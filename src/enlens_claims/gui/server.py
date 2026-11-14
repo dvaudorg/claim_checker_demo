@@ -18,6 +18,7 @@ runs as a job in a background thread; the page polls /api/jobs/<id> for its prog
 """
 from __future__ import annotations
 
+import bisect
 import json
 import mimetypes
 import os
@@ -568,6 +569,7 @@ class App(LibraryMixin, QueueMixin):
         choices = {r["fp"]: r["included"] for r in ws.query("SELECT fp, included FROM block_choices WHERE doc_id=?",
                                                              (doc_id,))}
         marks = {side: reader2.bound_index(choices, side, fps) for side in reader2.BOUNDS}
+        together = App.passage_runs(ws, doc_id, rows)
         out = []
         for idx, r in chosen:
             kind, pg = r["kind"], r["page"]
@@ -590,6 +592,7 @@ class App(LibraryMixin, QueueMixin):
                  "changed": bool(r["included"]) != (kind in reader2.INCLUDED) or fps[idx] in choices, "joined": joined,
                  "box": [r["x0"], r["y0"], r["x1"], r["y1"]] if r["x0"] is not None else None,
                  "alike": alike[shapes[idx]] - 1 if shapes[idx] else 0,
+                 "together": together[idx],
                  "share": round(idx / max(1, len(rows) - 1), 3),
                  "bound": next((side for side, at in marks.items() if at == idx), None)}
             t = tables.get(r["n"])
@@ -597,6 +600,23 @@ class App(LibraryMixin, QueueMixin):
                 b["table"] = {"n": t["n"], "caption": t["caption"], "rows": json.loads(t["rows_json"] or "[]")}
             out.append(b)
         return out, len(rows)
+
+    @staticmethod
+    def passage_runs(ws, doc_id: str, rows) -> list[int]:
+        """How many other blocks *Leave out* or *Restore* on each block (`rows`, in order) takes with it: those that
+        share a passage with it, as `set_block` finds them (a heading with the text under it, short lines put
+        together). A web page's menu of short lines read as headings can share one passage with its first paragraph:
+        the button says so before it is pressed. Blocks out of order: 0 for each (not worth a slow count)."""
+        starts = [r["start"] for r in rows]
+        ends = [r["end"] for r in rows]
+        if not rows or any(x > y for x, y in zip(starts, starts[1:])) or any(x > y for x, y in zip(ends, ends[1:])):
+            return [0] * len(rows)
+        lo, hi = list(range(len(rows))), list(range(1, len(rows) + 1))
+        for p in ws.query("SELECT start, end FROM passages WHERE doc_id=?", (doc_id,)):
+            i, j = bisect.bisect_right(ends, p["start"]), bisect.bisect_left(starts, p["end"])
+            for k in range(i, j):   # the blocks this passage touches: one run
+                lo[k], hi[k] = min(lo[k], i), max(hi[k], j)
+        return [hi[k] - lo[k] - 1 for k in range(len(rows))]
 
     @staticmethod
     def block_shapes(text: str, rows) -> list[str | None]:
