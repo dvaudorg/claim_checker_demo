@@ -295,3 +295,126 @@ def test_reader_6_is_offered_to_pdfs_of_reader_5(tmp_path):
     assert re.search(r"^export const reader = \{ latest: 6 \};", _src("doc-shared.js"), re.M)
     src = _src("sources.js", "doc-reading.js", "doc-shared.js")
     assert "const READER_6_NEWS = " in src and "`Read by the reader of ENLENS 0.18.1 to 0.19.0rc1. ${READER_6_NEWS}`" in src
+
+
+# ------------------------------------------------------------------------------------------------------------------
+# the rules one by one, on blocks made by hand (with sizes, and without them as pypdf and OCR give lines)
+# ------------------------------------------------------------------------------------------------------------------
+DIMS = [(595.0, 842.0)] * 3
+
+
+def _block(text: str, page: int = 0, kind: str = "body", top: float | None = None, size: float | None = None,
+           x0: float | None = 60.0, bold: bool = False):
+    if top is None:
+        x0 = None
+    ln = reader.Line(page, text, x0, top, None if x0 is None else x0 + 300, None if top is None else top + (size or 10),
+                     size, bold)
+    b = reader.Block(page, [ln], kind=kind)
+    b.text = text
+    return b
+
+
+def _details(blocks, body_size: float | None = 10.0) -> list[str]:
+    from enlens_claims import reader6
+
+    reader6.publishing_details(blocks, body_size, DIMS)
+    return [b.kind for b in blocks]
+
+
+def test_prose_in_the_first_pages_footer_stays_unless_it_names_publishing_details():
+    foot = dict(top=600.0, size=8.0)
+    kept = [_block("Results: Students at the university repaired fewer items than they brought to the repair cafe in "
+                   "every month of the study.", kind="abstract", **foot),
+            _block("Earlier studies published in this field have found that repair cafes reach people who seldom "
+                   "repair anything at home.", **foot),
+            _block("2. Methods", kind="heading", **foot),
+            _block("It does seem odd that this attack should be coming just when the professionals in", **foot)]
+    assert _details(kept) == ["abstract", "body", "heading", "body"]
+    out = [_block("This is an open access article under the CC BY license (https://creativecommons.org/licenses/by/4.0/).",
+                  **foot),
+           _block("Funding was received from the university, and the paper is published open access under a "
+                  "Creative Commons licence.", **foot),
+           _block("View related articles", **foot),
+           _block("1 The plots were walked in April and May, before the heather flowered.", **foot)]
+    assert _details(out) == ["front", "front", "front", "footnote"]
+    # the same prose higher on the page, or in the text's type, is not looked at
+    assert _details([_block("View related articles", top=300.0, size=8.0),
+                     _block("View related articles", top=600.0, size=10.0)]) == ["body", "body"]
+
+
+@pytest.mark.parametrize("sized", [True, False])
+def test_publishing_details_are_found_by_how_they_start_with_or_without_sizes(sized):
+    where = dict(top=120.0, size=10.0) if sized else {}
+    out = ["E-mail: ann.smith@example.org", "Correspondence: Ann Smith, Heath Institute",
+           "Received 16 May 2024; Received in revised form 9 August 2024; Accepted 18 September 2024",
+           "Received: September 01, 2024", "Available online 19 September 2024", "Published: 9 November 2021",
+           "Published online: 2023-03-02", "https://doi.org/10.1016/j.heath.2024.100070",
+           "Journal of Heathland Studies 2021, 13, 12351. https://doi.org/10.3390/su132212351",
+           "ann.smith@example.org (A. Smith), bob.jones@example.org (B. Jones)"]
+    kept = ["Received wisdom holds that ground birds nest where the heather is oldest.",
+            "Available online repair guides were used by most visitors to the cafes we studied.",
+            "Published 2019 figures show that most visitors repaired one item at each visit.",
+            "Accepted 12 marks as the threshold for a repair counted as done, as in earlier work.",
+            "Received in May, the forms were read by two of us."]
+    for page in (0, 1):
+        assert _details([_block(t, page, **where) for t in out], 10.0 if sized else None) == ["front"] * len(out)
+        assert _details([_block(t, page, **where) for t in kept], 10.0 if sized else None) == ["body"] * len(kept)
+    # after the first two pages only a paragraph that is nothing but a link or a DOI
+    assert _details([_block(t, 2, **where) for t in out[:3]] + [_block("https://www.example.org/data", 2, **where)]) \
+        == ["body", "body", "body", "front"]
+
+
+def test_a_publishing_detail_inside_the_abstract_is_set_aside_and_the_abstract_stays():
+    blocks = [_block("http://doi.org/10.1590/1809-43412023v20d911", kind="abstract", top=300.0, size=10.0),
+              _block("The repairs were received well by the visitors, who came back in May 2023 with more of their "
+                     "broken things.", kind="abstract", top=320.0, size=10.0),
+              _block("Correspondence: Ann Smith, ann.smith@example.org", kind="abstract", top=360.0, size=10.0)]
+    assert _details(blocks) == ["front", "abstract", "front"]
+
+
+def _title_and(next_block, title_size: float = 14.0):
+    t = _block("Counting ground nests on heathland plots over three springs", kind="title", top=130.0, size=title_size)
+    return [t, next_block]
+
+
+def test_a_titles_last_line_joins_it_and_nothing_else_does():
+    from enlens_claims import reader6
+
+    joined = reader6.join_title(_title_and(_block("of walking", kind="front", top=147.0, size=14.0)))
+    assert len(joined) == 1 and [ln.text for ln in joined[0].lines][-1] == "of walking"
+    for other in (_block("Ann Smith, Bob Jones", kind="front", top=147.0, size=11.0),       # other type: the authors
+                  _block("of walking", kind="front", top=190.0, size=14.0),                # far below
+                  _block("of walking", kind="front", top=147.0, size=14.0, x0=250.0),      # elsewhere on the line
+                  _block("of walking", kind="front", top=147.0, size=14.0, bold=True),     # bold
+                  _block("of walking", page=1, kind="front", top=147.0, size=14.0),        # on the next page
+                  _block("of walking", kind="body", top=147.0, size=14.0),                 # text, not front matter
+                  _block("ann.smith@example.org", kind="front", top=147.0, size=14.0)):    # an e-mail
+        assert len(reader6.join_title(_title_and(other))) == 2, other.text
+
+
+@needs_pdfminer
+def test_a_report_whose_running_head_is_its_title_keeps_its_title(tmp_path):
+    fl = pdfmake.Flow(columns=[(60, 475)], top=640, bottom=80, size=10, running_head="Repair Cafes in Hungary 2024")
+    for k in range(14):
+        fl.paragraph(BODY * 3)
+    fl.pages[0].text("Repair Cafes in Hungary", 60, 700, "Helvetica-Bold", 18)
+    path = tmp_path / "report.pdf"
+    fl.write(path)
+    doc = _read(path, 6)
+    assert len(doc.raw.pages) >= 3
+    assert [b.text for b in doc.blocks if b.kind == "title"] == ["Repair Cafes in Hungary"]
+    assert all(b.kind == "furniture" for b in doc.blocks if b.text == "Repair Cafes in Hungary 2024")
+
+
+@needs_pdfminer
+def test_the_cue_pass_without_sizes(tmp_path, monkeypatch):
+    """A PDF read without pdfminer (pypdf's lines: no sizes, no boxes): the publishing details are found by how
+    they start, and the text stays."""
+    path = pdf_with_publishing_details(tmp_path / "details.pdf")
+    monkeypatch.setattr(reader, "pdfminer_available", lambda: False)
+    doc = _read(path, 6)
+    assert doc.reading["engine"] == "pypdf"
+    kinds = {" ".join(b.text.split()): b.kind for b in doc.blocks}
+    hits = {t: k for t, k in kinds.items() if t.startswith(("E-mail address", "Received 16 May", "Available online"))}
+    assert hits and set(hits.values()) == {"front"}
+    assert all(k == "body" for t, k in kinds.items() if t.startswith("Received wisdom"))

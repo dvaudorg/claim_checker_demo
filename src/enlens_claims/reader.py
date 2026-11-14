@@ -952,7 +952,7 @@ def classify(blocks: list[Block], body_size: float | None, dims: list[tuple[floa
                 if version >= 6:
                     from . import reader6
 
-                    if reader6.banner(t, blocks):
+                    if reader6.banner(bi, blocks, body_size, h):
                         b.kind = "front"  # reader 6: the journal's name, as its running head begins
                         continue
                 b.kind = "title"

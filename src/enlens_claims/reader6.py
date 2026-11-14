@@ -23,7 +23,8 @@ PDFs read otherwise: a Word file, a web page or a text file reads as by reader 5
    DOI. "Received" counts only with a date, so "Received wisdom holds …" stays text.
 4. **The journal's name is not the title.** The title is the largest type near the top of the first page; a
    journal's banner can be larger. A title candidate whose words begin the first page's running head (the journal's
-   name, its volume and year) is front matter, and the next candidate is the title. A title's last line that came
+   name, its volume and year) is front matter when another candidate follows on the page, which is the title (a
+   report whose running head is its own title keeps it). A cover page that names only the journal is not caught. A title's last line that came
    apart from it (in the same type, just under it) is part of the title (`join_title`), not front matter.
 5. **A running head seen once.** A running head stands apart from the text (`reader.mark_furniture`); the line it
    was measured against could be the page number (or another running head) at the other end of its own row, so
@@ -52,8 +53,10 @@ class ClippedAggregator(PDFPageAggregator):
     def __init__(self, *a, **k):
         super().__init__(*a, **k)
         self._clips: list[tuple[float, float, float, float]] = []
+        self._ctms: list = []
 
     def begin_figure(self, name, bbox, matrix) -> None:
+        self._ctms.append(self.ctm)
         super().begin_figure(name, bbox, matrix)
         # the corners of the /BBox in the page's space (pdfminer reads it as x, y, width, height: its box was too large)
         x0, y0, x1, y1 = apply_matrix_rect(mult_matrix(matrix, self.ctm), tuple(float(v) for v in bbox))
@@ -67,6 +70,9 @@ class ClippedAggregator(PDFPageAggregator):
     def end_figure(self, name) -> None:
         self._clips.pop()
         super().end_figure(name)
+        # pdfminer leaves the form's own matrix as the device's: a form drawn straight after it (no q/Q, no cm
+        # between) would be placed, and clipped, by the wrong one
+        self.set_ctm(self._ctms.pop())
 
     def render_char(self, *a, **k) -> float:
         adv = super().render_char(*a, **k)
@@ -108,15 +114,19 @@ def form_figure(box, rec) -> bool:
 # ------------------------------------------------------------------------------------------------------------------
 # 3. publishing details after the text has begun
 # ------------------------------------------------------------------------------------------------------------------
-_MONTH = r"(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?"
-_DATE = rf"(\d{{1,2}}(st|nd|rd|th)?\s+{_MONTH}|{_MONTH}\s+\d{{1,2}}|\d{{4}}|\d{{1,2}}[./-]\d{{1,2}}[./-]\d{{2,4}})"
+_MONTH = (r"(january|february|march|april|may|june|july|august|september|october|november|december"
+          r"|jan|feb|mar|apr|jun|jul|aug|sept|sep|oct|nov|dec)\b\.?")
+# a date with its day and month ("5 May 2023", "May 5, 2023", "05.05.2023", "2023-05-05"); a year alone is not one
+# ("Published 2019 figures show …")
+_DATE = (rf"(\d{{1,2}}(st|nd|rd|th)?\s+{_MONTH}|{_MONTH}\s+\d{{1,2}}\b|\d{{1,2}}[./-]\d{{1,2}}[./-]\d{{2,4}}"
+         rf"|\d{{4}}-\d{{1,2}}-\d{{1,2}})")
 # what a publishing detail starts with (after a mark or two: "*", "✉", a superscript letter)
 CUE = re.compile(
     r"^\W{0,3}("
     r"e-?mails?(\s+address(es)?)?\s*[:：]|"
     r"https?://(dx\.)?doi\.org/|doi\s*:|"
     rf"received\s*:?\s*(in revised form|{_DATE})|revised\s*:?\s*{_DATE}|accepted\s*:?\s*{_DATE}|"
-    rf"available online|published(\s+online)?\s*:?\s*{_DATE}|"
+    rf"available online\s*:?\s*(on\s+|from\s+)?{_DATE}|published(\s+online)?\s*:?\s*(on\s+)?{_DATE}|"
     r"©|\(c\)\s*\d{4}|copyright\s*:?\s*©|issn\b|\d{4}-\d{3}[\dx]\s*/|"
     r"(to\s+)?cite this( article| paper)?\s*:?|citation\s*:|correspondence\s*:|\*?\s*corresponding authors?\b|"
     r"present address|this is an open access article)",
@@ -143,7 +153,7 @@ def _mostly_emails(t: str) -> bool:
 def publishing_details(blocks: list, body_size: float | None, dims: list[tuple[float, float]]) -> int:
     """Blocks of the first pages that `reader.classify` read as text (or as the abstract, or a heading) but hold the
     article's publishing details: made front matter (or a footnote). Returns how many were changed."""
-    from .reader import _FOOT_MARK, _FRONT, _sentence_like
+    from .reader import _FOOT_MARK, _FRONT, _FRONT_START, _is_section, _sentence_like
 
     changed = 0
     for b in blocks:
@@ -156,12 +166,15 @@ def publishing_details(blocks: list, body_size: float | None, dims: list[tuple[f
         h = dims[b.page][1] if b.page < len(dims) else None
         new = None
         footer = b.page == 0 and h and ln.top is not None and ln.size and body_size \
-            and ln.top > FOOTER_TOP * h and ln.size <= body_size - FOOTER_SMALLER
-        # the first page's footer, in smaller type: a note, or publishing details (not prose without one: an old
-        # paper sets its whole first page in smaller type)
+            and ln.top > FOOTER_TOP * h and ln.size <= body_size - FOOTER_SMALLER \
+            and not (b.kind == "heading" and _is_section(t))
+        # the first page's footer, in smaller type: a note, or publishing details. Prose there is set aside only when
+        # it starts with a publishing detail or names two or more (an old paper sets its whole first page smaller;
+        # an abstract can run into the lower half)
         if footer and _FOOT_MARK.match(t) and not _cue(t):
             new = "footnote"
-        elif footer and not (_sentence_like(t) and not _FRONT.search(t)):
+        elif footer and (not _sentence_like(t) or _cue(t) or _FRONT_START.match(t)
+                         or len({m.group(0).lower() for m in _FRONT.finditer(t)}) >= 2):
             new = "front"
         # a publishing detail on the first two pages, with sizes or without them (OCR, pypdf)
         elif b.page <= 1 and (_cue(t) or (len(t) < DOI_SHORT and _DOI_LINK.search(t)) or _mostly_emails(t)):
@@ -182,22 +195,35 @@ def _words(t: str) -> str:
     return " ".join(re.findall(r"[^\W_]+", t.lower()))
 
 
-def banner(t: str, blocks: list) -> bool:
-    """Whether a title candidate on the first page is the journal's name: its words begin a running head of the first
-    page ("Cleaner Production Letters" in "Cleaner Production Letters 7 (2024) 100070")."""
-    w = _words(t)
+def banner(bi: int, blocks: list, body_size: float | None, height: float | None) -> bool:
+    """Whether the title candidate `blocks[bi]` on the first page is the journal's name: its words begin a running
+    head of the first page ("Cleaner Production Letters" in "Cleaner Production Letters 7 (2024) 100070"), and
+    another title candidate follows it on the page (a report whose running head is its own title keeps it)."""
+    w = _words(" ".join(ln.text for ln in blocks[bi].lines))
     if len(w) < 4:
         return False
+    named = False
     for b in blocks:
         if b.page > 0:
             break
-        ln = b.lines[0]
-        if ln.furniture == "head":
+        if b.lines[0].furniture == "head":
             head = _words(" ".join(x.text for x in b.lines))
             # the rest of the head is the volume, the year, the pages: a short title as the head of later pages is not
             if head.startswith(w + " ") and re.search(r"\d", head[len(w):]):
-                return True
-    return False
+                named = True
+                break
+    return named and any(_candidate(b, body_size, height) for b in blocks[bi + 1:] if b.page == 0)
+
+
+def _candidate(b, body_size: float | None, height: float | None) -> bool:
+    """A block that `reader.classify` could take for the title: on the first page, a heading in type 2 points larger
+    than the text, in the upper half."""
+    from .reader import _heading_like
+
+    ln = b.lines[0]
+    return bool(not ln.furniture and not ln.figure and b.kind != "table" and body_size and ln.size
+                and ln.size >= body_size + 2 and height and ln.top is not None and ln.top < 0.5 * height
+                and _heading_like(b, body_size))
 
 
 def join_title(blocks: list) -> list:

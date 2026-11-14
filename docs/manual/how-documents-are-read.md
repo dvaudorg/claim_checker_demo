@@ -109,11 +109,14 @@ the same. In PDFs:
   reader 5 read them as text. Reader 6 sets them aside as front matter: what stands at the foot of the first page in
   smaller type (a numbered note there is a footnote), and on the first two pages a short paragraph that starts with
   such a detail. A paragraph that is only a link or a DOI is set aside anywhere. "Received wisdom holds …" stays text.
-- **The title, not the journal.** A journal's name printed larger than the title was taken for the title. It is now
-  front matter, and a title over two lines is kept whole.
+- **The title, not the journal.** A journal's name printed larger than the title was taken for the title. When the
+  name begins the first page's running head (as at Elsevier) and a title follows it, the name is now front matter;
+  a title over two lines is kept whole. A cover page that names only the journal (Taylor & Francis), or a title
+  interleaved with a column beside it, can still give the wrong title.
 - **Running heads beside a page number.** A running head with the page number at the other end of its line was found
   on only every other page; the rest read as text, often as a heading. Reader 6 finds it on every page, so a reference
-  list or an end note that runs over a page is no longer cut by it.
+  list or an end note that runs over a page is no longer cut by it, and a byline or date before the text (a newspaper
+  article's "By …") is set aside with the front matter.
 
 
 ## Measuring how well ENLENS reads
