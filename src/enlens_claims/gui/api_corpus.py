@@ -135,8 +135,14 @@ class CorpusApi:
     def _theory_view(self, draft: dict | None) -> dict | None:
         """The draft as the page reads it: a reading whose job died (the app restarted, or the job ended without
         writing its end) is never shown as running for ever."""
+        from .. import theoryframe
+
         if draft is None:
             return None
+        r = draft["reading"]
+        # the focus changed since the last reading (the documents never do): reading again gives another framework
+        stale = bool(r.get("input")) and r["input"] != theoryframe._input_hash(draft["doc_ids"], draft.get("focus") or "")
+        draft = {**draft, "reading": {**r, "stale": stale}}
         r = draft["reading"]
         if r.get("state") != "running" or self._theory_job(draft) is not None:
             return draft

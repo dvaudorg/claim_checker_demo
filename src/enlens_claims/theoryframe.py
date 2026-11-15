@@ -721,8 +721,10 @@ def read(ws: Workspace, backend, model: str, progress: Callable | None = None,
          should_stop: Callable[[], bool] | None = None, readers=None, job: str | None = None) -> dict:
     """The reading of a draft's theory documents (a job): every part of every document the AI may read is drafted
     (`theory_codes`), the drafts are joined into a framework (one `theory_frame` task), and the framework is written
-    into the draft (`apply_frame`). Written to the research log. Returns {"ok", "stopped", "withdrawn", "state",
-    "model", "parts", "parts_read", "drafted", "groups", "concepts", "problems", "reused", "frame_task"}."""
+    into the draft (`apply_frame`). Written to the research log. Returns {"ok" (a framework was put together),
+    "stopped", "withdrawn", "state" (the draft's reading now), "model", "parts", "parts_read", "drafted", "groups",
+    "concepts", "problems", "reused", "frame_task", "discarded" (the draft was discarded or started again meanwhile:
+    nothing written)}. `job`: the app's job id, kept in the draft while it runs."""
     from . import access, researchlog, theorycodes, tasks
     from . import runs as runs_mod
 
@@ -778,7 +780,7 @@ def read(ws: Workspace, backend, model: str, progress: Callable | None = None,
                                    "problems": [why] if why else []}, None)
         return {"ok": False, "stopped": halted == "stopped", "withdrawn": halted == "withdrawn", "state": state,
                 "model": None, "parts": n_parts, "parts_read": parts_read, "drafted": 0, "groups": 0, "concepts": 0,
-                "problems": [why] if why else [], "reused": False, "frame_task": None}
+                "problems": [why] if why else [], "reused": False, "frame_task": None, "discarded": False}
     outside = {d for d in ids if levels.get(d) == "none"}
     for b in batches:
         if b["refused"]:
@@ -840,11 +842,13 @@ def read(ws: Workspace, backend, model: str, progress: Callable | None = None,
                     if progress:
                         progress(total, total)
                     if should_stop and should_stop() and not ok:
-                        _end_reading(ws, created, {**draft["reading"], "state": before if before == "read" else "none",
-                                                   "job": job}, None)
-                        return {"ok": False, "stopped": True, "withdrawn": False, "state": before or "none",
-                                "model": None, "parts": n_parts, "parts_read": parts_read, "drafted": len(numbered),
-                                "groups": 0, "concepts": 0, "problems": [], "reused": False, "frame_task": frame_task}
+                        # stopped while the frame was asked: the draft keeps what it had
+                        state = before if before == "read" else "none"
+                        _end_reading(ws, created, {**draft["reading"], "state": state, "job": job}, None)
+                        return {"ok": False, "stopped": True, "withdrawn": False, "state": state, "model": None,
+                                "parts": n_parts, "parts_read": parts_read, "drafted": len(numbered), "groups": 0,
+                                "concepts": 0, "problems": [], "reused": False, "frame_task": frame_task,
+                                "discarded": False}
                     got_frame = frame_of(ws, frame_task) if ok else None
                     if got_frame:
                         frame, used = got_frame
