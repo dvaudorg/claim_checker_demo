@@ -57,7 +57,7 @@ Windows from 0.15.4 on). Your projects and settings (the `enlens` folder in your
   impact claims tagged with UN SDG targets and compared with an expert Value Chain Assessment.
 
 <!-- new-in:start (written by `python tools/release.py prepare`: change the changelog entry, not this) -->
-## New in 0.20.0: See what is sent, code names that fit the grid, and leaving out a figure
+## New in 0.19.3: See what is sent, code names that fit the grid, and leaving out a figure
 
 - **See what is sent.** Wherever work waits for Claude Code, the line "Claude Code sends the passages inside the tasks it takes to Anthropic" now has a *See what is sent* button.
 <!-- new-in:end -->
