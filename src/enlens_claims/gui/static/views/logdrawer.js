@@ -6,8 +6,8 @@ import { subjectHref, entryText, entrySubject, entryWho } from "./log.js";
 import { whenText } from "./team-state.js";
 
 const PAGE = 30;
-const GROUP_ICON = { entries: "note", documents: "book-open", checks: "flask", themes: "shapes", codebooks: "book-marked",
-  history: "undo", together: "users", other: "circle" };
+const GROUP_ICON = { entries: "note", colleagues: "users", documents: "book-open", checks: "flask", themes: "shapes",
+  codebooks: "book-marked", history: "undo", together: "users", other: "circle" };
 const NOTHING_HERE = "Nothing is kept with this page; showing all";
 
 // Which part of the log belongs to the page at this hash. {subject_kind, subject_id} for one item, {group} for a place

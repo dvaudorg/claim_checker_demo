@@ -625,19 +625,26 @@ h2 .defined-wrap { font-size: var(--fs-small); font-weight: var(--fw-regular); }
 /* the research log: the box to write in, and the entries */
 .log-new { margin-bottom: 18px; }
 .log-new-foot { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; margin-top: 8px; }
+/* on the page: one slim box, its button at its end; one line that grows to three while it has the focus or holds words */
+.log-new-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
+.log-new-row > .log-new-text { flex: 1 1 16em; width: auto; min-width: 0; min-height: calc(1.5em + 1rem + 2px); resize: none; transition: min-height .12s; }
+.log-new-row > .log-new-text:focus, .log-new-row > .log-new-text:not(:placeholder-shown) { min-height: calc(4.5em + 1rem + 2px); resize: vertical; }
+.log-new-row > .btn { flex: none; }
 .log-entries { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
 .log-entry { display: grid; grid-template-columns: 26px 1fr; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--border); }
 .log-entry:last-child { border-bottom: 0; }
+/* on the page, one entry is one row: the time in a narrow column, the group's icon, the words, the More menu */
+.log-by-time > .log-entry { grid-template-columns: 3.2em 18px minmax(0, 1fr) auto; align-items: start; gap: 8px; }
+.log-by-time .log-time { padding-top: 3px; }
+.log-by-time .menu { margin-top: -2px; }
 .log-icon { padding-top: 2px; color: var(--muted); }
 .log-body { min-width: 0; }
-.log-line { display: flex; align-items: baseline; gap: 10px; }
 .log-time { flex: none; color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
 .log-text { min-width: 0; overflow-wrap: anywhere; }
 /* an entry in your own words: the research's own words, in serif */
 .log-own-text { color: var(--text); font-family: var(--font-serif); white-space: pre-wrap; }
 .log-why { margin: 4px 0 0; padding: 4px 10px; border-left: 3px solid var(--border-strong); background: var(--surface-2); font-size: var(--fs-small); overflow-wrap: anywhere; }
-.log-meta, .log-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin-top: 4px; font-size: var(--fs-xs); }
-.log-actions { gap: 6px; }
+.log-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin-top: 4px; font-size: var(--fs-xs); }
 /* in the drawer: a narrower column, a step smaller */
 .drawer-section .log-text { font-size: var(--fs-small); white-space: pre-wrap; }
 .drawer-section .log-why { font-size: var(--fs-small); }
