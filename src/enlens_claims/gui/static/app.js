@@ -285,6 +285,9 @@ const WHERE_CHIP = {
   here: { icon: "house", label: "This computer", tip: "This runs on this computer; nothing is sent to Anthropic." },
   crossref: { icon: "network", label: "Crossref", tip: "Only the DOIs are sent, to Crossref; no text of your documents leaves this computer." },
 };
+// 0.19: work that sends passages to Claude has a grey rail with the cloud on the box's left edge and says "to Claude"
+// (docs/DESIGN.md 5.2): a different shape, not a colour of its own, so it reads at a glance and in greyscale
+const CLOUD_TIP = "Your documents stay here; only the passages inside the AI's tasks go to Anthropic.";
 const tasksWord = (n) => `${n.toLocaleString()} ${n === 1 ? "task" : "tasks"}`;
 async function drawStatus() {
   const box = document.getElementById("work-indicator");
@@ -323,7 +326,7 @@ async function drawStatus() {
       sub: j.waiting_for ? j.waiting_for.message : j.state === "queued" ? "waiting its turn" : more ? `and ${more} more running` : waiting + answering ? `${(waiting + answering).toLocaleString()} for Claude Code` : "running",
       act: j.waiting_for ? "cancel" : undefined, job: j.id };   // 0.18 queued jobs: what it waits for, with Cancel
   } else if (runner) {
-    w = { kind: "running", main: "Claude Code is working", sub: `${(waiting + answering).toLocaleString()} to go`, href: "#/settings/queue", tip: "Claude Code answers the work waiting for it, on your Claude plan." };
+    w = { kind: "running", where: "cloud", main: "Claude Code is working", sub: `${(waiting + answering).toLocaleString()} to go`, href: "#/settings/queue", tip: "Claude Code answers the work waiting for it, on your Claude plan." };
   } else if (q && waiting) {
     w = { kind: "stalled", icon: "inbox", main: `${tasksWord(waiting)} waiting`, sub: "for Claude Code", href: "#/settings/queue", tip: "Work prepared for Claude Code: answer it there, or with the AI model of Settings.", act: "open" };
   }
@@ -332,18 +335,22 @@ async function drawStatus() {
   document.getElementById("status-area").classList.toggle("status-busy", !!w);
   if (!w) { replace(box); statusKey = ""; }
   else {
-    const key = JSON.stringify([App.project, w.kind, w.where, w.main, w.sub, w.href, w.act, w.act === "cancel" ? w.job : ""]);
+    // where text goes stays in view while work runs (it took the AI line's place): the AI's name, with its icon
+    const p = App.privacy();
+    const cloud = w.kind === "running" && (w.where === "cloud" || (w.where == null && p.where === "cloud"));
+    const cloudTip = w.where === "cloud" ? CLOUD_TIP : p.plain;
+    const key = JSON.stringify([App.project, w.kind, w.where, cloud, w.main, w.sub, w.href, w.act, w.act === "cancel" ? w.job : ""]);
     if (key === statusKey && box.firstChild) {
       const t = box.querySelector(".work-time"); if (t && w.time) t.textContent = w.time;   // only the seconds changed
     } else {
       statusKey = key;
-      // where text goes stays in view while work runs (it took the AI line's place): the AI's name, with its icon
-      const p = App.privacy();
       // 0.17: work that runs on this computer says so, not "Claude"; 0.19: the server says where each job runs
       const chip = WHERE_CHIP[w.where];
       const who = w.kind !== "running" || w.where === "none" ? null   // nothing is sent while it waits; an install reads no document
+        : cloud ? h("span", { class: "work-who", title: cloudTip }, "to Claude")   // the rail carries the cloud
         : chip ? h("span", { class: "work-who", title: chip.tip }, icon(chip.icon, { size: 12 }), chip.label)
         : h("span", { class: "work-who", title: p.plain }, icon(p.icon, { size: 12 }), (p.label || "").split(",")[0]);
+      const rail = cloud ? h("span", { class: "work-rail", title: cloudTip, "aria-hidden": "true" }, icon("cloud", { size: 14 })) : null;
       const main = h("a", { class: "work-main", href: w.href, title: w.tip,   // 0.18: a round opens the Team tab beside the page
         onClick: w.drawer ? (e) => { e.preventDefault(); window.dispatchEvent(new CustomEvent("enlens-drawer", { detail: { tab: w.drawer } })); } : undefined },
         h("span", { class: "work-line" }, w.kind === "running" ? h("span", { class: "running-dot", "aria-hidden": "true" }) : icon(w.icon, { size: 14 }),
@@ -364,8 +371,8 @@ async function drawStatus() {
           act.disabled = false; renderStatus();
         } }, "Cancel");
       }   // 0.17.0 (design guide): no "Open" button: the box's words are the link to where the work shows
-      box.className = `work-box work-${w.kind}`;
-      replace(box, main, act);
+      box.className = `work-box work-${w.kind}${cloud ? " work-cloud" : ""}`;
+      replace(box, rail, main, act);
     }
   }
   let again = active.length ? 2000 : q && (waiting || answering || runner) ? 5000 : s.backend === "claude_code" ? 15000 : 0;

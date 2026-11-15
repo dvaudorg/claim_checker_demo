@@ -1014,6 +1014,11 @@ span.passage-broken, span.passage-broken > span { display: block; }
 .work-box .work-act { flex: none; }
 .work-box.work-stalled { border-color: var(--attention-line); background: var(--attention-soft); }
 .work-box.work-stalled .work-text, .work-box.work-stalled .work-line .icon { color: var(--attention); }
+/* 0.19: work that sends passages to Claude: a grey rail with the cloud on the box's left edge, and the chip in stronger
+   words (never a colour of its own: docs/DESIGN.md 5.2). The rail has its own corners, so the link's focus ring is not clipped */
+.work-box.work-cloud { padding-left: 0; }
+.work-box .work-rail { display: flex; flex: none; align-items: center; justify-content: center; align-self: stretch; width: 24px; margin: -6px 0; border-right: 1px solid var(--border-strong); border-radius: var(--radius-ctl) 0 0 var(--radius-ctl); background: var(--surface-3); color: var(--text-2); }
+.work-box.work-cloud .work-who { color: var(--text-2); font-weight: var(--fw-strong); }
 .sidebar-app { display: flex; flex-direction: column; gap: 2px; padding-top: 6px; border-top: 1px solid var(--border); }
 .sidebar-app-row { display: flex; align-items: center; gap: 4px; }
 .sidebar-app-row .nav-foot { flex: 1; min-width: 0; }

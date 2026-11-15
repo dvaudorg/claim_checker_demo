@@ -81,6 +81,17 @@ def test_the_sidebar_does_not_call_the_index_job_claude():
     assert "WHERE_CHIP[w.where]" in js and "LOCAL_JOB_KINDS" not in js
 
 
+def test_cloud_work_has_its_own_shape_in_the_sidebar():
+    """0.19: work that sends passages to Claude gets a grey rail with the cloud and says "to Claude"; local work none."""
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    css = (STATIC / "components.css").read_text(encoding="utf-8")
+    assert 'w.where === "cloud" || (w.where == null && p.where === "cloud")' in js   # the AI of Settings, when Claude
+    assert 'w = { kind: "running", where: "cloud", main: "Claude Code is working"' in js   # whatever Settings name
+    assert 'work-box work-${w.kind}${cloud ? " work-cloud" : ""}' in js and "replace(box, rail, main, act)" in js
+    assert ".work-box .work-rail {" in css and ".work-box.work-cloud .work-who {" in css
+    assert "--accent" not in css[css.index(".work-box .work-rail {"):css.index(".work-box.work-cloud .work-who {")]
+
+
 def test_the_server_says_which_jobs_run_on_this_computer():
     """0.19: the dry run before a new reading was called "Claude" in the sidebar: every job that reads no document
     with the AI says where it runs, and the two jobs of kind "reread" are told apart by their lane."""

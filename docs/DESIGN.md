@@ -826,7 +826,7 @@ while work runs or waits, the work box in exactly that space. Never a popover.
 | --- | --- |
 | The AI line | the cloud or the house, the AI's name (*Claude, on your plan*), what leaves the computer; on hover or focus a card of details opens upwards (the account, the model, where to change it) |
 | Set-up not finished, no AI model yet, Demo mode | the same card in the attention look: the triangle, amber |
-| Work running | a teal edge; the running dot, what runs, the time; under it how many more, and the AI's name with its icon |
+| Work running | a teal edge; the running dot, what runs, the time; under it how many more, and where the text goes: work that sends passages to Claude also has a grey rail with the cloud on its left edge and says *to Claude*; work on this computer keeps the house and no rail (*This computer*); a DOI lookup says *Crossref* |
 | Work not running or waiting | amber: a pause mark, *Not running*, *N tasks waiting* (for whom: its tooltip); one action, *Start* (a small main button) |
 
 The box's words are the link to where the work shows; its one button is always an action. The status area is the AI's
