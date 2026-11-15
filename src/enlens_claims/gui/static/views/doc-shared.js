@@ -12,8 +12,9 @@ export const reader = { latest: 6 };  // ingest.READER, as the list of documents
 // it (it would read the same); documents of earlier readers are offered it whatever their kind
 // 0.18.1: from reader 5 a plain text file reads the same as by reader 4 (reader 5 changes tables, figures and pictures),
 // so a reader-4 text file is not offered the move
-// 0.19: reader 6 reads only PDFs otherwise than reader 5, so a reader-5 document of another kind is not offered it (nor
-// a reader-4 text file, which reads the same by readers 4, 5 and 6)
+// 0.19: reader 6 reads PDFs otherwise than reader 5, and a document in two languages of any kind; the server says which
+// (`new_reader_changes`); without that word, a reader-5 document of another kind than a PDF is not offered it (nor a
+// reader-4 text file)
 export function newReaderFor(d, latest) {
   const r = d.reader || 1;
   // 0.19: the server says whether the new reader would read it otherwise (languages.new_reader_changes: reader 6

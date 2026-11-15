@@ -14,7 +14,7 @@
 
 - **Reader 6 also keeps the two languages of a document apart.** Reader 5 sometimes put a paragraph of each
   language into one passage, where a column ended without a full stop and the next started in lower case. Reader 6
-  never does, in a document in two languages of any kind (besides what it changes in PDFs, above). A document reader
+  never does, in a document in two languages of any kind (besides what it changes in PDFs). A document reader
   5 read is offered *Read with the new reader* only when reader 6 reads it otherwise: a PDF, or a document in two
   languages one of whose passages held both. New documents get reader 6. Can change results, for documents you move
   to it.
@@ -29,6 +29,6 @@
 
 ### Not yet done
 
-- A colleague on an ENLENS older than 0.19.0rc2 keeps the choice but does not apply it, so their copy still reads both
+- A colleague on an ENLENS older than 0.19 keeps the choice but does not apply it, so their copy still reads both
   languages until they update (as with marking a document as theory).
 - A document in three languages: only its two main ones are told apart, so paragraphs of the third may still count.

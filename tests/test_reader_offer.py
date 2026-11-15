@@ -34,8 +34,9 @@ def test_reader_4_is_offered_only_where_it_can_change_the_reading(tmp_path):
 
 @pytest.mark.skipif(not NODE, reason="node is not installed")
 def test_reader_6_is_offered_only_to_a_document_it_reads_otherwise(tmp_path):
-    """0.19: the server says whether reader 6 changes a document (`new_reader_changes`: a reader-5 document only when
-    one of its passages holds both languages of a document in two); older readings are offered it as before."""
+    """0.19: the server says whether reader 6 changes a document (`new_reader_changes`: a reader-5 PDF, or a reader-5
+    document one of whose passages holds both languages of a document in two); older readings are offered it as
+    before."""
     src = SOURCES.read_text(encoding="utf-8")
     m = re.search(r"^export function newReaderFor\(d, latest\) \{.*?^\}", src, re.S | re.M)
     docs = [{"reader": 5, "kind": "pdf", "new_reader_changes": False}, {"reader": 5, "kind": "pdf", "new_reader_changes": True},

@@ -424,13 +424,15 @@ class Run:
         """`p`'s copy read `d` again (their own act, or following the project): each judgement of theirs on it is
         placed on the new reading's passage that holds its words, which may be another passage than before (reader 1
         reads a short report as one passage, reader 5 as three). The result is kept, not lost: as many excerpts, the
-        same verdicts and notes, only passage ids of `d` other; what `p` has is then what is kept from here on."""
+        same verdicts and notes, only passage ids of `d` other, and none left as a record (a tombstone id) that was on a
+        passage; what `p` has is then what is kept from here on."""
         for h, want in list(self.mine[p.name].items()):
             got = self.results(p, h)
             if got == want or got is None or want is None:
                 continue
             same = (got[0] == want[0] and sorted((v, n) for _, v, n in got[1]) == sorted((v, n) for _, v, n in want[1])
-                    and all(a == b or (a.split(":")[0] == d and b.split(":")[0] == d)
+                    and all(a == b or (a.split(":")[0] == d and b.split(":")[0] == d
+                                       and (reread.is_tombstone(b) or not reread.is_tombstone(a)))
                             for a, b in zip(sorted(x[0] for x in got[1]), sorted(x[0] for x in want[1]))))
             self.check_that(same, f"{p.name}'s check {h} changed when {d} was read again: {want} -> {got}")
             self.mine[p.name][h] = got

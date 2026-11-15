@@ -41,8 +41,9 @@ and alternative text. `read_blocks(raw, version=4)` still reads as reader 4 did.
 Reader 6 (ENLENS 0.19) adds the rules of `reader6.py`, for PDFs only: text a form crops away (a draft page shown
 through a window) is not read, a form that shows a diagram of words is one figure, publishing details printed after
 the text has begun (e-mails, the DOI, the dates in the first page's footer) are front matter, a journal's name in
-large type is not the title, and a running head with a page number on its row is found on every page.
-`read_blocks(raw, version=5)` still reads as reader 5 did.
+large type is not the title, and a running head with a page number on its row is found on every page. For any kind of
+file, in a document in two languages (`languages.py`) no block is carried on, and no passage put together, across the
+two. `read_blocks(raw, version=5)` still reads as reader 5 did.
 """
 from __future__ import annotations
 

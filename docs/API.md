@@ -884,8 +884,9 @@ place: those are kept as records that point nowhere, as a move from the document
 cannot be read again now, and the result has `summary`: `{"moved", "left_as_they_were", "results_moved",
 "results_without_place", "moved_anyway"}`. The list of documents (`GET …/documents`) gives `new_reader`
 (`ingest.READER`) beside each document's `reader`, and (0.19) `new_reader_changes`. 0.19: a document reader 5
-read is one of "the documents an earlier reader read" only when reader 6 would read it otherwise (one of its passages
-holds both languages of a document in two); `POST …/reread` of any other answers 409 with the reason.
+read is one of "the documents an earlier reader read" only when reader 6 would read it otherwise (a PDF, or a
+document one of whose passages holds both languages of a document in two); `POST …/reread` of any other answers 409
+with the reason.
 
 `POST /api/projects/<p>/new-reader/preview` `{"doc_ids"?: [doc_id]}` (0.18.0rc2) → `{"job"}` (kind
 `new_reader_preview`): the dry run before moving several documents; same `doc_ids` rules, errors and 409 as the move.

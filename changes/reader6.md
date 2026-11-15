@@ -13,7 +13,7 @@
   list that runs over a page is now left out of the passages as a whole, and a document can count noticeably fewer
   words (one Elsevier paper went from 10,605 to 9,003). A byline or a date before the text, as in a newspaper article
   ("By …", "May 8, 2012"), is now set aside with the front matter too. Word files, web pages and text files read as
-  before. **Can change results, for documents you move to it.** New documents are read by reader 6; PDFs already in a
+  before, except one in two languages (below). **Can change results, for documents you move to it.** New documents are read by reader 6; PDFs already in a
   project keep their reading until you choose *Read with the new reader*.
 
 ### Not yet done

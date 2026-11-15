@@ -91,8 +91,8 @@ under *Left out of the text*, each marked *left out: Spanish (you kept English)*
 - **Read with the new reader.** A reader before reader 6 (ENLENS 0.19) sometimes put a paragraph of each language
   into one passage: where a column ended without a full stop and the next started in lower case, it took the second
   for the end of the first. Such a passage still counts, the other language with it; the panel says how many there
-  are. Reader 6 keeps the two languages apart, and is offered for exactly those documents: a document in one language
-  reads the same with it.
+  are. Reader 6 keeps the two languages apart, and is offered for those documents (and, for what else it changes, for
+  PDFs): any other document in one language reads the same with it.
 
 Changing what counts makes keyword codes, key terms and themes out of date, as adding a document does.
 
@@ -101,10 +101,12 @@ Changing what counts makes keyword codes, key terms and themes out of date, as a
 A document read by an older reader keeps that reading, and the list of documents marks it (*read before 0.15*, or
 *read by an earlier reader*). Its *Reading* panel offers **Read with the new reader** (the mark in the list opens it
 with the preview already started). It is offered only where the new reader can change the reading: a PDF or web page
-read by reader 3 was not offered reader 4, a plain text file read by reader 4 is not offered reader 5, and only PDFs
-read by reader 5 are offered reader 6, as the others would read the same. Reader 5 changes PDFs with ruled tables,
+read by reader 3 was not offered reader 4, a plain text file read by reader 4 is not offered reader 5, and of the
+documents reader 5 read only PDFs and documents in two languages that have a passage in both are offered reader 6, as
+the others would read the same. Reader 5 changes PDFs with ruled tables,
 tables over two pages or figures, and Word files and web pages with pictures; reader 6 changes PDFs with text hidden
-behind a figure, publishing details at the foot of the first page, or running heads beside a page number. The preview
+behind a figure, publishing details at the foot of the first page, or running heads beside a page number, and any
+document in two languages one of whose passages holds both. The preview
 says what would change.
 
 ```mermaid
