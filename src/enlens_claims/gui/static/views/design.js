@@ -136,9 +136,13 @@ export async function renderDesign(page) {
   };
 
   // ---- 4.19: the drawer, and a drawer with two tabs
-  const logEntry = (ic, meta, text, actions) => h("li", { class: "log-entry" }, h("span", { class: "log-icon" }, icon(ic, { size: 14 })),
-    h("div", { class: "log-body" }, h("div", { class: "log-meta" }, meta), h("div", { class: "log-text" }, text),
-      actions ? h("div", { class: "log-actions" }, actions) : null));
+  // the Research log page's row: the time, the group's icon, the words (a why and a quiet line under them), one More menu
+  const logEntry = (time, ic, text, { own, who, why, items } = {}) => h("li", { class: "log-entry" + (own ? " log-own" : "") },
+    h("time", { class: "log-time" }, time), h("span", { class: "log-icon" }, icon(ic, { size: 15 })),
+    h("div", { class: "log-body" }, h("div", { class: own ? "log-text log-own-text" : "log-text" }, text),
+      why ? h("p", { class: "log-why" }, h("strong", {}, "Why: "), why) : null,
+      who ? h("div", { class: "log-meta" }, who) : null),
+    items ? menu({ label: `More for the entry of ${time}`, items }) : null);
   const drawerDemo = drawer({ id: "dz-drawer", title: "Research log", icon: "notebook",
     control: choice({ label: "Show entries of", filter: true, sm: true, value: "page", options: [["page", "This page"], ["all", "All"]] }),
     sections: [h("div", { class: "log-new" }, textarea({ rows: 2, "aria-label": "A new entry", placeholder: "A decision and why…" }),
@@ -378,9 +382,12 @@ export async function renderDesign(page) {
 
     section("4.20", "Tables, lists and dense places", "Rows divided by lines; the name of each row is its link, its actions at the row's end.",
       answersTable(),
-      sample("A list of entries", h("ol", { class: "log-entries" },
-        logEntry("flask", h("time", { class: "log-time" }, "Today 17:26"), link({ kind: "title", href: HERE }, "Checked the hypothesis “Hybrid work improves wellbeing”."), button({ kind: "quiet", sm: true }, "Say why")),
-        logEntry("book-open", h("time", { class: "log-time" }, "Today 16:02"), "Added 3 documents."))),
+      sample("The research log's entries: the time, the icon, the words, one More menu", h("ol", { class: "log-entries log-by-time" },
+        logEntry("17:26", "flask", ["Checked the hypothesis “", link({ kind: "title", href: HERE }, "Hybrid work improves wellbeing"), "”."],
+          { why: "The second interview round asked about it.", items: [{ text: "Change why", icon: "quote" }, { text: "Compare with before", icon: "history" }] }),
+        logEntry("16:40", "users", "Kept the 2019 survey out: its sample is too small.", { own: true, who: personMark(["Anna de Vries"], { name: "short" }) }),
+        logEntry("16:02", "note", "Coded the interviews before the reports.", { own: true,
+          items: [{ text: "Edit", icon: "type" }, "sep", { text: "Remove…", icon: "trash", danger: true }] }))),
       sample("Rows grouped by person or day: who, the item's title link, a quiet second line, when, one or two actions",
         listGroup("Anna de Vries", listRow({ person: personMark(["Anna de Vries"]), title: "Remote work lowers commuting emissions.", href: HERE, time: "17:26",
           actions: [button({ kind: "quiet", sm: true }, "Accept"), button({ kind: "quiet", sm: true }, "Decline")] }),

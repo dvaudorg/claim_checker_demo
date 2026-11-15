@@ -40,12 +40,12 @@
 .ov-finder { margin: 0 0 24px; max-width: 640px; }
 
 /* ==== Research log */
-.log-tools { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px 16px; margin: 4px 0 12px; }
-.log-tools-right { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
-.log-search { width: 240px; max-width: 100%; }
-@media (max-width: 860px) {
-  .log-tools { flex-direction: column; align-items: stretch; }
-  .log-search { width: 100%; max-width: none; }
+/* a readable column: the write box, the tools and the entries never stretch across a wide window */
+.log-new-row, .log-tools, .log-list { max-width: 52em; }
+.log-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 4px; }
+.log-tools > .search-field { flex: 1 1 14em; max-width: 22em; }
+@media (max-width: 520px) {
+  .log-tools > .select, .log-tools > .search-field { flex: 1 1 100%; max-width: none; }
 }
 
 /* ==== Documents */

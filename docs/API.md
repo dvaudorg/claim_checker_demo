@@ -1675,13 +1675,15 @@ An entry: `{"entry_id", "at", "person_id", "who", "mine", "kind", "group", "text
 "subject_id", "why", "edited_at", "version_id", "has_version", "can_edit", "can_why", "data", "app_version"}`.
 `kind` `entry` is a person's own; every other kind is written by the app (documents added or removed, `ai-access`,
 `reread`, checks added or removed, `evidence-added`, themes found, removed, renamed, merged or restored, codebooks
-made, changed, moved, copied or removed, `restored`, `sync`). `group` is one of `entries`, `documents`, `checks`,
-`themes`, `codebooks`, `history`, `together`. `has_version` says an earlier version from before the change exists
-(`version_id`, see *Earlier versions*).
+made, changed, moved, copied or removed, `restored`, `sync`). `group` is one of `entries` (an entry of your own, `kind`
+`entry`, that you wrote), `colleagues` (an entry of their own that a colleague wrote; it came in with their work),
+`documents`, `checks`, `themes`, `codebooks`, `history`, `together`. `has_version` says an earlier version from before
+the change exists (`version_id`, see *Earlier versions*).
 
 - `GET /api/projects/<p>/log?group=&q=&subject_kind=&subject_id=&offset=&limit=` → `{"entries": [entry], "total",
   "groups": {group: count}, "group_names"}`, newest first (`limit` up to 2000, default 200). `q` matches the text,
-  the title and the reason.
+  the title and the reason. `groups` counts only the groups that have entries; `group_names` names every group for
+  the page's filter (`entries`: *Your own entries*, `colleagues`: *Your colleagues' entries*, …).
 - `POST /api/projects/<p>/log {"text", "subject_kind"?, "subject_id"?, "title"?}` → `{"entry"}`: an entry of your own
   (at most 10,000 characters; empty is a 400).
 - `PUT /api/projects/<p>/log/<entry_id> {"text"?, "why"?}` → `{"entry"}`. `why` (at most 2,000 characters; `""`
@@ -1690,7 +1692,8 @@ made, changed, moved, copied or removed, `restored`, `sync`). `group` is one of 
   back when a colleague's copy is brought in.
 - `GET /api/projects/<p>/log.md` and `…/log.xlsx`: the whole log, oldest first. Markdown has a heading per day; the
   sheet *Research log* has *When (UTC)*, *Who*, *What*, *Entry*, *About*, *Why* and *ENLENS version*, with the usual
-  *How these results were made* sheet.
+  *How these results were made* sheet. *What* names the group, except that a person's own entry (yours or a
+  colleague's) is *Entry* there, whoever reads the file: *Who* says whose.
 
 #### Notes and highlights
 

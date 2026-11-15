@@ -699,7 +699,13 @@ about what happened (*Anna judged 3 excerpts…*) stay sans. A list of proposed 
 (`proposalCard()`, [5.5](#55-the-pieces-of-working-together)). The research log's entries
 are such rows: in an entry ENLENS wrote, the item's quoted name is its title link (*Checked the hypothesis “Working from
 home…”*), not the whole sentence; where the words do not quote it, and under your own entry (your words, in serif), the
-item is named after *About:*.
+item is named after *About:*. On the Research log page one entry is one row, in a readable column (at most 52em): the
+time in a narrow column of its own, the group's icon, the words, a reason as the indented *Why:* line under them, a
+quiet line of facts (a colleague's person mark, the sharing state of an entry you wrote, *edited …*), and at the row's
+end one *More* menu with what can be done to it (*Say why* or *Change why*, *Edit*, *Compare with before*, and last,
+after a line, *Remove…*); no button stands under an entry (`.log-by-time`). In the drawer's narrow column the time
+joins the quiet line, and the actions stay on the page. Entries you wrote and entries a colleague wrote are two groups
+of the log's *Show* list (*Your own entries*, *Your colleagues' entries*), never one.
 
 **Make it:** `h("div", { class: "table-wrap" }, h("table", { class: "table table-responsive" }, …))`;
 `listGroup(heading | { text, action }, …listRow({ person, title, href, time, sub, warn, serif, actions }))`; `drawInSteps()` for a long list.
