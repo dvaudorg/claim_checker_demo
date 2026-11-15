@@ -25,7 +25,7 @@ import { itemHref, shareButton, KIND_WORDS, KIND_MANY, zipButton, ZIP_WORDS, SHA
 import { pollerState, syncLine, myShared, personLine, whenText, whenPhrase, newsLines, whoseWork, folderAsSeen, POLLER_API, EVERY_CHOICES, KEEP_OUT_LABEL, KEEP_OUT_HELP } from "./team-state.js";
 import { OWNER_SECTION, ownerMarks, ownerPerson } from "./owner.js";   // 0.18 L2
 import { MINE_SECTION, REMOVED_SECTION, ROLES_SECTION, peopleRows, personSub, peopleNote } from "./owner.js";   // roles
-import { SPACE_SECTION, joinDialog, inviteDialog, removeMember, memberSub, SERVICE_NAME } from "./team-space.js";   // 0.18.0rc2 (L6): a storage space
+import { SPACE_SECTION, inviteDialog, spaceInvites, removeMember, memberSub, SERVICE_NAME } from "./team-space.js";   // 0.18.0rc2 (L6): a storage space
 import { TEAM_SETUP_SECTIONS } from "./team-setup.js";   // the Team page of a project without a team
 
 const EVERY = 20000;          // how often the open page reads the folder's state again (it is cheap)
@@ -433,7 +433,15 @@ function firstInviteSection(ctx) {
   const sp = st.space;
   if (sp) {
     const others = (sp.members || []).filter((m) => !m.removed && !m.me);
-    if (!sp.keeper || others.length || (sp.invites || []).length) return null;
+    if (!sp.keeper || others.length) return null;
+    const waiting = sp.invites || [];
+    if (waiting.length) {
+      const names = waiting.map((i) => i.label).filter(Boolean);
+      return section("first-invite", "Invite a colleague",
+        h("p", { class: "team-text" }, `${plural(waiting.length, "invite")} ${waiting.length === 1 ? "is" : "are"} waiting to be used${names.length ? ` (for ${names.join(", ")})` : ""}. Your colleague shows in `,
+          link({ href: "#/team/settings?at=people", id: "team-invites-waiting" }, "People and settings"), " once they have joined."),
+        h("div", { class: "btn-row" }, button({ sm: true, icon: "plus", id: "team-invite-another", onClick: () => inviteDialog(ctx) }, "Invite another colleague…")));
+    }
     return section("first-invite", "Invite a colleague",
       h("p", { class: "team-text" }, "You are the only one in this team so far. Make an invite link and send it to a colleague: they join from it in a minute."),
       h("div", { class: "btn-row" }, button({ kind: "main", sm: true, icon: "plus", id: "team-first-invite", onClick: () => inviteDialog(ctx) }, "Invite a colleague…")));
@@ -589,7 +597,7 @@ function cameInSection(ctx) {
   };
   const body = [];
   if (!items.length) {
-    body.push(h("p", { class: "muted team-text", title: "What your colleagues share shows here when a round brings it in." }, "Nothing yet."));
+    body.push(h("p", { class: "muted team-text" }, "Nothing yet. What your colleagues share shows here when a round brings it in."));
   } else {
     if (fresh.length) {
       body.push(listGroup(null, ...fresh.map(row)),
@@ -654,7 +662,7 @@ function peopleSection(ctx) {
   const both = st.other_computer ? h("div", { class: "btn-row" }, button({ sm: true, id: "team-page-both-computers", onClick: () => bothComputersDialog(ctx) }, "Use both computers…")) : null;
   /* 0.18 real poller: offline, the folder says nothing of who is in it (not "no colleague yet") */
   if (!people.length && st.reachable === false) {
-    return section("people", "People", h("div", { class: "team-people" }, listGroup(null, mine, ...joined)),
+    return section("people", "People", h("div", { class: "team-people" }, listGroup(null, mine, ...joined)), ...spaceInvites(ctx),
       h("p", { class: "muted team-text" }, st.space ? "Your colleagues show here again once the storage space can be reached." : "Your colleagues show here again once the shared folder can be reached."), gone, both);
   }
   const join = people.length || st.space ? null : h("div", { class: "team-join" },   // (a storage space: its section invites)
@@ -670,7 +678,7 @@ function peopleSection(ctx) {
   });
   const count = 1 + people.length + joined.length;
   return section("people", count > 1 ? `People (${count})` : "People",
-    peopleNote(ctx), h("div", { class: "team-people" }, listGroup(null, mine, ...rows, ...joined)), gone, both, join);
+    peopleNote(ctx), h("div", { class: "team-people" }, listGroup(null, mine, ...rows, ...joined)), ...spaceInvites(ctx), gone, both, join);
 }
 
 function sharedSection(ctx) {
@@ -679,7 +687,7 @@ function sharedSection(ctx) {
   const mine = myShared(listing);
   const body = [];
   if (!mine.total) {
-    body.push(h("p", { class: "muted team-text", title: "Share an item from its own page: a check, a set of themes, a codebook, a note, an entry of your own or a link between terms." }, "Nothing yet."));
+    body.push(h("p", { class: "muted team-text" }, "Nothing yet. Press Share on a check, a set of themes, a codebook, a note, a research log entry of yours or a link between terms."));
   } else {
     for (const kind of Object.keys(KIND_MANY)) {
       const items = mine.byKind[kind];

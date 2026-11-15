@@ -25,17 +25,17 @@ function section(key, title, ...children) {
 const HOW_HELP = "Each of you keeps your own copy of this project on your own computer. ENLENS puts what you share in the place you choose here and brings in what your colleagues share, by itself. Nothing of yours goes to the team until you press Share on it: a check, a set of themes, a codebook, a note, an entry of your own or a link between terms.";
 
 // Where the team's shared work can be kept: what it is, who it suits, and what its button starts
-const SEALED = "It will hold the documents’ text and files and only what you share of your own work, locked on this computer with a key only your team has: the service cannot read any of it.";
+const SEALED = "It will hold the documents’ text and files and only what you share of your own work, encrypted on this computer before it is sent, with a key only your team has: the service cannot read it.";
 export const WHERE = [
   { value: "b2", icon: "database", title: "A storage space at Backblaze", tag: "Recommended", go: "Set up at Backblaze…", holds: SEALED,
-    text: "Free and private: no payment card, kept in the EU. You make one account; your colleagues need none." },
+    text: "Online storage only your team can read. Free, no payment card, kept in the EU; you make one account, your colleagues need none." },
   { value: "webdav", icon: "library", title: "Your institution’s drive", go: "Set up in your institution’s drive…", holds: SEALED,
-    text: "SURFdrive, SURF Research Drive or a Nextcloud. No new account, but every colleague needs an account at the same drive." },
+    text: "A folder in SURFdrive, SURF Research Drive or a Nextcloud, which only your team can read. No new account, but every colleague needs one at the same drive." },
   { value: "r2", icon: "database", title: "A storage space at Cloudflare", go: "Set up at Cloudflare…", holds: SEALED,
-    text: "For large teams that grow quickly. Asks for a payment card; nothing is charged within the free amount." },
+    text: "Online storage only your team can read, for large teams that grow quickly. Asks for a payment card; nothing is charged within the free amount." },
   { value: "folder", icon: "folder", title: "A folder you already share", go: "Choose the folder…",
     holds: "The folder will hold the documents’ text and files, and only what you share of your own work. Your project’s database stays on this computer.",
-    text: "OneDrive, Dropbox, Google Drive or a network drive that every colleague has on their computer. Nothing to sign up for." },
+    text: "A folder in OneDrive, Dropbox, Google Drive or on a network drive that every colleague has on their computer. Nothing to sign up for." },
 ];
 
 const noTeam = (ctx) => !ctx.status.folder && !ctx.status.space;
@@ -74,7 +74,7 @@ function foundSection(ctx) {
   return section("found", "Your colleague’s shared folder is on this computer",
     notice({ kind: "info", role: "note" },
       h("p", {}, "A colleague already works on this project through the folder ", h("strong", { title: dir }, seen.text), ". Use it to join them."),
-      button({ sm: true, icon: "folder", id: "team-found-use", onClick: () => folderDialog(ctx, { path: dir }) }, "Use this folder…")));
+      button({ sm: true, icon: "folder", id: "team-found-use", onClick: () => folderDialog(ctx, { path: dir, joining: true }) }, "Use this folder…")));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -95,7 +95,7 @@ function startSection(ctx) {
     onPick: (v) => { typed.where = v; goWords.textContent = chosen().go; holds.textContent = chosen().holds; } });
   return section("space-setup", "Start a team for this project",
     // (the help mark stays on the line of the last words: alone on a line it reads as a stray icon)
-    h("p", { class: "team-text" }, "You are the first of your team here. Choose where the team’s shared work is kept; your colleagues join ",
+    h("p", { class: "team-text" }, "This project is not shared with a team yet. Choose where the team’s shared work is kept; your colleagues join ",
       h("span", { class: "nowrap" }, "after that. ", helpMark("How working together works", HOW_HELP))),
     cards,
     h("div", { class: "btn-row" }, go),
@@ -110,8 +110,8 @@ function joinSection(ctx) {
   return section("join", "Join a colleague’s team",
     h("p", { class: "team-text" }, "A colleague already started the team and sent you an invite link. It starts with ", h("span", { class: "mono" }, "enlens://join#"), "."),
     h("div", { class: "btn-row" }, button({ kind: "main", icon: "link", id: "team-space-join", onClick: () => joinDialog(ctx) }, "Join with an invite link…")),
-    h("p", { class: "muted team-text" }, "No link, but a folder your colleague shared with you (OneDrive, Dropbox, Google Drive or a network drive)?"),
-    h("div", { class: "btn-row" }, button({ sm: true, icon: "folder", id: "team-join-folder", onClick: () => folderDialog(ctx) }, "Choose the shared folder…")));
+    h("p", { class: "muted team-text" }, "No invite link? If your colleague shared a folder with you instead (OneDrive, Dropbox, Google Drive or a network drive), choose it."),
+    h("div", { class: "btn-row" }, button({ sm: true, icon: "folder", id: "team-join-folder", onClick: () => folderDialog(ctx, { joining: true }) }, "Choose the shared folder…")));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -142,7 +142,9 @@ export const TEAM_SETUP_SECTIONS = [
 const FOLDER_HELP = "Each of you keeps your own copy of this project. ENLENS puts what you share in the folder and brings in what your colleagues share. Nothing of yours goes to the team until you press Share on it: a check, a set of themes, a codebook, a note, an entry of your own or a link between terms.";
 const FOUND_WORDS = "Your colleague’s shared folder is here:";
 
-export async function folderDialog(ctx, { path: start = "" } = {}) {
+// `joining`: a colleague already works through the folder (the Join card, the notice of a folder found): the dialog
+// says so and offers what helps to find their folder; the one who starts is not asked about a colleague's folder.
+export async function folderDialog(ctx, { path: start = "", joining = false } = {}) {
   const st = ctx.status, me = st.me || {};
   const project = ctx.project;
   const example = win() ? "C:\\Users\\Anna\\OneDrive\\Our project" : "/Users/anna/Dropbox/Our project";
@@ -170,15 +172,15 @@ export async function folderDialog(ctx, { path: start = "" } = {}) {
   // the cloud folders by name, the system's folder window, and a colleague's folder already found
   const offers = h("div", { class: "team-offers", id: "team-offers" });
   const o = offersOf(ctx);
-  const drawOffers = () => replace(offers, offerBlock(o, fillPath, showErr, () => path.value));
+  const drawOffers = () => replace(offers, offerBlock(o, fillPath, showErr, () => path.value, joining));
   drawOffers();
   if (!o.loaded) o.ready.then(() => { if (offers.isConnected) drawOffers(); });
   path.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); document.getElementById("team-use-folder")?.click(); } });
 
   await dialog({
-    title: "Use a folder your team shares", wide: true,
+    title: joining ? "Join through a folder your colleague shared" : "Start with a folder you share", wide: true,
     body: h("div", { class: "team-folder-setup" },
-      h("p", { class: "muted" }, "A folder that OneDrive, Dropbox, Google Drive or a network drive keeps the same on every colleague’s ",
+      h("p", { class: "muted" }, joining ? "The folder your colleague chose for this project, as it is on this " : "A folder that OneDrive, Dropbox, Google Drive or a network drive keeps the same on every colleague’s ",
         h("span", { class: "nowrap" }, "computer. ", helpMark("About working through a shared folder", FOLDER_HELP))),
       nameField, offers, pathField, err,
       h("div", { class: "team-switch" }, sw, helpMark("About documents that stay here", KEEP_OUT_HELP)),
@@ -215,9 +217,9 @@ export async function folderDialog(ctx, { path: start = "" } = {}) {
 // Above the path field. A colleague's shared folder, when it is already among this computer's cloud folders ("Use it");
 // the cloud folders by name (one press fills the path); the system's folder window; and, when the team's folder is
 // nowhere yet, what to do at each service. The pasted path stays as the fallback.
-function offerBlock(o, fillPath, showErr, typedPath) {
+function offerBlock(o, fillPath, showErr, typedPath, joining) {
   const rows = [];
-  for (const dir of o.found) {
+  for (const dir of joining ? o.found : []) {
     const seen = folderAsSeen(dir, o.folders);
     rows.push(h("p", { class: "team-text team-found" }, `${FOUND_WORDS} `, h("strong", { title: dir }, seen.text), " · ",
       link({ kind: "jump", "data-found": dir, onclick: () => fillPath(dir) }, "Use it")));
@@ -240,7 +242,7 @@ function offerBlock(o, fillPath, showErr, typedPath) {
     });
     rows.push(h("div", { class: "btn-row team-pick" }, pick));
   }
-  if (o.loaded && !o.found.length) {   // how a colleague's folder comes to this computer, folded beside the field
+  if (joining && o.loaded && !o.found.length) {   // how a colleague's folder comes to this computer, folded beside the field
     rows.push(fold({ sm: true, class: "team-where-fold", id: "team-where-fold" }, "Your colleague’s folder is not here yet?",
       h("p", { class: "muted small" }, "Ask the colleague who set it up to share the folder with you, then make it available on this computer. ",
         h("strong", {}, "OneDrive: "), "on OneDrive’s website, choose ", h("em", {}, "Add shortcut to My files"), " on the shared folder, and ",

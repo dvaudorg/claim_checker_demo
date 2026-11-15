@@ -44,6 +44,7 @@
 .log-new-row, .log-tools, .log-list { max-width: 52em; }
 .log-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 4px; }
 .log-tools > .search-field { flex: 1 1 14em; max-width: 22em; }
+.log-show-label { margin-right: calc(-1 * var(--space-1)); color: var(--text-2); font-size: var(--fs-small); }
 @media (max-width: 520px) {
   .log-tools > .select, .log-tools > .search-field { flex: 1 1 100%; max-width: none; }
 }

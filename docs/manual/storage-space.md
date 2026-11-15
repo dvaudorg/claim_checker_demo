@@ -40,8 +40,10 @@ dialog's main button, *Set up the storage space*, waits until the last step that
   page keeps asking whether you are a robot, see below). 2 *Make a key for ENLENS*: open *Application Keys* and choose
   *Generate New Master Application Key*. 3 *Paste the key here*: its *keyID* and *applicationKey*. ENLENS checks where
   the storage is (and says so when it is not in the EU), makes a key of its own with only the rights it needs, forgets
-  the one you pasted, makes a private storage space and tries it. Once the space is ready, step 4, *Afterwards: make the
-  pasted key useless*, asks you to generate a new master key in Backblaze, and the button says *Done*.
+  the one you pasted, makes a private storage space and tries it. Once the space is ready, step 4, *Afterwards: cancel
+  the key you pasted*, asks you to generate a new master key in Backblaze, and the button says *Done*. (A new master key
+  stops the one before it working: in an account made for ENLENS nothing else uses it.) The dialog remembers the step
+  you were at while ENLENS stays open, never what you pasted, and asks before Escape or a click beside it closes it.
 - *Cloudflare:* 1 *Make a Cloudflare account* (paste `dash.cloudflare.com/sign-up` in your browser). 2 *Switch on R2
   storage*. 3 *Make a token and paste it here*: open the link *the token ENLENS needs*, choose *Create Token*, and paste
   the token. ENLENS makes a storage space in Cloudflare's EU area and tries it.
@@ -151,8 +153,9 @@ or Edge, and open *Application Keys* there too, where you are signed in.
 
 ## Inviting a colleague
 
-On *Team* › *People and settings*, *Invite a colleague…* (under *The storage space*, in the owner's copy; while you are
-the only person in the space, *Activity* also offers it on a card) makes a message with a link (it starts with
+On *Team* › *People and settings*, *Invite a colleague…* (under *People*, in the owner's copy, with the invites not
+used yet; while you are the only person in the space, *Activity* also offers it on a card) makes a message with a link
+(it starts with
 `enlens://join#`). Send it privately: it holds the keys to your storage space. The colleague opens ENLENS and chooses
 *Join a team…* in the project menu (also a button on the *Projects* page, and *Join with the invite link…* under
 *Invited to a team?* when ENLENS is first set up), pastes the link, and ENLENS makes a new project for it. A copy they

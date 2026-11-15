@@ -199,7 +199,7 @@ def test_a_colleagues_entry_is_theirs_in_the_list_the_counts_the_filter_and_the_
         assert r["groups"]["entries"] == 1 and r["groups"]["colleagues"] == 1
         assert sum(r["groups"].values()) == r["total"]
         assert r["group_names"]["entries"] == "Your own entries"
-        assert r["group_names"]["colleagues"] == "Your colleagues' entries"
+        assert r["group_names"]["colleagues"] == "Your colleagues’ entries"
         own = researchlog.entries(ben.ws, group="entries")
         theirs = researchlog.entries(ben.ws, group="colleagues")
         assert [e["entry_id"] for e in own["entries"]] == [his["entry_id"]] and own["total"] == 1
@@ -229,7 +229,8 @@ def test_the_log_page_has_one_menu_per_row_and_no_button_under_an_entry():
         assert words in row
     assert row.index('"sep"') < row.index('"Remove…"') and "danger: true" in row
     assert 'pageHead("Research log"' in js and "actions: downloadLinks(" in js and "viewTabs" not in js
-    assert "choice(" not in js and 'select({ sm: true, "aria-label": "Show" })' in js
+    assert "choice(" not in js and 'select({ sm: true, id: "log-show" })' in js
+    assert 'h("label", { class: "log-show-label", for: "log-show" }, "Show")' in js      # its word is in view
     assert 'title: "Ctrl/⌘ + Enter adds it"' in js and "card(" not in js
     # the drawer and the page give the new group an icon
     for rel in ("views/log.js", "views/logdrawer.js"):

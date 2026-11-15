@@ -196,7 +196,7 @@ def test_keyboard_and_screen_reader():
     assert 'field("Reason (optional)", reason, { help,' in OWNER and 'id: "owner-dlg-reason"' in OWNER
     assert 'h("label", { for: id, class: "field-label" }, label)' in lib and 'control.setAttribute("aria-describedby", id + "-help")' in lib
     dlg = lib[lib.index("export function dialog("):]
-    assert 'e.key === "Enter"' in OWNER and 'dlg.addEventListener("cancel", (e) => { e.preventDefault(); close(null); });' in dlg  # Escape
+    assert 'e.key === "Enter"' in OWNER and 'dlg.addEventListener("cancel", (e) => { e.preventDefault(); dismiss(); });' in dlg  # Escape
     assert 'const ok = await reasonDialog({ title: "Decline this proposal?", confirmText: "Decline", help: reasonHelp(p),' in OWNER
     assert "sees it with your answer, and it is kept in the research log." in OWNER   # the help says where the reason goes
     # stable ids, so the panel finds the focus again after a redraw (a card's buttons: an answer reads the tab again and

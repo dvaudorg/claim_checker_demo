@@ -22,7 +22,7 @@ export const FEATURES = {
   },
   together: {
     section: "project", title: "Work together", icon: "users", href: "#/team", ai: "none",
-    what: "Each of you keeps a copy of the project on your own computer and Claude plan. Send your work as one file and bring in a colleague’s: what is new comes in, each person’s judgements are kept under their name, and nothing you decided is replaced.",
+    what: "Work on a project with colleagues. Each of you keeps a copy on your own computer and Claude plan; ENLENS sends what you choose to share and brings in what they share: each person’s judgements are kept under their name, and nothing you decided is replaced.",
     overview: false,
   },
   bibliography: {

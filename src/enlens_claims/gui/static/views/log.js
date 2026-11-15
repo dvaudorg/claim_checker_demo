@@ -81,13 +81,14 @@ export async function renderLog(view) {
 
   // ---- one row of tools (which entries, and words to find), and the list
   // a list to pick from, not a choice: up to nine groups, each with the entries it would show
-  const show = select({ sm: true, "aria-label": "Show" });
+  const show = select({ sm: true, id: "log-show" });
+  const showLabel = h("label", { class: "log-show-label", for: "log-show" }, "Show");
   show.addEventListener("change", () => { group = show.value; session(`log-group:${project}`, group); shown = PAGE; load(); });
   const searchBox = searchField({ placeholder: "Search the log", "aria-label": "Search the log" });
   const search = searchBox.input;
   search.addEventListener("input", debounce(() => { q = search.value.trim(); shown = PAGE; load(); }, 250));
   const listBox = h("div", { class: "log-list", "aria-live": "polite" });
-  view.append(h("div", { class: "log-tools" }, show, searchBox), listBox);
+  view.append(h("div", { class: "log-tools" }, showLabel, show, searchBox), listBox);
 
   async function load() {
     const mine = fresh();

@@ -48,7 +48,7 @@ GROUPS = {
 # A person's entry (kind "entry") is in "entries" when you wrote it and in "colleagues" when a colleague did (their
 # entries come in with their work, sync.py): GROUPS names the kind's group as written; _view and entries() split it.
 OWN, COLLEAGUES = "entries", "colleagues"
-GROUP_NAMES = {OWN: "Your own entries", COLLEAGUES: "Your colleagues' entries", "documents": "Documents",
+GROUP_NAMES = {OWN: "Your own entries", COLLEAGUES: "Your colleagues’ entries", "documents": "Documents",
                "checks": "Checks", "themes": "Themes", "codebooks": "Codebooks", "history": "Restored versions",
                "together": "Work together"}
 # the downloads go to other people, for whom "Your own" is wrong: a person's entry is an "Entry" there, and the Who

@@ -73,7 +73,7 @@ flowchart LR
 ```
 
 **Setting it up.** One of you starts: on the *Team* page (*Team* in the sidebar), under *Start a team for this project*,
-choose *A folder you already share* and press *Choose the folder…*. A dialog, *Use a folder your team shares*, offers
+choose *A folder you already share* and press *Choose the folder…*. A dialog, *Start with a folder you share*, offers
 the cloud folders of your computer by name, or opens the system's folder window, and a colleague is offered the team's
 folder by their own ENLENS. Step by step: [Choosing the shared
 folder](shared-folder.md). Then decide on the switch *Keep documents marked Only a local AI or No AI out of the shared

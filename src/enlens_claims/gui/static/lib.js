@@ -550,10 +550,18 @@ export function showError(e, extra = {}) {
 // ---------------------------------------------------------------------------------------------
 // `lock` (0.14.3): { on: true } while a request of the dialog runs: Escape, a click outside, the X and Cancel then do
 // nothing, so the dialog cannot be closed on work that goes on without it (its report would never be seen)
-export function dialog({ title, body, actions, danger, onOpen, wide, lock }) {
+export function dialog({ title, body, actions, danger, onOpen, wide, lock, onDismiss }) {
   return new Promise((resolve) => {
     const dlg = h("dialog", { class: "dialog" + (wide ? " dialog-wide" : ""), "aria-labelledby": "dlg-title" });
     const close = (value) => { if (lock && lock.on) return; dlg.close(); dlg.remove(); resolve(value); };
+    // onDismiss(): asked before the dialog goes without an answer (Escape, the x, a click beside it); false keeps it
+    // open (a set-up half done, with something pasted: a slip of the hand does not lose the place)
+    let asking = false;
+    const dismiss = async () => {
+      if (asking || (lock && lock.on)) return;
+      if (onDismiss) { asking = true; let go; try { go = await onDismiss(); } finally { asking = false; } if (go === false) return; }
+      close(null);
+    };
     const btns = (actions || [{ text: "Close", value: null }]).map((a) =>
       button({
         kind: a.primary ? (danger ? "confirm" : "main") : "quiet",
@@ -566,12 +574,12 @@ export function dialog({ title, body, actions, danger, onOpen, wide, lock }) {
       }, a.text));
     append(dlg, [
       h("div", { class: "dialog-head" }, h("h2", { id: "dlg-title" }, title),
-        iconButton({ icon: "x", label: "Close", onClick: () => close(null) })),
+        iconButton({ icon: "x", label: "Close", onClick: dismiss })),
       h("div", { class: "dialog-body" }, body),
       h("div", { class: "dialog-actions" }, btns),
     ]);
-    dlg.addEventListener("cancel", (e) => { e.preventDefault(); close(null); });
-    dlg.addEventListener("click", (e) => { if (e.target === dlg) close(null); });
+    dlg.addEventListener("cancel", (e) => { e.preventDefault(); dismiss(); });
+    dlg.addEventListener("click", (e) => { if (e.target === dlg) dismiss(); });
     document.getElementById("dialogs").appendChild(dlg);
     dlg.showModal();
     if (onOpen) onOpen(dlg);

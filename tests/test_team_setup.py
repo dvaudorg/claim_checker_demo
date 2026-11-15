@@ -59,7 +59,7 @@ def test_where_the_work_is_kept_is_named_by_what_it_is():
 def test_joining_says_where_the_teams_project_goes():
     join = _fn(SETUP, "function joinSection(ctx) {")
     assert '"Join with an invite link…"' in join and "joinDialog(ctx)" in join and "enlens://join#" in join
-    assert '"Choose the shared folder…"' in join and "folderDialog(ctx)" in join
+    assert '"Choose the shared folder…"' in join and "folderDialog(ctx, { joining: true })" in join
     dlg = _fn(SPACE, "export async function joinDialog(ctx) {")
     assert "let newProject = true;" in dlg                     # the usual answer, as the invite's own message says
     assert 'title: "A new project", tag: "Usual"' in dlg and "title: `This project (${ctx.project})`" in dlg
@@ -73,7 +73,9 @@ def test_the_set_up_is_one_step_at_a_time():
     steps = _fn(SPACE, "function serviceSteps(service, L) {")
     b2 = steps[:steps.index('if (service === "r2")')]
     assert re.findall(r'\{ title: "([^"]+)"', b2) == ["Make a free Backblaze account", "Make a key for ENLENS", "Paste the key here",
-                                                    "Afterwards: make the pasted key useless"]
+                                                    "Afterwards: cancel the key you pasted"]
+    # a new master key stops the one before it: said at the step that makes one
+    assert "A new master key stops the one before it working." in b2
     # what cannot be undone is a notice, not a clause in a sentence
     assert 'notice({ kind: "attention", role: "note" }, h("p", {}, "On the sign-up form, choose ", h("strong", {}, "EU Central")' in b2
     assert "It cannot be changed afterwards." in b2
@@ -86,7 +88,14 @@ def test_the_set_up_is_one_step_at_a_time():
     dlg = _fn(SPACE, "export async function setupDialog(ctx, service, { move = false } = {}) {")
     assert "const way = guidedSteps({" in dlg and "who.el ? { title: \"Your name\", body: [who.el] } : null" in dlg
     # the main button waits for the step that asks, says what is missing and opens that step
-    assert "if (b && !ready) b.disabled = i < paste;" in dlg and "b.disabled = way.at() < paste;" in dlg
+    assert "if (b && !ready) hold(b, i < paste);" in dlg and "if (b) hold(b, way.at() < paste);" in dlg
+    assert 'const WAITS = "Waits for the last step: go through the steps above first.";' in dlg     # and says why it waits
+    # a slip of the hand does not lose the place: Escape or a click beside the dialog asks once something is begun,
+    # and the step (never what was typed) is remembered for the window
+    assert "onDismiss: async () => !begun() || (await confirmDialog({ title: \"Stop the set-up?\"" in dlg
+    assert "const begun = () => !ready && (way.at() > first || Object.values(svc.read()).some(Boolean));" in dlg
+    assert "session(stepKey, i >= first ? i - first : null);" in dlg and dlg.count("session(stepKey, null);") == 2
+    assert 'if (asking || (lock && lock.on)) return;' in LIB and 'dlg.addEventListener("cancel", (e) => { e.preventDefault(); dismiss(); });' in LIB
     assert "if (lacks) { err.textContent = lacks; way.go(" in dlg
     # Backblaze: once the space is ready the last step says what is left to do there, and the button says Done
     assert 'way.go(afterAt);' in dlg and 'btn.textContent = "Done";' in dlg and "if (ready) return true;" in dlg

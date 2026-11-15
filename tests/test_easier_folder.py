@@ -232,6 +232,6 @@ def test_the_set_up_offers_the_folders_the_window_and_what_to_do():
     assert "team-use-folder" in SETUP and 'placeholder: example' in SETUP   # the pasted path stays
     # a colleague's folder already on this computer is offered before anything else on the page, with one button
     assert 'section("found", "Your colleague’s shared folder is on this computer"' in SETUP
-    assert 'folderDialog(ctx, { path: dir })' in SETUP and '{ key: "found", render: foundSection },\n  { key: "space-setup"' in SETUP
+    assert 'folderDialog(ctx, { path: dir, joining: true })' in SETUP and '{ key: "found", render: foundSection },\n  { key: "space-setup"' in SETUP
     assert "the Team page offers the shared folder" in TEAM and "folderAsSeen(st.folder" in TEAM
     assert ".team-cloud" in VIEWS

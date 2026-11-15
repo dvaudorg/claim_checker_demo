@@ -11,7 +11,7 @@
 // ENLENS could not stop after a removal (until the owner says it is done, or a round sees it gone), and files missing
 // from the space that were written again.
 import { App, api, h, toast, showError, P, plural, field, button, link, input, select, fold, noticeList, notice, dialog,
-  confirmDialog, listRow, listGroup, watchJob, navigate, textarea, copyLine, guidedSteps, optionCards } from "../lib.js";
+  confirmDialog, listRow, listGroup, watchJob, navigate, textarea, copyLine, guidedSteps, optionCards, session } from "../lib.js";
 
 const S = (project) => `/api/projects/${P(project)}/space`;
 let LINKS = null;
@@ -27,7 +27,7 @@ function section(key, title, ...children) {
     h("h3", { class: "team-h", id }, title), ...children.filter((c) => c !== null && c !== undefined));
 }
 
-const outLink = (href, text, id) => link({ href, target: "_blank", rel: "noopener noreferrer", id }, text);
+const outLink = (href, text, id) => link({ kind: "external", href, target: "_blank", rel: "noopener noreferrer", id }, text);
 // A sign-up page's address to type or paste in a browser of the person's choosing, with a Copy button: a link would
 // open the default browser, where Backblaze's robot check can loop for ever and Cloudflare's sign-up can fail.
 const typeAddress = (href, id) => {
@@ -64,7 +64,8 @@ function serviceSteps(service, L) {
           h("p", { class: "muted small", id: "space-b2-robot" }, "No payment card is needed. If Backblaze keeps asking whether you are a robot, use another browser, such as Safari, Chrome or Edge.")] },
         { title: "Make a key for ENLENS", next: "I see the key", body: [
           h("p", {}, "In that browser, signed in to Backblaze, open ", h("strong", {}, "Application Keys"), " in the menu on the left and press ", h("strong", {}, "Generate New Master Application Key"), "."),
-          h("p", { class: "muted small" }, "Backblaze then shows two parts, a keyID and an applicationKey, once. Leave that page open.")] },
+          h("p", { class: "muted small" }, "Backblaze then shows two parts, a keyID and an applicationKey, once. Leave that page open."),
+          h("p", { class: "muted small", id: "space-b2-old-key" }, "A new master key stops the one before it working. In an account made for this, nothing uses it; if another program uses this Backblaze account with its master key, give that program the new one.")] },
         { title: "Paste the key here", next: false, body: [
           field("keyID", keyId),
           field("applicationKey", appKey, { help: "ENLENS uses it once, to make a key of its own, and then forgets it." })] },
@@ -72,8 +73,10 @@ function serviceSteps(service, L) {
       read: () => ({ key_id: keyId.value.trim(), app_key: appKey.value.trim() }),
       missing: (b) => (!b.key_id || !b.app_key ? "Paste both the keyID and the applicationKey." : ""),
       // once the space is ready: the pasted key is made useless (not when ENLENS had to keep it; a warning says so then)
-      after: { title: "Afterwards: make the pasted key useless", back: false, body: [
-        h("p", {}, "The storage space is ready. In Backblaze, press ", h("strong", {}, "Generate New Master Application Key"), " once more: that makes the key you pasted useless, and ENLENS no longer needs it.")] },
+      after: { title: "Afterwards: cancel the key you pasted", back: false, body: [
+        notice({ kind: "done", role: "note" }, h("p", {}, "The storage space is ready.")),
+        h("p", {}, "One thing is left, at Backblaze: press ", h("strong", {}, "Generate New Master Application Key"), " once more. That cancels the key you pasted; ENLENS no longer needs it."),
+        h("p", { class: "muted small" }, "Then invite your colleagues: the Team page offers it next.")] },
     };
   }
   if (service === "r2") {
@@ -109,7 +112,8 @@ function serviceSteps(service, L) {
       { title: "Make an app password for ENLENS", body: [
         h("p", {}, "In the drive’s settings, under ", h("strong", {}, "Security"), ", make an ", h("strong", {}, "app password"), " for ENLENS (on SURFdrive: a WebDAV password). Never use your main password here."),
         field("User name", user, { help: "As the drive’s settings show it: not always your e-mail address." }),
-        field("App password", pass, { help: `${keptIn(L.keychain)}, never sent to your colleagues. It opens your whole account at the drive, not only the team’s folder.` }),
+        field("App password", pass, { help: `${keptIn(L.keychain)}, never sent to your colleagues.` }),
+        notice({ kind: "attention", role: "note" }, h("p", {}, "An app password opens your whole account at the drive, not only the team’s folder. Remove it in the drive’s settings when you stop working with ENLENS.")),
         h("p", { class: "muted small" }, "ENLENS then makes a folder for the project in your drive and shares it with each colleague you invite. Each colleague needs an account at the same drive.")] },
     ],
     read: () => ({ address: address.value.trim(), user: user.value.trim(), password: pass.value.trim() }),
@@ -134,8 +138,21 @@ export async function setupDialog(ctx, service, { move = false } = {}) {
   let ready = false;                                   // the space is set up: the last step says what is left to do
   const confirmBtn = () => document.querySelector("#dialogs dialog[open] #dlg-confirm");
   const cancelBtn = () => document.querySelector("#dialogs dialog[open] #dlg-cancel");
-  const way = guidedSteps({ label: "Setting up the storage space", id: "space-steps", steps: list,
-    onStep: (i) => { const b = confirmBtn(); if (b && !ready) b.disabled = i < paste; } });
+  // the main button waits for the last step that asks for something, and says so while it waits
+  const WAITS = "Waits for the last step: go through the steps above first.";
+  const hold = (b, on) => { b.disabled = on; if (on) b.title = WAITS; else b.removeAttribute("title"); };
+  // the step is remembered for this window (never what was typed), so a set-up left half way opens where it was:
+  // its first steps happen at the service's website, often over several visits
+  const stepKey = `space-setup-step:${ctx.project}:${service}`;
+  const left = move ? 0 : Math.min(Math.max(0, Number(session(stepKey)) || 0), svc.steps.length - 1);
+  const way = guidedSteps({ label: "Setting up the storage space", id: "space-steps", steps: list, current: left ? first + left : 0,
+    onStep: (i) => {
+      const b = confirmBtn(); if (b && !ready) hold(b, i < paste);
+      if (!move && !ready) session(stepKey, i >= first ? i - first : null);
+    } });
+  const maintenance = h("p", { class: "muted small" }, "If the service says it is down for maintenance, try again later: nothing is changed until the set-up has finished.");
+  // something is pasted, or the first step is behind: a slip (Escape, a click beside the dialog) asks before it closes
+  const begun = () => !ready && (way.at() > first || Object.values(svc.read()).some(Boolean));
   const where = service === "b2" ? "at Backblaze" : service === "r2" ? "at Cloudflare" : "in your institution’s drive";
   const doneWords = move ? "The team moves to the new storage space." : "The storage space is ready. Next: invite your colleagues from the Team page.";
   await dialog({
@@ -143,7 +160,9 @@ export async function setupDialog(ctx, service, { move = false } = {}) {
     wide: true, lock,
     body: h("div", { class: "team-space-setup" }, way, err, progress,
       move ? h("p", { class: "muted small" }, "Your colleagues’ copies follow by themselves at their next round. What you share is written there once more.") : null,
-      h("p", { class: "muted small" }, "If the service says it is down for maintenance, try again later: nothing is changed until the set-up has finished.")),
+      maintenance),
+    onDismiss: async () => !begun() || (await confirmDialog({ title: "Stop the set-up?", confirmText: "Stop the set-up", danger: false,
+      message: "Nothing has been set up yet. What you pasted here is not kept; the step you were at is, until you close ENLENS." })) === true,
     actions: [{ text: "Cancel", value: null, id: "dlg-cancel" }, {
       text: move ? "Move the team" : "Set up the storage space", primary: true, id: "dlg-confirm",
       async onClick(dlg) {
@@ -186,19 +205,22 @@ export async function setupDialog(ctx, service, { move = false } = {}) {
           // Backblaze: the last step, what to do there now (unless ENLENS had to keep the pasted key: its warning says so)
           if (afterAt >= 0 && !warnings.some((w) => /master key/.test(w))) {
             ready = true;
+            session(stepKey, null);
             progress.textContent = "";
+            maintenance.hidden = true;
             way.go(afterAt);
             btn.textContent = "Done";
             const c = cancelBtn(); if (c) c.hidden = true;
             return false;
           }
+          session(stepKey, null);
           toast(doneWords, "ok", { ttl: 9000 });
           return true;
         } catch (e) { progress.textContent = ""; err.textContent = e.message || String(e); return false; }
-        finally { lock.on = false; const again = dlg.querySelector("#dlg-confirm"); if (again && (ready || way.at() >= paste)) again.disabled = false; }
+        finally { lock.on = false; const again = dlg.querySelector("#dlg-confirm"); if (again) hold(again, !ready && way.at() < paste); }
       } }],
     onOpen(dlg) {
-      const b = dlg.querySelector("#dlg-confirm"); if (b) b.disabled = way.at() < paste;
+      const b = dlg.querySelector("#dlg-confirm"); if (b) hold(b, way.at() < paste);
       const f = dlg.querySelector(".guided-step[data-state='current'] input"); (f || dlg.querySelector(".guided-step[data-state='current'] .guided-step-title")).focus();
     },
   });
@@ -315,12 +337,7 @@ function spaceSection(ctx) {
   if (!sp) return null;
   const keeper = sp.members.find((m) => m.keeper);
   const waiting = !sp.joined ? notice({ kind: "info" }, h("p", {}, `Waiting for ${keeper && !keeper.me ? keeper.name : "the owner"} to let you in: their ENLENS does it by itself at its next round. Until then, your colleagues do not see what you share; you already see theirs.`)) : null;
-  const invites = sp.invites.map((i) => listRow({
-    title: i.label ? `Invite for ${i.label}` : "An invite", sub: `made ${when(i.made_at)}, not used yet`,
-    actions: [button({ kind: "quiet", sm: true, id: `space-withdraw-${i.part}`, onClick: () => withdraw(ctx, i) }, "Withdraw")],
-  }));
   const aside = sp.set_aside || [];
-  const invite = sp.keeper ? button({ kind: "main", sm: true, icon: "plus", id: "space-invite", onClick: () => inviteDialog(ctx) }, "Invite a colleague…") : null;
   const moveFold = sp.keeper ? fold({ sm: true, id: "space-move" }, "Move to another storage space",
     h("p", { class: "muted small team-text" }, "When the storage is lost, unpaid or should change: set up a new one. Every copy writes what it shares there once more; your colleagues’ copies follow by themselves (to a drive, only those already in a drive at the same address)."),
     h("div", { class: "btn-row" }, button({ sm: true, onClick: () => setupDialog(ctx, "b2", { move: true }) }, "Backblaze…"),
@@ -354,9 +371,24 @@ function spaceSection(ctx) {
     h("p", { class: "team-text team-space-where" }, sp.drive ? `The folder “${sp.drive.folder}” in the drive at ${sp.drive.host}` : sp.where, sp.in_eu === false ? " · not in the EU" : null),
     waiting, holderNote, standing.length ? noticeList(standing) : null,
     aside.length ? noticeList([{ kind: "attention", text: `${plural(aside.length, "file")} in the storage space ${aside.length === 1 ? "was" : "were"} set aside: ${aside[0].message}${aside.length > 1 ? " (and others)" : ""} Nothing of ${aside.length === 1 ? "it" : "them"} came into this project.` }]) : null,
+    moveFold, davPassword, tech);
+}
+
+// The People card's part of a storage space (team.js peopleSection): the invites not used yet, each with Withdraw, and
+// the way to add a colleague: Invite a colleague… for the copy that keeps the space's keys, or whom to ask.
+export function spaceInvites(ctx) {
+  const sp = ctx.status && ctx.status.space;
+  if (!sp) return [];
+  const keeper = sp.members.find((m) => m.keeper);
+  const invites = sp.invites.map((i) => listRow({
+    title: i.label ? `Invite for ${i.label}` : "An invite", sub: `made ${when(i.made_at)}, not used yet`,
+    actions: [button({ kind: "quiet", sm: true, id: `space-withdraw-${i.part}`, onClick: () => withdraw(ctx, i) }, "Withdraw")],
+  }));
+  const invite = sp.keeper ? button({ kind: "main", sm: true, icon: "plus", id: "space-invite", onClick: () => inviteDialog(ctx) }, "Invite a colleague…") : null;
+  return [
     invites.length ? listGroup(`Invites not used yet (${invites.length})`, ...invites) : null,
     invite ? h("div", { class: "btn-row" }, invite) : (sp.joined ? h("p", { class: "muted small team-text" }, `To add a colleague, ask ${keeper && !keeper.me ? keeper.name : "the owner"} for an invite.`) : null),
-    moveFold, davPassword, tech);
+  ].filter(Boolean);
 }
 
 async function dismissNotice(ctx, id) {

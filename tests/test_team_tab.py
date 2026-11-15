@@ -123,7 +123,10 @@ def test_the_team_place_draws_itself_for_its_state():
 
 def test_the_first_invite_while_you_are_the_only_one():
     fn = TEAM[TEAM.index("function firstInviteSection(ctx) {"):TEAM.index("function stateSection(ctx) {")]
-    assert "if (!sp.keeper || others.length || (sp.invites || []).length) return null;" in fn
+    assert "if (!sp.keeper || others.length) return null;" in fn
+    # with an invite waiting, the card says so and offers another (a small button: the first is the card's main one)
+    assert "waiting to be used" in fn and 'id: "team-invite-another", onClick: () => inviteDialog(ctx) }, "Invite another colleague…")' in fn
+    assert 'link({ href: "#/team/settings?at=people", id: "team-invites-waiting" }, "People and settings")' in fn
     assert "You are the only one in this team so far. Make an invite link and send it to a colleague: they join from it in a minute." in fn
     assert 'button({ kind: "main", sm: true, icon: "plus", id: "team-first-invite", onClick: () => inviteDialog(ctx) }, "Invite a colleague…")' in fn
     # a shared folder no colleague has used: one sentence and the way to the three steps
@@ -131,6 +134,12 @@ def test_the_first_invite_while_you_are_the_only_one():
     assert 'link({ href: "#/team/settings?at=people", id: "team-first-steps" }, "People and settings")' in fn
     space = (STATIC / "views" / "team-space.js").read_text(encoding="utf-8")
     assert "export async function inviteDialog(ctx) {" in space
+    # the invites and Invite a colleague… stand with the people (the People card), not in the storage space's card
+    assert "export function spaceInvites(ctx) {" in space and TEAM.count("...spaceInvites(ctx)") == 2
+    people = TEAM[TEAM.index("function peopleSection(ctx) {"):TEAM.index("function sharedSection(ctx) {")]
+    assert "listGroup(null, mine, ...rows, ...joined)), ...spaceInvites(ctx), gone, both, join);" in people
+    card = space[space.index("function spaceSection(ctx) {"):space.index("export function spaceInvites(ctx) {")]
+    assert "inviteDialog" not in card and "Invites not used yet" not in card
 
 
 def test_activity_keeps_the_day_to_day_and_settings_the_team():
@@ -153,7 +162,9 @@ def test_activity_keeps_the_day_to_day_and_settings_the_team():
     assert "return null;   // nothing waits: no section" in owner and "if (v.is_owner) body.push(acceptAddsSwitch(ctx, v));" in owner
     assert owner.index("function rolesSection(") < owner.index("if (v.is_owner) body.push(acceptAddsSwitch(ctx, v));")
     assert 'helpMark("About accepting documents at once", ACCEPT_ADDS_HELP)' in owner
-    assert TEAM.count('}, "Nothing yet.")') == 2 and "Nothing yet. What your colleagues share" not in TEAM
+    # an empty card says how it fills (a page has the room for a sentence)
+    assert '"Nothing yet. What your colleagues share shows here when a round brings it in."' in TEAM
+    assert '"Nothing yet. Press Share on a check, a set of themes, a codebook, a note, a research log entry of yours or a link between terms."' in TEAM
     assert '{ label: "About documents that stay here", text: KEEP_OUT_HELP }' in TEAM
     assert 'helpMark("About documents not on this computer", NOT_HERE_HELP)' in TEAM
     assert '"Your colleague’s folder is not here yet?"' in SETUP          # the OneDrive how-to in a fold by the field
@@ -199,7 +210,7 @@ def test_the_panel_redraws_only_what_changed_and_keeps_the_place():
     its own project's round."""
     assert "if (force || sig !== drawn) { drawn = sig; draw(); } else updateLine();" in TEAM
     # the set-up keeps the chosen place across a redraw; the folder form is a dialog, which no redraw reaches
-    assert "typed.where = v;" in SETUP and 'title: "Use a folder your team shares"' in SETUP
+    assert "typed.where = v;" in SETUP and 'title: joining ? "Join through a folder your colleague shared" : "Start with a folder you share"' in SETUP
     assert 'fa.matches("input[type=text], textarea, select")' in TEAM
     assert "document.getElementById(had.id)" in TEAM and "textContent.trim() === keep.text" not in TEAM
     assert "(j.project && j.project !== project)" in TEAM and "if (watching) { watching.w.stop(); watching = null; }" in TEAM

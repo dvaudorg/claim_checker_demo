@@ -38,7 +38,7 @@ it is set instead.
 ## The research log
 
 The *Research log* is a dated record of what was decided in the project. It is a place of its own in the sidebar, under
-*Project*. A *Research log* button at the top right of every other page opens the log as a panel beside the page; the
+*Project*. The *Write in the log* button at the top right of every other page opens the log as a panel beside the page; the
 panel holds the log only, and its foot link, *The whole research log*, opens the page. ENLENS writes an entry by itself
 when you:
 

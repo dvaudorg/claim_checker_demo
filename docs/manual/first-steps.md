@@ -159,7 +159,7 @@ A title with the AI mark and one short line under it, the views as tabs, a longe
 that opens on hover or click, and downloads as one quiet line of links (*Download Excel (.xlsx) · CSV*). Model names
 and other technical facts sit under *Technical details* and *Settings → Technical*, never on a working screen.
 
-The **Research log** button at the top right of every page opens the log in a panel beside the page: write an entry
+The **Write in the log** button at the top right of every page opens the research log in a panel beside the page: write an entry
 that is kept with the page you are on, and see that page's entries (*This page*) or all of them (*All*); its foot link,
 *The whole research log*, opens the page of the same name, a place under *Project*
 ([The research log](notes-and-log.md#the-research-log)). **Team**, also under *Project*, is where you work with

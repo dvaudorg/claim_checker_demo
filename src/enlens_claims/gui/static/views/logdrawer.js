@@ -44,7 +44,7 @@ export function initLogDrawer() {
   // ---- the button (docs/DESIGN.md 4.19): the drawer component's, soft teal while the drawer is open; in the top bar
   // under 861 px
   const phone = () => window.matchMedia("(max-width: 860px)").matches;
-  const btn = drawerButton({ id: "logdrawer-btn", controls: "logdrawer", label: "Research log", icon: "notebook",
+  const btn = drawerButton({ id: "logdrawer-btn", controls: "logdrawer", label: "Write in the log", icon: "notebook",
     title: "The research log, beside this page", onClick: () => (open ? close(true) : openIt(true)) });
   const placeBtn = () => {
     const bar = document.getElementById("topbar");

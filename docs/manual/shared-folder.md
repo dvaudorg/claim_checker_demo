@@ -13,7 +13,8 @@
 
 1. Open *Team* in the sidebar. In a project without a team, under *Start a team for this project*, pick *A folder you
    already share* and press *Choose the folder…*. (A colleague who only joins presses *Choose the shared folder…* under
-   *Join a colleague's team*.) A dialog opens, *Use a folder your team shares*.
+   *Join a colleague's team*, which opens the same dialog under the title *Join through a folder your colleague
+   shared*.) A dialog opens, *Start with a folder you share*.
 2. In the dialog, choose the folder your team shares:
    - **Cloud folders on this computer** lists the OneDrive, Google Drive, Box and Dropbox folders this computer has
      (on a Mac those in `~/Library/CloudStorage/` and `~/Dropbox`; on Windows those OneDrive and Dropbox name).
