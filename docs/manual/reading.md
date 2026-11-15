@@ -45,7 +45,8 @@ the words inside it, if any, are under a small fold *Words in the figure*. A fig
 themes or checks, so it has no *Leave out* or *Restore*. A picture of a Word file or web page, or one whose PDF is no
 longer there, shows only its alternative text or its words, folded under *Left out of the text* as before.
 
-A heading goes with the text under it, and short paragraphs that share a passage go together. Your choice is kept by
+A heading goes with the text under it, and short paragraphs that share a passage go together: *Leave out* and
+*Restore* then say how many blocks go (*17 together*) before you press them. Your choice is kept by
 the block's words, so it holds when the document is read again; *restored by you*, *left out by you* or *the text
 starts here (you said)* stands beside the block. A block you restore before the start or after the end still counts.
 Changing what counts makes keyword codes, key terms and themes out of date, as adding a document does.
