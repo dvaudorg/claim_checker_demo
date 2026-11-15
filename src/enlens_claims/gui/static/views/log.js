@@ -1,7 +1,7 @@
 // 0.16 (roadmap F4): the research log. A dated record of what was decided in the project, written by the app as it
 // happens (documents added and removed, checks made and dropped, themes removed, codebook changes...), with room for
 // a person's own entries and their reasons. An entry about a change can be compared with now and restored (F5).
-import { featureEyebrow, viewTabs } from "../features.js";
+import { featureEyebrow } from "../features.js";
 import { App, api, h, icon, clear, toast, showError, failedLoad, fmt, pageHead, P, confirmDialog, download, downloadLinks,
   debounce, session, dialog, button, card, input, textarea, choice, link, personMark, emptyState, latest } from "../lib.js";
 import { compareVersion } from "./versions.js";
@@ -52,11 +52,10 @@ export async function renderLog(view) {
     { text: "Markdown (.md)", title: "The whole log, oldest first, a heading per day: for an appendix or an audit", onClick: () => download(`${base}.md`).catch(showError) },
     { text: "Excel (.xlsx)", onClick: () => download(`${base}.xlsx`).catch(showError) },
   ]);
-  view.appendChild(pageHead(project, {
+  view.appendChild(pageHead("Research log", {
     eyebrow: featureEyebrow("researchlog"),
     sub: "The research log: a dated record of what was decided in this project. ENLENS writes down what happens; add your own entries, and say why next to any of yours.",
   }));
-  view.appendChild(viewTabs("overview", "researchlog"));   // 0.17.0: the research log is a view of the Overview
   let group = session(`log-group:${project}`) || "";
   let q = "";
   let shown = PAGE;
