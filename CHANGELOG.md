@@ -1,5 +1,58 @@
 # Changelog
 
+## 0.20.0 (November 2026): See what is sent, code names that fit the grid, and leaving out a figure
+
+You can now see, word for word, what Claude Code would send to Anthropic before it takes the next batch of work. A
+grid of named codes shows many more of them at once, a picture in the reading view can be left out like the text
+around it, and a codebook's buttons are back in one row. Nothing in this release changes a result.
+
+### New
+
+- **See what is sent.** Wherever work waits for Claude Code, the line "Claude Code sends the passages inside the tasks
+  it takes to Anthropic" now has a *See what is sent* button. It opens the next batch word for word as Claude Code's
+  helper receives it: the instruction once, then each task's text with its document and pages, and the connector's
+  whole reply to copy. *Show the batch after* goes on through the queue. Looking takes no task and records nothing as
+  sent; a document marked *Only a local AI* or *No AI* never appears in it, as it never leaves.
+
+### Reading
+
+- **Leave out a figure.** A picture shown in the reading view (from reader 5) now has *Leave out* beside it, like the
+  text around it: an advert, a logo or another picture that is no part of the document folds away under “Left out of
+  the text”, with a small picture of it, and *Restore* brings it back. The choice is kept by the figure's page and
+  place, so it holds when the document is read again. A figure is never
+  read, so this cannot change results.
+
+### Improved
+
+- **A grid of codes with names shows many of them at once.** On Themes (*Themes by code*) and on Codes (*Documents by
+  code*), a codebook whose codes are names ("Public trust in medical AI") had each name on one line in typewriter
+  letters, so every column was as wide as its name and four of thirty-two codes showed at a time. Now the names are
+  in the interface's own letters: wrapped, a column each, while the grid fits the page; and once it would not, set at
+  a slant over narrow columns, on two lines at most, so that about thirteen codes show on the page and twenty-two in
+  *Full screen* (on a 1,400-pixel window). The column under the pointer has its name darkened, and hovering a name
+  still says the whole code with its description. Codebooks whose codes are short marks ("3.4") look as they did.
+  Changes no result.
+
+### Fixed
+
+- **A codebook's head is in order again.** While codes still held the AI's draft, the line saying so stood among the
+  buttons at the top of a codebook: it pushed *More* to a row of its own and lifted *Try it*, *History* and the
+  downloads above *All codebooks*. The line is now under the codebook's title, and the buttons sit in one row beside
+  *All codebooks*.
+
+### Tests
+
+- The heat grid's column heads: one helper on both pages, names never on one unbroken line, and the header row held
+  as a whole in *Full screen* (`tests/test_update_and_grid.py`).
+- `test_queue.py`: the preview is the batch `next_tasks` then hands over (same instruction, same texts, same order),
+  claims nothing, writes no ledger row, leaves out a document marked No AI, and pages on; the route answers 400 for an
+  unknown kind.
+
+### Not yet done
+
+- Claude Code's own part of what it sends (the helper's instructions from the ENLENS plugin, the same for every
+  project, and its own working) is named in the dialog but not shown.
+
 ## 0.19.2 (November 2026): A framework from theory, and codebooks that stay in their project
 
 A codebook from theory documents is now a framework you shape on a page of its own: the AI joins what the authors

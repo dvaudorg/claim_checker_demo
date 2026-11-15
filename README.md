@@ -57,10 +57,9 @@ Windows from 0.15.4 on). Your projects and settings (the `enlens` folder in your
   impact claims tagged with UN SDG targets and compared with an expert Value Chain Assessment.
 
 <!-- new-in:start (written by `python tools/release.py prepare`: change the changelog entry, not this) -->
-## New in 0.19.2: A framework from theory, and codebooks that stay in their project
+## New in 0.20.0: See what is sent, code names that fit the grid, and leaving out a figure
 
-- **A codebook from theory is now a framework you shape on a page of its own.** *New codebook* › *From theory documents* asks which theory documents you read your documents through, and, if you like, what you want to find out; a draft page then opens.
-- **A codebook from theory offers fewer, better terms.** It no longer offers words a text merely uses often, nor a heading's single word without a sentence that defines it.
+- **See what is sent.** Wherever work waits for Claude Code, the line "Claude Code sends the passages inside the tasks it takes to Anthropic" now has a *See what is sent* button.
 <!-- new-in:end -->
 
 How it works, in the manual: [Explore your documents](docs/manual/explore.md) (working documents, the concept map),
