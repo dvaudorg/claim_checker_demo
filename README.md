@@ -57,9 +57,9 @@ Windows from 0.15.4 on). Your projects and settings (the `enlens` folder in your
   impact claims tagged with UN SDG targets and compared with an expert Value Chain Assessment.
 
 <!-- new-in:start (written by `python tools/release.py prepare`: change the changelog entry, not this) -->
-## New in 0.19.3: See what is sent, code names that fit the grid, and leaving out a figure
+## New in 0.19.4: Your local model's own panel, and labelling that goes on without it
 
-- **See what is sent.** Wherever work waits for Claude Code, the line "Claude Code sends the passages inside the tasks it takes to Anthropic" now has a *See what is sent* button.
+- **Your local model has its own panel, like Claude Code's.** Wherever work waits for the local model (passages of documents marked Only a local AI on the Codes page, excerpts on a hypothesis's result), a panel says so.
 <!-- new-in:end -->
 
 How it works, in the manual: [Explore your documents](docs/manual/explore.md) (working documents, the concept map),
