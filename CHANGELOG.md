@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.19.5 (November 2026): Start your local model from any page
+
+Your local model can now be started from any page where it was held back for lack of memory. Its panel takes the place
+of the error message, and Start it anyway runs the same work again with the model started. Nothing in this release
+changes a result.
+
+### Fixed
+
+- **A local model refused for memory gets its panel everywhere, with Start it anyway.** In 0.19.4 the local model's
+  panel came to the Codes page and a hypothesis's result; elsewhere (naming themes, judging concept links, other
+  wordings, and the other AI jobs), a run the local model was refused in still ended with the memory message in a
+  toast, and nothing on the page could start the model. Now that run shows the local panel in its place (on the
+  Themes page under its buttons, elsewhere in a small window): the memory the model needs against what is free,
+  *Start <model>* (the memory is checked again) and *Start it anyway*, which runs the same work again with the model
+  started whatever memory is free, for that run only. What was done before is kept. Does not change results.
+
+### Tests
+
+- `tests/test_local_panel.py`: a job the local model was refused in keeps the numbers and runs again, checked again
+  or with the model started whatever memory is free, for that run only; *Start it anyway* turns the memory check off
+  for the local model of documents marked Only a local AI; the pages show the panel, not a toast.
+
+### Not yet done
+
+- Tried with stand-ins for Ollama and for a computer short of memory, not with a real local model under memory
+  pressure.
+- When the local model is refused, naming themes stops for the themes Claude could name too; labelling on the Codes
+  page already goes on with Claude.
+
 ## 0.19.4 (November 2026): Your local model's own panel, and labelling that goes on without it
 
 Your local model now has its own panel, like Claude Code's. It says what waits for the model, how much memory it needs

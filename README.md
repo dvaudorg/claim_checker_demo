@@ -57,9 +57,9 @@ Windows from 0.15.4 on). Your projects and settings (the `enlens` folder in your
   impact claims tagged with UN SDG targets and compared with an expert Value Chain Assessment.
 
 <!-- new-in:start (written by `python tools/release.py prepare`: change the changelog entry, not this) -->
-## New in 0.19.4: Your local model's own panel, and labelling that goes on without it
+## New in 0.19.5: Start your local model from any page
 
-- **Your local model has its own panel, like Claude Code's.** Wherever work waits for the local model (passages of documents marked Only a local AI on the Codes page, excerpts on a hypothesis's result), a panel says so.
+- **A local model refused for memory gets its panel everywhere, with Start it anyway.** In 0.19.4 the local model's panel came to the Codes page and a hypothesis's result; elsewhere (naming themes, judging concept links, other wordings, and the other AI jobs).
 <!-- new-in:end -->
 
 How it works, in the manual: [Explore your documents](docs/manual/explore.md) (working documents, the concept map),
