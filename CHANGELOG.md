@@ -1,6 +1,87 @@
 # Changelog
 
-## 0.19.0rc2 (November 2026): Reader 6 and documents in two languages, a codebook from several theories, and sync that settles
+## 0.19.0 (November 2026): Your own drafts, a concept map, codebooks from other programs and from theory, and reader 6
+
+Your own drafts beside the corpus, a concept map, codebooks from other programs and from theory, and cleaner
+reading. This is the stable 0.19: everything the two release candidates brought, and, since the second one, a codebook
+from a theory document that finds the theory's concepts. You can keep your own drafts in the project and check them a
+sentence at a time, see the concepts your documents mention together as a map, bring a codebook in from NVivo,
+ATLAS.ti or MAXQDA or start one from the theories your research is read through, let the AI draft a code's
+definition from its examples, count non-scientific documents in the one check where they are the material, and use a
+folder in your institution's drive as the team's storage space. Reader 6 reads PDFs more cleanly and keeps the two
+languages of a side-by-side translation apart. Documents already in a project keep their reading until you choose
+*Read with the new reader*, and codebooks you made are not changed. In a team everyone needs this version: an older
+ENLENS reads a working document as evidence and does not apply a kept language.
+
+### New in 0.19, in short
+
+- **Your own working documents.** Keep your drafts and notes beside the corpus (*Documents* → *Role* → *Mark as my
+  working document*): they are read, searched and coded like any document but are never a source, their codes are
+  counted apart, and *Check against the corpus* checks a sentence you select. Details under the first candidate.
+- **A concept map.** *Concepts* → *Map* draws the concepts your documents mention together more often than by chance,
+  in groups and with the links you accepted, filtered by document, theme, code or year. No AI, the same map every
+  time. Details under the first candidate.
+- **Codebooks from NVivo, ATLAS.ti or MAXQDA, and from theory.** *New codebook* takes a REFI-QDA codebook (`.qdc` or
+  `.qdpx`), or every theory document the research is read through: their own glossaries first, and *Draft with AI*
+  reads the whole document. In the codebook editor, *Draft from the examples* lets the AI draft a code's definition,
+  marked as an AI draft until you rewrite it. Details since the second candidate, and under both candidates.
+- **Reader 6.** PDFs are read more cleanly (text a figure hides, publishing details on the first page, the title,
+  running heads), and a document printed in two languages can keep one: *Keep only English* leaves the other out of
+  searches, codes, themes and checks. Documents already in a project keep their reading until you choose *Read with
+  the new reader*, so it can change results only when you do. Details under the second candidate.
+- **Your institution's drive as the team's storage space.** Besides Backblaze and Cloudflare, the Team page offers a
+  folder in SURFdrive, SURF Research Drive or a university's Nextcloud (any drive that speaks WebDAV), locked and
+  signed as the others, with nobody signing up anywhere new. Details under the first candidate.
+- **Non-scientific documents counted in one check.** When newspapers, blogs or company brochures are the material a
+  hypothesis is about, *Count non-scientific documents in this check* counts them in that check only, and says so
+  wherever its answer is shown. Off by default. Details under the first candidate.
+
+### Changes that can alter your results since 0.19.0rc2
+
+- **A codebook from a theory document now finds the theory's concepts.** The first version offered every sentence
+  that starts "X is a …" as a definition and ticked it, so a book gave "Takes" (from "All it takes is a click"),
+  "Say", "Tree" and its printer's marks as concepts, and the AI draft read only twelve passages of it. Now, without
+  AI, the entries of the document's own glossary come first, each with its definition (*Stock: an accumulation of
+  material or information …*), then the terms its text defines, the terms its headings name ("Stocks, Flows, and
+  Dynamic Equilibrium" gives three) and the phrases it uses far more than your evidence documents do. Running heads,
+  printer's marks, tables of contents, equations and figure labels are left out, a definition is the sentence that
+  best says what the term means and never a heading, and only the glossary's entries are ticked (the defined terms
+  where there is no glossary, and nothing in a long text that defines fewer than three). *Draft with AI* reads **the whole document**, a part at a time, and puts the parts'
+  drafts together: a concept found in several parts is offered once with its best definition, the most central first,
+  and the AI is told to leave out the theory's own examples and cases. It can change results: the concepts offered
+  for a theory document are different ones, so a codebook started from it again will differ. Codebooks you already
+  made are not changed.
+
+- **Terms in any alphabet are found whole.** The words of a theory document were read with Western European letters
+  only, so a Hungarian term with "ő" or "ű" was cut at that letter and a Cyrillic or Greek one was not seen at all.
+  Can change results, for the concepts offered from such a document.
+
+### Under the hood since 0.19.0rc2
+
+- Prompt `theory-codes-v2` (was `-v1`): one `theory_codes` task for each part of the document (`theorycodes._ai_parts`,
+  at most 22,000 characters a part and 60 parts), so answers kept from `-v1` are not reused. A model on this computer
+  with the automatic context length gets 16,384 tokens for the draft (the app sized it for a check's excerpts, 8,192,
+  so the first version's draft failed on a long document with "This task needs about … tokens of context"); with a
+  context length you set, the parts are made to fit it (`theorycodes._part_chars`). The job's result carries
+  `parts`, `parts_read` and `task_ids`; `GET …/codebook-theory/<doc>/ai` says `parts`; a candidate says `ticked` and
+  may be `"how": "glossary"`. With Claude Code as the AI every part waits in the queue at once.
+- The documents, code and tests name no particular app built on ENLENS (the example add-on app is "Fieldnotes", as
+  in `docs/EXTENDING.md`); four mentions in older changelog entries were made neutral. No behaviour changes.
+
+### Not yet done since 0.19.0rc2
+
+- The rules that find defined terms are English. A theory in another language still gives its glossary, headings and
+  frequent phrases, and the AI draft reads any language.
+- Tried on two books of one project (a primer with a glossary, and one chapter of a book that argues instead of
+  defining). The AI draft of the second leaves out its case study; without AI a term of its case study is still
+  offered, unticked.
+- The AI validation report was not measured again for `theory-codes-v2`: the release attaches the last run's
+  report, made before the prompt changed. The new prompt was tried on a copy of one project with Claude Sonnet
+  answering (19 of 19 parts accepted first time), and with a local model only through the dev server's stand-in.
+
+### From the release candidates
+
+### The second candidate (0.19.0rc2): Reader 6 and documents in two languages, a codebook from several theories, and sync that settles
 
 A second candidate for 0.19.0. Reader 6 reads PDFs more cleanly (text a figure hides, publishing details at the foot
 of the first page, the journal's name, running heads) and keeps the two languages of a side-by-side translation
@@ -11,7 +92,7 @@ sync-clash copies of a check made at every round. Documents already in a project
 *Read with the new reader*. *Update* offers a candidate only when you chose *Try new versions early*. In a team
 everyone needs this version, so try it on a project you do not share, or with the whole team at once.
 
-### New
+#### New
 
 - **A codebook from several theory documents at once.** *New codebook*, *From theory documents* now lets you tick
   every theory the research is read through (those marked as theory are ticked to begin with), not just one. Each
@@ -32,7 +113,7 @@ everyone needs this version, so try it on a project you do not share, or with th
 - **Settings → Updates links to ENLENS's code on GitHub.** Beside *Report a problem*, a *Source code* link opens
   the repository, with its releases and the roadmap. Changes no result.
 
-### Changes that can alter your results
+#### Changes that can alter your results
 
 - **Reader 6 reads PDFs more cleanly: hidden text, publishing details, the title and running heads.** Some publishers
   (MDPI among them) make a figure by showing a window onto a whole draft page; reader 5 read the hidden rest of that
@@ -56,7 +137,7 @@ everyone needs this version, so try it on a project you do not share, or with th
   languages one of whose passages held both. New documents get reader 6. Can change results, for documents you move
   to it.
 
-### Fixed
+#### Fixed
 
 - **The reading view's Leave out card: one at a time, beside the text, and it says what goes with it.** After a
   click, the card of the block you had clicked stayed open while you pointed at another block, so two cards showed at
@@ -78,7 +159,7 @@ everyone needs this version, so try it on a project you do not share, or with th
   excerpt's judgements join it, and nothing is lost. Changes no result of yours; colleagues' copies now agree where
   they did not.
 
-### Tests
+#### Tests
 
 - `test_codebook_from_theory.py`: a codebook from two theory documents (a group per document, examples from either
   dropped, the log naming both; one document still makes no groups).
@@ -91,7 +172,7 @@ everyone needs this version, so try it on a project you do not share, or with th
   reads a short report as one passage, reader 5 as three) counts as kept, one left as a record where it had a place
   as lost. All 30 seeds of the long run pass.
 
-### Not yet done
+#### Not yet done
 
 - A journal's name on a cover page (Taylor & Francis) can still be taken for the title, and a title set beside a
   column of other text can still come out in pieces.
@@ -101,7 +182,7 @@ everyone needs this version, so try it on a project you do not share, or with th
   languages until they update (as with marking a document as theory).
 - A document in three languages: only its two main ones are told apart, so paragraphs of the third may still count.
 
-## 0.19.0rc1 (November 2026): Your own drafts, a concept map, codebooks from other programs, and a university drive for the team
+### The first candidate (0.19.0rc1): Your own drafts, a concept map, codebooks from other programs, and a university drive for the team
 
 A candidate for 0.19.0, with six new features to try before the release. You can keep your own drafts beside the
 corpus and check them a sentence at a time, see the concepts your documents mention together as a map, bring a
@@ -111,7 +192,7 @@ team's storage space. Each of these was audited on 14 November 2026, and what th
 candidate. No answer changes by itself. *Update* offers a candidate only when you chose *Try new versions early*. In
 a team everyone needs this version, so try it on a project you do not share, or with the whole team at once.
 
-### New
+#### New
 
 - **Your own working documents.** Keep your drafts and notes in the project beside the corpus: in *Documents*, open
   a row → *Role* → *Mark as my working document*, or use the same button on the document's page. A working document
@@ -248,26 +329,26 @@ a team everyone needs this version, so try it on a project you do not share, or 
   `.qdc` import does), and every answer is read up to a limit. An idle round of a storage space now writes nothing on
   this computer.
 
-### Safer
+#### Safer
 
 - A REFI-QDA file that declares a DOCTYPE or an ENTITY is refused, whatever its encoding, and a `.qdpx` is read no
   further than its `project.qde` (at most 64 MB unpacked, 5,000 files). A file with more than 10,000 codes is refused
   as it is read, and long names and descriptions cost time only in step with their length.
 
-### Fixed
+#### Fixed
 
 - **After *Move to another storage space*, the owner's copy could wait for ever** when a colleague's copy followed
   before the owner's next round ("The shared folder has not brought this project's own file … yet"). The project's own
   file now goes along with the move.
 
-### Privacy
+#### Privacy
 
 - A draft definition sends the passages that hold the code's examples, with the code's name and group; never a
   passage of a document marked *No AI*, and one marked *Only a local AI* only to the local model (`docs/PRIVACY.md`).
   A definition you keep goes with later label tasks, as every definition does: when the local model drafted it, the
   draft says so and asks you to rewrite it if it gives away what those documents say.
 
-### For developers
+#### For developers
 
 - `conceptmap.py` (D1) builds on `conceptpaths._Graph`; routes `GET /api/projects/{p}/concept-map`, `…/options` and
   `…/edge` (docs/API.md); `views/concept-map.js`. New tokens `--group-1` to `--group-5` (docs/DESIGN.md 3.1), each at
@@ -276,7 +357,7 @@ a team everyone needs this version, so try it on a project you do not share, or 
 - *Download as .qdc* writes a code's keywords separated by `; ` (was `, `), as the CSV does, and a single keyword that
   holds a comma ends with `;`, so a keyword holding a comma comes back whole.
 
-### Tests
+#### Tests
 
 - `tests/test_webdav_storage.py` with a stand-in drive (`tests/fake_webdav.py`: WebDAV, the OCS Share API, several
   users and shares): the storage, refusals in plain words, a file written whole or not at all, set-up, invite, join,
@@ -289,7 +370,7 @@ a team everyone needs this version, so try it on a project you do not share, or 
   folder, an address with a password, no ETags, an href as a whole address or in another Unicode form, a share for
   reading only, and an idle round's requests and writes. The stand-in now keeps a share's rights and display names.
 
-### Not yet done
+#### Not yet done
 
 - The concept map has no "needs", "shapes" or "clashes with" links (ENLENS has no such link types yet), does not name
   its groups with the AI, and cannot be saved as a picture.
