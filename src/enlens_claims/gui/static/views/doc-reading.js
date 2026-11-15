@@ -70,10 +70,52 @@ export function readingPanel(ctx) {
     (rep.warnings || []).length ? h("ul", { class: "dv-warn" }, rep.warnings.map((w, i) => h("li", {}, w, " ", placeBtn((rep.places || [])[i])))) : null,
     !before15 && (rep.quality === "fair" || rep.quality === "poor") ? checkedBox(ctx, rep) : null,
     figs.length ? h("ul", { class: "dv-figs" }, figs) : null,
+    languageBox(ctx),
     outPart,
     older ? rereadBox(ctx) : null].filter(Boolean));  // append(null) would write "null"
   live();
   return { el, live };
+}
+
+// 0.19: a document in two languages (a side-by-side translation): keep one, the other is left out (languages.py)
+function languageBox(ctx) {
+  const { d } = ctx;
+  const L = d.languages || {};
+  if (!L.two || !ctx.reading || !ctx.changeLanguage) return null;
+  const box = h("div", { class: "dv-languages" });
+  const nameOf = (c) => (L.names || {})[c] || c;
+  const pct = (c) => `${Math.round(100 * ((L.shares || {})[c] || 0))} %`;
+  function draw(focusIt) {
+    const Lnow = d.languages || L;
+    const kept = Lnow.kept;
+    const other = L.two.find((c) => c !== kept);
+    const mixed = Lnow.mixed_passages || 0;
+    // a reading before reader 6 may have put a paragraph of each language into one passage: it still counts whole
+    const mixedNote = mixed ? h("p", { class: "muted small" }, `${plural(mixed, "passage")} of this reading ${mixed === 1 ? "holds" : "hold"} both languages${kept ? `, and still ${mixed === 1 ? "counts" : "count"} with the ${nameOf(other)} in ${mixed === 1 ? "it" : "them"}` : ""}.`,
+      newReaderFor(d, d.new_reader || 1) ? " Read it with the new reader (below) to keep the two apart." : "") : null;
+    if (kept) {
+      const undo = button({ kind: "quiet", sm: true, onClick: (e) => change(null, e.currentTarget) }, icon("undo", { size: 12 }), "Count both again");
+      replace(box, h("p", { class: "small dv-lang-kept" }, icon("check", { size: 13 }), ` Only the ${nameOf(kept)} counts: the ${nameOf(other)} is left out of searches, codes, themes and checks. `, undo), mixedNote);
+      if (focusIt) undo.focus();
+      return;
+    }
+    const btns = L.two.map((c) => button({ sm: true, onClick: (e) => change(c, e.currentTarget) }, `Keep only ${nameOf(c)}`));
+    replace(box, notice({ kind: "info", icon: "split" }, h("div", {},
+      h("p", {}, h("strong", {}, `In two languages: ${L.two.map((c) => `${nameOf(c)} ${pct(c)}`).join(", ")}.`),
+        " A translation printed beside the text gives every finding twice. Keep one language: the other stays in the text, folded, but searches, codes, themes and checks do not read it. Paragraphs in both (a title printed twice) and those whose language cannot be told still count."),
+      h("div", { class: "btn-row" }, btns), mixedNote)));
+    if (focusIt && btns[0]) btns[0].focus();
+  }
+  async function change(keep, btn) {
+    btn.disabled = true;
+    const r = await ctx.changeLanguage(keep);
+    if (!r) { btn.disabled = false; return; }
+    draw(true);
+    toast(keep ? `Only the ${nameOf(keep)} counts: ${plural(r.left_out, "paragraph")} left out, folded under “Left out of the text”.`
+      : `Both languages count again${r.restored ? `: ${plural(r.restored, "paragraph")} restored` : ""}.`, "ok");
+  }
+  draw(false);
+  return box;
 }
 
 // 0.15.7: the person looked at what the reading report names and marks the reading as checked (or takes it

@@ -1799,8 +1799,9 @@ def _apply_delta(base: dict, delta: dict) -> dict:
         if v is None:
             out.pop(fp, None)
         elif isinstance(v, list) and v:
-            side = fp.split(":", 1)[0] if fp.startswith(("start:", "end:", "role:")) else None
-            if side:  # the text starts (or ends) in one place only; 0.19.0 (N3): a document has one role only
+            side = fp.split(":", 1)[0] if fp.startswith(("start:", "end:", "role:", "lang:")) else None
+            if side:  # the text starts (or ends) in one place only; 0.19.0 (N3): a document has one role only;
+                #       0.19: one language is kept, never two
                 for other in [f for f in out if f.startswith(side + ":")]:
                     out.pop(other)
             out[fp] = [1 if v[0] else 0, v[1] if len(v) > 1 else None]
@@ -1820,6 +1821,12 @@ def _delta_words(delta: dict) -> dict:
                 out.setdefault("role", "evidence")
         elif fp.startswith("mark:"):  # 0.18.6 (docrole.py): marked Non-scientific, or counted as scientific again
             out[fp.split(":", 1)[1]] = bool(v is not None and v[0])
+        elif fp.startswith("lang:"):  # 0.19 (languages.py): one language of a document in two kept, or both again
+            from .stopwords import NAMES
+
+            if v is not None or out.get("language") in (None, "both"):   # from one language to another: the new one
+                out["language"] = fp.split(":", 1)[1] if v is not None else "both"
+                out["language_name"] = NAMES.get(out["language"], out["language"])
         elif v is None:
             out["undone"] += 1
         else:

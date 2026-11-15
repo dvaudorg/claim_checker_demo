@@ -43,7 +43,9 @@ READER = 6  # 1: ENLENS 0.5 to 0.14 (pypdf's page text, cut by sentences); 2: EN
             # 5: ENLENS 0.18.1 (reader5.py: tables from their ruled lines, a table over a page joined, figures and
             #    images as blocks of their own; a Word file's or web page's image captions and alternative text)
             # 6: ENLENS 0.19 (reader6.py, PDFs only: text a form crops away left out, a form of words one figure,
-            #    publishing details in the first page's footer set aside, a journal's name not the title)
+            #    publishing details in the first page's footer set aside, a journal's name not the title; and, any
+            #    kind of file, languages.py: in a document in two languages, a side-by-side translation, no passage
+            #    holds both)
 REF_HEADING = re.compile(
     r"(?:^|\s)(References|REFERENCES|Bibliography|BIBLIOGRAPHY|Literature [Cc]ited|Works [Cc]ited|Reference [Ll]ist)"
     r"\s*:?\s+(?=\[?\(?\d|[A-Z][A-Za-z'\-]+,?\s+[A-Z]|[A-Z]{2,})"

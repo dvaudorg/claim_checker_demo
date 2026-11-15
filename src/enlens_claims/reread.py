@@ -596,6 +596,12 @@ def _check(ws: Workspace, cx, doc_id: str, verify_file: bool = True, tasks: list
     if reader >= ingest.READER:
         out["reason"] = "This document was read by the current reader already: there is nothing to do."
         return out
+    from . import languages
+
+    kind = cx.execute("SELECT kind FROM documents WHERE doc_id=?", (doc_id,)).fetchone()[0]
+    if not languages.new_reader_changes(reader, languages.summary_for(cx, doc_id, keep=False), kind):   # 0.19: reader 5 to 6
+        out["reason"] = "The new reader reads this document as it is read now: there is nothing to do."
+        return out
     f = original_file(ws, doc_id, verify=False)
     if not f["available"]:
         out["reason"] = ("No original file was recorded for this document, so it cannot be read again."
