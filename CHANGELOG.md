@@ -2,6 +2,11 @@
 
 ## 0.19.6 (November 2026): The local model shows its work, and names themes again
 
+Your local model can name themes again: it was never allowed to write a theme's description, so every answer
+was turned down. While it works, the sidebar now says This computer instead of Claude, and the job's line shows
+what it has written so far, how fast, and how long is left. Themes from documents marked Only a local AI can get
+the AI's name and description in place of their key terms.
+
 ### New
 
 - **A slow local model shows that it keeps working.** The line of a short AI job (naming themes, judging pairs of
@@ -32,6 +37,12 @@
 
 - The JSON schema sent to a local model keeps every field of each kind of answer; a stand-in local model that writes
   only what the schema allows names themes; a failed naming is shown and asked again.
+
+### Not yet done
+
+- Not tried with a real local model in the app: the fix and the progress line were tested with stand-ins and the
+  answers stored in a real project.
+- *Try again* names every theme still unnamed, not one at a time.
 
 ## 0.19.5 (November 2026): Start your local model from any page
 
