@@ -1657,6 +1657,8 @@ export function heatHead(text, { title, spoken } = {}) {
 // grid fits its frame that way. Once it would not, a name per column shows four of thirty codes at a time, so the
 // names are set at a slant over narrow columns instead (`.heat-slant`), which shows most of them at once.
 const NAMED_HEAD = 10, NAME_COL = 6.5;
+// The same question for any place that sets codes (0.19.4: the Codes profile's ranked codes): are these names?
+export const codesAreNames = (codes) => codes.some((c) => String(c).length > NAMED_HEAD);
 
 // 0.18.2: a heat grid in its frame (components.css, 4.25 The heat grid). Both of its axes are data, so a grid wider
 // than the page still scrolls sideways, but never silently: while columns are out of sight, a bar above it says which
@@ -1667,7 +1669,7 @@ const NAMED_HEAD = 10, NAME_COL = 6.5;
 // `label` names the grid (its region, the layer's title); `unit` is what its columns are, in the plural.
 export function heatGrid(table, { label, unit = "columns" } = {}) {
   const texts = [...table.querySelectorAll("thead .heat-head-text")];
-  const named = texts.some((t) => t.textContent.length > NAMED_HEAD);
+  const named = codesAreNames(texts.map((t) => t.textContent));
   table.classList.toggle("heat-named", named);
   // the head of the column under the pointer (or holding the focus) is marked, so that a name is found from a cell far
   // below it

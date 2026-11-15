@@ -4,7 +4,7 @@
 // says why it is there; a person can agree, change or reject it (in the document viewer, Codes panel).
 // The pieces shared with the document viewer (the AI-labelling card, the keyword pass, wording) are exported from here.
 import { featureEyebrow, viewTabs, withAI } from "../features.js";
-import { App, api, h, icon, madeWithFact, replace, clear, toast, showError, addDocumentsFirst, fmt, pageHead, P, emptyState, download, switchControl, navigate, plural, shortTitle, cap, runningJob, heatCell, downloadLinks, helpMark, drawInSteps, button, link, notice, card, tag, input, select, fold, choice, readsLine, localPanel, inset, heatGrid, heatHead } from "../lib.js";
+import { App, api, h, icon, madeWithFact, replace, clear, toast, showError, addDocumentsFirst, fmt, pageHead, P, emptyState, download, switchControl, navigate, plural, shortTitle, cap, runningJob, heatCell, downloadLinks, helpMark, drawInSteps, button, link, notice, card, tag, input, select, fold, choice, readsLine, localPanel, inset, heatGrid, heatHead, codesAreNames } from "../lib.js";
 import { jobCard } from "./progress.js";
 import { roleTag } from "./doc-role.js";   // 0.19.0 (N3): a working document's row in the grid
 
@@ -420,9 +420,11 @@ export async function renderProfile(view, params, query) {
       const max = Math.max(1, ...codes.map((c) => c.passages));
       topBox.appendChild(h("section", { class: "section", "aria-labelledby": "pf-top-h" },
         h("div", { class: "section-title" }, h("h2", { id: "pf-top-h" }, level === "group" ? `The ${groupWord()}s addressed most` : `The ${fw.label || "code"}s addressed most`)),
-        h("ol", { class: "pf-top" }, codes.map((c) => h("li", {},
+        // 0.19.4: a codebook of your own has names for codes ("Practice-arrangement bundle"); in the column made for a
+        // mark ("3.4") a name ran over its description. Names are set as the heat grid sets them (codesAreNames).
+        h("ol", { class: "pf-top" + (codesAreNames(codes.map((c) => c.code)) ? " pf-top-named" : "") }, codes.map((c) => h("li", {},
           h("span", { class: "pf-top-code" }, c.code),
-          h("span", { class: "pf-top-desc" }, c.description || ""),
+          h("span", { class: "pf-top-desc", title: c.description || null }, c.description || ""),
           h("span", { class: "pf-top-bar", "aria-hidden": "true" }, h("span", { style: { width: `${Math.max(2, Math.round((c.passages / max) * 100))}%` } })),
           h("span", { class: "pf-top-n" }, `${plural(c.passages, "passage")} · ${plural(c.documents, "document")}`))))));
     }

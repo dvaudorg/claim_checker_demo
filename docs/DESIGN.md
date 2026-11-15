@@ -779,7 +779,10 @@ than ten characters) are set in the interface's face: wrapped, a column each, wh
 and once it would not, at a slant over columns as narrow as a mark's, on two lines at most, so that most of thirty
 codes show at once where a name per column showed four. Never a name on one line with the column as wide as it, and
 never a name cut short to fit: hovering a head says the whole code and its description, and the head of the column
-under the pointer or the focus darkens, so a slanted name is found from a cell far below it. **Make it:** the cells
+under the pointer or the focus darkens, so a slanted name is found from a cell far below it. A list that sets codes
+in a column of its own asks the same question (`codesAreNames()`): the Codes profile's ranked codes set a mark in the
+mono and a name in the interface's face, wrapped in a column the rows share, never run over the description beside
+it. **Make it:** the cells
 with `heatCell(n, max, label, prefix, onClick)`, a column of codes with `heatHead(text, { title, spoken })`, the grid
 in its frame with `heatGrid(table, { label, unit })` (never a `.map-wrap` by hand; it chooses how the heads are set).
 **Lives in:** `components.css` § 4.25.
