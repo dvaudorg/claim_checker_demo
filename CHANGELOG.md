@@ -2,6 +2,10 @@
 
 ## 0.20.0 (November 2026): See what is sent, code names that fit the grid, and leaving out a figure
 
+You can now see, word for word, what Claude Code would send to Anthropic before it takes the next batch of work. A
+grid of named codes shows many more of them at once, a picture in the reading view can be left out like the text
+around it, and a codebook's buttons are back in one row. Nothing in this release changes a result.
+
 ### New
 
 - **See what is sent.** Wherever work waits for Claude Code, the line "Claude Code sends the passages inside the tasks

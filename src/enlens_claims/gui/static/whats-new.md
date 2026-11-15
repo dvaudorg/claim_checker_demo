@@ -1,3 +1,3 @@
 # 0.20.0: See what is sent, code names that fit the grid, and leaving out a figure
-*What changed since the last release.*
+*You can now see, word for word, what Claude Code would send to Anthropic before it takes the next batch of work.*
 - See what is sent
