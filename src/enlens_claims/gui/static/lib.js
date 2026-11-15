@@ -1396,6 +1396,54 @@ export function compare({ left, right, actions, label }) {
     h("div", { class: "compare-sides" }, side(left), side(right)), actions ? h("div", { class: "compare-actions btn-row" }, actions) : null);
 }
 
+// Steps: a task done in a fixed order, one step at a time (setting up a storage space; docs/DESIGN.md 4.28). A numbered
+// rail down the left: the step in hand is open, the ones done show a tick and their title, the ones to come their
+// title in muted words, so the whole way is in view from the start.
+// steps: [{ title, body, next }]: title says what to do, body how (its lines and fields), next the words of the small
+// button that goes on to the following step ("I have an account"; "Next step" when none is given). The last step has
+// no such button: what ends the task is the dialog's or card's own main button. From the second step on, a quiet Back.
+// label: the list's name for a screen reader. current: the step open at first. onStep(i): after every move.
+// .go(i) opens a step from code, .at() says which is open, .count how many there are. Fields of a closed step stay in
+// the page (hidden), so a form reads them all at the end.
+export function steps(opts = {}) {
+  const [o, attrs] = split(opts, ["label", "steps", "current", "onStep"]);
+  const list = (o.steps || []).filter(Boolean);
+  const last = list.length - 1;
+  let at = Math.min(Math.max(0, o.current || 0), Math.max(0, last));
+  const parts = list.map((s, i) => {
+    const mark = h("span", { class: "step-mark", "aria-hidden": "true" });
+    const said = h("span", { class: "visually-hidden" });
+    const title = h("h3", { class: "step-title", tabindex: "-1" }, said, s.title);
+    const move = i < last || i > 0 ? h("div", { class: "btn-row step-move" },
+      i < last ? button({ sm: true, class: "step-next", onClick: () => go(i + 1, true) }, s.next || "Next step") : null,
+      i > 0 ? button({ kind: "quiet", sm: true, class: "step-back", onClick: () => go(i - 1, true) }, "Back") : null) : null;
+    const body = h("div", { class: "step-body" }, s.body, move);
+    return { li: h("li", { class: "step" }, mark, h("div", { class: "step-main" }, title, body)), mark, said, title, body };
+  });
+  const el = h("ol", withClass("steps", { "aria-label": o.label || "Steps", ...attrs }), parts.map((x) => x.li));
+  const paint = () => parts.forEach((x, i) => {
+    const state = i < at ? "done" : i === at ? "current" : "todo";
+    x.li.dataset.state = state;
+    if (i === at) x.li.setAttribute("aria-current", "step"); else x.li.removeAttribute("aria-current");
+    replace(x.mark, state === "done" ? icon("check", { size: 14 }) : String(i + 1));
+    x.said.textContent = `Step ${i + 1} of ${parts.length}${state === "done" ? ", done" : ""}: `;
+    x.body.hidden = i !== at;
+  });
+  // byUser: the focus goes to the step opened (its first field, or its title), so the keyboard is where the eyes are
+  function go(i, byUser = false) {
+    if (!parts.length) return;
+    at = Math.min(Math.max(0, i), last);
+    paint();
+    if (o.onStep) o.onStep(at);
+    if (byUser) (parts[at].body.querySelector("input:not([type=hidden]), textarea, select") || parts[at].title).focus();
+  }
+  paint();
+  el.go = (i) => go(i, false);
+  el.at = () => at;
+  el.count = parts.length;
+  return el;
+}
+
 // A work state: work under way, waiting, not running, done or did not work, in words and an icon (never a pill).
 // state: "running" | "waiting" (queued: starts when … has finished) | "stopped" (not running) | "done" (synced, finished)
 // | "failed" | "attention" (needs you: a folder not reachable, a newer ENLENS needed) | "paused" (you paused it: grey)
