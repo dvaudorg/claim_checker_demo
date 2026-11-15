@@ -239,9 +239,8 @@ export async function renderTheoryDraft(view) {
       await flush();
       const r = await api("POST", `${base}/read`);
       job = r.job;
-      draft.reading = { ...draft.reading, state: "running", job: job.id };
-      drawAll();
-      follow();
+      // the draft now says the reading runs, under a new revision: loaded again, so a later save is not refused
+      await reload();
     } catch (e) { showError(e); if (btn.isConnected) setBusy(btn, false); }
   }
   // watch the reading (also one found running after a reload); when it ends, the draft is loaded again
