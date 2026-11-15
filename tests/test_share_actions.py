@@ -120,8 +120,9 @@ def test_the_line_says_where_a_shared_item_goes():
     assert 'link({ href: "#/team" }, "Set up a team")' in fn
     assert "`Sent to your team ${whenPhrase(brief.sentAt)}.`" in fn
     assert '`Goes to ${brief.names} at the next round${brief.nextAt ? ", " + inText(brief.nextAt) : ""}.`' in fn
-    assert 'link({ kind: "jump", class: "share-see"' in fn and '"See what you shared"' in fn
-    assert 'new CustomEvent("enlens-drawer", { detail: { tab: "team", section: "shared" } })' in fn
+    # a plain link to the section on the Team page (it was a jump that opened the drawer's Team tab)
+    assert 'link({ href: "#/team?at=shared", class: "share-see" }, "See what you shared")' in fn
+    assert "enlens-drawer" not in SHARE
     css = (STATIC / "views.css").read_text(encoding="utf-8")
     block = css[css.index("/* ==== Working together */"):]
     assert ".share-bar .share-where { flex: 1 1 100%; margin: 0; color: var(--text-2); font-size: var(--fs-small); }" in block
@@ -140,19 +141,15 @@ const iso = (s) => new Date(NOW + s * 1000).toISOString();
 const text = (n) => n === null || n === undefined ? null : typeof n === "string" ? n
   : Array.isArray(n) ? n.map(text).join("") : n.link ? `[${text(n.c)}${n.link.href ? " -> " + n.link.href : ""}]` : text(n.c);
 const team = { team: true, names: "Ben and Chloé", nextAt: iso(120), sentAt: iso(-3600) };
-let seen = null;
-window.addEventListener = () => {};
-window.dispatchEvent = (e) => { seen = e.detail; };
 const shared = { kind: "check", key: "h1", state: "shared", at: iso(-60) };
 const line = shareWhere(shared, team);
-line.c[2].link.onClick();
 const pick = shareChoice({ kind: "themes", key: "r 1", state: "withdrawn" }, null, { team: true });
 console.log(JSON.stringify({
   waits: text(line), sent: text(shareWhere({ ...shared, at: iso(-7200) }, { ...team, sentAt: iso(-60) })),
   noNext: text(shareWhere(shared, { ...team, nextAt: null })),
   noTeam: text(shareWhere(shared, null)), noTeam2: text(shareWhere(shared, { team: false })),
   withdrawn: text(shareWhere({ ...shared, state: "withdrawn" }, team)), private: shareWhere({ ...shared, state: "private" }, team),
-  detail: seen, cls: line.attrs.class,
+  cls: line.attrs.class,
   pick: { label: pick.label, value: pick.value, id: pick.id, filter: pick.filter, sm: pick.sm || false,
     words: pick.options.map((o) => [o[0], text(o[1])]) },
   noTeamWords: shareChoice({ kind: "check", key: "h1", state: "shared" }, null, {}).options.map((o) => text(o[1])),
@@ -181,14 +178,14 @@ def test_the_line_and_the_choice_in_node(tmp_path):
     r = subprocess.run([shutil.which("node"), str(tmp_path / "run.mjs")], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     got = json.loads(r.stdout)
-    assert got["waits"] == "Goes to Ben and Chloé at the next round, in about 2 min. [See what you shared]"
-    assert got["sent"].startswith("Sent to your team today at ") and got["sent"].endswith(". [See what you shared]")
-    assert got["noNext"] == "Goes to Ben and Chloé at the next round. [See what you shared]"
+    see = "[See what you shared -> #/team?at=shared]"   # a plain link to the section on the Team page
+    assert got["waits"] == f"Goes to Ben and Chloé at the next round, in about 2 min. {see}"
+    assert got["sent"].startswith("Sent to your team today at ") and got["sent"].endswith(f". {see}")
+    assert got["noNext"] == f"Goes to Ben and Chloé at the next round. {see}"
     assert got["noTeam"] == got["noTeam2"] == ("No team yet: it goes to colleagues in the file “Send what you shared (.zip)”. "
                                                "[Set up a team -> #/team]")
     assert got["withdrawn"] == "Taken back: colleagues keep what they had, marked as withdrawn."
     assert got["private"] is None and got["cls"] == "share-where"
-    assert got["detail"] == {"tab": "team", "section": "shared"}
     assert got["pick"] == {"label": "Who sees this set of themes", "value": "private", "id": "share-themes-r_1", "filter": True,
                            "sm": False, "words": [["private", "Private"], ["shared", "Shared with your team"]]}
     assert got["noTeamWords"] == ["Private", "Shared"]

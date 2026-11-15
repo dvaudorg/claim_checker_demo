@@ -354,7 +354,7 @@ async function drivePasswordDialog(ctx, dav, sp) {
   });
 }
 
-async function inviteDialog(ctx) {
+export async function inviteDialog(ctx) {
   const name = input({ id: "space-invite-name", maxlength: 80, placeholder: "e.g. Ben de Wit", autocomplete: "off" });
   const dav = ctx.status && ctx.status.space && ctx.status.space.drive;
   const driveUser = input({ id: "space-invite-drive-user", maxlength: 200, autocomplete: "off", spellcheck: "false" });
