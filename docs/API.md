@@ -1859,10 +1859,13 @@ in the project folder (`drafts/codebook-from-theory.json`, not shared through th
  "concepts": [{"key": "c" + 10 hex, "group": a group's key | "", "name", "meaning", "when_to_use", "when_not",
                "words": [...], "core": bool, "how": "ai" | "glossary" | "defined" | "heading" | "own", "keep": bool,
                "touched": bool (the person changed it, or added it: a reading leaves it as it is),
+               "checked": bool (the person has looked it over; a reading leaves it as it is too),
                "sources": [{"doc_id", "title", "quote", "start", "end", "page"}],
                "examples": [{"quote", "doc_id", "title", "page", "start", "end", "project"}],
                "ai": {"model", "meaning", "when_to_use", "when_not"} | null (the AI's words, to tell what was rewritten)}],
- "left_out": [{"name", "doc_id", "title", "quote", "start", "end", "page"}]}   (drafted, not in the framework)
+ "left_out": [{"name", "doc_id", "title", "quote", "start", "end", "page"}],   (drafted, not in the framework: a name
+                                                    once, none the framework has, none whose quote is a scrap)
+ "rev": n}   (raised at every write)
 ```
 
 - `GET /api/projects/{p}/codebook-theory/draft` → `{"draft": draft | null, "offer": offer | null, "documents":
@@ -1877,8 +1880,9 @@ in the project folder (`drafts/codebook-from-theory.json`, not shared through th
   entries, defined terms, heading phrases), joined across documents by name, ungrouped; glossary entries start kept.
   400 when the name is taken or not a codebook name, no document is given, or `where` is neither; 404 for a document
   not in the project.
-- `PUT …/codebook-theory/draft` `{"title"?, "focus"?, "groups"?, "concepts"?}` (each whole: the list sent replaces the
-  list) → `{"draft"}`. Concepts are matched to the stored ones by `key` (a missing or unknown key makes a new
+- `PUT …/codebook-theory/draft` `{"title"?, "focus"?, "groups"?, "concepts"?, "rev"?}` (each whole: the list sent
+  replaces the list) → `{"draft"}`. With `rev` (the draft's `rev` as the page loaded it), a draft that changed since
+  (a reading ended, another tab saved) answers 409 and nothing is written: load it again. Concepts are matched to the stored ones by `key` (a missing or unknown key makes a new
   concept, `how: "own"`); `ai` is the app's and cannot be sent; a source must be a span of one of the draft's
   documents (`quote` equal to the text from `start` to `end`, as `lookup` gives them), else it is dropped; an example
   from a theory or working document, or from one of `doc_ids`, is dropped; a `group` not among the groups becomes
@@ -1897,9 +1901,13 @@ in the project folder (`drafts/codebook-from-theory.json`, not shared through th
 - `POST …/codebook-theory/draft/evidence` `{"concept": {"name", "meaning"?, "when_to_use"?, "words"?}, "skip"?:
   [passage ids], "k"?: 1 to 8 (4)}` → `{"passages": [{"quote", "doc_id", "title", "page", "start", "end", "project",
   "passage_id", "matched", "found_by"}]}`: passages of the evidence documents only (never a theory or working
-  document, nor the draft's own), one per document, searched with `when_to_use` (else the meaning, else the name)
-  and the words (a passage must hold one of them); of each, the sentence that holds most of them (`start`/`end` in
-  the document's text). By meaning too when the project has vectors of the chosen embedding model; no AI.
+  document, nor the draft's own), found by the concept's `words` (without any, its name): a word counts as the field
+  writes it (a phrase as a phrase: "repair knowledge" never finds "repair" alone), and `matched` lists the words
+  found in the quote. Of each passage the sentence (or two that follow each other) that holds the most of them
+  (`start`/`end` in the document's text); the passages with the most words first, one per document before a second
+  of any. A sentence that could be no example is passed over: a question (an interview guide), a run of references,
+  a table's cells, a line of figures. Where the words find fewer than `k` and the project has vectors of the chosen
+  embedding model, passages found by meaning (`found_by: "meaning"`, `matched` empty) fill the rest. No AI.
 - `GET …/codebook-theory/draft/lookup?term=…` → `{"term", "sources": [{"doc_id", "title", "uses" (sentences that use
   it), "options": [{"quote", "start", "end", "page", "score"}]}], "passages": [the evidence for the term, as above]}`:
   of each of the draft's documents, the three sentences that best say what the term means (its glossary entry first;

@@ -191,11 +191,14 @@ class CorpusApi:
         return {"draft": d, "offer": theoryframe.offer(ws, d["doc_ids"], self.app.settings())}
 
     def put_codebook_theory_draft(self, name, q):
-        """Body: what changed, {"title"?, "focus"?, "groups"?, "concepts"?} (theoryframe.save). {"draft"}."""
+        """Body: what changed, {"title"?, "focus"?, "groups"?, "concepts"?, "rev"?} (theoryframe.save). {"draft"};
+        409 when "rev" is not the draft's (it changed since the page loaded it)."""
         from .. import theoryframe
 
         try:
             return {"draft": self._theory_view(theoryframe.save(self.app.ws(name), self._body()))}
+        except theoryframe.Stale as e:   # the page's draft is older than the one kept: it loads it again
+            raise ApiError(409, str(e)) from None
         except LookupError as e:
             raise ApiError(404, str(e)) from None
         except ValueError as e:

@@ -332,6 +332,59 @@ def test_a_document_marked_no_ai_never_enters_a_payload(project):
     assert any("No AI" in p for p in d["reading"]["problems"])
 
 
+def test_a_word_counts_as_the_field_writes_it_and_a_question_is_no_example(project, tmp_path):
+    ws, meadows, practice, ev = project
+    d = tmp_path / "more"
+    d.mkdir()
+    (d / "guide.txt").write_text(
+        "Interview guide\n\n"
+        "Can you tell me about the repair knowledge you had before you first came to the repair evening here?\n\n"
+        "Visitors said that the repair knowledge of the volunteers was the reason they came back every month.\n\n"
+        "Repair is a niche [11]; parts are hard to get [43,51]; devices are glued shut [9]; repair costs more [67].\n",
+        encoding="utf-8")
+    ingest.ingest(ws, [d])
+    _started(ws, meadows, practice)
+    got = theoryframe.evidence(ws, {"name": "competence", "when_to_use": "When a passage says what visitors know.",
+                                    "words": ["repair knowledge", "expertise"]}, k=8)
+    quotes = [p["quote"] for p in got]
+    assert any(q.startswith("Visitors said") for q in quotes)
+    assert not any("?" in q or "[43,51]" in q for q in quotes)          # the guide's question, the run of references
+    assert all(p["matched"] == ["repair knowledge"] for p in got)        # the phrase, never "repair" alone
+    # words of when to use it ("visitors") find nothing by themselves, and without words the name is looked for
+    assert theoryframe.evidence(ws, {"name": "habitus", "when_to_use": "When visitors say so.", "words": []}) == []
+
+
+def test_a_save_from_an_older_page_is_refused_and_a_checked_concept_stays(project):
+    ws, meadows, practice, ev = project
+    d = _started(ws, meadows, practice)
+    assert d["rev"] == 1 and d["concepts"][0]["checked"] is False
+    c = {**d["concepts"][0], "checked": True}
+    saved = theoryframe.save(ws, {"concepts": [c] + d["concepts"][1:], "rev": d["rev"]})
+    assert saved["rev"] == 2 and saved["concepts"][0]["checked"] and saved["concepts"][0]["touched"]
+    with pytest.raises(theoryframe.Stale):
+        theoryframe.save(ws, {"focus": "late", "rev": d["rev"]})       # the page still holds the first one
+    assert theoryframe.load(ws)["focus"] == ""
+    assert theoryframe.save(ws, {"focus": "now"})["focus"] == "now"    # without a rev: written (the API's own callers)
+    # the reading leaves the checked concept as it is
+    theoryframe.read(ws, FakeModel(), "claude-sonnet-5-5")
+    assert _by_name(theoryframe.load(ws))[theorycodes._norm(c["name"])]["checked"]
+
+
+def test_what_is_set_aside_is_there_once_and_the_ais_half_sentence_is_made_whole(project):
+    ws, meadows, practice, ev = project
+    _started(ws, meadows, practice)
+    theoryframe.read(ws, FakeModel(), "claude-sonnet-5-5")
+    d = theoryframe.load(ws)
+    names = [theorycodes._norm(x["name"]) for x in d["left_out"]]
+    assert len(names) == len(set(names)) and not set(names) & set(_by_name(d))
+    # "a routinised way in which bodies move" was all the AI quoted: the person reads the sentence it is from
+    whole = [s["quote"] for c in d["concepts"] + d["left_out"] for s in (c.get("sources") or [c])
+             if "routinised way in which bodies move" in s["quote"]]
+    assert whole and all(q.startswith("A practice is a routinised way") and q.endswith("understood.") for q in whole)
+    assert theoryframe._broken("refer to c o m m a nd over objects") and theoryframe._broken("connections witFTThose who")
+    assert not theoryframe._broken("Agency refers to doing.")
+
+
 def test_the_routes(api, tmp_path):  # noqa: F811
     from test_codebook_from_theory import THEORY_PAGES
 
@@ -373,7 +426,8 @@ def test_the_routes(api, tmp_path):  # noqa: F811
     st, body = api("GET", f"{base}/lookup?term=balancing%20loop")
     assert st == 200 and body["term"] == "balancing loop" and len(body["sources"]) == 2 and "passages" in body
     c["examples"] = body["passages"][:1]
-    st, body = api("PUT", base, {"concepts": draft["concepts"]})
+    assert api("PUT", base, {"focus": "old page", "rev": draft["rev"] - 1})[0] == 409
+    st, body = api("PUT", base, {"concepts": draft["concepts"], "rev": draft["rev"]})
     assert st == 200 and body["draft"]["concepts"][0]["key"] == draft["concepts"][0]["key"]
     st, body = api("POST", f"{base}/make")
     assert st == 200 and body["codebook"]["codes"] and body["codebook"]["name"] == "lenses"

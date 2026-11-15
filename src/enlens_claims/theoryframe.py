@@ -106,6 +106,7 @@ def _path(ws: Workspace):
 def _write(ws: Workspace, draft: dict) -> dict:
     p = _path(ws)
     p.parent.mkdir(parents=True, exist_ok=True)
+    draft["rev"] = int(draft.get("rev") or 0) + 1   # every write: the page sends the one it loaded (`save`)
     part = p.with_name(p.name + f".{os.getpid()}.part")
     part.write_text(json.dumps(draft, ensure_ascii=False, indent=1), encoding="utf-8")
     os.replace(part, p)
@@ -168,6 +169,36 @@ def start(ws: Workspace, title: str, name: str, where: str, doc_ids: list[str], 
         return _write(ws, draft)
 
 
+_SPACED = re.compile(r"(?<!\w)(?:[^\W\d_]\s){3,}[^\W\d_]")           # "c o m m a n d"
+_GLUED = re.compile(r"[a-z]{2,}[A-Z]{2,}[a-z]{2,}")                     # "witFTThose"
+
+
+def _broken(quote: str) -> bool:
+    """Whether a sentence is text the reader could not read cleanly (a scan's letters apart, words run together):
+    not offered as a definition without AI, nor among the drafts set aside."""
+    return bool(_SPACED.search(quote) or _GLUED.search(quote))
+
+
+def _whole_sentence(text: str, a: int | None, z: int | None, limit: int = 500) -> tuple[int, int] | None:
+    """The sentence (or sentences) of the document that hold the span a..z, when the span is a piece of them and they
+    are not longer than `limit`: the AI often quotes the half of a sentence that names the concept, and a person reads
+    a whole one. Within the span's own line only."""
+    from .textutil import split_sentences
+
+    if a is None or z is None or not (0 <= a < z <= len(text)) or "\n" in text[a:z]:
+        return None
+    la = text.rfind("\n", 0, a) + 1
+    lz = text.find("\n", z)
+    lz = len(text) if lz < 0 else lz
+    spans = [(x, y) for x, y in split_sentences(text[la:lz], la) if x < z and y > a]
+    if not spans:
+        return None
+    x, y = spans[0][0], spans[-1][1]
+    x += len(text[x:y]) - len(text[x:y].lstrip())
+    y = x + len(text[x:y].rstrip())
+    return (x, y) if (x, y) != (a, z) and x <= a and y >= z and y - x <= limit else None
+
+
 def _source(c: dict, doc_id: str, title: str) -> dict | None:
     d = c.get("definition")
     if not d or not d.get("quote"):
@@ -180,7 +211,8 @@ def _concept(name: str, how: str, keep: bool, sources: list[dict], **kw) -> dict
     return {"key": kw.get("key") or "c" + _h(_norm(name))[:10], "group": kw.get("group", ""), "name": name,
             "meaning": kw.get("meaning", ""), "when_to_use": kw.get("when_to_use", ""),
             "when_not": kw.get("when_not", ""), "words": kw.get("words") or [name.lower()], "core": bool(kw.get("core")),
-            "how": how, "keep": keep, "touched": False, "sources": sources, "examples": [], "ai": kw.get("ai")}
+            "how": how, "keep": keep, "touched": False, "checked": False, "sources": sources, "examples": [],
+            "ai": kw.get("ai")}
 
 
 def without_ai(ws: Workspace, doc_ids: list[str]) -> tuple[list[dict], list[dict]]:
@@ -200,6 +232,8 @@ def without_ai(ws: Workspace, doc_ids: list[str]) -> tuple[list[dict], list[dict
                 continue
             k = _norm(c["term"])
             src = _source(c, d, titles[d])
+            if c["how"] != "glossary" and (src is None or _broken(src["quote"])):
+                continue    # a sentence the reader could not read ("c o m m a nd", "witFTThose") defines nothing
             got = by.get(k)
             if got is None:
                 by[k] = _concept(c["term"], c["how"], c["how"] == "glossary", [src] if src else [])
@@ -267,7 +301,12 @@ def _clean_examples(ws: Workspace, raw: Any, not_from: set[str]) -> list[dict]:
     return out
 
 
-_COMPARED = ("name", "meaning", "when_to_use", "when_not", "words", "keep", "group", "core", "sources", "examples")
+_COMPARED = ("name", "meaning", "when_to_use", "when_not", "words", "keep", "group", "core", "checked", "sources",
+             "examples")
+
+
+class Stale(ValueError):
+    """The page saved over a draft that changed since it loaded it (a reading ended, another tab saved)."""
 
 
 def _comparable(c: dict) -> dict:
@@ -281,7 +320,8 @@ def save(ws: Workspace, patch: dict) -> dict:
     MAX_CONCEPTS concepts and MAX_EXAMPLES examples a concept, each example a span of an evidence document). A
     concept is matched to the stored one by its key: what only the app writes (its `ai` words) stays, and a concept
     the page changed, or added, is marked `touched` (a reading then leaves it as it is). Raises ValueError (a plain
-    sentence; nothing is written) or LookupError when there is no draft."""
+    sentence; nothing is written; `Stale` when the patch's "rev" is not the draft's) or LookupError when there is no
+    draft."""
     from .docrole import not_evidence_docs
 
     if not isinstance(patch, dict):
@@ -290,6 +330,9 @@ def save(ws: Workspace, patch: dict) -> dict:
         draft = load(ws)
         if draft is None:
             raise LookupError(NO_DRAFT)
+        if patch.get("rev") is not None and patch["rev"] != draft.get("rev"):
+            # the whole lists are sent: an older page would write over what a reading or another tab put there
+            raise Stale("The draft changed since this page loaded it: load it again.")
         if "title" in patch:
             draft["title"] = _clean(patch["title"], 200) or draft["title"]
         if "focus" in patch:
@@ -337,7 +380,7 @@ def save(ws: Workspace, patch: dict) -> dict:
                        "meaning": _clean(c.get("meaning"), 1200), "when_to_use": _clean(c.get("when_to_use"), 1000),
                        "when_not": _clean(c.get("when_not"), 800), "words": _clean_words(c.get("words")),
                        "core": bool(c.get("core")), "how": was["how"] if was else how,
-                       "keep": bool(c.get("keep")),
+                       "keep": bool(c.get("keep")), "checked": bool(c.get("checked")),
                        "sources": _clean_sources(ws, c.get("sources"), ids, titles, texts),
                        "examples": _clean_examples(ws, c.get("examples"), not_from),
                        "ai": was.get("ai") if was else None}
@@ -608,8 +651,12 @@ def _drafts_of(ws: Workspace, doc_id: str, title: str, found: dict, read: list[s
             out.append({"doc_id": doc_id, "title": title, "name": c["term"], "how": c["how"], **_span(d),
                         "passage_id": _passage_at(ws, doc_id, d.get("start"))})
     if read:
+        text = ws.scalar("SELECT text FROM documents WHERE doc_id=?", (doc_id,)) or ""
         for c in theorycodes.ai_drafts(ws, read, seen, with_examples=False):
-            d = c["definition"]
+            d = dict(c["definition"])
+            whole = _whole_sentence(text, d.get("start"), d.get("end"))
+            if whole:
+                d.update(start=whole[0], end=whole[1], quote=" ".join(text[whole[0]:whole[1]].split()))
             out.append({"doc_id": doc_id, "title": title, "name": c["term"], "how": "ai", **_span(d),
                         "passage_id": _passage_at(ws, doc_id, d.get("start"))})
     return out
@@ -626,7 +673,7 @@ def _src(d: dict) -> dict:
 
 def _keeps(c: dict) -> bool:
     """A concept the person has made their own: kept or dropped by hand, edited, added, or given examples."""
-    return bool(c.get("touched") or c.get("how") == "own" or c.get("examples"))
+    return bool(c.get("touched") or c.get("how") == "own" or c.get("examples") or c.get("checked"))
 
 
 def _sources_of(drafts: list[dict]) -> list[dict]:
@@ -713,8 +760,16 @@ def apply_frame(draft: dict, frame, model: str | None, sent: list[dict], drafts:
     # the person's concepts keep their place first, then the framework's in its order
     draft["groups"] = groups
     draft["concepts"] = (mine + concepts)[:MAX_CONCEPTS]
-    draft["left_out"] = [{"name": d["name"], **_src(d)} for d in drafts if _ident(d) not in used] \
-        if frame is not None else []
+    # the drafts no concept is made of, to add by hand: a name once (two documents, or two parts, drafted "zooming
+    # in"), none the framework has under that name, none whose quote is a scrap of a sentence
+    left, seen = [], {_norm(c["name"]) for c in draft["concepts"]}
+    for d in (drafts if frame is not None else []):
+        k = _norm(d["name"])
+        if _ident(d) in used or k in seen or len(d["quote"].split()) < MIN_SENTENCE_WORDS or _broken(d["quote"]):
+            continue
+        seen.add(k)
+        left.append({"name": d["name"], **_src(d)})
+    draft["left_out"] = left
 
 
 def read(ws: Workspace, backend, model: str, progress: Callable | None = None,
@@ -917,75 +972,141 @@ def read(ws: Workspace, backend, model: str, progress: Callable | None = None,
 # ---------------------------------------------------------------------------------------------
 # the meeting with the evidence, and a term looked up in the theory
 # ---------------------------------------------------------------------------------------------
-def _best_sentence(text: str, matched: list[str]) -> tuple[int, int]:
-    """Of a passage's text, the sentence that holds the most of the matched words (MIN_SENTENCE_WORDS words or more,
-    at most QUOTE_MAX characters; the earliest of the best); else its first QUOTE_MAX characters, cut at a word."""
+_WORD = r"[^\W\d_][\w'’-]*"
+_CITED = re.compile(r"\[\d+(?:\s*[,–-]\s*\d+)*\]|\(\s*[^\W\d_][\w’'-]+(?:\s+et al\.?|\s+(?:and|&)\s+[^\W\d_][\w’'-]+)?,?"
+                    r"\s+(?:1[89]|20)\d\d[a-z]?")
+EVIDENCE_POOL = 80         # the passages looked through for a concept's words
+PAIR_CHARS = 480           # a sentence with the next one, when the two together hold more of the words
+
+
+def _phrase_rx(phrase: str) -> re.Pattern | None:
+    """A word or phrase of a concept as running text writes it: its words in order, the last with its endings
+    ("skill" finds "skills", "repair knowledge" finds "repair knowledge", never "repair" alone)."""
+    words = re.findall(_WORD, phrase.lower())
+    if not words:
+        return None
+    last = words[-1]
+    stem = last[:-1] if len(last) > 4 and last.endswith(("s", "e", "y")) else last
+    return re.compile(r"(?<![\w'’-])" + r"[\s\-]+".join([re.escape(w) for w in words[:-1]]
+                                                         + [re.escape(stem) + r"[\w'’-]{0,4}"]) + r"(?![\w'’-])", re.I)
+
+
+def _poor_example(s: str) -> bool:
+    """A sentence nobody would keep as an example of a concept: a question (an interview guide, a survey), a run of
+    references or of a table's cells, a heading, a line of figures, a scrap."""
+    w = s.split()
+    if len(w) < 8 or "?" in s:
+        return True
+    if len(_CITED.findall(s)) >= 3 or s.count(";") >= 4 or s.count("•") >= 2 or "□" in s:
+        return True
+    if sum(c.isdigit() for c in s) > 0.12 * len(s):
+        return True
+    return sum(1 for x in w if x[:1].isupper()) > 0.6 * len(w)
+
+
+def _best_span(text: str, rxs: list[tuple[str, re.Pattern]]) -> tuple[int, int, int, list[str]] | None:
+    """Of a passage, the sentence (or two that follow each other) that holds the most of a concept's words:
+    (score, start, end, the words found), a phrase counting double. None when no sentence that could be an example
+    holds one."""
     from .textutil import split_sentences
 
-    rxs = [re.compile(r"(?<!\w)" + re.escape(w) + r"(?!\w)", re.I) for w in dict.fromkeys(m.lower() for m in matched)
-           if w.strip()]
-    best, score = None, 0
-    for a, z in split_sentences(text):
-        s = text[a:z]
-        if len(s.split()) < MIN_SENTENCE_WORDS or len(" ".join(s.split())) > QUOTE_MAX:
-            continue
-        n = sum(1 for rx in rxs if rx.search(s))
-        if n > score:
-            best, score = (a + len(s) - len(s.lstrip()), a + len(s.rstrip())), n
-    if best:
-        return best
-    a = len(text) - len(text.lstrip())
-    z = min(len(text), a + QUOTE_MAX)
-    if z < len(text):
-        cut = text.rfind(" ", a, z)
-        z = cut if cut > a else z
-    return a, len(text[:z].rstrip())
+    sents = split_sentences(text)
+    best = None
+    for i, (a, _z) in enumerate(sents):
+        for j in (i, i + 1):
+            if j >= len(sents):
+                continue
+            z = sents[j][1]
+            s = text[a:z]
+            if len(" ".join(s.split())) > (QUOTE_MAX if j == i else PAIR_CHARS) \
+                    or any(_poor_example(text[x:y]) for x, y in sents[i:j + 1]):
+                continue
+            hit = [p for p, rx in rxs if rx.search(s)]
+            score = sum(2 if " " in p else 1 for p in hit)
+            if hit and (best is None or score > best[0] or (score == best[0] and z - a < best[2] - best[1])):
+                best = (score, a + len(s) - len(s.lstrip()), a + len(s.rstrip()), hit)
+    return best
 
 
 def evidence(ws: Workspace, concept: dict, k: int = 4, skip=(), embedder=None) -> list[dict]:
-    """Passages of the researcher's own documents that may show a concept, by its words and when to use it (no AI): of
-    each, the sentence that holds most of the words, at most `k`, one per document. Never from a theory or a working
+    """Passages of the researcher's own documents that may show a concept, found by the words those documents use
+    for it (`words`; without any, its name), no AI: of each passage the sentence that holds the most of the words,
+    the passages with the most words first, one per document before a second from any, at most `k`. A word counts
+    only as it is written in the field (a phrase as a phrase), and a sentence that could be no example (a question
+    of an interview guide, a run of references, a table's cells) is passed over. Never from a theory or a working
     document, nor from the draft's own documents. Each {"quote", "doc_id", "title", "page", "start", "end" (in the
-    document's text), "project", "passage_id", "matched", "found_by"}. `skip`: passage ids not to offer again."""
+    document's text), "project", "passage_id", "matched" (the words found in the quote, as the field writes them),
+    "found_by"}. `skip`: passage ids not to offer again. With `embedder` (the project has vectors), passages found
+    by meaning alone fill the places the words leave empty."""
     from .docrole import not_evidence_docs
     from .search import rank_passages
 
-    words = _clean_words(concept.get("words"))
-    query = _clean(concept.get("when_to_use"), 1000) or _clean(concept.get("meaning"), 1200) \
-        or _clean(concept.get("name"), 60)
-    if not query and not words:
+    words = _clean_words(concept.get("words")) or _clean_words([concept.get("name")])
+    rxs = [(w, rx) for w in words for rx in [_phrase_rx(w)] if rx]
+    if not rxs:
         return []
     draft = load(ws)
     never = not_evidence_docs(ws._conn()) | set(draft["doc_ids"] if draft else [])
-    args = dict(k=k * 3, per_doc=1, require_terms=bool(words), evidence_only=True,
-                exclude={str(x) for x in skip or ()})
+    gone = {str(x) for x in skip or ()}
     try:
-        found = rank_passages(ws, query or " ".join(words), words, embedder=embedder, **args)
-    except Exception:  # noqa: BLE001 - search by meaning failed (its model is gone): by keywords, silently
-        if embedder is None:
-            return []
-        try:
-            found = rank_passages(ws, query or " ".join(words), words, embedder=None, **args)
-        except Exception:  # noqa: BLE001 - no index yet: nothing to offer
-            return []
-    out = []
-    for p in found:
-        if p["doc_id"] in never:
-            continue
+        found = rank_passages(ws, " ".join(words), words, k=EVIDENCE_POOL, per_doc=8, require_terms=True,
+                              evidence_only=True, exclude=gone)
+    except Exception:  # noqa: BLE001 - no index yet: nothing to offer
+        return []
+    project = ws.project_uid()
+
+    def row(p: dict, a: int, z: int, hit: list[str], by: str) -> dict | None:
         r = ws.query("SELECT p.page, p.start, p.text, d.title FROM passages p JOIN documents d ON d.doc_id=p.doc_id "
                      "WHERE p.passage_id=?", (p["passage_id"],))
-        if not r:
+        if not r or r[0]["text"] != p["text"]:
+            return None
+        return {"quote": " ".join(p["text"][a:z].split()), "doc_id": p["doc_id"], "title": r[0]["title"],
+                "page": r[0]["page"], "start": r[0]["start"] + a, "end": r[0]["start"] + z, "project": project,
+                "passage_id": p["passage_id"], "matched": hit, "found_by": by}
+
+    ranked = []
+    for at, p in enumerate(found):
+        if p["doc_id"] in never:
             continue
-        t = r[0]["text"] or ""
-        a, z = _best_sentence(t, list(p.get("matched") or []) + words)
-        if z <= a:
-            continue
-        out.append({"quote": " ".join(t[a:z].split()), "doc_id": p["doc_id"], "title": r[0]["title"],
-                    "page": r[0]["page"], "start": r[0]["start"] + a, "end": r[0]["start"] + z,
-                    "project": ws.project_uid(), "passage_id": p["passage_id"],
-                    "matched": list(p.get("matched") or []), "found_by": p.get("found_by")})
-        if len(out) >= k:
-            break
+        best = _best_span(p["text"] or "", rxs)
+        if best:
+            ranked.append((-best[0], at, p, best))
+    ranked.sort(key=lambda x: x[:2])
+    out: list[dict] = []
+    for second in (False, True):          # a document once, then a second passage of any
+        per: set[str] = {x["doc_id"] for x in out} if not second else set()
+        for _s, _at, p, (_score, a, z, hit) in ranked:
+            if len(out) >= k:
+                break
+            if p["passage_id"] in {x["passage_id"] for x in out} or (not second and p["doc_id"] in per):
+                continue
+            r = row(p, a, z, hit, "keywords")
+            if r:
+                out.append(r)
+                per.add(p["doc_id"])
+    if len(out) < k and embedder is not None:
+        # by meaning, where the words found too little: the definition as the question
+        query = _clean(concept.get("meaning"), 1200) or _clean(concept.get("when_to_use"), 1000)
+        try:
+            near = rank_passages(ws, query, [], k=k * 3, per_doc=1, evidence_only=True, embedder=embedder,
+                                 exclude=gone | {x["passage_id"] for x in out}) if query else []
+        except Exception:  # noqa: BLE001 - its model is gone: the words' passages are what there is
+            near = []
+        from .textutil import split_sentences
+
+        for p in near:
+            if len(out) >= k:
+                break
+            if p["doc_id"] in never or p.get("found_by") == "keywords":
+                continue
+            t = p["text"] or ""
+            first = next(((a, z) for a, z in split_sentences(t)
+                          if not _poor_example(t[a:z]) and len(" ".join(t[a:z].split())) <= QUOTE_MAX), None)
+            if first:
+                s = t[first[0]:first[1]]
+                r = row(p, first[0] + len(s) - len(s.lstrip()), first[0] + len(s.rstrip()), [], "meaning")
+                if r:
+                    out.append(r)
     return out
 
 
