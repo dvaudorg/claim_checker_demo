@@ -564,7 +564,8 @@ export async function renderCodebook(view, [name]) {
       if (g.group && gName.tagName === "INPUT") gName.title = `Short name in the CSV file: ${g.group}`;
       sec.appendChild(h("div", { class: "cb-group-head" }, gName,
         h("span", { class: "muted small" }, plural(codes.length, "code")),
-        ro ? null : button({ kind: "quiet", sm: true, onClick: () => addCode(g.group) }, icon("plus", { size: 13 }), "Add a code")));
+        ro ? null : button({ kind: "quiet", sm: true, onClick: () => addCode(g.group) }, icon("plus", { size: 13 }), "Add a code"),
+        ro || !g.group ? null : button({ kind: "quiet", sm: true, class: "cb-group-remove", onClick: () => removeGroup(g) }, icon("trash", { size: 13 }), "Remove group")));
       const ul = h("ul", { class: "cb-codes" });
       for (const c of codes) ul.appendChild(codeCard(c));
       if (!ro) dropZone(sec, g.group);
@@ -847,6 +848,17 @@ export async function renderCodebook(view, [name]) {
     openCode = c.code;
     touch(); draw();
     setTimeout(() => { const x = body.querySelector(".cb-open input"); if (x) { x.focus(); x.select(); } }, 0);
+  }
+  // a group goes; its codes stay, without a group (Discard, or History after saving, brings it back)
+  async function removeGroup(g) {
+    const codes = st.codes.filter((c) => c.group === g.group);
+    const name = g.group_name || `Group ${g.group}`;
+    if (codes.length && !(await confirmDialog({ title: `Remove the group “${name}”?`,
+      message: `Its ${plural(codes.length, st.label)} stay in the codebook, under Codes without a group, with their labels. Move them to another group from each one's Group field.`,
+      confirmText: "Remove group" }))) return;
+    for (const c of codes) c.group = "";
+    st.groups = st.groups.filter((x) => x.group !== g.group);
+    touch(); draw();
   }
   function addGroup() {
     let n = st.groups.length + 1, k = `g${n}`;
