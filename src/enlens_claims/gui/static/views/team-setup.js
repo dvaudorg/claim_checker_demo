@@ -94,8 +94,9 @@ function startSection(ctx) {
     options: WHERE.map(({ value, icon, title, tag, text }) => ({ value, icon, title, tag, text })),
     onPick: (v) => { typed.where = v; goWords.textContent = chosen().go; holds.textContent = chosen().holds; } });
   return section("space-setup", "Start a team for this project",
-    h("p", { class: "team-text" }, "You are the first of your team here. Choose where the team’s shared work is kept; your colleagues join after that. ",
-      helpMark("How working together works", HOW_HELP)),
+    // (the help mark stays on the line of the last words: alone on a line it reads as a stray icon)
+    h("p", { class: "team-text" }, "You are the first of your team here. Choose where the team’s shared work is kept; your colleagues join ",
+      h("span", { class: "nowrap" }, "after that. ", helpMark("How working together works", HOW_HELP))),
     cards,
     h("div", { class: "btn-row" }, go),
     aiWhere(holds, "folder"));
@@ -177,8 +178,8 @@ export async function folderDialog(ctx, { path: start = "" } = {}) {
   await dialog({
     title: "Use a folder your team shares", wide: true,
     body: h("div", { class: "team-folder-setup" },
-      h("p", { class: "muted" }, "A folder that OneDrive, Dropbox, Google Drive or a network drive keeps the same on every colleague’s computer. ",
-        helpMark("About working through a shared folder", FOLDER_HELP)),
+      h("p", { class: "muted" }, "A folder that OneDrive, Dropbox, Google Drive or a network drive keeps the same on every colleague’s ",
+        h("span", { class: "nowrap" }, "computer. ", helpMark("About working through a shared folder", FOLDER_HELP))),
       nameField, offers, pathField, err,
       h("div", { class: "team-switch" }, sw, helpMark("About documents that stay here", KEEP_OUT_HELP)),
       // where text goes, at the foot (docs/DESIGN.md 4.4 and 5.5: the AI line's folder)

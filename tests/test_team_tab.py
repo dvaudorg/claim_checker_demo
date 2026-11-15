@@ -84,8 +84,9 @@ def test_the_sections_come_in_order_with_room_for_the_owner():
     # People and settings is the team itself: the people, where it is, the owner, the settings, leaving
     assert [a or b for a, b in _keys("TEAM_SETTINGS_SECTIONS")] == ["people", "SPACE_SECTION", "folder", "ROLES_SECTION", "keep-out",
                                                                      "often", "downloads", "leave"]
-    # the set-up, from one list another stage replaces
-    assert [a or b for a, b in _keys("TEAM_SETUP_SECTIONS")] == ["SPACE_SETUP_SECTION", "setup", "downloads"]
+    # the set-up is its own file's list (views/team-setup.js, tests/test_team_setup.py), offered from here too
+    assert 'import { TEAM_SETUP_SECTIONS } from "./team-setup.js";' in TEAM and "export { TEAM_SETUP_SECTIONS };" in TEAM
+    assert "SPACE_SETUP_SECTION" not in TEAM and "function setupSection" not in TEAM
     assert "TEAM_SECTIONS" not in TEAM and "TEAM_PAGE_SECTIONS" not in TEAM and "tabSetupSection" not in TEAM
     assert "export async function renderTeam(view, params = [], query = {})" in TEAM
     assert ("sections: !withTeam ? TEAM_SETUP_SECTIONS : want === \"settings\" ? TEAM_SETTINGS_SECTIONS : TEAM_ACTIVITY_SECTIONS" in TEAM

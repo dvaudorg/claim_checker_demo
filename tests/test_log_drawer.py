@@ -224,6 +224,9 @@ TEAM_CASES = [
     ({"project": "P", "folder": True, "round": None, "state": "waiting", "last_round": {"state": "done", "finished_at": "2026-11-02T09:00:00"}}, 0,
      {"kind": "ok", "words": "synced 2 Nov"}),
     ({"project": "P", "folder": True, "round": None, "state": "waiting", "last_round": None}, 0, {"kind": "ok", "words": "no round yet"}),
+    # before the first round since ENLENS started, the entry says when the next one comes, never "no round yet"
+    ({"project": "P", "folder": True, "round": None, "state": "waiting", "last_round": None, "next_round_in": 95}, 0, {"kind": "ok", "words": "round in 2 min"}),
+    ({"project": "P", "folder": True, "round": None, "state": "waiting", "last_round": None, "next_round_in": 12}, 0, {"kind": "ok", "words": "round in a moment"}),
 ]
 
 

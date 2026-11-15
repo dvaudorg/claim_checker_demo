@@ -6,7 +6,9 @@ import { App, teamEntry } from "../lib.js";
 import { whenText } from "./team-state.js";
 
 // What the Team entry says, from the poller's answer (GET …/sync-poller) and what is new: the first that holds of a
-// round running, offline, the last round not working, paused, what is new, when the last round was, no round yet.
+// round running, offline, the last round not working, paused, what is new, when the last round was; and before the
+// first round since ENLENS started (the poller knows only its own rounds, so it cannot say when the copies were last in
+// step), when the next one comes: "no round yet" would read as never, beside a Team page that says when.
 export function teamWords(s, count = 0, now = new Date()) {
   const r = s && s.round;
   if (!s) return { kind: "ok", words: "no round yet" };
@@ -16,6 +18,7 @@ export function teamWords(s, count = 0, now = new Date()) {
   if (s.paused || s.paused_all) return { kind: "ok", words: "paused" };
   if (count > 0) return { kind: "ok", count: `${count} new` };
   if (s.last_round) return { kind: "ok", words: syncedWords(s.last_round.finished_at, now) };
+  if (typeof s.next_round_in === "number") return { kind: "ok", words: s.next_round_in < 60 ? "round in a moment" : `round in ${Math.ceil(s.next_round_in / 60)} min` };
   return { kind: "ok", words: "no round yet" };
 }
 // "synced 15:44" (today), "synced yesterday", "synced 12 Nov" (from whenText's "Today 15:44", "Yesterday …", "12 Nov …")
