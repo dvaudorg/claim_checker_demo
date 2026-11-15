@@ -2,6 +2,12 @@
 
 ## 0.19.7 (November 2026): A team you can find and set up step by step, and a calmer research log
 
+Working together now has a place of its own. *Team* is in the sidebar and opens the Team page from anywhere; without
+a team, that page asks what you came to do (start a team, join a colleague's, or send the project once as a file)
+and sets up a storage space one step at a time. The research log is a place of its own too, with a calmer page, and
+the panel beside the page holds the log only. A new user who was asked to share a project could not find where,
+nor tell which of the choices was theirs: this release is the answer to that.
+
 ### New
 
 - **Team and Research log are places in the sidebar.** The sidebar now reads *Overview*, then *Project* (*Documents*,
@@ -45,6 +51,15 @@
   menu. `teamEntry()` replaces `teamLine()`; the window event `enlens-drawer` is gone (`#/team?at=<section>` brings a
   section of the Team page into view). `GET …/log` has the group `colleagues` beside `entries`.
 - The Team page's set-up is `views/team-setup.js`; `views/team-entry.js` keeps the sidebar's Team entry.
+
+### Tests
+
+- `tests/test_team_setup.py` (new): the set-up's cards and choices, where the team's project goes when joining, each
+  service's steps, the dialog that keeps its place, and the guided steps walked in Node. The tests of the sidebar, the
+  panel beside the page, the Team page and the research log follow the new places (`test_sidebar.py`,
+  `test_navigation.py`, `test_log_drawer.py`, `test_team_tab.py`, `test_research_log.py`, `test_design.py`).
+- Looked at in a browser in the light and dark themes, at 390 px wide and 640 px high, and the Backblaze set-up walked
+  to its end against a storage space kept in a folder.
 
 ### Not yet done
 

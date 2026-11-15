@@ -1,5 +1,5 @@
 # 0.19.7: A team you can find and set up step by step, and a calmer research log
-*What changed since the last release.*
+*Working together now has a place of its own.*
 - Team and Research log are places in the sidebar
 - The Team page says what you came to do
 - A storage space is set up one step at a time
