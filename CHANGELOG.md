@@ -2,6 +2,11 @@
 
 ## 0.19.2 (November 2026): A framework from theory, and codebooks that stay in their project
 
+A codebook from theory documents is now a framework you shape on a page of its own: the AI joins what the authors
+share into concepts in groups, each with the theory's own sentences and passages from your documents, and you choose
+what goes into the codebook. A codebook kept in one project no longer leaves the other projects without one. A
+codebook from theory offers fewer, better terms; codebooks made earlier are unchanged.
+
 ### New
 
 - **A codebook from theory is now a framework you shape on a page of its own.** *New codebook* › *From theory
@@ -21,8 +26,8 @@
 
 ### Changes that can alter your results
 
-- **A codebook from theory no longer offers words a text merely uses often, nor a heading's single word without a
-  sentence that defines it.** Codebooks made earlier are unchanged.
+- **A codebook from theory offers fewer, better terms.** It no longer offers words a text merely uses often, nor a
+  heading's single word without a sentence that defines it. Codebooks made earlier are unchanged.
 
 ### Fixed
 
@@ -32,6 +37,13 @@
   another one by hand. Now each project uses the chosen codebook when it has it and the SDG targets when it does not;
   the first project keeps your choice, and Settings shows the codebook the open project uses. Documents added to the
   other project get the SDG targets' keyword codes again (that step had failed quietly). No other result changes.
+
+### Not yet done
+
+- The framework from theory has been read only by stand-in helpers answering through the app's own checks, not by a
+  real Claude Code queue run or a local model. No new AI validation run was recorded for its prompt.
+- Its page was scored 6.0 of 10 by a design reviewer; what it named was fixed, not scored again. Redrafting one
+  concept with AI and counter-examples per concept wait.
 
 ## 0.19.1 (November 2026): Rename a document, and a calmer document page
 
