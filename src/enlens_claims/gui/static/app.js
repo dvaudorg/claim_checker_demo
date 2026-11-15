@@ -279,7 +279,12 @@ async function renderStatus() {
   try { await drawStatus(); } finally { statusBusy = false; }
   if (statusAgain) { statusAgain = false; renderStatus(); }
 }
-const LOCAL_JOB_KINDS = new Set(["index", "folder-sync", "new_reader"]);   // jobs that never use the chat model: search by meaning runs on the embedding model here; 0.18: a round of the shared folder, a new reading
+// where a job's work goes, as the server says (job.where, WHERE_OF_KIND in api_common.py): a chip under the work box's
+// words; a job that uses the AI of Settings (no `where`) gets that AI's name and icon
+const WHERE_CHIP = {
+  here: { icon: "house", label: "This computer", tip: "This runs on this computer; nothing is sent to Anthropic." },
+  crossref: { icon: "network", label: "Crossref", tip: "Only the DOIs are sent, to Crossref; no text of your documents leaves this computer." },
+};
 const tasksWord = (n) => `${n.toLocaleString()} ${n === 1 ? "task" : "tasks"}`;
 async function drawStatus() {
   const box = document.getElementById("work-indicator");
@@ -314,7 +319,7 @@ async function drawStatus() {
   } else if (going.length) {
     const j = going[0], v = jobRow(j);
     const more = going.length - 1;
-    w = { kind: "running", local: LOCAL_JOB_KINDS.has(j.kind), main: v.text, time: j.state === "running" ? fmt.secs(j.seconds) : "", href: v.href, tip: v.tooltip, drawer: v.drawer,
+    w = { kind: "running", where: j.where || null, main: v.text, time: j.state === "running" ? fmt.secs(j.seconds) : "", href: v.href, tip: v.tooltip, drawer: v.drawer,
       sub: j.waiting_for ? j.waiting_for.message : j.state === "queued" ? "waiting its turn" : more ? `and ${more} more running` : waiting + answering ? `${(waiting + answering).toLocaleString()} for Claude Code` : "running",
       act: j.waiting_for ? "cancel" : undefined, job: j.id };   // 0.18 queued jobs: what it waits for, with Cancel
   } else if (runner) {
@@ -327,16 +332,18 @@ async function drawStatus() {
   document.getElementById("status-area").classList.toggle("status-busy", !!w);
   if (!w) { replace(box); statusKey = ""; }
   else {
-    const key = JSON.stringify([App.project, w.kind, w.local, w.main, w.sub, w.href, w.act, w.act === "cancel" ? w.job : ""]);
+    const key = JSON.stringify([App.project, w.kind, w.where, w.main, w.sub, w.href, w.act, w.act === "cancel" ? w.job : ""]);
     if (key === statusKey && box.firstChild) {
       const t = box.querySelector(".work-time"); if (t && w.time) t.textContent = w.time;   // only the seconds changed
     } else {
       statusKey = key;
       // where text goes stays in view while work runs (it took the AI line's place): the AI's name, with its icon
       const p = App.privacy();
-      const who = w.kind === "running" ? (w.local   // 0.17: work that runs on this computer says so, not "Claude"
-        ? h("span", { class: "work-who", title: "This runs on this computer; nothing is sent to Anthropic." }, icon("house", { size: 12 }), "This computer")
-        : h("span", { class: "work-who", title: p.plain }, icon(p.icon, { size: 12 }), (p.label || "").split(",")[0])) : null;   // nothing is sent while it waits
+      // 0.17: work that runs on this computer says so, not "Claude"; 0.19: the server says where each job runs
+      const chip = WHERE_CHIP[w.where];
+      const who = w.kind !== "running" || w.where === "none" ? null   // nothing is sent while it waits; an install reads no document
+        : chip ? h("span", { class: "work-who", title: chip.tip }, icon(chip.icon, { size: 12 }), chip.label)
+        : h("span", { class: "work-who", title: p.plain }, icon(p.icon, { size: 12 }), (p.label || "").split(",")[0]);
       const main = h("a", { class: "work-main", href: w.href, title: w.tip,   // 0.18: a round opens the Team tab beside the page
         onClick: w.drawer ? (e) => { e.preventDefault(); window.dispatchEvent(new CustomEvent("enlens-drawer", { detail: { tab: w.drawer } })); } : undefined },
         h("span", { class: "work-line" }, w.kind === "running" ? h("span", { class: "running-dot", "aria-hidden": "true" }) : icon(w.icon, { size: 14 }),

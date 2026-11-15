@@ -76,5 +76,27 @@ def test_the_documents_page_follows_the_running_job():
 
 def test_the_sidebar_does_not_call_the_index_job_claude():
     js = (STATIC / "app.js").read_text(encoding="utf-8")
-    # (0.18: a round of the shared folder and a new reading run on this computer too)
-    assert 'LOCAL_JOB_KINDS = new Set(["index", ' in js and "w.local" in js
+    # (0.18: a round of the shared folder and a new reading run on this computer too; 0.19: the server says where)
+    assert 'here: { icon: "house", label: "This computer"' in js and "where: j.where || null" in js
+    assert "WHERE_CHIP[w.where]" in js and "LOCAL_JOB_KINDS" not in js
+
+
+def test_the_server_says_which_jobs_run_on_this_computer():
+    """0.19: the dry run before a new reading was called "Claude" in the sidebar: every job that reads no document
+    with the AI says where it runs, and the two jobs of kind "reread" are told apart by their lane."""
+    from enlens_claims.gui.api_common import Job, job_where
+
+    def job(kind, lane=None):
+        j = Job(kind, "t", "p")
+        j.lane = lane
+        return j
+
+    for kind in ("new_reader_preview", "new_reader", "index", "ingest", "folder-sync", "keywords", "terms", "themes",
+                 "theme-new", "codebook-try", "bibliography", "read-local", "queue-local-mix", "queue-local-limit"):
+        assert job_where(job(kind)) == "here", kind
+    assert job_where(job("reread", "reader")) == "here"       # one document moved to the new reader
+    assert job_where(job("reread")) is None                   # one excerpt read again by the AI
+    assert job_where(job("check")) is None and job_where(job("label")) is None
+    assert job_where(job("retractions")) == "crossref"
+    assert job_where(job("claude-install")) == "none"
+    assert job("new_reader_preview").view(full=False)["where"] == "here"
