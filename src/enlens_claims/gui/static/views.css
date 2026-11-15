@@ -382,6 +382,7 @@ p.dv-selnote { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; 
 .doc-view .dv-figure-cap { margin: 6px 0 0; }
 .doc-view .dv-figure-act { margin-top: 4px; }
 .doc-view .dv-figure-words { margin-top: 4px; }
+.doc-view .dv-figure-thumb .dv-figure-img { max-height: 96px; width: auto; opacity: .7; margin-bottom: 4px; }
 .doc-view .dv-table { border-collapse: collapse; font-size: var(--fs-small); font-variant-numeric: tabular-nums; }
 .doc-view .dv-table { width: 100%; }
 .doc-view .dv-table th, .doc-view .dv-table td { border: 1px solid var(--border); padding: 3px 8px; text-align: left; vertical-align: top; overflow-wrap: normal; word-break: normal; white-space: normal; }
