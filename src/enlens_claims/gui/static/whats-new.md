@@ -1,3 +1,3 @@
-# 0.19.5: Start your local model from any page
-*Your local model can now be started from any page where it was held back for lack of memory.*
-- A local model refused for memory gets its panel everywhere, with Start it anyway
+# 0.19.6: The local model shows its work, and names themes again
+*What changed since the last release.*
+- A slow local model shows that it keeps working

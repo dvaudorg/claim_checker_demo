@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.19.6 (November 2026): The local model shows its work, and names themes again
+
+### New
+
+- **A slow local model shows that it keeps working.** The line of a short AI job (naming themes, judging pairs of
+  terms, other wordings, reading an excerpt again) names your local model and adds a second line: the tokens it has
+  written so far and how fast, how long it has been reading the prompt, and when it has gone quiet for a while. While it
+  reasons, its latest words run along under it. Naming themes also says about how long is left once the first theme is
+  done. Does not change results.
+
+### Fixed
+
+- **The sidebar says "This computer" while your local model reads.** With Claude Code as your AI, work your local
+  model does (naming themes from documents marked Only a local AI, or a job run again from the local model's panel)
+  was labelled "to Claude" in the sidebar. It now says "This computer", and its tooltip names the model. While the
+  local model reads, that work no longer shows as waiting for Claude Code either. Does not change results.
+- **Your local model can name themes again.** A local model (Ollama, LM Studio) could never give a theme a name:
+  ENLENS told it the form of its answer but left out the description, so the model could not write one and every
+  answer was turned down three times. Its quotes were fine; the message after naming wrongly said they "did not check
+  out". Themes from documents marked Only a local AI are now named and described by your local model. Can change
+  results: those themes get the AI's name and description in place of their key terms.
+- **Let the AI name the themes asks the AI again.** After the AI could not name a theme, pressing the button again
+  ended at once and named nothing. Each press now asks the model again, with what was wrong last time.
+- **A theme the AI could not name says so on the Themes page.** Above the themes, a notice says how many themes the AI
+  could not name and why, in plain words, with *Try again*; each such theme's card says it too, with the technical
+  details folded away, and so does the theme's own page. The message after naming no longer has to be caught before it
+  goes. Does not change results.
+
+### Tests
+
+- The JSON schema sent to a local model keeps every field of each kind of answer; a stand-in local model that writes
+  only what the schema allows names themes; a failed naming is shown and asked again.
+
 ## 0.19.5 (November 2026): Start your local model from any page
 
 Your local model can now be started from any page where it was held back for lack of memory. Its panel takes the place
