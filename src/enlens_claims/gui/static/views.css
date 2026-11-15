@@ -724,7 +724,7 @@ p.dv-selnote { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; 
 .cb-card-go { padding-right: 12px; color: var(--muted); }
 .cb-start p { margin: 0 0 12px; }
 .cb-meta { display: inline-flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
-.cb-dl-note { max-width: 46em; margin: .35rem 0 0; }   /* DEC-2: the codes still holding the AI's draft, under the title's line */
+.cb-dl-note { max-width: 46em; margin: 6px 0 0; }   /* DEC-2: the codes still holding the AI's draft, under the title's line */
 .cb-start-pick { grid-template-columns: 1fr; }
 .cb-start-extra { margin-top: 8px; }
 .cb-import-notes { margin: 0; padding-left: 1.25em; }   /* K1: the .qdc summary, in a .stack (no extra gap) */
