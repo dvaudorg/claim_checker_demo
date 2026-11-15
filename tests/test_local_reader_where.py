@@ -111,7 +111,10 @@ def test_the_sidebar_and_the_short_job_line_use_it():
     prog = (STATIC / "views" / "progress.js").read_text(encoding="utf-8")
     assert "export function modelDetail(" in prog and "export function timeLeft(" in prog
     assert "this.detail" in prog and "this.tail" in prog and "MODEL_PHASE[m.phase]" in prog
+    # a queue report older than the model's does not make the line say "waiting for Claude Code"
+    assert "(m.at || 0) > (p.queue.at || 0)" in prog and "running && pq)" in prog
+    assert '"mini-detail", hidden: true, "aria-hidden": "true"' in prog
     themes = (STATIC / "views" / "themes.js").read_text(encoding="utf-8")
-    assert "timeLeft(job.seconds" in themes
+    assert "timeLeft(atSecs, " in themes and "m.waiting ? null" in themes
     css = (STATIC / "components.css").read_text(encoding="utf-8")
     assert ".mini-job .mini-detail {" in css and ".mini-job .mini-tail {" in css

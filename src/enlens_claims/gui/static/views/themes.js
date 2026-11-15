@@ -467,14 +467,16 @@ async function renderRun(view, runId, info, query) {
     const m = new MiniJob({ title: "The AI names the themes" });
     replace(nameJob, h("div", { class: "th-names-job" }, m.el,
       h("p", { class: "muted small th-names-help" }, "The AI reads the passages that represent each theme and gives it a short name and a description, each with a quote that is checked against the passage. Names you gave yourself are kept.")));
+    let lastAt = 0, atSecs = 0;   // the theme being named, and the job's time when it began
     const w = watchJob(jobId, (job) => {
       m.update(job);
       const p = job.progress || {};
       // the job counts the theme it is naming (the first is theme 1), so the themes finished are one fewer; 0.19.6: the
-      // time left, from the time the finished ones took
+      // time left, from the time the finished ones took (not while the work waits for Claude Code)
       if (p.total && (job.state === "running" || job.state === "queued")) {
         const at = Math.min(p.done || 0, p.total);
-        const left = timeLeft(job.seconds, Math.max(0, at - 1), p.total);
+        if (at !== lastAt) { lastAt = at; atSecs = job.seconds || 0; }
+        const left = m.waiting ? null : timeLeft(atSecs, Math.max(0, at - 1), p.total, (job.seconds || 0) - atSecs);
         m.time.textContent = `theme ${at} of ${p.total}${left ? ` · ${left}` : ""} · ${m.time.textContent}`;
       }
     });

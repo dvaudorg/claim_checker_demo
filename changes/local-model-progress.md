@@ -9,6 +9,6 @@
 
 - **A slow local model shows that it keeps working.** The line of a short AI job (naming themes, judging pairs of
   terms, other wordings, reading an excerpt again) names your local model and adds a second line: the tokens it has
-  written so far and how fast, how long it has been reading the prompt, and how long since its last token if it goes
-  quiet. Its latest words run along under it. Naming themes also says about how long is left once the first theme is
+  written so far and how fast, how long it has been reading the prompt, and when it has gone quiet for a while. While it
+  reasons, its latest words run along under it. Naming themes also says about how long is left once the first theme is
   done. Does not change results.
