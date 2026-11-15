@@ -93,7 +93,7 @@ def test_the_set_up_is_one_step_at_a_time():
     # a slip of the hand does not lose the place: Escape or a click beside the dialog asks once something is begun,
     # and the step (never what was typed) is remembered for the window
     assert "onDismiss: async () => !begun() || (await confirmDialog({ title: \"Stop the set-up?\"" in dlg
-    assert "const begun = () => !ready && (way.at() > first || Object.values(svc.read()).some(Boolean));" in dlg
+    assert "const begun = () => !ready && (way.at() > first || Object.values(svc.read()).some(Boolean) || " in dlg
     assert "session(stepKey, i >= first ? i - first : null);" in dlg and dlg.count("session(stepKey, null);") == 2
     assert 'if (asking || (lock && lock.on)) return;' in LIB and 'dlg.addEventListener("cancel", (e) => { e.preventDefault(); dismiss(); });' in LIB
     assert "if (lacks) { err.textContent = lacks; way.go(" in dlg

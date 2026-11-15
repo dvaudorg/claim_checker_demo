@@ -149,10 +149,13 @@ export async function setupDialog(ctx, service, { move = false } = {}) {
     onStep: (i) => {
       const b = confirmBtn(); if (b && !ready) hold(b, i < paste);
       if (!move && !ready) session(stepKey, i >= first ? i - first : null);
+      // the name is kept as soon as its step is behind (it is the person's, not the set-up's): a set-up taken up
+      // again later does not ask for it twice, and is never finished without it
+      if (who.el && i >= first) who.save().catch(() => {});
     } });
   const maintenance = h("p", { class: "muted small" }, "If the service says it is down for maintenance, try again later: nothing is changed until the set-up has finished.");
   // something is pasted, or the first step is behind: a slip (Escape, a click beside the dialog) asks before it closes
-  const begun = () => !ready && (way.at() > first || Object.values(svc.read()).some(Boolean));
+  const begun = () => !ready && (way.at() > first || Object.values(svc.read()).some(Boolean) || !!(who.el && who.el.querySelector("input").value.trim()));
   const where = service === "b2" ? "at Backblaze" : service === "r2" ? "at Cloudflare" : "in your institution’s drive";
   const doneWords = move ? "The team moves to the new storage space." : "The storage space is ready. Next: invite your colleagues from the Team page.";
   await dialog({
