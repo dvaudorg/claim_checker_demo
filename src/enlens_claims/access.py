@@ -667,6 +667,7 @@ class Readers:
         self._settings = settings
         self._local: tuple | None = None
         self._local_tried = False
+        self._report = None                    # 0.19.4: how the local model reports to the page (_wire)
         self.local_problem: str | None = None
         # 0.13.11: the local model's reports while it reads (info dicts, marked "who": "local") and the job's Stop;
         # without them, those of the main backend are used
@@ -722,10 +723,23 @@ class Readers:
                   or getattr(self.backend, "progress", None))
         stop = (self.should_stop or getattr(self.backend, "local_should_stop", None)
                 or getattr(self.backend, "should_stop", None))
+        self._report = report
         if report is not None and hasattr(be, "progress"):
             be.progress = lambda info, _r=report: _r({**info, "who": "local"})
         if stop is not None and hasattr(be, "should_stop"):
             be.should_stop = stop
+
+    def local_ended(self, refused: str | None = None) -> None:
+        """0.19.4: tell the page the local model reads nothing more in this job (phase "done"), or that it was not
+        started (phase "refused", with why), so its panel does not go on saying it is loading."""
+        report = getattr(self, "_report", None)
+        if report is None or self._local is None:
+            return
+        try:
+            report({"who": "local", "model": self._local[1], "phase": "refused" if refused else "done",
+                    **({"error": refused} if refused else {})})
+        except Exception:  # noqa: BLE001 - a display problem must never stop the work
+            pass
 
     def stopped(self) -> bool:
         """Whether the job was stopped (a local model's "Stopped." is not a model that cannot be reached)."""

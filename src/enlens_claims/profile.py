@@ -446,6 +446,7 @@ def run_labels(ws: Workspace, framework: str, backend, model: str, doc_ids: list
     by_local = {p for p, got in reader_of.items() if got[0] is not backend}
     plan["passage_ids"].sort(key=lambda p: p not in by_local)
     local_off: str | None = None   # why the local model reads nothing more in this run
+    local_said = False             # whether the page was told the local model has ended
     make_label_tasks(ws, framework, plan["passage_ids"], model, all_passages)
     run_id = runs.start(ws, "label", framework, backend, model, len(plan["passage_ids"]))
     done = failed = 0
@@ -472,6 +473,9 @@ def run_labels(ws: Workspace, framework: str, backend, model: str, doc_ids: list
         local = got[0] is not backend
         if local and local_off:
             continue  # waits for the local model, as the passages before it
+        if not local and by_local and not local_said:
+            local_said = True
+            readers.local_ended(local_off)  # the local model's passages came first: its panel says it has ended
         try:
             ok, _errs = tasks.run_one(ws, tid, got[0], got[1])
         except MemoryShort as e:
@@ -497,6 +501,8 @@ def run_labels(ws: Workspace, framework: str, backend, model: str, doc_ids: list
             change["added"] += len(got - cand)
     if getattr(getattr(backend, "router", None), "route", "") == "local" and not (should_stop and should_stop()):
         tasks.run_stepups(ws, backend, ["label"], should_stop)  # the stronger model once, after the small one
+    if by_local and not local_said:
+        readers.local_ended(local_off)
     runs.finish(ws, run_id, done + failed)
     readers.free_memory()  # a large local model lets go of its memory once it has read
     waiting = 0

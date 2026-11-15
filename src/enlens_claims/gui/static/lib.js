@@ -2294,7 +2294,7 @@ export function localPanel(opts = {}) {
 }
 
 function localPanelBody(opts) {
-  const { model, memory: mem, problem, count, noun = "passage", running, refused, onStart, head } = opts;
+  const { model, memory: mem, problem, count, noun = "passage", running, refused, onStart, head, note } = opts;
   const name = model || "Your local model";
   const short = !!(mem && mem.short) || !!refused;
   const parts = [h("p", { class: "lp-eyebrow small" }, "On this computer")];
@@ -2332,7 +2332,7 @@ function localPanelBody(opts) {
       row.push(withAI(b), h("span", { class: "muted small" }, "Runs here, in this app, and stops by itself when nothing waits."));
     }
     parts.push(h("div", { class: "lp-start" }, ...row));
-  }
+  } else if (note) parts.push(h("p", { class: "muted small" }, note));
   // the model's own row, where Claude's panel has Thought and its helpers
   parts.push(h("p", { class: "lp-model small" }, h("span", { class: "lp-model-label" }, "Model"), " ",
     h("span", { class: "mono" }, model || "none chosen"), " · ", link({ href: "#/settings/model" }, problem ? "Choose one in Settings" : "Change in Settings")));

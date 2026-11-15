@@ -157,7 +157,7 @@ export function aiLabelCard({ project, framework, docIds = null, watchers, onEnd
       localBox = localPanel({ model: lm.model, memory: lm.memory, refused,
         problem: lm.problem || (lastLocal && lastLocal.local_problem),
         head: only ? `${plural(plan.local, "passage")} ${plan.local === 1 ? "waits" : "wait"} for your local model`
-          : `${fmt.num(plan.local)} of these come from documents marked Only a local AI: your local model reads ${plan.local === 1 ? "it" : "them"} first`,
+          : `${fmt.num(plan.local)} of these ${plan.local === 1 ? "comes" : "come"} from documents marked Only a local AI: your local model reads ${plan.local === 1 ? "it" : "them"} first`,
         onStart: short ? (force) => (force ? start(startBtn, true) : (lastLocal = null, load())) : null });
     }
     if (toRead && !localOnly) bits.push(h("div", { class: "btn-row pf-start-actions" }, withAI(startBtn)));
