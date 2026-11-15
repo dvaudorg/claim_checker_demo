@@ -124,8 +124,8 @@ def known5(tmp_path_factory):
 # ------------------------------------------------------------------------------------------------------------------
 # frozen
 # ------------------------------------------------------------------------------------------------------------------
-def test_reader_5_is_the_current_reader():
-    assert reader.READER == 5 and ingest.READER == 5
+def test_reader_5_or_a_later_one_is_the_current_reader():
+    assert reader.READER == ingest.READER >= 5   # 0.18.6: reader 6 reads tables and figures as reader 5 does
 
 
 @needs_pdfminer
@@ -393,7 +393,7 @@ def test_figures_are_stored_as_blocks_and_their_picture_is_drawn_when_asked_for(
 
     docs = _project(api, tmp_path, [known5["j_figures"].path, known5["i_table_over_a_page"].path])
     d = docs["Counting Ground Nests on Four Heathland Plots"]
-    assert d["reader"] == 5
+    assert d["reader"] >= 5
     st, v = api("GET", f"/api/projects/R/documents/{d['doc_id']}?view=blocks&limit=500")
     assert st == 200 and v["reading"]["figures"] == 2
     figs = [b for b in v["blocks"] if b["kind"] == "figure"]

@@ -49,7 +49,8 @@ from dataclasses import dataclass, field
 
 from .textutil import split_sentences
 
-READER = 5   # 2: ENLENS 0.15.0; 3: ENLENS 0.15.1 (reader3.py); 4: ENLENS 0.17.2 (reader4.py); 5: ENLENS 0.18.1 (reader5.py)
+READER = 6   # 2: ENLENS 0.15.0; 3: ENLENS 0.15.1 (reader3.py); 4: ENLENS 0.17.2 (reader4.py); 5: ENLENS 0.18.1 (reader5.py);
+             # 6: ENLENS 0.18.6 (languages.py: no passage holds both languages of a document in two)
 INCLUDED = ("body", "heading", "title", "abstract", "caption")
 KINDS = ("title", "heading", "abstract", "body", "caption", "table", "footnote", "front", "back", "references",
          "figure", "furniture", "contents", "index")
@@ -110,6 +111,7 @@ class Block:
     caption: str | None = None     # a table's or a figure's caption
     n: int = 0
     box: tuple[float, float, float, float] | None = None   # reader 5: a box set by what drew it (rules, a picture)
+    lang: str | None = None        # reader 6: its language, in a document in two languages (`languages.py`)
 
     @property
     def bbox(self) -> tuple[float, float, float, float] | None:
@@ -1019,9 +1021,16 @@ class Reading:
     report: dict = field(default_factory=dict)
 
 
+def _lang_break(a: Block, b: Block) -> bool:
+    """Reader 6: whether two blocks are in the two different languages of a document in two (blocks of other
+    readings have no language, so nothing breaks)."""
+    return a.lang is not None and b.lang is not None and a.lang != b.lang
+
+
 def read_blocks(raw, version: int = READER) -> tuple[list[Block], dict]:
     """The blocks of a RawDoc in reading order, with their kinds and repaired text, and the reading report. `version`
-    2 reads as ENLENS 0.15.0 did; 3 adds the rules of `reader3.py`; 4 those of `reader4.py`; 5 those of `reader5.py`."""
+    2 reads as ENLENS 0.15.0 did; 3 adds the rules of `reader3.py`; 4 those of `reader4.py`; 5 those of `reader5.py`;
+    6 keeps the two languages of a document in two apart (`languages.py`)."""
     from . import reader3, reader4, reader5
 
     raw = raw.as_read_by(version) if hasattr(raw, "as_read_by") else raw
@@ -1187,9 +1196,17 @@ def read_blocks(raw, version: int = READER) -> tuple[list[Block], dict]:
     # a paragraph that goes on in the next content block (a column or a page turned mid-sentence); a word
     # hyphenated across that turn is put together at the end of the first block ("complex-" + "ity. An" ->
     # "complexity." + "An")
+    if version >= 6:   # reader 6: each block's language, in a document in two (a side-by-side translation)
+        from . import languages
+
+        items = [(b.text, b.kind) for b in blocks]
+        two = languages.survey(items)["two"]
+        if two:
+            for b, c in zip(blocks, languages.block_languages(items, two)):
+                b.lang = c if c in two else None
     content = [b for b in blocks if b.kind in ("body", "abstract")]
     for a, c in zip(content, content[1:]):
-        if a.kind == c.kind and not _ENDS.search(a.text.rstrip()) and c.text[:1].islower():
+        if a.kind == c.kind and not _ENDS.search(a.text.rstrip()) and c.text[:1].islower() and not _lang_break(a, c):
             a.continues = True
             if a.text.endswith(("-", "\u2010")) and _tail_match(a.text):
                 head, _sp, rest = c.text.partition(" ")
@@ -1266,6 +1283,8 @@ def make_passages(text: str, blocks: list[Block], spans, max_chars: int, min_cha
                 or (g != "in" and prev.page == b.page and size < max_chars))
             if g == "in" and prev.kind in ("heading",) and b.kind in INCLUDED:
                 same = True
+            if same and _lang_break(prev, b):   # reader 6: never both languages of a document in one passage
+                same = False
             if same:
                 lbs.append(b)
                 continue
@@ -1358,6 +1377,13 @@ def build_document(raw, max_chars: int = 1100, min_chars: int = 200, version: in
         doc.paragraphs = [s0 for _pg, s0 in lay.paragraphs]
     doc.blocks = blocks
     doc.reading = finish_report(report, blocks, doc.passages, text, raw.kind)
+    # 0.18.6: the document's languages, and how many passages hold both of a document in two (0 from reader 6 on)
+    from . import languages
+
+    items = [(text[b.start:b.end], b.kind, b.start, b.end) for b in blocks]
+    langs = languages.survey([(t, k) for t, k, _a, _z in items])
+    langs["mixed_passages"] = languages.mixed_passages(items, [(p.start, p.end) for p in doc.passages], langs["two"])
+    doc.reading["languages"] = langs
     return doc
 
 
@@ -1460,15 +1486,24 @@ def bound_index(choices: dict, side: str, fps: list[str]) -> int | None:
 def choose_inclusion(items: list[tuple[str, str]], choices: dict) -> list[int]:
     """Whether each block counts (1) or is left out (0), for blocks given as (text, kind) in reading order: its kind;
     then the person's *Text starts here* and *Text ends here* (what comes before or after is left out); then the
-    person's *Restore* or *Leave out* of that block, which always wins."""
+    person's *Restore* or *Leave out* of that block, which always wins. 0.18.6: between the two, the language the
+    person keeps of a document in two languages (`languages.keep_mask`): a block of the other language is left out."""
     want = [1 if kind in INCLUDED else 0 for _t, kind in items]
     if not choices:
         return want
     fps = [block_fp(t) for t, _k in items]
     first = bound_index(choices, "start", fps)
     last = bound_index(choices, "end", fps)
+    keep = None
+    if any(isinstance(k, str) and k.startswith("lang:") for k in choices):   # only then is a language read
+        from . import languages
+
+        code = languages.kept_language(choices)
+        keep = languages.keep_mask(items, code) if code else None
     for i in range(len(items)):
         if (first is not None and i < first) or (last is not None and i > last):
+            want[i] = 0
+        if keep is not None and not keep[i]:
             want[i] = 0
         if fps[i] in choices:
             want[i] = int(choices[fps[i]])

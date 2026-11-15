@@ -6,6 +6,8 @@
 > - The reading view shows each document the way it was read: what counts, and what was left out. *Leave out* and
 >   *Restore* put it right.
 > - The *Reading* panel says how well it was read and what to look at; *Checked: it reads well enough* clears the mark.
+> - A document printed in two languages (a side-by-side translation): *Keep only English* leaves the other language
+>   out.
 > - A document read by an older reader can be moved to the newest, one at a time or many at once; every result follows
 >   its quote.
 > - How a file becomes text, and what each reader changed: [How documents are read](how-documents-are-read.md).
@@ -64,6 +66,34 @@ takes it back). A new reading of the document asks again.
 **Page** (beside the text, for PDFs, with the OCR extra the one-line install has) shows the page of the original PDF
 with every block the reader found outlined: solid for what counts, dashed for what was left out. It follows the text
 as you scroll; click an outline to go to that block.
+
+## A document in two languages
+
+Some journals print each article twice, in the original language and in English, column beside column (a
+*side-by-side translation*). ENLENS reads the columns one after the other, so it has every finding twice: search by
+meaning finds both, a check may quote the other language, codes and themes count each point twice.
+
+When at least a fifth of a document's text is in a second language, the *Reading* panel says so, with the share of
+each: *In two languages: English 52 %, Spanish 48 %*. **Keep only English** (or the other one) leaves the paragraphs,
+headings and captions of the other language out of searches, codes, themes and checks. They stay in the text, folded
+under *Left out of the text*, each marked *left out: Spanish (you kept English)*. **Count both again** takes it back.
+
+- Each paragraph's language is told by its common words, for the document's two languages only. A paragraph in both
+  (a title printed in both languages) and one whose language cannot be told (a name, a page number) still count.
+  So does a short quotation in the other language inside the language you keep; a longer one, a paragraph of its
+  own, is left out with the rest of that language.
+- Your *Restore* or *Leave out* of a paragraph wins: restore a paragraph of the other language and it counts.
+- The choice is kept with the document, so it holds when the document is read again, and travels to your colleagues
+  as *Leave out* does: in a project with an owner, a Member's choice is a proposal.
+- A colleague whose ENLENS is older than 0.18.6 keeps your choice but does not apply it: their copy still reads both
+  languages until they update.
+- **Read with the new reader.** A reader before reader 6 (ENLENS 0.18.6) sometimes put a paragraph of each language
+  into one passage: where a column ended without a full stop and the next started in lower case, it took the second
+  for the end of the first. Such a passage still counts, the other language with it; the panel says how many there
+  are. Reader 6 keeps the two languages apart, and is offered for exactly those documents: a document in one language
+  reads the same with it.
+
+Changing what counts makes keyword codes, key terms and themes out of date, as adding a document does.
 
 ## Read with the new reader
 

@@ -389,6 +389,9 @@ p.dv-selnote { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; 
 .dv-pbox:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 /* A reading marked as checked by the person */
 .dv-checked { margin: 0 0 12px; }
+.dv-languages { margin: 0 0 12px; }
+.dv-languages .btn-row { margin-top: 8px; }
+.dv-lang-kept { margin: 0 0 6px; }
 /* a document's reference: in the Documents list and in the document viewer */
 .dv-bib { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; margin: 6px 0 0; font-size: var(--fs-small); color: var(--text-2); }
 .dv-bib .sep { color: var(--faint); }

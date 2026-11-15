@@ -69,7 +69,9 @@ def test_a_figure_is_shown_in_the_text_with_its_caption_and_its_page():
 def test_the_news_of_reader_5_is_said_to_documents_of_reader_4():
     src = _src("sources.js", "doc-reading.js", "doc-shared.js")
     assert "const READER_5_NEWS = " in src and "shows figures and pictures with their captions" in src
-    assert ": READER_5_NEWS)" in src and "`Read by the reader of ENLENS 0.17.2 to 0.18.0. ${READER_5_NEWS}`" in src
+    assert "? READER_5_NEWS : READER_6_NEWS)" in src and "`Read by the reader of ENLENS 0.17.2 to 0.18.0. ${READER_5_NEWS}`" in src
+    # 0.18.6: reader 5's documents are told what reader 6 changes
+    assert "`Read by the reader of ENLENS 0.18.1 to 0.18.5. ${READER_6_NEWS}`" in src
     assert "`Read by the reader of ENLENS 0.15.1 to 0.17.1. ${READER_4_NEWS}`" in src  # reader 3 keeps its sentence
 
 
@@ -80,7 +82,7 @@ def test_a_figure_of_reader_5_has_its_box_and_its_picture(api, tmp_path):  # noq
     case = next(c for c in measure.make_table_figure_texts(tmp_path / "known") if c.name == "j_figures")
     docs = _project(api, tmp_path, [case.path])
     d = next(iter(docs.values()))
-    assert d["reader"] == 5
+    assert d["reader"] >= 5   # 0.18.6: reader 6 reads figures as reader 5 does
     st, v = api("GET", f"/api/projects/R/documents/{d['doc_id']}?view=blocks&limit=500")
     assert st == 200
     figs = [b for b in v["blocks"] if b["kind"] == "figure"]

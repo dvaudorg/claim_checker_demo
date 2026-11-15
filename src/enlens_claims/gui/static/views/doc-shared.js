@@ -14,8 +14,12 @@ export const reader = { latest: 5 };  // ingest.READER, as the list of documents
 // so a reader-4 text file is not offered the move
 export function newReaderFor(d, latest) {
   const r = d.reader || 1;
+  // 0.18.6: the server says whether the new reader would read it otherwise (languages.new_reader_changes: reader 6
+  // changes only a document in two languages one of whose passages holds both)
+  if (typeof d.new_reader_changes === "boolean") return r < latest && d.new_reader_changes;
   return r < latest && !(r === 3 && latest === 4 && !["text", "docx"].includes(d.kind)) && !(r === 4 && latest === 5 && d.kind === "text");
 }
+export const READER_6_NEWS = "The new reader keeps the two languages of a document printed in two (a side-by-side translation) apart: no passage holds both, so keeping one language leaves the other out entirely. Other documents read the same.";
 export const READER_5_NEWS = "The new reader also finds tables from their ruled lines, joins a table that runs on to the next page, and shows figures and pictures with their captions (drawn from the original PDF, never stored). Other text reads the same.";
 export const READER_4_NEWS = "The new reader takes each line of a text file without blank lines between its paragraphs as a paragraph of its own, and reads the text in a Word file's content controls and a table inside a table once. Other documents read the same.";
 export function readingNote(d) {

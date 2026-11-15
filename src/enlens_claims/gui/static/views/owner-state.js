@@ -110,6 +110,8 @@ export function blocksLine(d) {
   if (d.bounds) out.push("Where the text starts or ends was changed.");
   // 0.18.1 (K2): a document marked as theory (the lens the research is read through), or as evidence again
   if (d.role) out.push(d.role === "evidence" ? "Marked as evidence again." : "Marked as theory: left out of themes, codebook labels, check excerpts and key terms.");
+  // 0.18.6: one language of a document in two kept (languages.py), or both again
+  if (d.language) out.push(d.language === "both" ? "Both languages of the document count again." : `Only its ${d.language_name || d.language} counts: the other language is left out.`);
   return out.join(" ") || "Which passages are read was changed.";
 }
 

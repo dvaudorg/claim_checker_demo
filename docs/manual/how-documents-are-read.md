@@ -25,6 +25,7 @@ where it is.
 | 3 | 0.15.1 | Reader 2, plus text files and books: running heads, page numbers, paragraphs and headings found from the text alone. |
 | 4 | 0.17.2 | Reader 3, plus: a text file with one paragraph per line, and a Word file's content controls and tables inside tables (see *What reader 4 changed* below). PDFs and web pages read as with reader 3. |
 | 5 | 0.18.1 | Reader 4, plus: tables found from their ruled lines and joined across pages, figures as blocks of their own with their captions, and a Word file's or web page's pictures by their alternative text (see *What reader 5 changed* below). Plain text files read as with reader 4. |
+| 6 | 0.18.6 | Reader 5, plus: in a document printed in two languages (a side-by-side translation), no passage holds both (see *What reader 6 changed* below). Every other document reads as with reader 5. |
 
 
 ## What the reader does
@@ -95,6 +96,13 @@ gone. Reader 3 reads such files by rules on the text alone (no AI):
 The picture itself is never stored and never sent to an AI: the reading view draws it from the original PDF when it
 is shown, so a large corpus does not grow. Kept out on purpose: reading the text inside pictures (OCR of figures),
 storing pictures, and tables or figures on scanned pages (a page with no text layer).
+
+**What reader 6 changed.** Reader 6 reads every document as reader 5 does, except a document in two languages (at
+least a fifth of its text, and five paragraphs, in a second language). There, a paragraph is never carried on from
+one language into the other (a Spanish column ending without a full stop, the English one starting in lower case,
+were read as one paragraph), and short paragraphs of the two languages are never put together into one passage. So
+*Keep only English* ([A document in two languages](reading.md#a-document-in-two-languages)) leaves the other language
+out entirely. Only the documents this changes are offered the new reader.
 
 
 ## Measuring how well ENLENS reads

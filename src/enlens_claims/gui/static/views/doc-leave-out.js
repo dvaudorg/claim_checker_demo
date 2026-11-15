@@ -185,5 +185,17 @@ export function leaveOut(ctx) {
     const mine = clicked && rows.get(clicked.n);
     return !!mine && !isShown(mine.row);
   }
-  return { blockActions };
+  // 0.18.6: keep one language of a document in two (keep null: both count again); the Reading panel asks for it.
+  // Resolves to the server's answer ({keep, left_out, restored, languages, ...}), or null when it did not work.
+  function changeLanguage(keep) {
+    return inTurn(async () => {
+      let r;
+      try { r = await api("PUT", `${docBase}/language`, { keep }); }
+      catch (e) { showError(e); return null; }
+      d.languages = Object.assign({}, d.languages || {}, r.languages || {}, { kept: r.keep });
+      await showChange(r, null, false);
+      return r;
+    });
+  }
+  return { blockActions, changeLanguage };
 }
