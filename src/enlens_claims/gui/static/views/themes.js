@@ -5,7 +5,7 @@
 // found in its place, on this computer without AI (POST …/new, job "theme-new").
 import { featureEyebrow, withAI } from "../features.js";
 import { App, api, h, icon, madeWithFact, replace, clear, toast, showError, fmt, pageHead, watchJob, P, emptyState, TERMINAL, dialog, download, rangeControl, passageNode, navigate, store, plural, shortTitle, runningJob, heatCell, downloadLinks, button, choice, link, tag, notice, card, input, select, textarea, fold, readsLine, stopButton, menu, inset, searchHref, drawInSteps, heatGrid, heatHead, jobFailed } from "../lib.js";
-import { simpleProgress, MiniJob, jobError } from "./progress.js";
+import { simpleProgress, MiniJob, jobError, timeLeft } from "./progress.js";
 import { historyButton, askWhy } from "./versions.js";
 import { shareBar } from "./share.js";   // 0.18 (L1)
 
@@ -470,7 +470,13 @@ async function renderRun(view, runId, info, query) {
     const w = watchJob(jobId, (job) => {
       m.update(job);
       const p = job.progress || {};
-      if (p.total && (job.state === "running" || job.state === "queued")) m.time.textContent = `theme ${Math.min(p.done || 0, p.total)} of ${p.total} · ${m.time.textContent}`;
+      // the job counts the theme it is naming (the first is theme 1), so the themes finished are one fewer; 0.19.6: the
+      // time left, from the time the finished ones took
+      if (p.total && (job.state === "running" || job.state === "queued")) {
+        const at = Math.min(p.done || 0, p.total);
+        const left = timeLeft(job.seconds, Math.max(0, at - 1), p.total);
+        m.time.textContent = `theme ${at} of ${p.total}${left ? ` · ${left}` : ""} · ${m.time.textContent}`;
+      }
     });
     watchers.push(w);
     w.promise.then(async (job) => {

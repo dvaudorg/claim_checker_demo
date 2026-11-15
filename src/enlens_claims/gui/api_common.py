@@ -69,6 +69,9 @@ class Job:
                "seconds": round(end - (self.started or end), 1), "error": self.error, "error_kind": self.error_kind,
                "scope": self.scope, "queue": self.queue, "waiting_for": self.waiting_for(),
                "background": self.background, "where": job_where(self)}
+        local = local_reader(self)
+        if local is not None:   # 0.19.6: the local model reads for it now, whatever Settings' AI is
+            out["local_model"] = local
         if self.error_kind == "memory":   # 0.19.4: the numbers for the local panel, and whether it can run again
             out["memory"] = self.memory
             out["can_run_again"] = self.again_args is not None
@@ -88,9 +91,7 @@ class Job:
         """0.12: its work waits in the queue for Claude Code right now (not its own steps on this computer)."""
         if not self.queue or self.state not in ("queued", "running"):
             return False
-        if self.tracker is not None:
-            return ((self.tracker.model or {}).get("phase")) == "queue"
-        return isinstance(self.progress, dict) and bool(self.progress.get("queue"))
+        return (latest_report(self) or {}).get("phase") == "queue"
 
 
 # 0.18 (M6): jobs wait their turn. Jobs of one project that change the same things do not run at the same time: the
@@ -137,10 +138,40 @@ WHERE_OF_KIND = {
 
 def job_where(job: Job) -> str | None:
     """Where a job's work goes (WHERE_OF_KIND); None: the AI of Settings. One document read with the new reader is a
-    job of kind "reread", as reading one excerpt again with the AI is: its lane tells them apart."""
+    job of kind "reread", as reading one excerpt again with the AI is: its lane tells them apart. 0.19.6: "here" while
+    the local model reads for a job that otherwise uses the AI of Settings (themes from documents marked Only a local
+    AI are named by it, and the local panel's Start runs a job again on it): the sidebar said "to Claude"."""
     if job.kind == "reread" and job.lane == ALONE:
         return "here"
-    return WHERE_OF_KIND.get(job.kind)
+    where = WHERE_OF_KIND.get(job.kind)
+    if where is None and local_reader(job) is not None:
+        return "here"
+    return where
+
+
+def latest_report(job: Job) -> dict | None:
+    """0.19.6: the latest report of the model at work for a job: the local model's (or a local main model's), or
+    Claude Code's queue (phase "queue"); None before the first. A Tracker keeps one; a job of start_queued_job keeps
+    the model's and the queue's apart, each stamped with its time ("at"), so the later one is the one at work now."""
+    if job.tracker is not None:
+        return job.tracker.model
+    p = job.progress if isinstance(job.progress, dict) else {}
+    m = p.get("model") if isinstance(p.get("model"), dict) else None
+    q = p.get("queue") if isinstance(p.get("queue"), dict) else None
+    if m and q:
+        return m if (m.get("at") or 0) > (q.get("at") or 0) else {**q, "phase": "queue"}
+    return m or ({**q, "phase": "queue"} if q else None)
+
+
+def local_reader(job: Job) -> str | None:
+    """0.19.6: the name of the local model (for documents marked Only a local AI) while it reads for a running job,
+    else None ("" when its name is not known). Its "done" between two passages still counts: the next one follows."""
+    if job.state != "running":
+        return None
+    r = latest_report(job)
+    if not r or r.get("who") != "local" or r.get("phase") in ("queue", "refused"):
+        return None
+    return str(r.get("model") or "")
 
 
 def conflicts(a: Job, b: Job) -> bool:
