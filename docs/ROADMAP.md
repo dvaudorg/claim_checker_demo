@@ -612,6 +612,11 @@ its own)
   ordinary K1 codebook: edited, tried before labelling, used in checks and exports.
   Since 0.19 several theory documents can be ticked at once (the researcher's framework drew on five authors): one
   section and one group of codes per document, each author's own definition kept when two define the same concept.
+  Rebuilt after 0.19 (15 November 2026), when a researcher's 81 codes from five practice-theory texts were words, not
+  concepts: the dialog of tick boxes is now a framework draft on a page of its own (`theoryframe.py`,
+  `views/theory-draft.js`): without AI what the texts define outright; *Read the theory* drafts every part and joins
+  the drafts into one framework of grouped concepts, each with the theory's quotes, a meaning, when to use it in the
+  researcher's documents and its words; passages of the evidence found by those words, kept as examples by hand.
 - Related: N3 (your own working documents) is the other document that is kept in a project but is never a source;
   both are a document's role, one mark with three values (evidence, theory, working document), built with N3.
 - *Already in ENLENS:* a check can be limited to some documents by hand; the reader recognises *Theory* and
