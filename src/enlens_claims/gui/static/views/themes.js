@@ -4,7 +4,7 @@
 // A theme that is not relevant can be removed (its passages are left out until it is brought back), and a new theme
 // found in its place, on this computer without AI (POST …/new, job "theme-new").
 import { featureEyebrow, withAI } from "../features.js";
-import { App, api, h, icon, madeWithFact, replace, clear, toast, showError, fmt, pageHead, watchJob, P, emptyState, TERMINAL, dialog, download, rangeControl, passageNode, navigate, store, plural, shortTitle, runningJob, heatCell, downloadLinks, button, choice, link, tag, notice, card, input, select, textarea, fold, readsLine, stopButton, menu, inset, searchHref, drawInSteps, heatGrid, heatHead, jobFailed, workState } from "../lib.js";
+import { App, api, h, icon, madeWithFact, replace, clear, toast, showError, fmt, pageHead, watchJob, P, emptyState, TERMINAL, dialog, download, rangeControl, passageNode, navigate, store, plural, shortTitle, runningJob, heatCell, downloadLinks, button, choice, link, tag, notice, card, input, select, textarea, fold, readsLine, aiWhere, stopButton, menu, inset, searchHref, drawInSteps, heatGrid, heatHead, jobFailed, workState } from "../lib.js";
 import { simpleProgress, MiniJob, jobError, timeLeft } from "./progress.js";
 import { historyButton, askWhy } from "./versions.js";
 import { shareBar } from "./share.js";   // 0.18 (L1)
@@ -216,7 +216,11 @@ async function renderRun(view, runId, info, query) {
         h("p", {}, `The AI${models.length === 1 ? ` (${models[0]})` : ""} could not name ${plural(notNamed.length, "theme")} after three tries: `,
           reasons.length === 1 ? `${reasons[0]}.` : "each says why below.",
           ` ${notNamed.length === 1 ? "It keeps its" : "They keep their"} key terms as a name. Try again, or rename ${notNamed.length === 1 ? "it" : "them"} yourself.`),
-        withAI(retry)));
+        withAI(retry),
+        // who reads them again: the local model that tried (documents marked Only a local AI), not always Settings' AI
+        models.length && models.every((x) => !/^(claude|haiku|sonnet|opus|fable)/i.test(x))
+          ? aiWhere(`Your local model (${models.join(", ")}) reads their passages on this computer: they never leave it.`, "local")
+          : readsLine("their passages")));
     }
     // 0.17: key terms that the glossary now leaves out (each language's common words, the project's own words)
     const leftOut = r.terms_left_out || [];

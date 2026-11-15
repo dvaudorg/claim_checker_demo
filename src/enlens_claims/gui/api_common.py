@@ -165,11 +165,15 @@ def latest_report(job: Job) -> dict | None:
 
 def local_reader(job: Job) -> str | None:
     """0.19.6: the name of the local model (for documents marked Only a local AI) while it reads for a running job,
-    else None ("" when its name is not known). Its "done" between two passages still counts: the next one follows."""
+    else None ("" when its name is not known). Its "done" between two passages counts only by Claude Code, whose
+    queue reports as soon as it has work again: the Claude API reports nothing, so after the local model's "done" it
+    may be Claude that reads."""
     if job.state != "running":
         return None
     r = latest_report(job)
     if not r or r.get("who") != "local" or r.get("phase") in ("queue", "refused"):
+        return None
+    if r.get("phase") == "done" and not job.queue:
         return None
     return str(r.get("model") or "")
 
@@ -301,8 +305,10 @@ class Jobs:
         if job.error_kind != "memory" or job.again_args is None:
             raise ValueError("Only a job the local model was not started in can run again from here.")
         kind, title, project, fn, uses_model, lane, serial, scope = job.again_args
-        return self.start(kind, title, project, fn, uses_model, lane=lane, serial=serial, scope=scope,
-                          force_local=force_local)
+        new = self.start(kind, title, project, fn, uses_model, lane=lane, serial=serial, scope=scope,
+                         force_local=force_local)
+        new.queue = job.queue   # 0.19.6: still Claude Code's work (start_job sets it after Jobs.start): on hold, where
+        return new
 
     # -- 0.18 (M6): the project's queue --------------------------------------------------------------------------
     def _blocker(self, job: Job) -> Job | None:

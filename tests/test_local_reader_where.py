@@ -118,3 +118,35 @@ def test_the_sidebar_and_the_short_job_line_use_it():
     assert "timeLeft(atSecs, " in themes and "m.waiting ? null" in themes
     css = (STATIC / "components.css").read_text(encoding="utf-8")
     assert ".mini-job .mini-detail {" in css and ".mini-job .mini-tail {" in css
+
+
+def test_a_local_done_is_not_this_computer_when_the_main_ai_reports_nothing():
+    """The Claude API reports nothing while it reads: after the local model's "done" it may be Claude reading."""
+    j = _running(progress={"model": {"who": "local", "model": "q", "phase": "done", "at": 1.0}})
+    assert job_where(j) is None
+    j.queue = True   # Claude Code: its queue reports as soon as it has work, so "done" still means the local model
+    assert job_where(j) == "here"
+
+
+def test_a_job_run_again_keeps_its_queue():
+    import time as _t
+
+    from enlens_claims import llm
+
+    calls = []
+
+    def fn(job):
+        calls.append(1)
+        if len(calls) == 1:
+            raise llm.MemoryShort("qwen3.5:9b", 8, 2)
+        return {}
+
+    jobs = Jobs()
+    first = jobs.start("theme-names", "The AI names the themes", "P", fn, uses_model=True)
+    first.queue = True
+    for _ in range(300):
+        if first.state in ("done", "error", "cancelled"):
+            break
+        _t.sleep(0.01)
+    assert first.error_kind == "memory"
+    assert jobs.again(first).queue is True
