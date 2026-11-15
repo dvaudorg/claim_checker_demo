@@ -530,6 +530,9 @@ buttons, the rest in a *More* [menu](#417-menus); downloads as small quiet butto
 hypothesis about this theme*). A page that is one item (a result, a document, a concept, a theme, a codebook) has a
 back link in place of the eyebrow, its name as the title (in the Display serif when it is the research's own words) and
 its facts in a quiet line under it, "·" between them (*Theme 3 · 42 passages from 5 documents · Named by the AI*).
+**One item's actions stand on the back link's line**, at its right, so the title and its lines have the head's whole
+width: a title that is the research's own words is often long, and a column of buttons beside it would break it a
+line early. The back link stands on the line of the actions' words (of their last row, when they need two).
 When the head is narrower than its two columns (700 px of its own width: the drawer open, a phone), the title and its
 lines come first and the actions follow as one row from the left; an AI action's line is the head's last line, under
 them. **Make it:** `pageHead(title, { eyebrow: featureEyebrow(key) | back: { href, text }, display, facts, sub, meta,

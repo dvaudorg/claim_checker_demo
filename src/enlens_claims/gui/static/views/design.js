@@ -347,7 +347,7 @@ export async function renderDesign(page) {
       sample("A place: the section and its AI mark, the title, one line; at the right only actions",
         sampleHead("Hypotheses", { eyebrow: featureEyebrow("check"), sub: "Check one hypothesis or a list against the 3 documents, and judge each answer by its quotes.",
           actions: downloadLinks([{ text: "Excel (.xlsx)", onClick: noop }, { text: "CSV", onClick: noop }]) })),
-      sample("One thing: a back link, its name in the Display serif, its facts; a way to another page in the line under the title",
+      sample("One thing: a back link with its actions on the same line, its name in the Display serif the whole width, its facts; a way to another page in the line under the title",
         sampleHead("Remote work and commuting", { back: { href: HERE, text: "All themes" }, display: true,
           sub: link({ kind: "next", href: HERE }, "Check a hypothesis about this theme"),
           facts: ["Theme 3", "42 passages from 5 documents", "Named by the AI"],

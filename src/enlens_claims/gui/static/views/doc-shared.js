@@ -3,6 +3,15 @@
 // was before a repaint, and a job the page started earlier.
 import { api, h, icon, fmt, P, TERMINAL, session, link, tag } from "../lib.js";
 
+// Whether a name (a file's, a work's in the bibliography) only repeats the document's title, whatever its case, its
+// punctuation and a file's extension: "About Repair Café - Repairing for a Sustainable Future.html" says no more than
+// its title. The document's head says each thing once (docs/DESIGN.md 4.14), so it leaves such a name out.
+const nameWords = (t) => String(t || "").normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+export function repeatsTitle(name, title) {
+  const t = nameWords(title);
+  return !!t && (nameWords(name) === t || nameWords(String(name || "").replace(/\.[A-Za-z0-9]{1,5}$/, "")) === t);
+}
+
 // 0.15: how a document was read, in the list: one that read badly or has something to check (0.15.7: until the
 // person marks the reading as checked), or one read by an earlier reader (0.15.7: also 0.15.0's; its link opens the
 // preview of the move)
