@@ -164,7 +164,8 @@ def start(ws: Workspace, title: str, name: str, where: str, doc_ids: list[str], 
     groups, concepts = without_ai(ws, ids)
     at = now()
     draft = {"version": VERSION, "title": _clean(title, 200) or n.replace("_", " ").capitalize(), "name": n,
-             "where": where, "doc_ids": ids, "focus": _clean(focus, 500), "created_at": at, "updated_at": at,
+             "where": where, "doc_ids": ids, "focus": _clean(focus, 500), "id": secrets.token_hex(8),
+             "created_at": at, "updated_at": at,
              "reading": _empty_reading(), "groups": groups, "concepts": concepts, "left_out": []}
     with _lock:
         return _write(ws, draft)
@@ -197,7 +198,11 @@ def _whole_sentence(text: str, a: int | None, z: int | None, limit: int = 500) -
     x, y = spans[0][0], spans[-1][1]
     x += len(text[x:y]) - len(text[x:y].lstrip())
     y = x + len(text[x:y].rstrip())
-    return (x, y) if (x, y) != (a, z) and x <= a and y >= z and y - x <= limit else None
+    m = re.match(r"\d{1,3}[.)]?\s+(?=[^\W\d_])", text[x:y])      # a footnote's number run into the sentence
+    if m and x + m.end() <= a:
+        x += m.end()
+    # (a long lead-in before the AI's words buries the definition: "For the purposes of this chapter, which …, we")
+    return (x, y) if (x, y) != (a, z) and x <= a and y >= z and y - x <= limit and a - x <= 60 else None
 
 
 def _source(c: dict, doc_id: str, title: str) -> dict | None:
@@ -263,40 +268,63 @@ def _int_or_none(v: Any) -> int | None:
     return v if isinstance(v, int) and not isinstance(v, bool) else None
 
 
-def _clean_sources(ws: Workspace, raw: Any, doc_ids: list[str], titles: dict[str, str], texts: dict) -> list[dict]:
+def _clean_sources(ws: Workspace, raw: Any, doc_ids: list[str], titles: dict[str, str], texts: dict,
+                   was: list[dict] | None = None) -> list[dict]:
     """The quotes of a concept's theory documents, each a span of one of the draft's documents (checked: the page
-    may move a source or attach one from `lookup`, never write one)."""
+    may move a source or attach one from `lookup`, never write one). A source the draft holds already (`was`) and
+    the page sends back as it was is kept without a second look: a document read again since has other text, and
+    its quotes must not fall out of every concept at the next save."""
+    held = {(x.get("doc_id"), x.get("start"), x.get("end"), x.get("quote")): x for x in was or []}
     out: list[dict] = []
     for s in (raw if isinstance(raw, list) else [])[:12]:
         if not isinstance(s, dict) or s.get("doc_id") not in doc_ids:
             continue
         d, a, z = s["doc_id"], _int_or_none(s.get("start")), _int_or_none(s.get("end"))
+        q = _clean(s.get("quote"), 2000)
+        if any(x["doc_id"] == d and x["start"] == a for x in out):
+            continue
+        if (d, a, z, q) in held:
+            out.append(held[(d, a, z, q)])
+            continue
         if d not in texts:
             texts[d] = ws.scalar("SELECT text FROM documents WHERE doc_id=?", (d,)) or ""
-        q = _clean(s.get("quote"), 2000)
-        if a is None or z is None or not (0 <= a < z <= len(texts[d])) or _clean(texts[d][a:z], 2000) != q or not q:
-            continue
-        if any(x["doc_id"] == d and x["start"] == a for x in out):
+        if a is None or z is None or not (0 <= a < z <= len(texts[d])) or z - a > 2400 \
+                or _clean(texts[d][a:z], 2000) != q or not q:
             continue
         out.append({"doc_id": d, "title": titles.get(d, ""), "quote": q, "start": a, "end": z,
                     "page": _int_or_none(s.get("page"))})
     return out
 
 
-def _clean_examples(ws: Workspace, raw: Any, not_from: set[str]) -> list[dict]:
+def _clean_examples(ws: Workspace, raw: Any, not_from: set[str], was: list[dict] | None = None,
+                    texts: dict | None = None) -> list[dict]:
     """A concept's kept examples: spans of evidence documents only (never a theory or a working document, nor one of
-    the draft's own documents)."""
+    the draft's own documents), each checked as every quote is: its words are the document's text from `start` to
+    `end` (as `evidence` gives them), and its title and page are the document's, never the page's say-so. An example
+    the draft holds already (`was`) and the page sends back as it was is kept without a second look."""
+    texts = {} if texts is None else texts
+    held = {(e.get("doc_id"), e.get("start"), e.get("end"), e.get("quote")) for e in was or []}
     out: list[dict] = []
     for e in (raw if isinstance(raw, list) else []):
         if not isinstance(e, dict):
             continue
         q = _clean(e.get("quote"), 600)
         d = str(e.get("doc_id") or "")
+        a, z = _int_or_none(e.get("start")), _int_or_none(e.get("end"))
         if not q or not d or d in not_from or q in [x["quote"] for x in out]:
             continue
-        out.append({"quote": q, "doc_id": d, "title": _clean(e.get("title"), 300), "page": _int_or_none(e.get("page")),
-                    "start": _int_or_none(e.get("start")), "end": _int_or_none(e.get("end")),
-                    "project": _clean(e.get("project"), 80) or ws.project_uid()})
+        if (d, a, z, q) in held:
+            out.append(next(x for x in was if (x.get("doc_id"), x.get("start"), x.get("end"), x.get("quote")) == (d, a, z, q)))
+        else:
+            if d not in texts:
+                r = ws.query("SELECT text, title FROM documents WHERE doc_id=?", (d,))
+                texts[d] = (r[0]["text"] or "", r[0]["title"] or "") if r else None
+            if texts[d] is None or a is None or z is None or not (0 <= a < z <= len(texts[d][0])) or z - a > 4000 \
+                    or _clean(texts[d][0][a:z], 600) != q:
+                continue
+            page = ws.scalar("SELECT page FROM pages WHERE doc_id=? AND start<=? AND ?<end", (d, a, a))
+            out.append({"quote": q, "doc_id": d, "title": _clean(texts[d][1], 300), "page": page, "start": a, "end": z,
+                        "project": ws.project_uid()})
         if len(out) >= MAX_EXAMPLES:
             break
     return out
@@ -336,6 +364,14 @@ def save(ws: Workspace, patch: dict) -> dict:
             raise Stale("The draft changed since this page loaded it: load it again.")
         if "title" in patch:
             draft["title"] = _clean(patch["title"], 200) or draft["title"]
+        if "where" in patch:
+            if patch["where"] not in ("project", "home"):
+                raise ValueError("A codebook is kept with this project or with all projects.")
+            draft["where"] = patch["where"]
+        if "name" in patch and str(patch["name"] or "") != draft["name"]:
+            from . import codebooks
+
+            draft["name"] = codebooks._free_name(ws, str(patch["name"] or ""))
         if "focus" in patch:
             draft["focus"] = _clean(patch["focus"], 500)
         if "groups" in patch:
@@ -365,6 +401,7 @@ def save(ws: Workspace, patch: dict) -> dict:
             titles = _titles(ws, ids)
             not_from = not_evidence_docs(ws._conn()) | set(ids)
             texts: dict = {}
+            ex_texts: dict = {}
             out, keys = [], set()
             for i, c in enumerate(raw, 1):
                 name = _clean(c.get("name"), 60)
@@ -382,8 +419,10 @@ def save(ws: Workspace, patch: dict) -> dict:
                        "when_not": _clean(c.get("when_not"), 800), "words": _clean_words(c.get("words")),
                        "core": bool(c.get("core")), "how": was["how"] if was else how,
                        "keep": bool(c.get("keep")), "checked": bool(c.get("checked")),
-                       "sources": _clean_sources(ws, c.get("sources"), ids, titles, texts),
-                       "examples": _clean_examples(ws, c.get("examples"), not_from),
+                       "sources": _clean_sources(ws, c.get("sources"), ids, titles, texts,
+                                                  was.get("sources") if was else None),
+                       "examples": _clean_examples(ws, c.get("examples"), not_from,
+                                                   was.get("examples") if was else None, ex_texts),
                        "ai": was.get("ai") if was else None}
                 new["touched"] = was is None or bool(was.get("touched")) or _comparable(was) != _comparable(new)
                 out.append(new)
@@ -620,8 +659,15 @@ def mark_running(ws: Workspace, job_id: str) -> None:
         d = load(ws)
         if d is None or d["reading"].get("job") == job_id:
             return
-        d["reading"] = {**d["reading"], "before": d["reading"].get("state"), "state": "running", "job": job_id}
+        was = d["reading"]
+        before = was.get("before") if was.get("state") == "running" else was.get("state")   # (a job that died)
+        d["reading"] = {**was, "before": before, "state": "running", "job": job_id}
         _write(ws, d)
+
+
+def _same_draft(d: dict | None, ident: str) -> bool:
+    """Whether a draft is the one a reading started on (its id; a draft from before ids: when it was made)."""
+    return d is not None and (d.get("id") or d.get("created_at")) == ident
 
 
 def _end_reading(ws: Workspace, created_at: str, reading: dict, apply: Callable[[dict], None] | None) -> dict | None:
@@ -629,7 +675,7 @@ def _end_reading(ws: Workspace, created_at: str, reading: dict, apply: Callable[
     alone), applying `apply` to it under the lock."""
     with _lock:
         d = load(ws)
-        if d is None or d.get("created_at") != created_at:
+        if not _same_draft(d, created_at):
             return None
         if apply:
             apply(d)
@@ -713,7 +759,7 @@ def apply_frame(draft: dict, frame, model: str | None, sent: list[dict], drafts:
                 ds = [by_n[n] for n in c.from_ if n in by_n]
                 used |= {_ident(d) for d in ds}
                 concepts.append(_concept(
-                    c.name, "ai", bool(c.core), _sources_of(ds), group=gk, meaning=c.meaning,
+                    c.name[:1].upper() + c.name[1:], "ai", bool(c.core), _sources_of(ds), group=gk, meaning=c.meaning,
                     when_to_use=c.when_to_use, when_not=c.not_when or "", words=list(c.words), core=c.core,
                     ai={"model": model, "meaning": c.meaning, "when_to_use": c.when_to_use,
                         "when_not": c.not_when or ""}))
@@ -760,10 +806,16 @@ def apply_frame(draft: dict, frame, model: str | None, sent: list[dict], drafts:
         keys.add(c["key"])
     # the person's concepts keep their place first, then the framework's in its order
     draft["groups"] = groups
+    over = (mine + concepts)[MAX_CONCEPTS:]
     draft["concepts"] = (mine + concepts)[:MAX_CONCEPTS]
     # the drafts no concept is made of, to add by hand: a name once (two documents, or two parts, drafted "zooming
     # in"), none the framework has under that name, none whose quote is a scrap of a sentence
     left, seen = [], {_norm(c["name"]) for c in draft["concepts"]}
+    for c in over:      # a draft holds MAX_CONCEPTS: what does not fit is set aside, never dropped
+        for x in c.get("sources") or []:
+            if _norm(c["name"]) not in seen:
+                seen.add(_norm(c["name"]))
+                left.append({"name": c["name"], **{k: x.get(k) for k in ("doc_id", "title", "quote", "start", "end", "page")}})
     for d in (drafts if frame is not None else []):
         k = _norm(d["name"])
         if _ident(d) in used or k in seen or len(d["quote"].split()) < MIN_SENTENCE_WORDS or _broken(d["quote"]):
@@ -789,7 +841,7 @@ def read(ws: Workspace, backend, model: str, progress: Callable | None = None,
         raise ValueError(NO_DRAFT)
     if job:
         mark_running(ws, job)
-    created, ids, focus = draft["created_at"], list(draft["doc_ids"]), draft.get("focus") or ""
+    created, ids, focus = draft.get("id") or draft["created_at"], list(draft["doc_ids"]), draft.get("focus") or ""
     before = draft["reading"].get("before") if draft["reading"].get("state") == "running" else draft["reading"]["state"]
     readers = readers or access.Readers(backend, model, should_stop=should_stop)
     settings = readers.settings()

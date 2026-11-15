@@ -1012,6 +1012,7 @@ def read_parts(ws: Workspace, batches: list[dict], progress: Callable | None = N
         progress(0, total)
     done = 0
     halted = None
+    finished = False
     try:
         for b in live:
             rid = runs_mod.start(ws, AI_KIND, b["doc_id"], b["be"], b["call"], len(b["tids"]))
@@ -1044,11 +1045,14 @@ def read_parts(ws: Workspace, batches: list[dict], progress: Callable | None = N
                 runs_mod.finish(ws, rid, len(b["read"]))
             if halted:
                 break
+        finished = True
     finally:
         unread = [t for b in live for t in b["tids"] if t not in b["read"]]
-        if unread and (halted == "stopped" or (halted is None and should_stop and should_stop())):
-            # stopped between two parts, or while one waited (Claude Code's wait raises): the parts not read leave
-            # the queue with the draft, so no helper goes on answering them (the parts read are kept)
+        if unread and (halted or not finished):
+            # stopped between two parts, or while one waited (Claude Code's wait raises), or one part was taken back
+            # (its document's AI setting changed) or an error ended the run: the parts not read leave the queue with
+            # the draft, every document's (they were queued together), so no helper goes on answering them for a
+            # reading that has ended (the parts read are kept)
             from . import taskqueue
 
             taskqueue.withdraw(ws, task_ids=unread)

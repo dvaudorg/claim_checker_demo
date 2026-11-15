@@ -196,6 +196,10 @@ class CorpusApi:
 
         ws = self.app.ws(name)
         body = self._body()
+        old = theoryframe.load(ws)
+        job = self._theory_job(old) if old else None
+        if job is not None:   # a reading of the draft this one replaces: stopped, as when a draft is discarded
+            self.app.jobs.cancel(job)
         try:
             d = theoryframe.start(ws, str(body.get("title") or ""), str(body.get("name") or ""),
                                   str(body.get("where") or "project"), body.get("doc_ids"), str(body.get("focus") or ""))
@@ -206,7 +210,8 @@ class CorpusApi:
         return {"draft": d, "offer": theoryframe.offer(ws, d["doc_ids"], self.app.settings())}
 
     def put_codebook_theory_draft(self, name, q):
-        """Body: what changed, {"title"?, "focus"?, "groups"?, "concepts"?, "rev"?} (theoryframe.save). {"draft"};
+        """Body: what changed, {"title"?, "name"?, "where"?, "focus"?, "groups"?, "concepts"?, "rev"?}
+        (theoryframe.save). {"draft"};
         409 when "rev" is not the draft's (it changed since the page loaded it)."""
         from .. import theoryframe
 
@@ -299,8 +304,12 @@ class CorpusApi:
         """The kept concepts become a codebook (theoryframe.make) and the draft is gone. {"codebook"}."""
         from .. import theoryframe
 
+        ws = self.app.ws(name)
+        d = theoryframe.load(ws)
+        if d is not None and self._theory_job(d) is not None:
+            raise ApiError(409, "The AI is still reading the theory: wait until it is done, or stop it.")
         try:
-            return {"codebook": theoryframe.make(self.app.ws(name))}
+            return {"codebook": theoryframe.make(ws)}
         except LookupError as e:
             raise ApiError(404, str(e)) from None
         except ValueError as e:

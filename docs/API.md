@@ -1855,7 +1855,8 @@ terms.
 in the project folder (`drafts/codebook-from-theory.json`, not shared through the team folder). A draft is
 
 ```
-{"version": 1, "title", "name", "where": "project" | "home", "doc_ids": [...], "focus": "", "created_at", "updated_at",
+{"version": 1, "id", "title", "name", "where": "project" | "home", "doc_ids": [...], "focus": "", "created_at",
+ "updated_at",
  "reading": {"state": "none" | "running" | "read" | "failed", "job": id | null, "model": str | null, "at": iso | null,
              "parts", "parts_read", "drafted", "problems": [one line each], "frame_task": id | null,
              "input": hash of (doc_ids, focus) the reading answered | null,
@@ -1885,12 +1886,14 @@ in the project folder (`drafts/codebook-from-theory.json`, not shared through th
   entries, defined terms, heading phrases), joined across documents by name, ungrouped; glossary entries start kept.
   400 when the name is taken or not a codebook name, no document is given, or `where` is neither; 404 for a document
   not in the project.
-- `PUT …/codebook-theory/draft` `{"title"?, "focus"?, "groups"?, "concepts"?, "rev"?}` (each whole: the list sent
-  replaces the list) → `{"draft"}`. With `rev` (the draft's `rev` as the page loaded it), a draft that changed since
+- `PUT …/codebook-theory/draft` `{"title"?, "name"?, "where"?, "focus"?, "groups"?, "concepts"?, "rev"?}` (each
+  whole: the list sent replaces the list) → `{"draft"}`. `name` must be free for a codebook (400 when not). With `rev` (the draft's `rev` as the page loaded it), a draft that changed since
   (a reading ended, another tab saved) answers 409 and nothing is written: load it again. Concepts are matched to the stored ones by `key` (a missing or unknown key makes a new
   concept, `how: "own"`); `ai` is the app's and cannot be sent; a source must be a span of one of the draft's
   documents (`quote` equal to the text from `start` to `end`, as `lookup` gives them), else it is dropped; an example
-  from a theory or working document, or from one of `doc_ids`, is dropped; a `group` not among the groups becomes
+  must be a span of an evidence document too (`quote` equal to its text from `start` to `end`, as `evidence` gives
+  them; its title and page are the document's), so one from a theory or working document, or from one of `doc_ids`,
+  or with words the document does not hold, is dropped; a `group` not among the groups becomes
   "". At most 60 concepts, 12 groups and 8 examples a concept; 400 for a concept without a name or too many concepts;
   404 without a draft.
 - `DELETE …/codebook-theory/draft` → `{"ok": true}`: the draft is discarded (a reading that runs is stopped).
@@ -1922,7 +1925,8 @@ in the project folder (`drafts/codebook-from-theory.json`, not shared through th
   theory: “quote” (title, p. N).` and `Also defined in title (p. N) and title (p. N).` for the other sources; with
   no meaning the quoted line alone; `include`: when to use it; `exclude`: when not; `keywords`: the words; the kept
   examples; the framework's groups) through `POST …/codebooks`' `"start": "theory"`, with the *AI draft* mark
-  (`ai_draft`, `"from": "theory"`) on the fields that still hold the AI's words. The draft is then gone. 400 when no
+  (`ai_draft`, `"from": "theory"`) on the fields that still hold the AI's words. The draft is then gone. 409 while
+  its reading runs. 400 when no
   concept is kept or two kept concepts share a name; 404 without a draft.
 
 **Concepts: paths, time and groups** (roadmap D3, D4, `conceptpaths.py`).

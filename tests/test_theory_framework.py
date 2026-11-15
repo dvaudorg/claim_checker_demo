@@ -177,7 +177,7 @@ def test_what_the_person_touched_survives_a_second_reading(project):
     d = theoryframe.load(ws)
     cs = d["concepts"]
     for c in cs:
-        if c["name"] == "practice":
+        if c["name"].lower() == "practice":
             c["meaning"] = "My own words for a practice."
     cs.append({"name": "Repair", "meaning": "Mending things.", "keep": True, "words": ["fix", "mend"]})
     d = theoryframe.save(ws, {"concepts": cs})
@@ -254,9 +254,9 @@ def test_the_kept_concepts_become_a_codebook_with_the_frameworks_groups(project)
     d = theoryframe.load(ws)
     ex = theoryframe.evidence(ws, {"name": "reinforcing loop", "words": ["reinforcing loop"]}, k=1)
     for c in d["concepts"]:
-        if c["name"] == "practice":
+        if c["name"].lower() == "practice":
             c["keep"], c["when_to_use"] = True, "When a passage describes what staff do every week."
-        if c["name"] == "stock":
+        if c["name"].lower() == "stock":
             c["examples"] = ex + [{"quote": "A stock is the memory", "doc_id": meadows, "title": "Thinking"}]
     theoryframe.save(ws, {"concepts": d["concepts"]})
     cb = theoryframe.make(ws)
@@ -299,12 +299,38 @@ def test_saving_cleans_what_the_page_sends(project):
     d = _started(ws, meadows, practice)
     c = dict(d["concepts"][0])
     c["sources"] = c["sources"] + [{"doc_id": meadows, "quote": "made up", "start": 0, "end": 7}]
-    c["examples"] = [{"quote": "from the theory", "doc_id": meadows}, {"quote": "from the evidence", "doc_id": ev}]
+    text = ws.scalar("SELECT text FROM documents WHERE doc_id=?", (ev,))
+    a = text.index("A delay between")
+    z = text.index("arrived.") + len("arrived.")
+    real = {"quote": " ".join(text[a:z].split()), "doc_id": ev, "start": a, "end": z, "title": "forged title", "page": 99}
+    mtext = ws.scalar("SELECT text FROM documents WHERE doc_id=?", (meadows,))
+    c["examples"] = [{"quote": " ".join(mtext[:40].split()), "doc_id": meadows, "start": 0, "end": 40},   # the theory
+                     {"quote": "Words nobody wrote in it", "doc_id": ev, "start": a, "end": z},        # not its text
+                     {"quote": real["quote"], "doc_id": ev},                                           # no place
+                     {"quote": "x", "doc_id": "nope", "start": 0, "end": 1},                           # no document
+                     real]
     c["ai"] = {"model": "forged"}
     d = theoryframe.save(ws, {"concepts": [c], "focus": "  repair  ", "groups": [{"key": "g1", "name": "One"}]})
     got = d["concepts"][0]
     assert len(got["sources"]) == len(c["sources"]) - 1                 # a quote not in the text is dropped
-    assert [e["doc_id"] for e in got["examples"]] == [ev] and got["ai"] is None and d["focus"] == "repair"
+    assert got["ai"] is None and d["focus"] == "repair"
+    # an example is a span of an evidence document, with the document's own title and page
+    assert [(e["doc_id"], e["start"], e["end"]) for e in got["examples"]] == [(ev, a, z)]
+    assert got["examples"][0]["title"] != "forged title" and got["examples"][0]["page"] != 99
+    # a theory document read again has other text: its quotes stay in the draft, and the concept is not "changed"
+    before = [dict(x) for x in got["sources"]]
+    assert before and not theoryframe.load(ws)["concepts"][0]["checked"]
+    with ws.connect() as cx:
+        cx.execute("UPDATE documents SET text = 'Read again. ' || text WHERE doc_id=?", (before[0]["doc_id"],))
+    again = theoryframe.save(ws, {"concepts": d["concepts"], "title": "Renamed"})
+    assert again["concepts"][0]["sources"] == before and again["title"] == "Renamed"
+    # the short name can be changed (a codebook of the first name may have come since), to a free one only
+    assert theoryframe.save(ws, {"name": "other_name", "where": "home"})["name"] == "other_name"
+    codebooks.create(ws, "taken", "Taken")
+    with pytest.raises(ValueError):
+        theoryframe.save(ws, {"name": "taken"})
+    with pytest.raises(ValueError):
+        theoryframe.save(ws, {"where": "nowhere"})
     with pytest.raises(ValueError):
         theoryframe.save(ws, {"concepts": [{"name": ""}]})
     with pytest.raises(ValueError):
