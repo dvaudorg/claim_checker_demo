@@ -729,15 +729,20 @@ class Readers:
         if stop is not None and hasattr(be, "should_stop"):
             be.should_stop = stop
 
-    def local_ended(self, refused: str | None = None) -> None:
+    def local_ended(self, refused=None) -> None:
         """0.19.4: tell the page the local model reads nothing more in this job (phase "done"), or that it was not
-        started (phase "refused", with why), so its panel does not go on saying it is loading."""
+        started (phase "refused", with why: a MemoryShort gives its numbers too), so its panel does not go on saying
+        it is loading."""
         report = getattr(self, "_report", None)
         if report is None or self._local is None:
             return
+        info = {"who": "local", "model": self._local[1], "phase": "refused" if refused else "done"}
+        if refused:
+            info["error"] = str(refused)
+            if hasattr(refused, "need"):
+                info["memory"] = {"need": refused.need, "free": refused.free, "short": True}
         try:
-            report({"who": "local", "model": self._local[1], "phase": "refused" if refused else "done",
-                    **({"error": refused} if refused else {})})
+            report(info)
         except Exception:  # noqa: BLE001 - a display problem must never stop the work
             pass
 

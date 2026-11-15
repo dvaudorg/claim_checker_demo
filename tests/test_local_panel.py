@@ -43,6 +43,8 @@ def test_no_room_for_the_local_model_claude_still_labels_the_rest(mixed, monkeyp
     assert res["local_waiting"] > 0 and res["local_read"] == 0 and res["local_model"] == "local-model"
     assert res["memory_short"].startswith("local-model was not started: it needs about 8.0 GB")
     assert res["local_problem"] is None
+    # the numbers, for the panel's one sentence
+    assert res["memory"] == {"need": 8 * GB, "free": 2 * GB, "short": True}
     # "Start it anyway": only the waiting passages are left, and the local model reads them
     again = profile.run_labels(ws, "sdg", cloud, "claude-haiku", all_passages=True, force=True)
     assert local.sent and _labelled(ws, ids["local"]) > 0
@@ -112,3 +114,35 @@ def test_local_status_for_the_panel(monkeypatch):
     monkeypatch.setattr(home, "make_restricted_backend", missing)
     st = access.local_status(s)
     assert st["model"] == "local-model" and "not installed" in st["problem"]
+
+
+def test_the_page_hears_when_the_local_model_was_refused(mixed, monkeypatch):
+    """Its panel must not go on saying "is loading": the job's progress says it was not started, with the numbers."""
+    ws, ids = mixed
+    local = Watched(need=8 * GB, free=2 * GB)
+    use_local_model(monkeypatch, local)
+    cloud = Cloud()
+    heard: list[dict] = []
+    cloud.progress = heard.append   # as the app's job wires its backend (start_queued_job)
+    profile.run_labels(ws, "sdg", cloud, "claude-haiku", all_passages=True)
+    last = [x for x in heard if x.get("who") == "local"][-1]
+    assert last["phase"] == "refused" and last["memory"]["short"] is True and "was not started" in last["error"]
+    heard.clear()
+    profile.run_labels(ws, "sdg", cloud, "claude-haiku", all_passages=True, force=True)
+    assert [x for x in heard if x.get("who") == "local"][-1]["phase"] == "done"
+
+
+def test_the_local_panel_is_built_like_the_claude_code_panel():
+    from pathlib import Path
+
+    static = Path(profile.__file__).parent / "gui" / "static"
+    lib = (static / "lib.js").read_text(encoding="utf-8")
+    body = lib[lib.index("function localPanelBody("):lib.index("// 0.13.10: how fast Claude Code works")]
+    # the house in every state, Start it anyway behind a confirmation, the memory sentence, the house line
+    assert 'icon("house"' in body and "On this computer" in body and "confirmDialog(" in body
+    assert "Start it anyway" in body and "of memory;" in body and 'aiWhere(' in body and '"local")' in body
+    assert 'local: "notice notice-local"' in lib
+    css = (static / "components.css").read_text(encoding="utf-8")
+    assert ".notice-local {" in css
+    for page in ("profile.js", "progress.js", "result.js"):
+        assert "localPanel(" in (static / "views" / page).read_text(encoding="utf-8"), page

@@ -475,7 +475,7 @@ def run_labels(ws: Workspace, framework: str, backend, model: str, doc_ids: list
             continue  # waits for the local model, as the passages before it
         if not local and by_local and not local_said:
             local_said = True
-            readers.local_ended(local_off)  # the local model's passages came first: its panel says it has ended
+            readers.local_ended(readers.memory_short or local_off)  # its passages came first: its panel says it has ended
         try:
             ok, _errs = tasks.run_one(ws, tid, got[0], got[1])
         except MemoryShort as e:
@@ -502,7 +502,7 @@ def run_labels(ws: Workspace, framework: str, backend, model: str, doc_ids: list
     if getattr(getattr(backend, "router", None), "route", "") == "local" and not (should_stop and should_stop()):
         tasks.run_stepups(ws, backend, ["label"], should_stop)  # the stronger model once, after the small one
     if by_local and not local_said:
-        readers.local_ended(local_off)
+        readers.local_ended(readers.memory_short or local_off)
     runs.finish(ws, run_id, done + failed)
     readers.free_memory()  # a large local model lets go of its memory once it has read
     waiting = 0
@@ -517,6 +517,9 @@ def run_labels(ws: Workspace, framework: str, backend, model: str, doc_ids: list
             "skipped_restricted": skipped + plan.get("no_ai", 0),
             "local_read": readers.read, "local_waiting": waiting, "local_model": local_model,
             "memory_short": str(readers.memory_short) if readers.memory_short else None,
+            # 0.19.4: the numbers, so the local panel writes its one sentence (need and free, in bytes)
+            "memory": ({"need": readers.memory_short.need, "free": readers.memory_short.free, "short": True}
+                       if readers.memory_short else None),
             "local_problem": None if readers.memory_short else (local_off or None)}
 
 

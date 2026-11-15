@@ -149,16 +149,20 @@ export function aiLabelCard({ project, framework, docIds = null, watchers, onEnd
     const lm = plan.local_model;
     let localBox = null, localOnly = false;
     if (toRead && plan.local && lm && !lm.same_as_main) {
-      // refused in the last run, unless the memory is known to be enough now
-      const refused = lastLocal && lastLocal.memory_short && !(lm.memory && !lm.memory.short) ? lastLocal.memory_short : null;
-      const short = (lm.memory && lm.memory.short) || !!refused;
+      // the last run's refusal counts unless the memory is known to be enough now; its numbers are the newer ones
+      const last = lastLocal && lastLocal.memory && !(lm.memory && !lm.memory.short) ? lastLocal.memory : null;
+      const memory = last || lm.memory;
+      const short = !!(memory && memory.short);
       const only = plan.local >= toRead;   // all that is left is the local model's
-      localOnly = only && short;   // then the panel's own buttons are the only ones
-      localBox = localPanel({ model: lm.model, memory: lm.memory, refused,
-        problem: lm.problem || (lastLocal && lastLocal.local_problem),
-        head: only ? `${plural(plan.local, "passage")} ${plan.local === 1 ? "waits" : "wait"} for your local model`
-          : `${fmt.num(plan.local)} of these ${plan.local === 1 ? "comes" : "come"} from documents marked Only a local AI: your local model reads ${plan.local === 1 ? "it" : "them"} first`,
-        onStart: short ? (force) => (force ? start(startBtn, true) : (lastLocal = null, load())) : null });
+      localOnly = only;                    // then the panel's Start is the one start
+      const n = plan.local, rest = toRead - plan.local;
+      localBox = localPanel({ model: lm.model, memory, problem: lm.problem || (lastLocal && lastLocal.local_problem),
+        blocking: only, count: n,
+        head: only ? null : `${fmt.num(n)} of these ${n === 1 ? "comes" : "come"} from documents marked Only a local AI: your local model reads ${n === 1 ? "it" : "them"}`,
+        sub: only ? null : short ? `Claude labels the other ${fmt.num(rest)} meanwhile; ${n === 1 ? "this one waits" : "these wait"} until there is room.` : "It reads them first, while Claude Code takes its own.",
+        anywayText: only ? null : `Label all ${fmt.num(toRead)}, the local ${n === 1 ? "one" : "ones"} too`,
+        status: only && lastLocal && lastLocal.memory ? `Still only ${(lastLocal.memory.free / 2 ** 30).toFixed(1)} GB free: it was not started.` : null,
+        onStart: (force) => start(startBtn, force) });
     }
     if (toRead && !localOnly) bits.push(h("div", { class: "btn-row pf-start-actions" }, withAI(startBtn)));
     else if (!toRead) bits.push(h("p", { class: "it pf-read-all" }, icon("check", { size: 14 }), all ? " The AI has read every passage." : " The AI has read every passage with a candidate code."));

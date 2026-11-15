@@ -287,8 +287,8 @@ export function simpleProgress(job, labelFn) {
   const localNow = running && m && m.phase && m.phase !== "done" && (m.who === "local" || LOCAL_MAIN.has(App.settings().backend));
   return h("div", { class: "stack prg-line" },
     localNow ? localPanel(m.phase === "refused"
-      ? { model: m.model, refused: m.error, head: "Your local model was not started: its passages wait", note: "When this run has finished, start it from this card." }
-      : { model: m.model, running: { phase: m.phase, seconds: m.seconds } }) : null,
+      ? { model: m.model, memory: m.memory, refused: m.memory ? null : m.error, head: "Your local model was not started: its passages wait", note: "When this run has finished, you can start it from this card." }
+      : { model: m.model, running: { phase: m.phase } }) : null,
     running && p.queue ? queueNotice(p.queue) : null,
     h("div", { class: "row prg-line-head" }, h("span", { class: "it" }, running ? h("span", { class: "running-dot", "aria-hidden": "true" }) : null, h("strong", {}, label)), h("span", { class: "muted small" }, fmt.secs(job.seconds))),
     h("div", { class: "progress-bar " + (running && !total ? "indeterminate" : ""), role: "progressbar", "aria-valuemin": 0, "aria-valuemax": total || 100, "aria-valuenow": total ? done : null, "aria-label": label },

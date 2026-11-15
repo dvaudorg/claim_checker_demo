@@ -1487,7 +1487,7 @@ export async function renderResult(view, [hypId], query) {
     if (![...running.values()].some((x) => x.kind === "read-local")) {
       return h("div", { class: "wait-local" }, localPanel({ count: part.waiting_local, noun: "excerpt", model: App.settings().restricted_model,
         head: `${part.waiting_local} ${part.waiting_local === 1 ? "excerpt comes" : "excerpts come"} from documents marked Only a local AI and ${part.waiting_local === 1 ? "waits" : "wait"} for your local model`,
-        load: true, onStart: (force) => startReadLocal(force) }));
+        blocking: true, load: true, onStart: (force) => startReadLocal(force) }));
     }
     const btn = readLocalButton("Read them now on this computer");
     return notice({ kind: "info", icon: "house", class: "wait-local" },

@@ -2293,51 +2293,58 @@ export function localPanel(opts = {}) {
   return box;
 }
 
-function localPanelBody(opts) {
-  const { model, memory: mem, problem, count, noun = "passage", running, refused, onStart, head, note } = opts;
-  const name = model || "Your local model";
-  const short = !!(mem && mem.short) || !!refused;
-  const parts = [h("p", { class: "lp-eyebrow small" }, "On this computer")];
-  if (running) {
-    const far = running.total ? ` · ${fmt.num(Math.min(running.done || 0, running.total))} of ${fmt.num(running.total)}` : "";
+let LP_SEQ = 0;   // each local panel's own ids
+// opts beyond localPanel's: blocking (the local model's work is all that is left, so a model that cannot start needs
+// you: the attention notice, and Start is the panel's main button), sub (one more line under the head: "Claude labels
+// the other 2 meanwhile."), anywayText (only the Start it anyway button, with these words: the card's own main button
+// starts the rest), status (what came of the last press, said once), note (a line where the buttons would be).
+function localPanelBody(o) {
+  const name = o.model || "your local model";
+  const noun = o.noun || "passage";
+  const mem = o.memory;
+  const short = !!(mem && mem.short) || !!o.refused;
+  const alarm = (short && o.blocking) || !!o.problem;
+  const id = `lp-${++LP_SEQ}`;
+  // the house in every state: the eyebrow says whose panel this is, whatever its tone
+  const parts = [h("p", { class: "lp-eyebrow small", id }, icon("house", { size: 13 }), "On this computer")];
+  if (o.running) {
     parts.push(h("p", { class: "lp-head" }, h("span", { class: "running-dot", "aria-hidden": "true" }),
-      h("strong", {}, `${name} ${LOCAL_PHASE[running.phase] || "is reading"}`),
-      h("span", { class: "muted small" }, `${far}${running.seconds !== undefined ? ` · ${fmt.secs(running.seconds)}` : ""}`)));
+      h("strong", {}, `${o.model || "Your local model"} ${LOCAL_PHASE[o.running.phase] || "is reading"}`)));
   } else {
-    const what = head || (count ? `${plural(count, noun)} ${count === 1 ? "waits" : "wait"} for your local model` : "Waiting for your local model");
-    parts.push(h("p", { class: "lp-head" }, h("strong", {}, what)));
+    parts.push(h("p", { class: "lp-head" }, h("strong", {}, o.head || (o.count ? `${plural(o.count, noun)} ${o.count === 1 ? "waits" : "wait"} for your local model` : "Waiting for your local model"))));
   }
-  // the memory line: what Claude Code's panel has no need of
-  if (problem) parts.push(h("p", { class: "small" }, problem));
-  else if (refused) parts.push(h("p", { class: "small" }, refused));
-  else if (mem && mem.loaded) parts.push(h("p", { class: "lp-mem muted small" }, `${name} is in memory already: it starts at once.`));
-  else if (mem && mem.need) parts.push(h("p", { class: `lp-mem small${short ? "" : " muted"}` },
-    `Needs about ${gb(mem.need)} of memory · ${gb(mem.free)} free now`, short ? ": too little, so it is not started by itself. Close programs you do not need, or start it anyway (the computer may become very slow until it has finished)." : "."));
-  if (!running && !problem && onStart) {
+  if (o.sub) parts.push(h("p", { class: "muted small" }, o.sub));
+  // the memory line, one sentence from the numbers: what Claude Code's panel has no need of
+  if (o.problem) parts.push(h("p", { class: "small" }, o.problem));
+  else if (mem && mem.need) {
+    const words = `Needs about ${gb(mem.need)} of memory; ${gb(mem.free)} is free now.${short ? " Close other programs, or choose a smaller model in Settings › AI." : ""}`;
+    parts.push(short && !alarm ? h("p", { class: "lp-mem small" }, workState("attention", words)) : h("p", { class: `lp-mem small${short ? "" : " muted"}` }, words));
+  } else if (o.refused) parts.push(h("p", { class: "lp-mem small" }, o.refused));
+  else if (mem && mem.loaded && !o.running) parts.push(h("p", { class: "lp-mem muted small" }, `${o.model || "Your local model"} is in memory already: it starts at once.`));
+  if (!o.running && !o.problem && o.onStart) {
     const go = async (b, force) => {
       b.disabled = true;
-      try { await onStart(force); } catch (e) { showError(e); b.disabled = false; }
+      try { await o.onStart(force); } catch (e) { showError(e); b.disabled = false; }
     };
-    const row = [];
-    if (short) {
-      const again = button({ kind: "main", sm: true, icon: "refresh", onClick: () => go(again, false) }, "Check the memory again");
-      const anyway = button({ sm: true, onClick: async () => {
-        const ok = await confirmDialog({ title: `Start ${name} anyway?`, danger: false, confirmText: "Start it anyway",
-          message: h("p", {}, "The computer may become very slow, or stop answering for a while, until the model has finished. What you have open is kept.") });
-        if (ok) go(anyway, true);
-      } }, "Start it anyway");
-      row.push(withAI(again), anyway);
+    const anyway = short ? button({ kind: o.anywayText ? "standard" : "quiet", sm: true, onClick: async () => {
+      const ok = await confirmDialog({ title: `Start ${name} anyway?`, danger: false, confirmText: "Start it anyway",
+        message: h("p", {}, "The computer may become very slow, or stop answering for a while, until the model has finished. What you have open is kept.") });
+      if (ok) go(anyway, true);
+    } }, o.anywayText || "Start it anyway") : null;
+    if (o.anywayText) {
+      if (anyway) parts.push(h("div", { class: "lp-start" }, withAI(anyway)));
     } else {
-      const b = button({ kind: "main", sm: true, icon: "play", onClick: () => go(b, false) }, `Start ${model || "your local model"}`);
-      row.push(withAI(b), h("span", { class: "muted small" }, "Runs here, in this app, and stops by itself when nothing waits."));
+      const start = button({ kind: "main", sm: true, icon: "play", onClick: () => go(start, false) }, `Start ${name}`);
+      parts.push(h("div", { class: "lp-start" }, anyway ? withAI(start, anyway) : withAI(start),
+        anyway ? null : h("span", { class: "muted small" }, "Runs here, in this app, and stops by itself when nothing waits.")));
     }
-    parts.push(h("div", { class: "lp-start" }, ...row));
-  } else if (note) parts.push(h("p", { class: "muted small" }, note));
-  // the model's own row, where Claude's panel has Thought and its helpers
-  parts.push(h("p", { class: "lp-model small" }, h("span", { class: "lp-model-label" }, "Model"), " ",
-    h("span", { class: "mono" }, model || "none chosen"), " · ", link({ href: "#/settings/model" }, problem ? "Choose one in Settings" : "Change in Settings")));
-  parts.push(aiWhere("It reads them on this computer: they never leave it.", "local"));
-  return notice({ kind: short || problem ? "attention" : "local", icon: short || problem ? undefined : "house", class: "local-notice", role: running ? "status" : null }, ...parts);
+  } else if (o.note) parts.push(h("p", { class: "muted small" }, o.note));
+  if (o.status) parts.push(h("p", { class: "small", role: "status" }, o.status));
+  // the model's own row, where Claude's panel has Thought and its helpers (not while it reads: nothing to change then)
+  if (!o.running) parts.push(h("p", { class: "lp-model small" }, h("span", { class: "lp-model-label" }, "Model"), " ",
+    h("span", { class: "mono" }, o.model || "none chosen"), " · ", link({ href: "#/settings/model" }, o.problem && !o.model ? "Choose one in Settings › AI" : "Change it in Settings › AI")));
+  parts.push(aiWhere(`The ${noun}s it reads never leave this computer.`, "local"));
+  return notice({ kind: alarm ? "attention" : "local", icon: alarm ? undefined : false, class: "local-notice", role: "group", "aria-labelledby": id }, ...parts);
 }
 
 // 0.13.10: how fast Claude Code works: how many helpers it starts at once (one, two or four). Faster is done sooner
