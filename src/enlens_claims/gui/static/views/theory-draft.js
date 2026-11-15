@@ -7,7 +7,7 @@
 // minutes, so it is a page, not a dialog: DESIGN.md 4.16). The labels are the codebook editor's, so nothing is renamed
 // when *Make the codebook* turns the concepts in the codebook into codes. Every change is kept in the draft as you work.
 import { forgetFrameworks } from "./options.js";
-import { App, api, h, icon, replace, clear, toast, showError, failedLoad, fmt, pageHead, P, plural, confirmDialog, field,
+import { App, api, h, icon, replace, clear, toast, showError, failedLoad, fmt, pageHead, P, plural, confirmDialog, dialog, field,
   watchJob, cancelJob, emptyState, shortTitle, session, debounce, button, setButtonKind, iconButton, stopButton, link, notice,
   card, tag, inset, input, select, textarea, choice, fold, readsLine, aiWhere, workState, withAI, aiTag, foundWords,
   searchHref, queueNotice, setBusy, spinner, cap } from "../lib.js";
@@ -65,8 +65,24 @@ export async function renderTheoryDraft(view) {
   let filter = session(`td-filter:${project}`) || "all";
   let job = null, watch = null, runEls = null;                  // the reading, while it runs
   let pending = false, saving = null, failed = false, gone = false;
+  let nameProblem = "";                                         // the short name is taken: said in Draft settings
   let lookedUp = null;                                          // Add a concept by name: {term, r, ticked: Set}
   const evid = new Map();                                       // a concept's passages: key -> state (`ev`)
+  let kept = new Map();                                         // each concept as the server last had it (key -> JSON)
+  const keptNow = () => { kept = new Map(draft.concepts.map((c) => [c.key, JSON.stringify(c)])); };
+  keptNow();
+  let counts = null;                                            // {documents, counts: {key: n}}: the rows' documents
+  let countSeq = 0;
+  async function askCounts() {
+    const seq = ++countSeq;
+    try {
+      const r = await api("GET", `${base}/counts`);
+      if (seq !== countSeq || !view.isConnected) return;
+      counts = r;
+      for (const c of draft.concepts) refreshRow(c);
+    } catch (_) { /* the rows go without their counts */ }
+  }
+  const askCountsSoon = debounce(askCounts, 1500);
   const head = h("div"), settingsBox = h("div"), theoryBox = h("div");
   // while the AI reads, the framework cannot be changed: one disabled fieldset holds it (its controls with it)
   const frame = h("fieldset", { class: "td-frame" });
@@ -84,17 +100,33 @@ export async function renderTheoryDraft(view) {
     pending = false;
     // while the AI reads, the reading's end writes the framework: only the title and the question are sent then
     const body = running() ? { title: draft.title, focus: draft.focus || "" }
-      : { title: draft.title, focus: draft.focus || "", groups: draft.groups, concepts: draft.concepts };
+      : { title: draft.title, focus: draft.focus || "", name: draft.name, where: draft.where, groups: draft.groups, concepts: draft.concepts };
     if (draft.rev !== undefined) body.rev = draft.rev;
+    const sent = body.concepts ? new Map(body.concepts.map((c) => [c.key, JSON.stringify(c)])) : null;
     saving = api("PUT", base, body);
     try {
       const r = await saving;
       if (r.draft && r.draft.rev !== undefined) draft.rev = r.draft.rev;
       if (r.draft && r.draft.reading) draft.reading.stale = r.draft.reading.stale;
+      if (sent) kept = sent;
       failed = false;
       return true;
     } catch (e) {
-      if (e.status === 409) { toast("The draft changed elsewhere: it is shown as it is now.", "info"); saving = null; await reload(); return false; }
+      if (e.status === 409) {
+        // the draft changed since this page loaded it (a reading ended, another tab): it is loaded again, and the
+        // concepts changed here since the last save are put into it, so nothing typed is lost
+        const mine = running() ? [] : draft.concepts.filter((c) => kept.get(c.key) !== JSON.stringify(c));
+        saving = null;
+        await reload();
+        if (mine.length && !gone && !running()) {
+          for (const c of mine) { const i = draft.concepts.findIndex((x) => x.key === c.key); if (i >= 0) draft.concepts[i] = c; else draft.concepts.push(c); }
+          drawAll();
+          changed();
+          toast(`The draft changed elsewhere. It is shown as it is now, with your last ${mine.length === 1 ? "change" : "changes"} put into it.`, "info");
+        } else toast("The draft changed elsewhere: it is shown as it is now.", "info");
+        return false;
+      }
+      if (e.status === 400 && /called|name/i.test(e.message || "")) { nameProblem = e.message; drawSettings(true); }
       if (e.status === 404) { gone = true; toast("The draft is gone (made into a codebook, or discarded elsewhere).", "info"); location.hash = "#/codebooks"; return false; }
       pending = true;
       failed = true;
@@ -108,7 +140,9 @@ export async function renderTheoryDraft(view) {
     if (!view.isConnected) return;
     if (!d.draft) { gone = true; location.hash = "#/codebooks"; return; }
     data = d; draft = d.draft; offer = d.offer; pending = false; failed = false;
+    keptNow();
     evid.clear();
+    askCounts();
     drawAll();
     follow();
   }
@@ -134,17 +168,26 @@ export async function renderTheoryDraft(view) {
 
   // ---- Draft settings (folded, like the editor's Codebook settings). The short name and where it is kept were chosen
   // when the draft began; the server keeps them as they are.
-  function drawSettings() {
+  function drawSettings(openIt) {
     const titleIn = input({ value: draft.title, maxlength: 200 });
     titleIn.addEventListener("input", () => { const v = titleIn.value.trim(); if (v) { draft.title = v; changed(); drawHead(); } });
+    const nameIn = input({ value: draft.name, maxlength: 40 });
+    const nameErr = h("div", { class: "field-error", role: "alert" }, nameProblem);
+    nameIn.addEventListener("input", () => { const v = nameIn.value.trim(); if (v) { draft.name = v; nameProblem = ""; nameErr.textContent = ""; changed(); } });
+    const whereSel = choice({ label: "Kept", value: draft.where, options: [["project", "With this project"], ["home", "With all my projects"]],
+      onPick: (w) => { draft.where = w; changed(); } });
     const titles = new Map((data.documents || []).map((d) => [d.doc_id, d.title]));
-    replace(settingsBox, card({ as: "details", class: "cb-settings" }, h("summary", {}, icon("sliders", { size: 14 }), "Draft settings"),
-      field("Title", titleIn),
-      h("p", { class: "small" }, h("strong", {}, "Short name: "), draft.name, h("span", { class: "muted" }, " (the codebook’s file)"), " · ",
-        h("strong", {}, "Kept: "), draft.where === "home" ? "with all my projects" : "with this project"),
+    const was = settingsBox.querySelector("details");
+    const box = card({ as: "details", class: "cb-settings" }, h("summary", {}, icon("sliders", { size: 14 }), "Draft settings"),
+      h("div", { class: "fields-2" }, field("Title", titleIn),
+        field("Short name", nameIn, { help: "letters, digits, - and _ (the codebook’s file)" })),
+      nameErr,
+      h("div", { class: "field" }, h("span", { class: "field-label" }, "Kept"), whereSel),
       h("div", { class: "field" }, h("span", { class: "field-label" }, "Theory documents"),
         h("ul", { class: "td-docs" }, draft.doc_ids.map((id) => h("li", {}, link({ kind: "title", serif: true, href: `#/doc/${encodeURIComponent(id)}` }, titles.get(id) || "a document no longer in the project"))))),
-      h("p", { class: "muted small" }, "To draw on other documents, start again from New codebook on the ", link({ href: "#/codebooks" }, "Codebooks page"), ".")));
+      h("p", { class: "muted small" }, "To draw on other documents, start again from New codebook on the ", link({ href: "#/codebooks" }, "Codebooks page"), "."));
+    if (openIt || (was && was.open)) box.open = true;
+    replace(settingsBox, box);
   }
 
   // ---- The theory: the reading, in one of four states
@@ -207,7 +250,8 @@ export async function renderTheoryDraft(view) {
     const r = draft.reading;
     const ai = draft.concepts.filter((c) => c.how === "ai").length;
     const btn = button({ icon: "refresh", onClick: (e) => readTheory(e.currentTarget) }, "Read again");
-    const sentence = `Read by ${r.model || "the AI"}${r.at ? ` on ${fmt.date(r.at)}` : ""}: ${plural(r.drafted || 0, "concept")} drafted from ${plural(r.parts_read || r.parts || 0, "part")}, joined into ${ai}${draft.groups.length ? ` in ${plural(draft.groups.length, "group")}` : ", not grouped"}.`;
+    const aside = (draft.left_out || []).length;
+    const sentence = `Read by ${r.model || "the AI"}${r.at ? ` on ${fmt.date(r.at)}` : ""}, in ${plural(r.parts_read || r.parts || 0, "part")}. Its ${plural(r.drafted || 0, "draft")} of concepts, many of them the same idea from two documents, became ${plural(ai, "concept")}${draft.groups.length ? ` in ${plural(draft.groups.length, "group")}` : ", not grouped"}${aside ? `; ${aside} ${aside === 1 ? "is" : "are"} set aside` : ""}.`;
     return card({ title: "The theory", class: "td-theory" },
       h("p", {}, workState("done", sentence)),
       (r.problems || []).length ? notice({ kind: "attention" }, (r.problems.length === 1 ? h("p", {}, r.problems[0]) : h("ul", {}, r.problems.map((x) => h("li", {}, x))))) : null,
@@ -215,7 +259,7 @@ export async function renderTheoryDraft(view) {
       fold({ open: !!r.stale }, "Your question, and reading again", focusField(),
         offer && offer.offered ? [h("div", { class: "btn-row" }, withAI(btn)),
           offer.reader === "local" ? aiWhere(localLine(), "local") : readsLine(readsWhat()),
-          h("p", { class: "muted small" }, "Reading again keeps every concept you changed, checked, added or kept examples for. The rest is replaced by the new reading.")]
+          h("p", { class: "muted small" }, "Reading again keeps every concept you changed, marked as done, added or kept examples for. The rest is replaced by the new reading.")]
           : h("p", { class: "muted small" }, offer ? offer.why : "")),
       docLines());
   }
@@ -284,7 +328,7 @@ export async function renderTheoryDraft(view) {
     if (all.length) {
       sec.append(h("p", { class: "muted" }, `${plural(all.length, "concept")}${draft.groups.length ? ` in ${plural(draft.groups.length, "group")}` : ""}, ${nIn} in the codebook. Open a concept to see the theory’s words and the passages of your documents.`),
         choice({ filter: true, label: "Which concepts", class: "td-filter", value: filter,
-          options: [["all", "All", all.length], ["in", "In the codebook", nIn], ["out", "Not in it", all.length - nIn]],
+          options: [["all", "All", all.length], ["in", "In the codebook", nIn], ["out", "Not in the codebook", all.length - nIn]],
           onPick: (v) => { filter = v; session(`td-filter:${project}`, v); drawFrame(); } }));
       if (draft.groups.length > 1) {
         sec.appendChild(h("p", { class: "td-jumps small" }, draft.groups.map((g, i) => {
@@ -343,14 +387,18 @@ export async function renderTheoryDraft(view) {
   // ---- a concept's row
   function summaryLine(c) {
     if (flat(c.meaning)) return shortTitle(flat(c.meaning), 160);
-    if (c.sources.length) return `“${shortTitle(flat(c.sources[0].quote), 150)}”`;
+    if (c.sources.length) return h("span", { class: "serif" }, `“${shortTitle(flat(c.sources[0].quote), 150)}”`);
     return h("em", { class: "muted" }, "no definition yet");
   }
   function badges(c) {
+    const docs = new Set(c.sources.map((x) => x.doc_id)).size;
+    const n = counts && counts.counts ? counts.counts[c.key] : undefined;
     return h("span", { class: "cb-code-badges" },
-      aiFields(c).length ? tag({ icon: "sparkles", title: "Words the AI drafted and you have not rewritten yet" }, "AI draft") : null,
+      docs > 1 ? tag({ icon: "book-open", title: `${docs} of your theory documents say what it means` }, `${docs} theory documents`) : null,
+      n !== undefined && (c.words || []).length ? tag({ icon: "file-text", title: n ? `Its words are found in ${n} of your ${plural(counts.documents, "document")}` : "None of your documents uses its words: try other words, or leave it out" },
+        n ? `in ${plural(n, "document")}` : "in no document") : null,
       c.examples.length ? tag({ icon: "quote", title: "Examples kept from your documents" }, plural(c.examples.length, "example")) : null,
-      c.checked ? tag({ icon: "check", title: "You have looked it over" }, "Checked") : null);
+      c.checked ? tag({ icon: "check", title: "You have looked it over" }, "Done") : null);
   }
   function keepButton(c) {
     return c.keep ? button({ kind: "quiet", sm: true, title: `Take “${cap(c.name)}” out of the codebook`, onClick: () => setKeep(c, false) }, "Take out")
@@ -451,23 +499,31 @@ export async function renderTheoryDraft(view) {
         `${cap(listWords(f.map((k) => FIELD_LABEL[k])))} ${f.length === 1 ? "is" : "are"} still the AI’s words${c.ai.model ? ` (${c.ai.model})` : ""}, drafted from your theory documents. Rewrite ${f.length === 1 ? "it" : "them"} in your own words; the mark goes when you do.`) : null);
     };
     drawMark();
-    const area = (key, rows, max) => {
-      const t = textarea({ rows, maxlength: max });
+    // a box as tall as its text (by its rows: a field half the page's width holds about 45 letters a line)
+    const fit = (t, perLine, least) => { t.rows = Math.min(10, Math.max(least, Math.ceil(t.value.length / perLine) + t.value.split("\n").length - 1)); };
+    const area = (key, least, max, perLine) => {
+      const t = textarea({ rows: least, maxlength: max });
       t.value = c[key] || "";
-      t.addEventListener("input", () => { c[key] = t.value; changed(); drawMark(); refreshRow(c); });
+      fit(t, perLine, least);
+      t.addEventListener("input", () => { c[key] = t.value; fit(t, perLine, least); changed(); drawMark(); refreshRow(c); });
       return t;
     };
     const words = textarea({ rows: 2, maxlength: 1200 });
     words.value = (c.words || []).join(", ");
+    fit(words, 95, 2);
     words.addEventListener("input", () => {
       c.words = [...new Map(words.value.split(/[,;\n]/).map(flat).filter(Boolean).map((w) => [w.toLowerCase(), w])).values()];
+      fit(words, 95, 2);
       changed();
       askSoon(c);
+      askCountsSoon();
     });
     return h("div", { class: "td-part" }, h("h3", { class: "td-h3" }, "The code"),
-      h("div", { class: "fields-2" }, field("Name", nameIn, { help: "It becomes the code’s name, with a capital first letter." }), field("Group", groupSel)),
-      field("Definition", area("meaning", 3, 1200), { help: "What the concept means, in plain words. The AI reads it when it labels." }),
-      h("div", { class: "fields-2" }, field("When to use it", area("when_to_use", 3, 1000)), field("When not to use it", area("when_not", 3, 800))),
+      h("div", { class: "fields-2" }, field("Name", nameIn), field("Group", groupSel)),
+      field("Definition", area("meaning", 2, 1200, 95), { help: c.sources.length
+        ? "What the concept means, in plain words. The AI reads it when it labels. In the codebook the theory’s first quote above follows it, with its document and page."
+        : "What the concept means, in plain words. The AI reads it when it labels." }),
+      h("div", { class: "fields-2" }, field("When to use it", area("when_to_use", 3, 1000, 45)), field("When not to use it", area("when_not", 3, 800, 45))),
       mark,
       field("Words it is matched by", words, { help: "The words your documents use for it, separated by commas. They find the passages below." }));
   }
@@ -518,7 +574,7 @@ export async function renderTheoryDraft(view) {
     const e = ev(c), words = c.words || [];
     const full = c.examples.length >= MAX_EXAMPLES;
     replace(part.querySelector(".td-kept"), c.examples.map((x, i) => inset({ class: "td-passage" }, whereLine(x),
-      h("p", { class: "serif td-quote-text" }, marked(flat(x.quote), words)[0]),
+      h("p", { class: "serif td-quote-text" }, flat(x.quote)),
       h("div", { class: "btn-row" }, h("span", { class: "small td-kept-mark" }, icon("check", { size: 13 }), " Kept as an example"),
         button({ kind: "quiet", sm: true, onClick: () => { c.examples.splice(i, 1); changed(); drawEvidence(c); refreshRow(c); } }, "Take back")))),
       full ? h("p", { class: "muted small" }, `It has ${MAX_EXAMPLES} examples, as many as a code keeps. Take one back to keep another.`) : null);
@@ -556,7 +612,7 @@ export async function renderTheoryDraft(view) {
     return h("div", { class: "btn-row cb-code-actions" },
       c.checked ? [h("span", { class: "small td-kept-mark" }, icon("check", { size: 13 }), " Checked"),
         button({ kind: "quiet", sm: true, onClick: () => { c.checked = false; changed(); drawFrame(); } }, "Undo")]
-        : button({ kind: "quiet", sm: true, icon: "check", onClick: () => { c.checked = true; changed(); drawFrame(); } }, "Mark as checked"),
+        : button({ kind: "quiet", sm: true, icon: "check", onClick: () => { c.checked = true; changed(); drawFrame(); } }, "Mark as done"),
       next ? button({ kind: "quiet", sm: true, icon: "arrow-right", onClick: () => openConcept(next) }, "Next concept") : null,
       others.length ? mergeSel : null,
       keepButton(c),
@@ -676,7 +732,7 @@ export async function renderTheoryDraft(view) {
   bar.append(barCount, barNote, barWhy, makeBtn);
   function drawBar() {
     const ins = draft.concepts.filter((c) => c.keep);
-    replace(barCount, h("strong", {}, plural(ins.length, "concept")), ` in the codebook · ${ins.filter((c) => c.checked).length} checked · ${ins.filter((c) => c.examples.length).length} with examples`);
+    replace(barCount, h("strong", {}, plural(ins.length, "concept")), ` in the codebook · ${ins.filter((c) => c.checked).length} done · ${ins.filter((c) => c.examples.length).length} with examples`);
     barNote.textContent = failed ? "Not kept yet: it is tried again at your next change." : "The draft is kept as you work.";
     // the page's main button: Read the theory before a reading (when the AI may read), Make the codebook after
     setButtonKind(makeBtn, draft.reading.state === "read" || !(offer && offer.offered) ? "main" : "standard");
@@ -686,6 +742,16 @@ export async function renderTheoryDraft(view) {
     barNote.hidden = !barWhy.hidden && !failed;   // one line beside the counts: why it cannot be made comes first
   }
   async function make(btn) {
+    // said before it is made: what becomes of the rest, and how much is still as the AI wrote it
+    const ins = draft.concepts.filter((c) => c.keep), outs = draft.concepts.length - ins.length, aside = (draft.left_out || []).length;
+    const asAI = ins.filter((c) => aiFields(c).length && !c.checked).length;
+    const rest = outs + aside;
+    const ok = await dialog({ title: "Make the codebook?", body: h("div", { class: "stack" },
+      h("p", {}, `The ${ins.length === 1 ? "concept" : `${ins.length} concepts`} in the codebook ${ins.length === 1 ? "becomes a code" : "become codes"} of “${draft.title}”, in ${ins.length === 1 ? "its group" : "their groups"}. You go on in the codebook’s editor.`),
+      asAI ? h("p", {}, `${asAI === ins.length ? (asAI === 1 ? "It is" : `All ${asAI} are`) : `${asAI} of them ${asAI === 1 ? "is" : "are"}`} still as the AI drafted ${asAI === 1 ? "it" : "them"}, not marked as done. ${asAI === 1 ? "It keeps its" : "They keep their"} AI draft mark in the codebook, so you can look ${asAI === 1 ? "it" : "them"} over there too.`) : null,
+      rest ? h("p", { class: "muted small" }, `The draft ends here: the ${plural(rest, "concept")} not in the codebook ${rest === 1 ? "is" : "are"} not kept. What the AI read is kept, so a new draft from the same documents gives the framework again at once.`) : null),
+      actions: [{ text: "Not yet", value: null }, { text: "Make the codebook", value: true, primary: true }] });
+    if (!ok) return;
     setBusy(btn, true);
     try {
       if (!(await flush())) return;
@@ -700,6 +766,7 @@ export async function renderTheoryDraft(view) {
 
   drawAll();
   follow();
+  askCounts();
   if (open) setTimeout(() => showOpen(true), 0);
   const onUnload = (e) => { if (pending || saving) { flush(); e.preventDefault(); e.returnValue = ""; } };
   window.addEventListener("beforeunload", onUnload);
@@ -707,6 +774,7 @@ export async function renderTheoryDraft(view) {
     window.removeEventListener("beforeunload", onUnload);
     if (watch) watch.stop();
     askSoon.cancel();
+    askCountsSoon.cancel();
     if (pending && !gone) flush();   // leaving the page: what was changed is kept
   };
 }

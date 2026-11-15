@@ -70,26 +70,34 @@ list says so (*A codebook from theory is being drafted*, with *Continue the draf
    and *Stop* ends it with the draft as it was. A document's own AI setting decides who reads it: Claude, only a local
    AI on this computer, or no AI (then only the terms it defines outright are used, and the card says so). The reading
    is written in the research log. *Read again* (under *Your question, and reading again*) keeps every concept you
-   changed, checked, added or kept examples for, and replaces the rest.
-4. **Shape it.** Each group is a card whose name you can change; *All*, *In the codebook* and *Not in it* filter the
-   rows. A row's *Add* and *Take out* put a concept in the codebook or take it out. Open a concept to see, top to
-   bottom:
+   changed, marked as done, added or kept examples for, and replaces the rest.
+4. **Shape it.** Each group is a card whose name you can change; *All*, *In the codebook* and *Not in the codebook*
+   filter the rows. A row says how many of your theory documents say what the concept means (when more than one),
+   in how many of your own documents its words are found (*in 11 documents*; *in no document* is a reason to try
+   other words or leave it out), how many examples you kept and whether you marked it *Done*. A row's *Add* and
+   *Take out* put a concept in the codebook or take it out. Open a concept to see, top to bottom:
    - *In the theory*: each source sentence, with its document (it opens the document at that place) and page;
      *Remove this quote*, and *Look for more in the theory*, which lists the best sentences of each theory document
      for the concept's name, each with *Add this quote*.
    - The code's fields, named as in the editor: *Name*, *Group*, *Definition*, *When to use it*, *When not to use it*,
      *Words it is matched by*. A field still in the AI's words carries the *AI draft* mark until you rewrite it.
    - *In your documents*: passages of your evidence documents that may show the concept, found by its words without
-     AI (never from a theory or working document), the words found marked. *Keep as an example* keeps one (at most
+     AI (never from a theory or working document), the words found marked and listed (*Matched: skills, repair
+     knowledge*). A word counts as you wrote it, a phrase as a phrase; a question of an interview guide, a run of
+     references and a table's row are passed over. *Keep as an example* keeps one (at most
      eight, as a code keeps), *Hide this passage* sets one aside, *Show other passages* asks again, and *Every place
      these words occur, in Search* opens the Search page. The passages follow *Words it is matched by* as you type.
-   - *Mark as checked*, *Next concept* (the next one in the codebook), *Merge into…* (the other concept takes this
+   - *Mark as done*, *Next concept* (the next one in the codebook), *Merge into…* (the other concept takes this
      one's quotes, examples and words; the toast has *Undo*), and *Remove from the draft* for a concept you added.
 5. **Add a concept by name** (no AI): type a name and *Look it up*; tick the sentences of the theory documents that
    define it (none is fine: you write its definition yourself), then add it. It joins *Concepts without a group*, in
    the codebook, opened.
-6. ***Make the codebook*** (in the bar at the foot, which counts the concepts in the codebook, how many you checked
-   and how many have examples) makes a code of each concept in the codebook and opens the editor. A code's
+6. ***Make the codebook*** (in the bar at the foot, which counts the concepts in the codebook, how many are done
+   and how many have examples) first says what will happen: how many concepts become codes, how many of them are
+   still as the AI drafted them, and that the draft ends here (the concepts not in the codebook are not kept; what
+   the AI read is, so a new draft from the same documents gives the framework again at once). It then makes a code
+   of each concept in the codebook and opens the editor. *Draft settings*, at the top of the page, holds the
+   codebook's *Title*, its *Short name* and where it is *Kept*. A code's
    description is its definition followed by the theory's sentence with its document and page ("In the theory: “…”
    (Title, p. 12)"), and the other documents that define it; *When to use it*, *When not to use it*, the words and
    the examples come with it, and the framework's groups become its groups. Fields still in the AI's words keep the

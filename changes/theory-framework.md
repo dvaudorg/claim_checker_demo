@@ -11,7 +11,9 @@
   choose what goes into the codebook; *Add a concept by name* finds a term's sentences in the theory without AI; the
   drafts the AI set aside wait in a fold to add. *Make the codebook* makes the codes, with the framework's groups, and
   marks the fields still in the AI's words *AI draft*. The draft is kept as you work, and the Codebooks list says when
-  one is waiting. Reading again keeps every concept you changed, checked, added or kept examples for.
+  one is waiting. Reading again keeps every concept you changed, marked as done, added or kept examples for. Each
+  row says in how many of your own documents the concept's words are found, so a concept your documents never speak
+  of shows before you open it.
 
 ### Changes that can alter your results
 

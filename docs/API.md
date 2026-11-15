@@ -1916,6 +1916,9 @@ in the project folder (`drafts/codebook-from-theory.json`, not shared through th
   of any. A sentence that could be no example is passed over: a question (an interview guide), a run of references,
   a table's cells, a line of figures. Where the words find fewer than `k` and the project has vectors of the chosen
   embedding model, passages found by meaning (`found_by: "meaning"`, `matched` empty) fill the rest. No AI.
+- `GET …/codebook-theory/draft/counts` → `{"documents": n, "counts": {concept key: n}}`: in how many of the evidence
+  documents each concept's words are found in a sentence that could be an example (as `evidence` finds them; no AI),
+  for the draft as it is kept. 404 without a draft.
 - `GET …/codebook-theory/draft/lookup?term=…` → `{"term", "sources": [{"doc_id", "title", "uses" (sentences that use
   it), "options": [{"quote", "start", "end", "page", "score"}]}], "passages": [the evidence for the term, as above]}`:
   of each of the draft's documents, the three sentences that best say what the term means (its glossary entry first;

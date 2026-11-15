@@ -838,6 +838,7 @@ html:has(.cb-savebar:not([hidden])) { scroll-padding-bottom: 6rem; }
 .td-add-row > .input { flex: 1 1 240px; max-width: 420px; }
 .td-lookup > p { margin: var(--space-2) 0; }
 .td-bar-note { flex: 1 1 auto; }
+@media (max-width: 520px) { .td-bar-note { display: none; } }   /* a phone's bar: the counts and the button */
 @container cb-codes (max-width: 620px) {
   .td-concept .cb-code-desc { white-space: nowrap; }
   .td-row { align-items: flex-start; }

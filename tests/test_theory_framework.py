@@ -449,6 +449,9 @@ def test_the_routes(api, tmp_path):  # noqa: F811
     c = next(c for c in draft["concepts"] if c["group"])
     st, body = api("POST", f"{base}/evidence", {"concept": {"name": "reinforcing loop", "words": ["reinforcing loop"]}})
     assert st == 200 and body["passages"] and all(p["doc_id"] not in (meadows, practice) for p in body["passages"])
+    st, body = api("GET", f"{base}/counts")
+    assert st == 200 and body["documents"] == 1 and set(body["counts"]) == {x["key"] for x in draft["concepts"]}
+    assert max(body["counts"].values()) == 1
     st, body = api("GET", f"{base}/lookup?term=balancing%20loop")
     assert st == 200 and body["term"] == "balancing loop" and len(body["sources"]) == 2 and "passages" in body
     c["examples"] = body["passages"][:1]

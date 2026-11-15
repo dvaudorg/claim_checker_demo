@@ -32,6 +32,7 @@ ROUTES: list[tuple[str, str, str]] = [
     ("POST", rf"/api/projects/{P}/codebook-theory/draft/read", "post_codebook_theory_draft_read"),
     ("POST", rf"/api/projects/{P}/codebook-theory/draft/evidence", "post_codebook_theory_draft_evidence"),
     ("GET", rf"/api/projects/{P}/codebook-theory/draft/lookup", "get_codebook_theory_draft_lookup"),
+    ("GET", rf"/api/projects/{P}/codebook-theory/draft/counts", "get_codebook_theory_draft_counts"),
     ("POST", rf"/api/projects/{P}/codebook-theory/draft/make", "post_codebook_theory_draft_make"),
     ("GET", rf"/api/projects/{P}/codebook-theory/{P}", "get_codebook_theory"),
     # 0.18.4 (K2 part 2, the optional AI part): whether the AI may draft a theory document's concepts, and the draft
@@ -284,6 +285,15 @@ class CorpusApi:
             return self.app._embedder_for(ws)
         except Exception:  # noqa: BLE001
             return None
+
+    def get_codebook_theory_draft_counts(self, name, q):
+        """{"documents": n, "counts": {concept key: n}}: in how many of the evidence documents each concept's words
+        are found (theoryframe.evidence_counts, no AI), for the draft as it is kept."""
+        from .. import theoryframe
+
+        ws = self.app.ws(name)
+        self._theory_draft(ws)
+        return theoryframe.evidence_counts(ws)
 
     def get_codebook_theory_draft_lookup(self, name, q):
         """?term=…: the term in each of the draft's theory documents (theoryframe.lookup), and "passages": the evidence

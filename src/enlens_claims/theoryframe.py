@@ -1170,6 +1170,37 @@ def evidence(ws: Workspace, concept: dict, k: int = 4, skip=(), embedder=None) -
     return out
 
 
+def evidence_counts(ws: Workspace, concepts: list[dict] | None = None) -> dict:
+    """In how many of the researcher's own documents each concept's words are found, in a sentence that could be an
+    example (as `evidence` finds them, no AI): {"documents": the evidence documents in all, "counts": {key: n}}. What
+    a row of the draft says about a concept before it is opened: a concept nobody's documents speak of, and one
+    they all do. `concepts`: the draft's when not given."""
+    from .docrole import not_evidence_docs
+    from .search import rank_passages
+
+    draft = load(ws)
+    if concepts is None:
+        concepts = draft["concepts"] if draft else []
+    never = not_evidence_docs(ws._conn()) | set(draft["doc_ids"] if draft else [])
+    total = sum(1 for r in ws.query("SELECT doc_id FROM documents") if r["doc_id"] not in never)
+    counts: dict[str, int] = {}
+    for c in concepts:
+        words = _clean_words(c.get("words")) or _clean_words([c.get("name")])
+        rxs = [(w, rx) for w in words for rx in [_phrase_rx(w)] if rx]
+        docs: set[str] = set()
+        if rxs:
+            try:
+                found = rank_passages(ws, " ".join(words), words, k=max(EVIDENCE_POOL, 4 * total), per_doc=4,
+                                      require_terms=True, evidence_only=True)
+            except Exception:  # noqa: BLE001 - no index yet: nothing counted
+                found = []
+            for p in found:
+                if p["doc_id"] not in never and p["doc_id"] not in docs and _best_span(p["text"] or "", rxs):
+                    docs.add(p["doc_id"])
+        counts[str(c.get("key") or "")] = len(docs)
+    return {"documents": total, "counts": counts}
+
+
 def lookup(ws: Workspace, doc_ids: list[str], term: str) -> dict:
     """A term in each theory document: how many of its sentences use it, and the three that best say what it means
     (`theorycodes._defining_score`; a glossary entry of that name first): {"term", "sources": [{"doc_id", "title",
