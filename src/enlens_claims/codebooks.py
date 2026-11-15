@@ -192,7 +192,7 @@ def load(ws: Workspace, name: str) -> dict:
     st["removed"] = removed_codes(ws, name)
     st["stale"] = stale(ws, name)
     st["versions"] = len(_version_files(ws, name))
-    st["profile_default"] = name == _profile_default()
+    st["profile_default"] = name == _profile_default(ws)
     st["clashes"] = clashes(ws, name)  # 0.18: a colleague's version of a code you both changed (sync)
     return st
 
@@ -270,10 +270,10 @@ def settle_clash(ws: Workspace, name: str, uid: str, keep: str, why: str | None 
     return load(ws, name)
 
 
-def _profile_default() -> str:
+def _profile_default(ws: Workspace) -> str:
     from .home import load_settings
 
-    return load_settings().get("profile_framework") or "sdg"
+    return frameworks.chosen(load_settings().get("profile_framework"), ws)
 
 
 def removed_codes(ws: Workspace, name: str) -> list[dict]:
@@ -330,7 +330,7 @@ def list_all(ws: Workspace) -> dict:
     labels = {r[0]: r[1] for r in ws.query("SELECT framework, COUNT(*) FROM labels GROUP BY framework")}
     checks = {r[0]: r[1] for r in ws.query("SELECT framework, COUNT(*) FROM hypotheses WHERE framework IS NOT NULL "
                                            "GROUP BY framework")}
-    default = _profile_default()
+    default = _profile_default(ws)
     for fw in frameworks.available(ws).values():
         info = fw.info()
         try:
