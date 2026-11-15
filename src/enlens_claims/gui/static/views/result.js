@@ -516,8 +516,10 @@ export async function renderResult(view, [hypId], query) {
     }
 
     // keep the person's place after a save or a re-read: the card they acted on stays where it was on the screen,
-    // even when it moved in the list (the list is sorted by judgement), gets a short highlight and says where it
-    // went; a slim placeholder is left at its old place, so the next card slides into it
+    // unless it moved in the list (the list is sorted by judgement). Then a slim placeholder is left at its old place
+    // and, after a judgement of yours, the screen stays there, so the next card to review slides up under it (the
+    // card itself says where it went, and the placeholder's "Show it" goes to it); after a re-read the screen follows
+    // the card, as before
     window.scrollTo(0, y);
     if (refocus && !focusAfter) {
       const again = (refocus.id && box.querySelector(`#${CSS.escape(refocus.id)}`)) || [...box.querySelectorAll(refocus.tag.toLowerCase())].find((e) => e.textContent.trim() === refocus.text);
@@ -533,14 +535,19 @@ export async function renderResult(view, [hypId], query) {
         const movedList = f.was && f.was !== nowIn;
         const movedInList = !movedList && Number.isInteger(f.index) && newIndex !== f.index;
         const group = { supports: "Supports", partially_supports: "Partly supports", refutes: "Contradicts" }[(el.className.match(/ev-(supports|partially_supports|refutes)/) || [])[1]] || "Not about this hypothesis";
+        let ph = null;   // the slim placeholder at the card's old place
         if ((movedList || movedInList) && !f.noNote) {
           const part = el.closest(".part-card");
           const oldList = part ? (f.was === "rest" ? part.querySelector(".also-read .ev-list") : part.querySelector(":scope > .ev-list")) : null;
+          // a long list draws its cards as the page scrolls: the cards down to the old place are drawn first, so the
+          // placeholder lands there and not at the end of what was drawn
+          const lazy = oldList && lazies.find((l) => l.lazy.el === oldList);
+          if (lazy && Number.isInteger(f.index)) lazy.lazy.reveal(Math.min(f.index + 1, lazy.lazy.total() - 1));
           const what = movedList ? (nowIn === "rest" ? "Moved to “not about this hypothesis”" : "Moved into the evidence list")
             : `Moved ${newIndex > f.index ? "down" : "up"} the list (sorted by judgement)`;
           const showIt = () => { el.scrollIntoView({ behavior: "smooth", block: "center" }); el.classList.add("ev-flash"); setTimeout(() => el.classList.remove("ev-flash"), 1800); };
           // the place it left: a one-line note like the card's own (which is the one a screen reader hears)
-          const ph = notice({ kind: "info", icon: "arrow-right", class: "moved-ph" },
+          ph = notice({ kind: "info", icon: "arrow-right", class: "moved-ph" },
             h("p", {}, what, " · ", link({ kind: "jump", onClick: showIt }, "Show it")));
           if (oldList) {
             const kids = [...oldList.children].filter((e) => e.classList.contains("ev") && e !== el);
@@ -554,9 +561,11 @@ export async function renderResult(view, [hypId], query) {
         }
         // same place on the screen as before, when it was in view then; otherwise bring it into view. With an
         // anchor (the judgement row the person clicked), that row is what stays put, so no button moves under the pointer
-        if (!f.noScroll) {
+        const wasInView = Number.isFinite(f.top) && (f.bottom === undefined || f.bottom > 0) && f.top < window.innerHeight;
+        const stay = !!(f.stay && ph && ph.isConnected && wasInView);   // a judgement moved it: the screen stays at the old place
+        if (stay) window.scrollBy(0, ph.getBoundingClientRect().top - f.top);
+        else if (!f.noScroll) {
           const r0 = el.getBoundingClientRect();
-          const wasInView = Number.isFinite(f.top) && (f.bottom === undefined || f.bottom > 0) && f.top < window.innerHeight;
           const anchorEl = f.anchor ? el.querySelector(f.anchor) : null;
           if (wasInView && anchorEl && Number.isFinite(f.anchorTop)) window.scrollBy(0, anchorEl.getBoundingClientRect().top - f.anchorTop);
           else if (wasInView) window.scrollBy(0, r0.top - f.top);
@@ -565,9 +574,10 @@ export async function renderResult(view, [hypId], query) {
         el.classList.add("ev-flash");
         setTimeout(() => el.classList.remove("ev-flash"), 1800);
         // the button that was pressed was drawn again: the keyboard goes on from the card's way back (its note's
-        // Back to “…”, else the first button of its judging row), never from the top of the page
+        // Back to “…”, else the first button of its judging row), never from the top of the page. When the screen
+        // stayed at the old place, from the placeholder's "Show it", so Tab goes on to the next card to review
         if (!document.activeElement || document.activeElement === document.body) {
-          const next = el.querySelector(".ev-moved .btn") || el.querySelector(".judge-row button");
+          const next = (stay && ph.querySelector("a, button")) || el.querySelector(".ev-moved .btn") || el.querySelector(".judge-row button");
           if (next) next.focus({ preventScroll: true });
         }
       }
@@ -1814,7 +1824,7 @@ export async function renderResult(view, [hypId], query) {
       const list = el ? [...el.parentElement.children].filter((e) => e.classList.contains("ev")) : [];
       const rect = el ? el.getBoundingClientRect() : { top: 80, bottom: 400 };
       // the judgement row is what the person clicked: after the re-draw it stays where it is on the screen
-      focusAfter = { passage_id: p.passage_id, claim_id: part.claim_id, top: rect.top, bottom: rect.bottom, anchor: ".judge", anchorTop: wrap.getBoundingClientRect().top, was: el && el.closest(".also-read") ? "rest" : "evidence", index: el ? list.indexOf(el) : 0,
+      focusAfter = { passage_id: p.passage_id, claim_id: part.claim_id, top: rect.top, bottom: rect.bottom, anchor: ".judge", anchorTop: wrap.getBoundingClientRect().top, was: el && el.closest(".also-read") ? "rest" : "evidence", index: el ? list.indexOf(el) : 0, stay: true,
         reason: verdict ? `your judgement is now ${verdict === "not_relevant" ? "“Not about this”" : `“${GRADE_TEXT[verdict]}”`}.` : "the AI's judgement counts again." };
       const fa = focusAfter;
       const noteNow = note ?? (noteField ? noteField.value.trim() : prev.note);   // a comment typed before picking is saved with the judgement
