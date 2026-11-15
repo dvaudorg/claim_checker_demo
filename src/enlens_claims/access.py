@@ -775,6 +775,34 @@ class Readers:
         return self.for_level(lv)
 
 
+def local_status(settings: dict) -> dict:
+    """0.19.4: the local model that reads documents marked Only a local AI, for the local panel, without starting it:
+    {"model", "server", "memory": {"loaded"} or {"need", "free", "short"}} (memory only where the server says enough),
+    {"model", "problem"} when it cannot be used, {"same_as_main": True} when the main model reads them itself, or
+    {"model": None, "problem"} when none is chosen."""
+    from .home import make_restricted_backend, restricted_choice
+    from .llm import BackendError
+
+    choice = restricted_choice(settings)
+    if not choice:
+        return {"model": None, "problem": "No local model is chosen for documents marked Only a local AI "
+                                          "(Settings → AI)."}
+    if choice.get("same_as_main"):
+        return {"same_as_main": True}
+    try:
+        got = make_restricted_backend(settings)
+    except BackendError as e:
+        return {"model": choice.get("model"), "server": choice.get("server"), "problem": str(e)}
+    if got is None:
+        return {"model": None, "problem": "No local model is chosen for documents marked Only a local AI."}
+    be, model = got
+    out: dict = {"model": model, "server": choice.get("server")}
+    st = be.memory_status(model) if hasattr(be, "memory_status") else None
+    if st:
+        out["memory"] = st
+    return out
+
+
 def allowed_docs(ws: Workspace, allowed: set[str]) -> set[str]:
     """The documents whose setting is one of `allowed`."""
     return {d for d, lv in levels(ws).items() if lv in allowed}

@@ -1562,6 +1562,11 @@ html:has(.cb-savebar:not([hidden])) { scroll-padding-bottom: 6rem; }
 .cc-step strong { display: block; }
 /* Start Claude Code (queue notices, the sidebar panel) */
 .start-claude { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+/* 0.19.4: the local panel (localPanel()): the Claude Code panel's rows, in the local notice */
+.lp-eyebrow { color: var(--text-2); font-weight: var(--fw-strong); letter-spacing: .02em; }
+.lp-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.lp-start { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.lp-model-label { color: var(--text-2); }
 .sc-start, .sc-running { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 /* the button's hint is a line of its own under it, never read as part of the AI mark beside the button */
 .sc-start > .muted { flex: 1 0 100%; }

@@ -4,7 +4,7 @@
 // says why it is there; a person can agree, change or reject it (in the document viewer, Codes panel).
 // The pieces shared with the document viewer (the AI-labelling card, the keyword pass, wording) are exported from here.
 import { featureEyebrow, viewTabs, withAI } from "../features.js";
-import { App, api, h, icon, madeWithFact, replace, clear, toast, showError, addDocumentsFirst, fmt, pageHead, P, emptyState, download, switchControl, navigate, plural, shortTitle, cap, runningJob, heatCell, downloadLinks, helpMark, drawInSteps, button, link, notice, card, tag, input, select, fold, choice, readsLine, inset, heatGrid, heatHead } from "../lib.js";
+import { App, api, h, icon, madeWithFact, replace, clear, toast, showError, addDocumentsFirst, fmt, pageHead, P, emptyState, download, switchControl, navigate, plural, shortTitle, cap, runningJob, heatCell, downloadLinks, helpMark, drawInSteps, button, link, notice, card, tag, input, select, fold, choice, readsLine, localPanel, inset, heatGrid, heatHead } from "../lib.js";
 import { jobCard } from "./progress.js";
 import { roleTag } from "./doc-role.js";   // 0.19.0 (N3): a working document's row in the grid
 
@@ -79,6 +79,7 @@ export function aiLabelCard({ project, framework, docIds = null, watchers, onEnd
   let all = false;
   let limit = "";
   let compareResult = null;
+  let lastLocal = null;   // 0.19.4: the last run's result, when the local model's passages were left waiting
   let running = false;
   const one = docIds && docIds.length === 1;
   el.append(h(compact ? "h3" : "h2", { id: hid, class: "pf-ai-title" }, one ? "Let the AI read this document" : "Let the AI read the passages"), body, jobBox);
@@ -143,9 +144,26 @@ export function aiLabelCard({ project, framework, docIds = null, watchers, onEnd
           h("thead", {}, h("tr", {}, h("th", { scope: "col" }, "Setting"), h("th", { scope: "col" }, "Last run"), h("th", { scope: "col" }, "Now"))),
           h("tbody", {}, changed.map((c) => h("tr", {}, h("td", {}, c.field), h("td", { class: "mono small" }, shown(c.was)), h("td", { class: "mono small" }, shown(c.now))))))))));
     }
-    if (toRead) bits.push(h("div", { class: "btn-row pf-start-actions" }, withAI(startBtn)));
-    else bits.push(h("p", { class: "it pf-read-all" }, icon("check", { size: 14 }), all ? " The AI has read every passage." : " The AI has read every passage with a candidate code."));
-    if (toRead || changed.length) bits.push(readsLine("the passages it labels"));
+    // 0.19.4: passages of documents marked Only a local AI are read by the local model, first: its own panel says so,
+    // with its memory against what this computer has free (and, when that is too little, Start it anyway)
+    const lm = plan.local_model;
+    let localBox = null, localOnly = false;
+    if (toRead && plan.local && lm && !lm.same_as_main) {
+      // refused in the last run, unless the memory is known to be enough now
+      const refused = lastLocal && lastLocal.memory_short && !(lm.memory && !lm.memory.short) ? lastLocal.memory_short : null;
+      const short = (lm.memory && lm.memory.short) || !!refused;
+      const only = plan.local >= toRead;   // all that is left is the local model's
+      localOnly = only && short;   // then the panel's own buttons are the only ones
+      localBox = localPanel({ model: lm.model, memory: lm.memory, refused,
+        problem: lm.problem || (lastLocal && lastLocal.local_problem),
+        head: only ? `${plural(plan.local, "passage")} ${plan.local === 1 ? "waits" : "wait"} for your local model`
+          : `${fmt.num(plan.local)} of these come from documents marked Only a local AI: your local model reads ${plan.local === 1 ? "it" : "them"} first`,
+        onStart: short ? (force) => (force ? start(startBtn, true) : (lastLocal = null, load())) : null });
+    }
+    if (toRead && !localOnly) bits.push(h("div", { class: "btn-row pf-start-actions" }, withAI(startBtn)));
+    else if (!toRead) bits.push(h("p", { class: "it pf-read-all" }, icon("check", { size: 14 }), all ? " The AI has read every passage." : " The AI has read every passage with a candidate code."));
+    if ((toRead && !localOnly) || changed.length) bits.push(readsLine("the passages it labels"));
+    if (localBox) bits.push(localBox);
     bits.push(opts);
     bits.push(fold({}, "Technical details", h("dl", { class: "ev-tech-list" },
       h("div", {}, h("dt", {}, "AI model"), h("dd", {}, shown(run.now && run.now.model))),
@@ -178,10 +196,11 @@ export function aiLabelCard({ project, framework, docIds = null, watchers, onEnd
     }, { small: true, plain: true, stoppedText: "Stopped. Nothing was stored." }));
   }
 
-  async function start(btn) {
+  async function start(btn, force) {
     btn.disabled = true;
     const lim = Number(limit) > 0 ? Math.floor(Number(limit)) : undefined;
     const payload = { framework, all_passages: all };
+    if (force) payload.force = true;   // 0.19.4: Start it anyway (the local model, with too little memory free)
     if (docIds) payload.doc_ids = docIds;
     if (lim) payload.limit = lim;
     let r;
@@ -201,6 +220,8 @@ export function aiLabelCard({ project, framework, docIds = null, watchers, onEnd
         const ch = res.changes || {};
         toast(`The AI read ${plural(res.read || 0, "passage")}${res.failed ? `; ${res.failed} could not be read` : ""}. Of the codes the keywords found there, it confirmed ${fmt.num(ch.confirmed || 0)} and did not confirm ${fmt.num(ch.not_confirmed || 0)}; it added ${fmt.num(ch.added || 0)} the keywords had missed.`, res.failed ? "warn" : "ok", { ttl: 12000 });
         jobBox.hidden = true;
+        // 0.19.4: the local model could not start: its passages wait; the plan's local panel says why (load() below)
+        lastLocal = res.local_waiting ? res : null;
       }
       body.hidden = false;
       load();

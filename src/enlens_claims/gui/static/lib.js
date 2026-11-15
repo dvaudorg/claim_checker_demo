@@ -908,8 +908,8 @@ export const UI = {
   iconButton: "icon-btn", iconButtonSm: "icon-btn icon-btn-sm",
   link: { plain: "", title: "link-title", back: "link-back", next: "link-next", external: "link-external", jump: "link-jump" },
   tag: { neutral: "chip", code: "chip chip-code", attention: "warn-chip", count: "chip chip-count" },
-  notice: { info: "notice notice-info", done: "notice notice-ok", attention: "notice notice-warn", error: "notice notice-error" },
-  noticeIcon: { info: "info", done: "check", attention: "alert-triangle", error: "alert-circle" },
+  notice: { info: "notice notice-info", done: "notice notice-ok", attention: "notice notice-warn", error: "notice notice-error", local: "notice notice-local" },
+  noticeIcon: { info: "info", done: "check", attention: "alert-triangle", error: "alert-circle", local: "house" },
   card: "card", cardSm: "card-sm", fold: "fold", foldSm: "fold-sm", choice: "seg", choiceButton: "seg-btn", option: "option-card",
   input: "input", select: "select", textarea: "textarea", search: "search-field",
   menu: "menu-list", menuItem: "menu-item", menuSep: "menu-sep",
@@ -2260,6 +2260,82 @@ function choiceChanged(project, from) {
     if (e.box === from || e.project !== project) continue;
     if (e.box.isConnected) e.redraw(); else if (e.box.dataset.drawn) SC_LIVE.delete(e);
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// 0.19.4: the local model's panel, the twin of the Claude Code panel (queueNotice + startClaude) for a model on this
+// computer. The same order (what waits, the start row, the model's own row, the AI line at its foot) and the same
+// buttons, so the two read as one family; told apart by its box (docs/DESIGN.md 4.12, the local notice: the page's own
+// ground, a stronger edge, "On this computer" over its head) and the house wherever Claude's panel has the inbox and
+// the cloud. It shows what Claude Code's panel cannot know: the model's memory against what this computer has free.
+//
+// opts: model (its name), memory ({ loaded } or { need, free, short } in bytes, from /api/local-status), problem (why
+// it cannot be used), count + noun (what waits: 33, "passage"), running ({ phase, seconds, done, total }: the model
+// is reading; the card around it holds Stop), refused (the job's MemoryShort words: it was not started), onStart(force)
+// (the start row; force: "Start it anyway").
+const GiB = 1 << 30;
+const gb = (n) => `${(n / GiB).toFixed(1)} GB`;
+const LOCAL_PHASE = { waiting: "is loading and reading", thinking: "is thinking it over", writing: "is writing its answer", done: "has finished" };
+
+export function localPanel(opts = {}) {
+  // opts.load: the panel asks /api/local-status for the model and its memory itself, and fills them in when they come
+  const box = h("div", { class: "local-panel" });
+  let st = { ...opts };
+  const draw = () => replace(box, localPanelBody(st));
+  draw();
+  if (opts.load) api("GET", "/api/local-status").then((r) => {
+    if (!r || r.same_as_main) return;
+    st = { ...st, model: st.model || r.model, memory: st.memory || r.memory, problem: st.problem || r.problem };
+    draw();
+  }).catch(() => {});
+  return box;
+}
+
+function localPanelBody(opts) {
+  const { model, memory: mem, problem, count, noun = "passage", running, refused, onStart, head } = opts;
+  const name = model || "Your local model";
+  const short = !!(mem && mem.short) || !!refused;
+  const parts = [h("p", { class: "lp-eyebrow small" }, "On this computer")];
+  if (running) {
+    const far = running.total ? ` · ${fmt.num(Math.min(running.done || 0, running.total))} of ${fmt.num(running.total)}` : "";
+    parts.push(h("p", { class: "lp-head" }, h("span", { class: "running-dot", "aria-hidden": "true" }),
+      h("strong", {}, `${name} ${LOCAL_PHASE[running.phase] || "is reading"}`),
+      h("span", { class: "muted small" }, `${far}${running.seconds !== undefined ? ` · ${fmt.secs(running.seconds)}` : ""}`)));
+  } else {
+    const what = head || (count ? `${plural(count, noun)} ${count === 1 ? "waits" : "wait"} for your local model` : "Waiting for your local model");
+    parts.push(h("p", { class: "lp-head" }, h("strong", {}, what)));
+  }
+  // the memory line: what Claude Code's panel has no need of
+  if (problem) parts.push(h("p", { class: "small" }, problem));
+  else if (refused) parts.push(h("p", { class: "small" }, refused));
+  else if (mem && mem.loaded) parts.push(h("p", { class: "lp-mem muted small" }, `${name} is in memory already: it starts at once.`));
+  else if (mem && mem.need) parts.push(h("p", { class: `lp-mem small${short ? "" : " muted"}` },
+    `Needs about ${gb(mem.need)} of memory · ${gb(mem.free)} free now`, short ? ": too little, so it is not started by itself. Close programs you do not need, or start it anyway (the computer may become very slow until it has finished)." : "."));
+  if (!running && !problem && onStart) {
+    const go = async (b, force) => {
+      b.disabled = true;
+      try { await onStart(force); } catch (e) { showError(e); b.disabled = false; }
+    };
+    const row = [];
+    if (short) {
+      const again = button({ kind: "main", sm: true, icon: "refresh", onClick: () => go(again, false) }, "Check the memory again");
+      const anyway = button({ sm: true, onClick: async () => {
+        const ok = await confirmDialog({ title: `Start ${name} anyway?`, danger: false, confirmText: "Start it anyway",
+          message: h("p", {}, "The computer may become very slow, or stop answering for a while, until the model has finished. What you have open is kept.") });
+        if (ok) go(anyway, true);
+      } }, "Start it anyway");
+      row.push(withAI(again), anyway);
+    } else {
+      const b = button({ kind: "main", sm: true, icon: "play", onClick: () => go(b, false) }, `Start ${model || "your local model"}`);
+      row.push(withAI(b), h("span", { class: "muted small" }, "Runs here, in this app, and stops by itself when nothing waits."));
+    }
+    parts.push(h("div", { class: "lp-start" }, ...row));
+  }
+  // the model's own row, where Claude's panel has Thought and its helpers
+  parts.push(h("p", { class: "lp-model small" }, h("span", { class: "lp-model-label" }, "Model"), " ",
+    h("span", { class: "mono" }, model || "none chosen"), " · ", link({ href: "#/settings/model" }, problem ? "Choose one in Settings" : "Change in Settings")));
+  parts.push(aiWhere("It reads them on this computer: they never leave it.", "local"));
+  return notice({ kind: short || problem ? "attention" : "local", icon: short || problem ? undefined : "house", class: "local-notice", role: running ? "status" : null }, ...parts);
 }
 
 // 0.13.10: how fast Claude Code works: how many helpers it starts at once (one, two or four). Faster is done sooner
