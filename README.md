@@ -57,9 +57,13 @@ Windows from 0.15.4 on). Your projects and settings (the `enlens` folder in your
   impact claims tagged with UN SDG targets and compared with an expert Value Chain Assessment.
 
 <!-- new-in:start (written by `python tools/release.py prepare`: change the changelog entry, not this) -->
-## New in 0.19.6: The local model shows its work, and names themes again
+## New in 0.19.7: A team you can find and set up step by step, and a calmer research log
 
-- **A slow local model shows that it keeps working.** The line of a short AI job (naming themes, judging pairs of terms, other wordings, reading an excerpt again) names your local model and adds a second line.
+- **Team and Research log are places in the sidebar.** The sidebar now reads *Overview*, then *Project* (*Documents*, *Research log*, *Team*), *Explore* and *Check*.
+- **The Team page says what you came to do.** Without a team it has three cards: *Start a team for this project*, *Join a colleague's team* and *Send it once, as a file*.
+- **A storage space is set up one step at a time.** The dialog shows the whole way as numbered steps, opens one at a time, and each goes on in your own words (*I have an account*, *I see the key*).
+- **With a team, the Team page has two views.** *Activity*: what waits for your word, the sync state with *Sync now* and *Pause*, what came in, what you shared; while you are the only one, a card with *Invite a colleague…*.
+- **A calmer Research log page.** A one-line box to write an entry, one *Show* list in place of the row of filter buttons, the downloads at the top right, entries in a readable column.
 <!-- new-in:end -->
 
 How it works, in the manual: [Explore your documents](docs/manual/explore.md) (working documents, the concept map),
