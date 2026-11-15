@@ -47,6 +47,7 @@ import os
 import re
 import secrets
 import threading
+from collections import Counter
 from typing import Any, Callable
 
 from .store import Workspace, now
@@ -995,12 +996,15 @@ def _poor_example(s: str) -> bool:
     """A sentence nobody would keep as an example of a concept: a question (an interview guide, a survey), a run of
     references or of a table's cells, a heading, a line of figures, a scrap."""
     w = s.split()
-    if len(w) < 8 or "?" in s:
+    if len(w) < 8 or "?" in s or s.lstrip()[:1].islower():      # (a small first letter: the tail of a sentence)
         return True
     if len(_CITED.findall(s)) >= 3 or s.count(";") >= 4 or s.count("•") >= 2 or "□" in s:
         return True
-    if sum(c.isdigit() for c in s) > 0.12 * len(s):
-        return True
+    if sum(c.isdigit() for c in s) > 0.12 * len(s) or s.rstrip()[-1:] not in ".!…”’\"')":
+        return True         # figures, or a line that ends without a full stop (a table's row, a caption)
+    said = Counter(x.lower().strip(".,;:()") for x in w if len(x) > 4)
+    if said and said.most_common(1)[0][1] >= 4:
+        return True         # a scale's cells ("Not a barrier Major barrier a barrier …")
     return sum(1 for x in w if x[:1].isupper()) > 0.6 * len(w)
 
 

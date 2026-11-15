@@ -263,7 +263,8 @@ framework from all of them, and join what two authors both mean.
   resources) is joined into the idea itself, unless the theory's argument rests on telling the kinds apart. Leave a
   draft out by naming it in no concept.
   Each concept has:
-  - name: as the theory names it, at most five words, in the singular;
+  - name: as the theory names it, at most five words; one thing in the singular ("stock", not "stocks"), a phrase
+    as the theory writes it ("making and breaking links");
   - from: the numbers of the drafts it is made of, at least one;
   - meaning: one or two plain sentences on what the concept means in this theory, saying only what its drafts' quotes
     say, in words a newcomer to the theory understands (no "refers to the notion of");
@@ -273,8 +274,10 @@ framework from all of them, and join what two authors both mean.
   - not_when: one sentence that starts with "When" and says when a neighbouring concept of the framework fits instead,
     naming it; null when no concept is close;
   - words: 5 to 10 words or short phrases that the researcher's documents would use where they show this concept.
-    Not the theory's terms: a report on a repair event writes "volunteers", "learned how to", "tools", never
-    "competence";
+    Not the theory's terms: a report on a repair event writes "learned how to", "skills", "know-how", never
+    "competence". Each is looked for exactly as you write it, so give words of one to three words that belong to
+    this concept, and none that nearly every page of their documents holds (in a study of repair events: "repair",
+    "volunteers") or that any text holds ("because", "always");
   - core: true for the concepts the framework cannot do without (the ones a first codebook should start from, 6 to
     12 of them), false for the rest.
 - note: one line on which drafts you left out and why, or null.
