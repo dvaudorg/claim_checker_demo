@@ -57,9 +57,9 @@ Windows from 0.15.4 on). Your projects and settings (the `enlens` folder in your
   impact claims tagged with UN SDG targets and compared with an expert Value Chain Assessment.
 
 <!-- new-in:start (written by `python tools/release.py prepare`: change the changelog entry, not this) -->
-## New in 0.19.5: Start your local model from any page
+## New in 0.19.6: The local model shows its work, and names themes again
 
-- **A local model refused for memory gets its panel everywhere, with Start it anyway.** In 0.19.4 the local model's panel came to the Codes page and a hypothesis's result; elsewhere (naming themes, judging concept links, other wordings, and the other AI jobs).
+- **A slow local model shows that it keeps working.** The line of a short AI job (naming themes, judging pairs of terms, other wordings, reading an excerpt again) names your local model and adds a second line.
 <!-- new-in:end -->
 
 How it works, in the manual: [Explore your documents](docs/manual/explore.md) (working documents, the concept map),
