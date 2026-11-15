@@ -57,16 +57,18 @@ Windows from 0.15.4 on). Your projects and settings (the `enlens` folder in your
   impact claims tagged with UN SDG targets and compared with an expert Value Chain Assessment.
 
 <!-- new-in:start (written by `python tools/release.py prepare`: change the changelog entry, not this) -->
-## New in 0.19.0rc2: Reader 6 and documents in two languages, a codebook from several theories, and sync that settles
+## New in 0.19.0: Your own drafts, a concept map, codebooks from other programs and from theory, and reader 6
 
-- **A codebook from several theory documents at once.** *New codebook*, *From theory documents* now lets you tick every theory the research is read through (those marked as theory are ticked to begin with), not just one.
-- **Keep one language of a document in two.** A journal that prints each article in two languages, column beside column, gave every finding twice: search by meaning found both, a check could quote the translation.
-- **Settings → Updates links to ENLENS's code on GitHub.** Beside *Report a problem*, a *Source code* link opens the repository, with its releases and the roadmap.
-- **Reader 6 reads PDFs more cleanly: hidden text, publishing details, the title and running heads.** Some publishers (MDPI among them) make a figure by showing a window onto a whole draft page; reader 5 read the hidden rest of that page too. Can change results.
-- **Reader 6 also keeps the two languages of a document apart.** Reader 5 sometimes put a paragraph of each language into one passage, where a column ended without a full stop and the next started in lower case. Can change results.
+- **Your own working documents.** Keep your drafts and notes beside the corpus (*Documents* → *Role* → *Mark as my working document*): they are read, searched and coded like any document but are never a source.
+- **A concept map.** *Concepts* → *Map* draws the concepts your documents mention together more often than by chance, in groups and with the links you accepted, filtered by document, theme, code or year.
+- **Codebooks from NVivo, ATLAS.ti or MAXQDA, and from theory.** *New codebook* takes a REFI-QDA codebook (`.qdc` or `.qdpx`), or every theory document the research is read through: their own glossaries first, and *Draft with AI* reads the whole document.
+- **Reader 6.** PDFs are read more cleanly (text a figure hides, publishing details on the first page, the title, running heads), and a document printed in two languages can keep one. Can change results.
+- **Your institution's drive as the team's storage space.** Besides Backblaze and Cloudflare, the Team page offers a folder in SURFdrive, SURF Research Drive or a university's Nextcloud (any drive that speaks WebDAV), locked and signed as the others.
 <!-- new-in:end -->
 
-How it works: [Work together](docs/manual/together.md) in the manual. Every release, with what was not tested:
+How it works, in the manual: [Explore your documents](docs/manual/explore.md) (working documents, the concept map),
+[Codebooks](docs/manual/codebooks.md), [How documents are read](docs/manual/how-documents-are-read.md) and
+[Your team's storage space](docs/manual/storage-space.md). Every release, with what was not tested:
 [CHANGELOG.md](CHANGELOG.md).
 
 ## How to cite ENLENS
