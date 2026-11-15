@@ -70,9 +70,11 @@ as you scroll; click an outline to go to that block.
 A document read by an older reader keeps that reading, and the list of documents marks it (*read before 0.15*, or
 *read by an earlier reader*). Its *Reading* panel offers **Read with the new reader** (the mark in the list opens it
 with the preview already started). It is offered only where the new reader can change the reading: a PDF or web page
-read by reader 3 was not offered reader 4, and a plain text file read by reader 4 is not offered reader 5, as each
-would read the same. Reader 5 changes PDFs with ruled tables, tables over two pages or figures, and Word files and web
-pages with pictures; the preview says what would change.
+read by reader 3 was not offered reader 4, a plain text file read by reader 4 is not offered reader 5, and only PDFs
+read by reader 5 are offered reader 6, as the others would read the same. Reader 5 changes PDFs with ruled tables,
+tables over two pages or figures, and Word files and web pages with pictures; reader 6 changes PDFs with text hidden
+behind a figure, publishing details at the foot of the first page, or running heads beside a page number. The preview
+says what would change.
 
 ```mermaid
 flowchart LR
