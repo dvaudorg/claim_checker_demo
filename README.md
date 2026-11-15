@@ -57,13 +57,13 @@ Windows from 0.15.4 on). Your projects and settings (the `enlens` folder in your
   impact claims tagged with UN SDG targets and compared with an expert Value Chain Assessment.
 
 <!-- new-in:start (written by `python tools/release.py prepare`: change the changelog entry, not this) -->
-## New in 0.19.0rc1: Your own drafts, a concept map, codebooks from other programs, and a university drive for the team
+## New in 0.19.0rc2: Reader 6 and documents in two languages, a codebook from several theories, and sync that settles
 
-- **Your own working documents.** Keep your drafts and notes in the project beside the corpus: in *Documents*, open a row → *Role* → *Mark as my working document*, or use the same button on the document's page.
-- **A concept map.** *Concepts* has a second tab, *Map*: the concepts mentioned in the most passages, joined by a line when the documents mention two together more often than by chance (pointwise mutual information, not…
-- **Bring in a codebook from NVivo, ATLAS.ti or MAXQDA.** *Codes* › *Codebooks* › *New codebook* › *From NVivo, ATLAS.ti or MAXQDA* takes a REFI-QDA codebook (`.qdc`), or the codebook of a REFI-QDA project (`.qdpx`), and makes it a codebook of your own.
-- **A code's definition drafted from its examples.** In the codebook editor, open a code with two examples or more and press *Draft from the examples*: the AI reads only the passages that hold those examples (with the code's name and group) and drafts…
-- **Count non-scientific documents in one check.** When newspapers, blogs or company brochures are the material a hypothesis is about, they are its evidence.
+- **A codebook from several theory documents at once.** *New codebook*, *From theory documents* now lets you tick every theory the research is read through (those marked as theory are ticked to begin with), not just one.
+- **Keep one language of a document in two.** A journal that prints each article in two languages, column beside column, gave every finding twice: search by meaning found both, a check could quote the translation.
+- **Settings → Updates links to ENLENS's code on GitHub.** Beside *Report a problem*, a *Source code* link opens the repository, with its releases and the roadmap.
+- **Reader 6 reads PDFs more cleanly: hidden text, publishing details, the title and running heads.** Some publishers (MDPI among them) make a figure by showing a window onto a whole draft page; reader 5 read the hidden rest of that page too. Can change results.
+- **Reader 6 also keeps the two languages of a document apart.** Reader 5 sometimes put a paragraph of each language into one passage, where a column ended without a full stop and the next started in lower case. Can change results.
 <!-- new-in:end -->
 
 How it works: [Work together](docs/manual/together.md) in the manual. Every release, with what was not tested:

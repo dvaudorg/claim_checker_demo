@@ -1,5 +1,106 @@
 # Changelog
 
+## 0.19.0rc2 (November 2026): Reader 6 and documents in two languages, a codebook from several theories, and sync that settles
+
+A second candidate for 0.19.0. Reader 6 reads PDFs more cleanly (text a figure hides, publishing details at the foot
+of the first page, the journal's name, running heads) and keeps the two languages of a side-by-side translation
+apart, so *Keep only English* can leave the other language out of everything you search, code and check. *New
+codebook from theory documents* now takes every theory you read through at once. Four defects in working together,
+found by the long random runs of four copies syncing, are fixed: a new reading that did not reach colleagues, and
+sync-clash copies of a check made at every round. Documents already in a project keep their reading until you choose
+*Read with the new reader*. *Update* offers a candidate only when you chose *Try new versions early*. In a team
+everyone needs this version, so try it on a project you do not share, or with the whole team at once.
+
+### New
+
+- **A codebook from several theory documents at once.** *New codebook*, *From theory documents* now lets you tick
+  every theory the research is read through (those marked as theory are ticked to begin with), not just one. Each
+  document's concepts are listed in a section of their own, with its own *Draft with AI*, and become a group of codes
+  named after the document. A concept two documents both define is offered once for each, with each author's own
+  definition quoted; if you keep both, each gets its document's title after its name. No example comes from any
+  of the chosen documents, even one not marked as theory. The research log names every document. Does not change
+  existing codebooks or results.
+- **Keep one language of a document in two.** A journal that prints each article in two languages, column beside
+  column, gave every finding twice: search by meaning found both, a check could quote the translation, codes and
+  themes counted each point twice. When at least a fifth of a document is in a second language, its *Reading* panel
+  now says *In two languages: English 52 %, Spanish 48 %* and offers **Keep only English** (or the other one): the
+  other language's paragraphs stay in the text, folded and marked *left out: Spanish (you kept English)*, but
+  searches, codes, themes and checks no longer read them. A paragraph in both languages (a title printed twice) and
+  one whose language cannot be told still count; your own *Restore* or *Leave out* of a paragraph wins. The choice
+  is kept with the document, holds when it is read again and travels to colleagues as *Leave out* does. Changes
+  results only for the documents you choose it for.
+- **Settings → Updates links to ENLENS's code on GitHub.** Beside *Report a problem*, a *Source code* link opens
+  the repository, with its releases and the roadmap. Changes no result.
+
+### Changes that can alter your results
+
+- **Reader 6 reads PDFs more cleanly: hidden text, publishing details, the title and running heads.** Some publishers
+  (MDPI among them) make a figure by showing a window onto a whole draft page; reader 5 read the hidden rest of that
+  page too, as dozens of one-line "figures" that broke the paragraphs around them in pieces. Reader 6 reads only what
+  the figure shows, so it is one figure with its caption and the paragraphs are whole. The e-mail addresses, the DOI
+  and the dates ("Received …", "Available online …") that Elsevier and others print at the foot of the first page,
+  after the introduction has begun, are set aside as front matter instead of read as text, as is a paragraph that is
+  only a link or a DOI. A journal's name printed larger than the title is no longer taken for the title when the name
+  begins the running head (as at Elsevier), and a title over two lines is kept whole. A running head with the page
+  number at the other end of its line is found on every page, not every other one. So it no longer reads as a heading
+  that cuts a reference list or the end notes in two: a reference list that runs over a page is now left out of the
+  passages as a whole, and a document can count noticeably fewer words (one Elsevier paper went from 10,605 to 9,003).
+  A byline or a date before the text, as in a newspaper article ("By …", "May 8, 2012"), is now set aside with the
+  front matter too. Word files, web pages and text files read as before, except one in two languages (below). **Can
+  change results, for documents you move to it.** New documents are read by reader 6; PDFs already in a project keep
+  their reading until you choose *Read with the new reader*.
+- **Reader 6 also keeps the two languages of a document apart.** Reader 5 sometimes put a paragraph of each
+  language into one passage, where a column ended without a full stop and the next started in lower case. Reader 6
+  never does, in a document in two languages of any kind (besides what it changes in PDFs, above). A document reader
+  5 read is offered *Read with the new reader* only when reader 6 reads it otherwise: a PDF, or a document in two
+  languages one of whose passages held both. New documents get reader 6. Can change results, for documents you move
+  to it.
+
+### Fixed
+
+- **The reading view's Leave out card: one at a time, beside the text, and it says what goes with it.** After a
+  click, the card of the block you had clicked stayed open while you pointed at another block, so two cards showed at
+  once; now only the block you point at (or the one the keyboard is on) shows its card. The card is no wider than the
+  column of paragraph numbers, so it no longer hides the first words of the next block. And when a block shares a
+  passage with others (a heading and the text under it, or a web page's menu of short lines read together with its
+  first paragraph), *Leave out* and *Restore* say how many blocks go together (*17 together*) before you press them:
+  before, *Leave out* on a menu line such as "Search" took seventeen blocks, the page's first paragraph among them,
+  without a word beforehand. Changes no result by itself.
+- **Working together: four defects the long random runs found, fixed.** The nightly runs of four copies of a project
+  syncing at random (30 seeds of 80 rounds) failed in 7 seeds since 14 November. (1) After the owner accepted a
+  colleague's *Read with the new reader*, then removed the document and added it again, the owner's own new reading
+  of it never reached the project: the colleagues kept the older reading. (2) In the same case a collaborator's new
+  reading was neither proposed nor sent, because their earlier proposal of it, accepted before, still counted. (3)
+  When one person had removed a document (their removal waiting for the owner) that the others read with a newer
+  reader, a check with an excerpt on it was copied as a sync clash at every round, a copy of the copy each time,
+  and the team never went quiet. (4) Reading a document again could stop with a database error when a colleague's
+  results on it already named the new reading's passages; now an excerpt already there keeps its place, the same
+  excerpt's judgements join it, and nothing is lost. Changes no result of yours; colleagues' copies now agree where
+  they did not.
+
+### Tests
+
+- `test_codebook_from_theory.py`: a codebook from two theory documents (a group per document, examples from either
+  dropped, the log naming both; one document still makes no groups).
+- `tests/test_bilingual.py`: a two-page Spanish and English PDF made for the test; the two languages and each
+  paragraph's; reader 5's passage in both languages and reader 6 without one; one-language documents read the same by
+  both readers; *Keep only English*, a restored paragraph, *Count both again* and the research log through the API;
+  the choice held through *Read with the new reader*; a one-language reader-5 PDF offered the new reader, a text
+  file not; one language kept between copies, never two.
+- `tests/test_owner_random.py`: a judgement that moves with its excerpt when a copy reads a document again (reader 1
+  reads a short report as one passage, reader 5 as three) counts as kept, one left as a record where it had a place
+  as lost. All 30 seeds of the long run pass.
+
+### Not yet done
+
+- A journal's name on a cover page (Taylor & Francis) can still be taken for the title, and a title set beside a
+  column of other text can still come out in pieces.
+- An appendix after the end notes is left out with them when its heading is not recognised ("Appendix B.
+  Description …"); in one Elsevier paper this now leaves out the appendix's second page as well as its first.
+- A colleague on an ENLENS older than 0.19 keeps the choice but does not apply it, so their copy still reads both
+  languages until they update (as with marking a document as theory).
+- A document in three languages: only its two main ones are told apart, so paragraphs of the third may still count.
+
 ## 0.19.0rc1 (November 2026): Your own drafts, a concept map, codebooks from other programs, and a university drive for the team
 
 A candidate for 0.19.0, with six new features to try before the release. You can keep your own drafts beside the
