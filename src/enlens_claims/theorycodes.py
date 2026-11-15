@@ -35,8 +35,9 @@ italics are not offered: the readers do not keep fonts' slant (only boldness). T
 as"); a document in another language still gives its glossary, headings and frequent phrases.
 
 0.18.4: **the optional AI draft** (Level 2 or 3, `ai_offer`, `draft_with_ai`). 0.19.0 (theory-codes-v2): the AI reads
-**the whole document**, a part at a time (`_ai_parts`: its body passages in order, at most AI_MAX_CHARS a part; v1
-read twelve passages of it, 5% of a book). Each part is one `theory_codes` task, given the Level-0 candidates as hints
+**the whole document**, a part at a time (`_ai_parts`: its body passages in order, at most AI_MAX_CHARS a part, fewer
+for a local model whose context length the person set smaller, `_part_chars`; v1 read twelve passages of it, 5% of a
+book, and a local model's automatic context length did not hold even those). Each part is one `theory_codes` task, given the Level-0 candidates as hints
 and the part's passages, and drafts the concepts that part defines or explains: each a short name, a definition quoted
 exactly from the document (at least three whole words; the quote check sends a quote that is not there back to be
 fixed, as for every kind) and a one-line reason; a part without a concept gives none. The parts' drafts are put
@@ -684,8 +685,9 @@ def keep_evidence_examples(ws: Workspace, codes: list[dict], sources: Iterable[s
 # ---------------------------------------------------------------------------------------------
 AI_KIND = "theory_codes"
 AI_MAX_CANDIDATES = 30   # the Level-0 candidates the AI is given as hints
-AI_MAX_CHARS = 24000     # one part of the document: what the AI reads at once (a local model's window holds it)
-AI_MAX_PARTS = 60        # the parts of one document it reads (about 1.4 million characters; of a longer one, the parts
+AI_MAX_CHARS = 22000     # one part of the document: what the AI reads at once (with the answer and a reasoning
+#                          model's room it fits a context length of 16,384 tokens, see `_part_chars`)
+AI_MAX_PARTS = 60        # the parts of one document it reads (about 1.3 million characters; of a longer one, the parts
 #                          that use the candidates most)
 AI_PART_CONCEPTS = 12    # the concepts it may draft from one part
 AI_MAX_CONCEPTS = 40     # and the concepts offered from the whole document
@@ -732,9 +734,40 @@ def ai_offer(ws: Workspace, doc_id: str, settings: dict | None = None) -> dict:
     return {"offered": True, "why": None, "reader": "claude" if claude else "main", "level": lv, "parts": parts}
 
 
-def _ai_parts(ws: Workspace, doc_id: str, terms: list[str]) -> list[list[dict]]:
-    """The whole document as the AI reads it: its body passages in order, in parts of at most AI_MAX_CHARS each (a
-    passage is never cut), without the passages that hold no prose (running heads, a table of contents, equations).
+AI_MIN_CHARS = 3000      # a part smaller than this is not worth a request: the reader's context length is too small
+_PASSAGE_HEAD = 24       # "P12 (page 345)" and the blank lines around a passage, in the prompt
+TOO_SMALL = ("The context length of the model on this computer ({n:,} tokens) is too small to read a theory document "
+             "a part at a time. Set it to automatic in Settings, or to 16,384 or more.")
+
+
+def _part_chars(be, settings: dict) -> int:
+    """The characters of the document one part may hold for this reader. Claude reads AI_MAX_CHARS. A model on this
+    computer has a context length (`num_ctx`): set to automatic, it is raised here to hold a whole part (the
+    app sizes it for a check's few excerpts, and a part of a book is longer); set by the person, the part is made to
+    fit it. Raises ValueError when not even AI_MIN_CHARS fit."""
+    n = getattr(be, "num_ctx", None)
+    if not n:
+        return AI_MAX_CHARS
+    from . import home, prompts
+    from .llm import CONTEXT_MARGIN, OUTPUT_CAP, THINK_ALLOWANCE, estimate_tokens
+
+    if str(settings.get("num_ctx", "auto")).lower() == "auto":
+        be.num_ctx = max(int(n), home.context_plan(settings, (AI_KIND,))["num_ctx"])
+    think, only, budget = home.thinking(settings)
+    reasons = think is not False and (only is None or AI_KIND in only)   # unknown ("default") counts as reasoning
+    room = int(be.num_ctx) - estimate_tokens(prompts.system_prompt(AI_KIND)) - OUTPUT_CAP.get(AI_KIND, 2000) \
+        - ((2 * budget + 64 if budget else THINK_ALLOWANCE) if reasons else 0) - CONTEXT_MARGIN
+    # tokens to characters as `estimate_tokens` counts them, less the title, the candidates and a retry's problems
+    chars = min(AI_MAX_CHARS, int(room * 3.5) - (prompt_size(0, 0) - AI_MAX_CHARS) - 1600)
+    if chars < AI_MIN_CHARS:
+        raise ValueError(TOO_SMALL.format(n=int(be.num_ctx)))
+    return chars
+
+
+def _ai_parts(ws: Workspace, doc_id: str, terms: list[str], max_chars: int = AI_MAX_CHARS) -> list[list[dict]]:
+    """The whole document as the AI reads it: its body passages in order, in parts of at most `max_chars` each with
+    their headers (a passage is never cut), without the passages that hold no prose (running heads, a table of
+    contents, equations).
     Each part: [{"n", "passage_id", "page", "text"}], numbered from 1. A document of more than AI_MAX_PARTS parts:
     the parts that use the candidate concepts most."""
     text = ws.scalar("SELECT text FROM documents WHERE doc_id=?", (doc_id,)) or ""
@@ -761,8 +794,8 @@ def _ai_parts(ws: Workspace, doc_id: str, terms: list[str]) -> list[list[dict]]:
     for r in rows:
         if kept and not prose(r):
             continue
-        n = len(r["text"] or "")
-        if parts[-1] and size + n > AI_MAX_CHARS:
+        n = len(r["text"] or "") + _PASSAGE_HEAD
+        if parts[-1] and size + n > max_chars:
             parts.append([])
             size = 0
         parts[-1].append(r)
@@ -777,12 +810,12 @@ def _ai_parts(ws: Workspace, doc_id: str, terms: list[str]) -> list[list[dict]]:
              for k, r in enumerate(p, 1)] for p in parts]
 
 
-def ai_payloads(ws: Workspace, doc_id: str) -> list[dict]:
+def ai_payloads(ws: Workspace, doc_id: str, max_chars: int = AI_MAX_CHARS) -> list[dict]:
     """What the AI is given, one payload for each part of the document: its title, its Level-0 candidates (names
-    only, as hints), the part's number and the part's passages."""
+    only, as hints), the part's number and the part's passages. `max_chars`: what one part may hold (`_part_chars`)."""
     c = candidates(ws, doc_id, AI_MAX_CANDIDATES, with_examples=False)
     terms = [x["term"] for x in c["concepts"]]
-    parts = _ai_parts(ws, doc_id, terms)
+    parts = _ai_parts(ws, doc_id, terms, max_chars)
     return [{"doc_id": doc_id, "title": c["title"], "candidates": terms, "part": i, "parts": len(parts),
              "passages": p} for i, p in enumerate(parts, 1)]
 
@@ -793,14 +826,14 @@ def ai_payload(ws: Workspace, doc_id: str) -> dict:
     return got[0] if got else {"doc_id": doc_id, "title": "", "candidates": [], "part": 1, "parts": 0, "passages": []}
 
 
-def make_ai_tasks(ws: Workspace, doc_id: str, model: str) -> list[str]:
+def make_ai_tasks(ws: Workspace, doc_id: str, model: str, max_chars: int = AI_MAX_CHARS) -> list[str]:
     """The draft's tasks, one for each part of the document (made once per input: the same text, candidates, prompt
     version and model give the same task, so a draft asked again reuses its answers). Returns their ids, in the
     document's order."""
     from . import prompts
     from .tasks import replace_task
 
-    payloads = ai_payloads(ws, doc_id)
+    payloads = ai_payloads(ws, doc_id, max_chars)
     if not payloads:
         raise ValueError("This document has no text to read: read it again first.")
     tids = []
@@ -959,7 +992,7 @@ def draft_with_ai(ws: Workspace, doc_id: str, backend, model: str, progress: Cal
     if got is None:
         raise ValueError(NO_LOCAL if lv == "local" else NO_AI)
     be, call = got
-    tids = make_ai_tasks(ws, doc_id, call)
+    tids = make_ai_tasks(ws, doc_id, call, _part_chars(be, readers.settings()))
     n = len(tids)
     if progress:
         progress(0, n)

@@ -450,3 +450,36 @@ def test_every_part_waits_in_the_claude_code_queue_at_once(long_project):
     th.join(30)
     assert not th.is_alive() and got["r"]["ok"] and got["r"]["parts_read"] == n
     assert "Bounded rationality" in {c["term"] for c in got["r"]["concepts"]}
+
+
+def test_a_part_fits_the_context_length_of_a_model_on_this_computer(long_project):
+    """The app sizes a local model's automatic context length for a check's excerpts (8,192 tokens): a part of a book
+    does not fit it, and the first version's draft failed there. Automatic: raised to hold a whole part. Set by the
+    person: the parts are made to fit; too small for any part: said in one line."""
+    ws, theory = long_project
+
+    class Local:
+        name = "ollama"
+        num_ctx = 8192
+
+    auto = {**ehome.load_settings(), "num_ctx": "auto", "think": "default"}
+    be = Local()
+    assert theorycodes._part_chars(be, auto) == theorycodes.AI_MAX_CHARS and be.num_ctx == 16384
+    assert theorycodes._part_chars(object(), auto) == theorycodes.AI_MAX_CHARS      # Claude: no context length to fit
+    # a context length the person set, reasoning off: smaller parts, more of them, every passage still read once
+    be = Local()
+    fixed = {**auto, "num_ctx": 8192, "think": "off"}
+    small = theorycodes._part_chars(be, fixed)
+    assert be.num_ctx == 8192 and theorycodes.AI_MIN_CHARS <= small < theorycodes.AI_MAX_CHARS
+    few, many = theorycodes.ai_payloads(ws, theory), theorycodes.ai_payloads(ws, theory, small)
+    assert len(many) > len(few)
+    assert [x["passage_id"] for p in many for x in p["passages"]] == [x["passage_id"] for p in few for x in p["passages"]]
+    from enlens_claims import prompts
+    from enlens_claims.llm import OUTPUT_CAP, estimate_tokens
+    for p in many:   # as the local backend counts it: the prompt, a retry's problems and the answer fit
+        need = estimate_tokens(prompts.system_prompt("theory_codes")) + estimate_tokens(prompts.user_prompt("theory_codes", p)) \
+            + estimate_tokens("x" * 1600) + OUTPUT_CAP["theory_codes"]
+        assert need <= 8192, need
+    # with room kept for a reasoning model nothing fits 8,192 tokens: one line that says what to change
+    with pytest.raises(ValueError, match="too small to read a theory document"):
+        theorycodes._part_chars(Local(), {**fixed, "think": "default"})

@@ -17,7 +17,10 @@
 ### Under the hood
 
 - Prompt `theory-codes-v2` (was `-v1`): one `theory_codes` task for each part of the document (`theorycodes._ai_parts`,
-  at most 24,000 characters a part and 60 parts), so answers kept from `-v1` are not reused. The job's result carries
+  at most 22,000 characters a part and 60 parts), so answers kept from `-v1` are not reused. A model on this computer
+  with the automatic context length gets 16,384 tokens for the draft (the app sized it for a check's excerpts, 8,192,
+  so the first version's draft failed on a long document with "This task needs about … tokens of context"); with a
+  context length you set, the parts are made to fit it (`theorycodes._part_chars`). The job's result carries
   `parts`, `parts_read` and `task_ids`; `GET …/codebook-theory/<doc>/ai` says `parts`; a candidate says `ticked` and
   may be `"how": "glossary"`. With Claude Code as the AI every part waits in the queue at once.
 
