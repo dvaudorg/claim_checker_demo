@@ -302,3 +302,8 @@ export async function teamBrief(project, get = null) {
   return brief;
 }
 export function forgetBrief(project) { briefs.delete(project); }
+
+// The switch that keeps restricted documents out of what the team shares: its label and its explanation, the same on
+// the Team page and in the set-up of a shared folder (team-setup.js)
+export const KEEP_OUT_LABEL = "Keep documents marked Only a local AI or No AI out of the shared folder";
+export const KEEP_OUT_HELP = "Their text, their files and the passages an AI read from them stay on this computer; colleagues add those files themselves. What you share still carries the words you quoted from them, your notes on them and their titles. Once anyone in the team turns it on, it holds for everyone.";

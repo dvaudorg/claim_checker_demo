@@ -1770,11 +1770,13 @@ html:has(.cb-savebar:not([hidden])) { scroll-padding-bottom: 6rem; }
 .team-cloud .list-group { margin: 0; }
 .team-found strong, .team-join-folder { overflow-wrap: anywhere; }
 .team-steps { margin: 0; padding-left: 1.3em; font-size: var(--fs-small); }
-/* 0.18.0rc2 (L6): a storage space: the two services offered, the set-up's steps in a dialog */
-.team-choices { list-style: none; margin: var(--space-2) 0; padding: 0; display: grid; gap: var(--space-2); }
-.team-choices li { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-2); }
-.team-space-setup .team-steps { font-size: inherit; display: grid; gap: var(--space-3); }
-.team-space-setup .field { margin-top: var(--space-2); }
+/* the Team page without a team (team-setup.js): where the team's shared work is kept, two option cards to a row
+   while there is room; then the set-up's steps, the join form and the folder form, each in a dialog */
+.team-where { grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); margin: var(--space-2) 0 var(--space-3); }
+.team-section > .ai-where { margin: var(--space-3) 0 0; }
+.team-space-setup, .team-join-form, .team-folder-setup { display: grid; gap: var(--space-3); }
+.team-space-setup > p, .team-join-form > p, .team-folder-setup > p, .team-join-form > .field, .team-folder-setup > .field { margin: 0; }
+.team-folder-setup > .team-offers, .team-folder-setup > .team-error { margin: 0; }
 .team-space-where { overflow-wrap: anywhere; }
 .team-check { display: inline-flex; align-items: center; gap: var(--space-2); cursor: pointer; }
 #space-invite-message, #space-join-link { width: 100%; resize: vertical; font-size: var(--fs-small); word-break: break-all; }
@@ -1787,7 +1789,7 @@ html:has(.cb-savebar:not([hidden])) { scroll-padding-bottom: 6rem; }
 .team-summary { margin: 8px 0 0; overflow-wrap: anywhere; }
 /* a section's one line with its help mark after it */
 .team-lead { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; margin: 0 0 8px; }
-.team-where { margin-top: var(--space-2); }
+.team-where-fold { margin-top: var(--space-2); }
 /* the Team page (#/team): each section a card (card()), its heading the card's section title */
 .team-page { max-width: 52rem; }
 .team-page .team-section { padding: 0; border-bottom: 0; }

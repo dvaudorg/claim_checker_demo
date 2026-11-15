@@ -17,20 +17,17 @@
 // A later stage adds a section to the tab with `addTeamSection` (L2: "Waiting for your word", before "state").
 import { App, api, h, clear, replace, toast, showError, P, plural, field, switchControl, confirmDialog, watchJob,
   TERMINAL, store, shortTitle, helpMark, navigate, button, link, input, select, fold, tag, noticeList, notice, workState, dialog,
-  listRow, listGroup, absentDocument, aiWhere, personMark, setBusy, card, pageHead } from "../lib.js";
+  listRow, listGroup, absentDocument, personMark, card, pageHead } from "../lib.js";
 import { itemHref, shareButton, KIND_WORDS, KIND_MANY, zipButton, ZIP_WORDS, SHARING_HELP } from "./share.js";
-import { pollerState, syncLine, myShared, personLine, cleanPath, whenText, whenPhrase, newsLines, whoseWork, folderAsSeen, POLLER_API, EVERY_CHOICES } from "./team-state.js";
+import { pollerState, syncLine, myShared, personLine, whenText, whenPhrase, newsLines, whoseWork, folderAsSeen, POLLER_API, EVERY_CHOICES, KEEP_OUT_LABEL, KEEP_OUT_HELP } from "./team-state.js";
 import { OWNER_SECTION, ownerMarks, ownerPerson } from "./owner.js";   // 0.18 L2
 import { MINE_SECTION, REMOVED_SECTION, ROLES_SECTION, peopleRows, personSub, peopleNote } from "./owner.js";   // roles
-import { SPACE_SETUP_SECTION, SPACE_SECTION, joinDialog, removeMember, memberSub, SERVICE_NAME } from "./team-space.js";   // 0.18.0rc2 (L6): a storage space
+import { SPACE_SECTION, joinDialog, removeMember, memberSub, SERVICE_NAME } from "./team-space.js";   // 0.18.0rc2 (L6): a storage space
+import { TEAM_SETUP_SECTIONS } from "./team-setup.js";   // the Team page of a project without a team
 
 const EVERY = 20000;          // how often the open tab reads the folder's state again (it is cheap)
 const SOON = 4000;            // … and while the poller is about to start a round ("due": it looks every 5 s)
 const SHOWN_PER_KIND = 5;     // "What you shared": rows per kind before "Show all"
-const KEEP_OUT_LABEL = "Keep documents marked Only a local AI or No AI out of the shared folder";
-const KEEP_OUT_HELP = "Their text, their files and the passages an AI read from them stay on this computer; colleagues add those files themselves. What you share still carries the words you quoted from them, your notes on them and their titles. Once anyone in the team turns it on, it holds for everyone.";
-const mac = () => /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent || "");
-const win = () => /Win/i.test(navigator.platform || navigator.userAgent || "");
 
 // ---- the Team tab's sections, in order. Each is {key, render(ctx) -> Element | null}.
 export const TEAM_SECTIONS = [
@@ -58,8 +55,7 @@ addTeamSection(REMOVED_SECTION, { before: "shared" });
 
 // ---- the Team page's sections, in order: the team itself
 export const TEAM_PAGE_SECTIONS = [
-  SPACE_SETUP_SECTION,                            // no team yet: a storage space (recommended), or an invite link
-  { key: "setup", render: setupSection },         // … or a folder the team already shares
+  ...TEAM_SETUP_SECTIONS,                         // no team yet: start one, join a colleague's, or send a file (team-setup.js)
   { key: "folder", render: folderSection },       // a shared folder: where it is
   SPACE_SECTION,                                  // a storage space: where it is, invites, move, technical details
   { key: "people", render: peopleSection },       // the people: roles, since when, Remove…
@@ -356,133 +352,6 @@ function tabSetupSection(ctx) {
   return section("setup", "Work together",
     h("p", { class: "muted team-text" }, "Not shared with a team yet. ", link({ href: "#/team", id: "team-set-up" }, "Set up a team")),
     h("div", { class: "btn-row" }, button({ sm: true, icon: "link", id: "team-join", onClick: () => joinDialog(ctx) }, "Join with an invite link…")));
-}
-
-// ---------------------------------------------------------------------------------------------
-// no shared folder yet: the set-up step
-// ---------------------------------------------------------------------------------------------
-function setupSection(ctx) {
-  const st = ctx.status;
-  if (st.folder) return null;
-  const typed = ctx.setup;   // what was typed and chosen here stays across redraws until the folder is chosen
-  const example = win() ? "C:\\Users\\Anna\\OneDrive\\Our project" : "/Users/anna/Dropbox/Our project";
-  const path = input({ mono: true, id: "team-folder-path", autocomplete: "off", spellcheck: "false", placeholder: example, value: typed.path });
-  path.addEventListener("input", () => { typed.path = path.value; });
-  const copyTip = mac() ? "In the Finder, select the folder and press ⌥⌘C to copy its path." : win() ? "In File Explorer, hold Shift, right-click the folder and choose Copy as path." : "";
-  const pathField = field("The shared folder", path, { help: `Its whole path on this computer. ${copyTip}`.trim() });
-  const err = h("p", { class: "field-error team-error", role: "alert", id: "team-folder-error" }, typed.error);
-  path.setAttribute("aria-describedby", `${path.getAttribute("aria-describedby") || ""} team-folder-error`.trim());
-  if (typed.error) path.setAttribute("aria-invalid", "true");
-  const sw = teamSwitch("team-setup-keep-out", KEEP_OUT_LABEL, typed.keepOut ?? !!(st.keep_out || {}).mine, null, { label: "About documents that stay here", text: KEEP_OUT_HELP });
-  sw.input.addEventListener("change", () => { typed.keepOut = sw.input.checked; });
-  const me = st.me || {};
-  const name = input({ id: "team-your-name", maxlength: 60, autocomplete: "name", placeholder: "e.g. Anna de Vries", value: typed.name });
-  name.addEventListener("input", () => { typed.name = name.value; });
-  const nameField = me.name ? null : field("Your name", name, { help: "Colleagues see your work under this name." });
-  const go = button({ kind: "main", sm: true, icon: "folder", id: "team-use-folder" }, "Use this folder");
-  // the error is said where the field is now (the panel may have been drawn again meanwhile)
-  const showErr = (text) => {
-    typed.error = text;
-    const e = document.getElementById("team-folder-error"), f = document.getElementById("team-folder-path");
-    if (e) e.textContent = text;
-    if (f) { f.setAttribute("aria-invalid", text ? "true" : "false"); if (text) f.focus(); }
-  };
-  const choose = async () => {
-    showErr("");
-    const p = cleanPath(typed.path);
-    if (!p) { showErr("Type or paste the path of the folder your team shares."); return; }
-    const b = document.getElementById("team-use-folder") || go;
-    b.disabled = true;
-    let named = false;
-    try {
-      if (!me.name && typed.name.trim()) { await api("PUT", "/api/settings", { your_name: typed.name.trim() }); named = true; }
-      await api("PUT", `/api/projects/${P(ctx.project)}/shared-folder`, typed.keepOut === null ? { path: p } : { path: p, keep_out: typed.keepOut });
-      ctx.setup = freshSetup();
-      toast("This project now works through the shared folder. The first round starts now.", "ok");
-      await ctx.refresh({ force: true });
-      ctx.focusHeading("folder");
-      ctx.startRound();
-    } catch (e) {
-      const again = document.getElementById("team-use-folder");
-      if (again) again.disabled = false;
-      if (e.status === 400) showErr(e.message); else showError(e);
-    } finally {
-      if (named) App.refresh().catch(() => {});   // the name, for the other pages (after the folder: no read beside it)
-    }
-  };
-  go.addEventListener("click", choose);
-  // 0.18.0rc2 (L7): the cloud folders by name, the system's folder window, and a colleague's folder already found
-  const fillPath = (p) => {
-    typed.path = p;
-    const f = document.getElementById("team-folder-path") || path;
-    f.value = p;
-    showErr("");
-    f.focus();
-  };
-  const offers = h("div", { class: "team-offers", id: "team-offers" });
-  const drawOffers = (into) => replace(into, offerBlock(typed.offers, project, fillPath, showErr, typed));
-  const project = ctx.project;
-  if (!typed.offers) {
-    typed.offers = { loaded: false, folders: [], picker: false, found: [], team: "" };
-    Promise.all([cloudFolders(), api("GET", `/api/projects/${P(project)}/shared-folder/find`).catch(() => ({ found: [], team: "" }))])
-      .then(([cloud, find]) => {
-        Object.assign(typed.offers, { loaded: true, folders: cloud.folders || [], picker: !!cloud.picker, found: find.found || [], team: find.team || "" });
-        const el = document.getElementById("team-offers");
-        if (el && ctx.setup === typed) drawOffers(el);
-      });
-  }
-  drawOffers(offers);
-  path.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); choose(); } });
-  return section("setup", "Or a folder your team already shares",
-    h("p", { class: "muted team-lead" }, "OneDrive, Dropbox, Google Drive or a network drive.",
-      helpMark("About working through a shared folder", FOLDER_HELP)),
-    nameField, offers, pathField, err, sw,
-    h("div", { class: "btn-row" }, go),
-    // where text goes, at the foot (docs/DESIGN.md 4.4 and 5.5: the AI line's folder)
-    aiWhere([h("strong", {}, "The folder will hold the documents’ text and files, and only what you share of your own work. "),
-      "Your project’s database stays on this computer."], "folder"));
-}
-
-const FOLDER_HELP = "Each of you keeps your own copy of this project. ENLENS puts what you share in the folder and brings in what your colleagues share. Nothing of yours goes to the team until you press Share on it: a check, a set of themes, a codebook, a note, an entry of your own or a link between terms.";
-
-// 0.18.0rc2 (L7): above the path field. A colleague's shared folder, when it is already among this computer's cloud
-// folders ("Use it"); the cloud folders by name (one click fills the path); the system's folder window; and, when the
-// team's folder is nowhere yet, what to do at each service. The pasted path stays as the fallback.
-const WHERE = "Your colleague’s shared folder is here:";
-function offerBlock(o, project, fillPath, showErr, typed) {
-  const rows = [];
-  for (const dir of o.found) {
-    const seen = folderAsSeen(dir, o.folders);
-    rows.push(h("p", { class: "team-text team-found" }, `${WHERE} `, h("strong", { title: dir }, seen.text), " · ",
-      link({ kind: "jump", "data-found": dir, onclick: () => fillPath(dir) }, "Use it")));
-  }
-  if (o.folders.length) {
-    rows.push(h("div", { class: "team-cloud" }, listGroup("Cloud folders on this computer", ...o.folders.map((c) =>
-      listRow({ title: c.name, sub: c.path, actions: [button({ sm: true, "aria-label": `Use ${c.name}`, onclick: () => fillPath(c.path) }, "Use")] })))));
-  }
-  if (o.picker) {
-    const pick = button({ sm: true, icon: "folder", id: "team-choose-folder" }, "Choose folder…");
-    pick.addEventListener("click", async () => {
-      showErr("");
-      setBusy(pick, true);
-      try {
-        const r = await api("POST", "/api/choose-folder", { prompt: "Choose the folder your team shares", start: cleanPath(typed.path) || undefined });
-        if (r.path) fillPath(r.path);
-      } catch (e) {
-        if (e.status === 409) showErr(e.message); else showError(e);
-      } finally { setBusy(pick, false); }
-    });
-    rows.push(h("div", { class: "btn-row team-pick" }, pick));
-  }
-  if (o.loaded && !o.found.length) {   // how a colleague's folder comes to this computer, folded beside the field
-    rows.push(fold({ sm: true, class: "team-where", id: "team-where" }, "Your colleague’s folder is not here yet?",
-      h("p", { class: "muted small" }, "Ask the colleague who set it up to share the folder with you, then make it available on this computer. ",
-        h("strong", {}, "OneDrive: "), "on OneDrive’s website, choose ", h("em", {}, "Add shortcut to My files"), " on the shared folder, and ",
-        h("em", {}, "Always keep on this device"), " so its files are not fetched only when opened. ",
-        h("strong", {}, "Google Drive and Dropbox: "), "accept the share and keep the folder available offline. ",
-        "It then appears here.")));
-  }
-  return h("div", {}, ...rows);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -826,9 +695,10 @@ function keepOutSection(ctx) {
 }
 
 function downloadsSection(ctx) {
+  if (!ctx.status.folder) return null;   // without a team, the set-up has its own (team-setup.js: Send it once, as a file)
   const project = ctx.project;
-  return section("downloads", ctx.status.folder ? "As a file" : "Or as a file",
-    h("p", { class: "muted team-text" }, ctx.status.folder ? "For a colleague outside the team, or to move the project." : "By e-mail or a USB stick, without a storage space or folder."),
+  return section("downloads", "As a file",
+    h("p", { class: "muted team-text" }, "For a colleague outside the team, or to move the project."),
     h("ul", { class: "team-downloads" },
       h("li", {}, zipButton(project, "shared", { id: "team-zip-shared" }), h("span", { class: "muted small" }, ZIP_WORDS.shared.what)),
       h("li", {}, zipButton(project, "all", { id: "team-zip-all" }), h("span", { class: "muted small" }, ZIP_WORDS.all.what))));

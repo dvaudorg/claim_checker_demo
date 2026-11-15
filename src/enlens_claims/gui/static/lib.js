@@ -1404,6 +1404,7 @@ export function compare({ left, right, actions, label }) {
 // steps: [{ title, body, next }]: title says what to do, body how (its lines and fields), next the words of the small
 // button that goes on to the following step ("I have an account"; "Next step" when none is given). The last step has
 // no such button: what ends the task is the dialog's or card's own main button. From the second step on, a quiet Back.
+// next: false, back: false: a step without that button (the step the main button ends; a step shown once it is done).
 // label: the list's name for a screen reader. current: the step open at first. onStep(i): after every move.
 // .go(i) opens a step from code, .at() says which is open, .count how many there are. Fields of a closed step stay in
 // the page (hidden), so a form reads them all at the end.
@@ -1416,9 +1417,10 @@ export function steps(opts = {}) {
     const mark = h("span", { class: "step-mark", "aria-hidden": "true" });
     const said = h("span", { class: "visually-hidden" });
     const title = h("h3", { class: "step-title", tabindex: "-1" }, said, s.title);
-    const move = i < last || i > 0 ? h("div", { class: "btn-row step-move" },
-      i < last ? button({ sm: true, class: "step-next", onClick: () => go(i + 1, true) }, s.next || "Next step") : null,
-      i > 0 ? button({ kind: "quiet", sm: true, class: "step-back", onClick: () => go(i - 1, true) }, "Back") : null) : null;
+    const onward = i < last && s.next !== false, back = i > 0 && s.back !== false;
+    const move = onward || back ? h("div", { class: "btn-row step-move" },
+      onward ? button({ sm: true, class: "step-next", onClick: () => go(i + 1, true) }, s.next || "Next step") : null,
+      back ? button({ kind: "quiet", sm: true, class: "step-back", onClick: () => go(i - 1, true) }, "Back") : null) : null;
     const body = h("div", { class: "step-body" }, s.body, move);
     return { li: h("li", { class: "step" }, mark, h("div", { class: "step-main" }, title, body)), mark, said, title, body };
   });
