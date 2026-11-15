@@ -1605,6 +1605,7 @@ ROUTES: list[tuple[str, re.Pattern, str]] = [(m, re.compile("^" + p + "$"), h) f
     ("GET", rf"/api/projects/{P}/flexiconc\.sqlite", "get_flexiconc"),
     # 0.8: the task queue (Claude Code), model routing, the plugin's set-up
     ("GET", rf"/api/projects/{P}/queue", "get_queue"),
+    ("GET", rf"/api/projects/{P}/queue/preview", "get_queue_preview"),
     ("POST", rf"/api/projects/{P}/queue/order", "post_queue_order"),
     ("POST", rf"/api/projects/{P}/queue/withdraw", "post_queue_withdraw"),
     ("POST", rf"/api/projects/{P}/queue/run", "post_queue_run"),

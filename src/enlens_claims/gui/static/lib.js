@@ -2032,8 +2032,57 @@ export function queueNotice(q, opts = {}) {
       q.being_answered ? h("span", { class: "muted small qn-answered" }, ` · ${q.being_answered} being answered now`) : null),
     est && !q.paused ? h("p", { class: "muted small" }, est.charAt(0).toUpperCase() + est.slice(1) + ".") : null,
     q.paused && q.paused_text ? h("p", { class: "small" }, q.paused_text) : null,
-    App.project ? startClaude(App.project, { command: q.command, foldType: opts.foldType }) : null,
-    opts.privacy === false || opts.foldType ? null : aiWhere(q.privacy || "Claude Code sends the passages inside the tasks it takes to Anthropic."));
+    App.project ? startClaude(App.project, { command: q.command, foldType: opts.foldType, kind: q.kind }) : null,
+    opts.privacy === false || opts.foldType ? null : queueAiLine(q.privacy, App.project, q.kind));
+}
+
+// The AI line of the queue (Claude Code), with "See what is sent" after its sentence: a dialog with the next batch of
+// `kind` (the first kind that waits when none) exactly as Claude Code receives it. Nothing is claimed or recorded.
+export function queueAiLine(text, project, kind) {
+  const line = aiWhere(text || "Claude Code sends the passages inside the tasks it takes to Anthropic.", "cloud");
+  if (project) line.lastChild.append(" ", button({ kind: "quiet", sm: true, class: "sent-btn", icon: "eye", onClick: () => showSent(project, kind) }, "See what is sent"));
+  return line;
+}
+
+export async function showSent(project, kind) {
+  const body = h("div", { class: "sent-preview" }, h("p", { class: "muted" }, "Building the next batch…"));
+  let start = 0;
+  let r = null;
+  const more = { text: "Show the batch after", value: null, onClick: async (dlg) => {
+    start += r && r.tasks ? r.tasks.length : 0;
+    await load();
+    dlg.querySelector(".dialog-body").scrollTop = 0;
+    return false;
+  } };
+  async function load() {
+    try {
+      r = await api("GET", `/api/projects/${P(project)}/queue/preview?${new URLSearchParams({ kind: kind || "", start: String(start) })}`);
+    } catch (e) { replace(body, h("p", {}, "The preview could not be built.")); showError(e); return; }
+    replace(body, ...sentParts(r));
+    const btn = document.querySelector("#sent-more");
+    if (btn) btn.hidden = !r.more;
+  }
+  load();
+  return dialog({ title: "What Claude Code is sent", body, wide: true,
+    actions: [{ ...more, id: "sent-more" }, { text: "Close", value: null, primary: true }] });
+}
+
+function sentParts(r) {
+  if (!r.tasks || !r.tasks.length) return [h("p", {}, r.note || "Nothing waits for Claude Code now, so nothing is about to be sent.")];
+  const pages = (d) => d.pages && d.pages.length ? `, ${d.pages.length > 1 ? "pp." : "p."} ${d.pages.join(", ")}` : "";
+  const from = r.start ? `Tasks ${r.start + 1} to ${r.start + r.tasks.length}` : `The next ${r.tasks.length === 1 ? "task" : `${r.tasks.length} tasks`}`;
+  return [
+    h("p", {}, `${from} of ${r.title}, word for word as Claude Code's helper receives them: the instruction once, then each task's text. Nothing else from this project goes with them: not the documents' files, other passages, your results or your reviews.`),
+    h("p", { class: "muted small" }, `${r.waiting.toLocaleString()} waiting${r.being_answered ? ` · ${r.being_answered} being answered now` : ""} · ${r.helper ? `${r.helper} on ` : "on "}${r.model}. Claude Code adds its own instructions for the helper (the same for every project) and its own working; they hold none of your documents.`),
+    fold({ sm: true }, "The instruction (the same for every task of the batch)", inset({ class: "sent-box" }, h("pre", { class: "sent-text" }, r.system))),
+    ...r.tasks.map((t, i) => h("section", { class: "sent-task" },
+      h("h3", {}, `Task ${r.start + i + 1}`, (t.documents || []).length ? h("span", { class: "muted small" }, ` · ${t.documents.map((d) => `${d.title}${pages(d)}`).join("; ")}`) : null),
+      inset({ class: "sent-box" }, h("pre", { class: "sent-text" }, t.prompt)))),
+    fold({ sm: true }, "As Claude Code receives it (the connector's reply)", inset({ class: "sent-box" }, h("pre", { class: "sent-text" }, r.raw)),
+      button({ kind: "quiet", sm: true, icon: "copy", onClick: async () => {
+        try { await navigator.clipboard.writeText(r.raw); toast("Copied.", "ok", { ttl: 2000 }); } catch (_) { toast("Select the text and copy it with Ctrl+C (or Cmd+C).", "info"); }
+      } }, "Copy it")),
+  ];
 }
 
 // 0.9: "Start Claude Code": ENLENS starts Claude Code (signed in with its own login, on the researcher's plan) for
@@ -2087,7 +2136,7 @@ export function startClaude(project, opts = {}) {
     const typeBlock = opts.foldType && q.can_start ? fold({ sm: true, class: "sc-type-fold" }, "How it works",
       h("p", { class: "small" }, "It works on your Claude plan, in the background, and stops by itself when nothing waits."),
       h("div", { class: "sc-type" }, h("span", { class: "muted small" }, "Or type this in Claude Code yourself:"), copyLine(cmd)),
-      aiWhere(q.privacy || "Claude Code sends the passages inside the tasks it takes to Anthropic.")) : typeIt;
+      queueAiLine(q.privacy, project, opts.kind)) : typeIt;
     const r = q.runner || {};
     const parts = [];
     const idle = idleQueue(q);

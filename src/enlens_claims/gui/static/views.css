@@ -1900,3 +1900,10 @@ html:has(.cb-savebar:not([hidden])) { scroll-padding-bottom: 6rem; }
 /* 0.18.5: on a phone the top bar is 49 px (its 32 px button, 8 px above and under, its edge): the group heads stick
    right under it */
 @media (max-width: 860px) { .doc-group-head { top: 49px; } .doc-group { scroll-margin-top: 49px; } }
+/* "See what is sent" (the queue's AI line): the next batch, word for word as Claude Code receives it */
+.ai-where .sent-btn { margin-left: 4px; vertical-align: baseline; }
+.sent-preview > p { margin: 0 0 var(--space-2); }
+.sent-task h3 { margin: var(--space-3) 0 4px; font-size: var(--fs-small); }
+.sent-box { margin: 4px 0 var(--space-2); }
+.sent-text { margin: 0; max-height: 18em; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+  font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1.45; color: var(--text); }
