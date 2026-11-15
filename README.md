@@ -57,13 +57,10 @@ Windows from 0.15.4 on). Your projects and settings (the `enlens` folder in your
   impact claims tagged with UN SDG targets and compared with an expert Value Chain Assessment.
 
 <!-- new-in:start (written by `python tools/release.py prepare`: change the changelog entry, not this) -->
-## New in 0.19.0: Your own drafts, a concept map, codebooks from other programs and from theory, and reader 6
+## New in 0.19.1: Rename a document, and a calmer document page
 
-- **Your own working documents.** Keep your drafts and notes beside the corpus (*Documents* → *Role* → *Mark as my working document*): they are read, searched and coded like any document but are never a source.
-- **A concept map.** *Concepts* → *Map* draws the concepts your documents mention together more often than by chance, in groups and with the links you accepted, filtered by document, theme, code or year.
-- **Codebooks from NVivo, ATLAS.ti or MAXQDA, and from theory.** *New codebook* takes a REFI-QDA codebook (`.qdc` or `.qdpx`), or every theory document the research is read through: their own glossaries first, and *Draft with AI* reads the whole document.
-- **Reader 6.** PDFs are read more cleanly (text a figure hides, publishing details on the first page, the title, running heads), and a document printed in two languages can keep one. Can change results.
-- **Your institution's drive as the team's storage space.** Besides Backblaze and Cloudflare, the Team page offers a folder in SURFdrive, SURF Research Drive or a university's Nextcloud (any drive that speaks WebDAV), locked and signed as the others.
+- **Rename a document.** Open a document's row on the Documents page, or its page, and press *Rename…* to give it a title of your own.
+- **Work that sends passages to Claude looks different in the sidebar.** While it runs, the work box has a grey rail with the cloud on its left edge and says *to Claude*; work on this computer keeps the plain box with the house.
 <!-- new-in:end -->
 
 How it works, in the manual: [Explore your documents](docs/manual/explore.md) (working documents, the concept map),

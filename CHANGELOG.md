@@ -1,5 +1,81 @@
 # Changelog
 
+## 0.19.1 (November 2026): Rename a document, and a calmer document page
+
+### New
+
+- **Rename a document.** Open a document's row on the Documents page, or its page, and press *Rename…* to give it a
+  title of your own. It is used everywhere in the project (the Documents list, results, Search, the bibliography and
+  exports), and it stays when the bibliography links the document to a work or a new reading would find another title.
+  *Use the title it had before* gives back the work's title, or the one read from the file, which the page still
+  shows as *Title in the file*. The research log notes each rename. In a shared project the title is in your copy
+  only. Changes no result.
+- **Work that sends passages to Claude looks different in the sidebar.** While it runs, the work box has a grey rail
+  with the cloud on its left edge and says *to Claude*; work on this computer keeps the plain box with the house. The
+  difference is the box's shape, not a new colour, so it shows at a glance, also in greyscale. Does not change results.
+
+### Easier to read
+
+- **A document's page opens with less on it.** Under the title stand its facts and *Open the original* in one line,
+  then the bibliography's line. The file's name, and the work's name in the bibliography, show only when they say
+  more than the title does. *Download a highlighted copy* stands at the right of the title, and beside it *More*
+  holds the marks: *Mark as theory…*, *Mark as my working document…*, *Mark as non-scientific…* (and the ways back,
+  *Mark as evidence…* and *Count as scientific…*). A document with no mark shows no row of mark buttons any more; a
+  marked one still says so in its box, with the one button that takes the mark back. The bibliography's suggestion
+  (*Your bibliography lists this as a blog post…*) keeps its line, its *Mark* and *No* now set apart, here and in the
+  Documents list. Changes no result.
+- **On a page that is one thing, the buttons stand on the back link's line.** A document's, a theme's and a
+  codebook's buttons (*Download a highlighted copy*, *Rename…*, *Try it*…) stood beside the title and broke a long
+  title a line early. They now stand at the right of *← All documents* (*All themes*, *All codebooks*), and the title
+  and its lines have the page's whole width. On a narrow window nothing changes: the title first, the buttons under
+  its lines. The design guide's page heads (`docs/DESIGN.md` 4.14) say so.
+- **A menu is as wide as its longest row**, so a row such as *Mark as my working document…* stays on one line while
+  the page has the room.
+
+### Documents
+
+- **Search by meaning takes one line on the Documents page once it is on.** While it is on and covers every excerpt,
+  the page says so in one quiet line above the list, in place of a card. The card still shows when there is something
+  to do or to wait for: search by meaning is off, not set up yet, set up for part of the documents, or being set up.
+  Does not change results.
+
+### Fixed
+
+- **Draft with AI in *Codebook from theory* could not be started.** The draft waited for Claude Code, but the dialog
+  covered the sidebar, so its *Start* could not be pressed. The dialog now has its own *Start Claude Code* under the
+  AI line while the draft waits, and it goes once the draft is back.
+- **The sidebar no longer says "Claude" for work that runs on this computer.** While ENLENS checked where your results
+  would go before a new reading, the work box in the sidebar showed Claude's cloud icon, though nothing was sent to
+  Anthropic. It now says *This computer*, as it does for the reading itself. The same was wrong for adding documents,
+  the glossary, themes, codes by keywords, trying a codebook, bringing in the bibliography and work done by your local
+  model. *Check for retractions* now says *Crossref*, where only the DOIs go, and installs and downloads show neither.
+  Does not change results.
+- **A codebook's group can be removed.** Each group in the codebook editor now has *Remove group*. Its codes stay, with
+  their labels, under *Codes without a group*; the research log says which group went. An empty group, made by *Add a
+  group* and not needed, goes the same way. Does not change results.
+
+### For developers
+
+- `pageHead()` gives a head with a back link and actions the class `page-head-item` and makes its back link's line
+  (`.eyebrow`) a child of the head, before `.page-head-main`; every other head is unchanged. `doc-shared.js` has
+  `repeatsTitle(name, title)`; `roleBox()` takes the head's element it fills with *More* as its fifth argument.
+- `documents.own_title` (a new column; NULL: none) holds the person's title; `bibliography.set_title()` sets or
+  clears it and `_sync_titles()` lets it win, keeping the replaced title in `file_title`. `PUT
+  /api/projects/<p>/documents/<id>/title` `{"title"}`; the list and the document carry `named`.
+- A job's view carries `where` (`here`, `crossref`, `none`, or `null` for the AI of Settings), from `WHERE_OF_KIND` and
+  `job_where()` in `gui/api_common.py`; the sidebar follows it instead of its own list of kinds. A new job that never
+  sends text to the AI should be named there.
+
+### Tests
+
+- `tests/test_document_head.py`: the document page's head says the title once, puts the marks in *More* and leaves a
+  notice one action; a menu takes the width of its rows and the project switch keeps the sidebar's; one item's head
+  draws its back link's line first with the actions beside it, stacks when narrow, and a head without actions (a
+  result) or of a place is as it was.
+- `tests/test_document_rename.py`: a title of one's own wins over the bibliography's and comes back off with *Use the
+  title it had before*; the search index follows it; the research log says so; the API, the list's opened row and the
+  page offer it; the theory dialog carries its own *Start Claude Code*.
+
 ## 0.19.0 (November 2026): Your own drafts, a concept map, codebooks from other programs and from theory, and reader 6
 
 Your own drafts beside the corpus, a concept map, codebooks from other programs and from theory, and cleaner
