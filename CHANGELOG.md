@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.19.2 (November 2026): A framework from theory, and codebooks that stay in their project
+
+### New
+
+- **A codebook from theory is now a framework you shape on a page of its own.** *New codebook* › *From theory
+  documents* asks which theory documents you read your documents through, and, if you like, what you want to find
+  out; a draft page then opens. Without AI it holds the terms the documents define outright (a start, not a
+  framework). *Read the theory* lets the AI read the documents whole and put one framework together from all the
+  authors: concepts in groups, each with the theory's own sentences (quoted with document and page, every quote
+  checked), its meaning in plain words, when to use it in *your* documents and when not, and the words your documents
+  use for it. Open a concept to change any of this, look for more sentences in the theory, and see passages of your
+  own documents that may show it, found by its words without AI: *Keep as an example* keeps one. *Add* and *Take out*
+  choose what goes into the codebook; *Add a concept by name* finds a term's sentences in the theory without AI; the
+  drafts the AI set aside wait in a fold to add. *Make the codebook* makes the codes, with the framework's groups, and
+  marks the fields still in the AI's words *AI draft*. The draft is kept as you work, and the Codebooks list says when
+  one is waiting. Reading again keeps every concept you changed, marked as done, added or kept examples for. Each
+  row says in how many of your own documents the concept's words are found, so a concept your documents never speak
+  of shows before you open it.
+
+### Changes that can alter your results
+
+- **A codebook from theory no longer offers words a text merely uses often, nor a heading's single word without a
+  sentence that defines it.** Codebooks made earlier are unchanged.
+
+### Fixed
+
+- **A codebook kept in one project no longer breaks the others.** The codebook chosen for document profiles is one
+  setting for the whole app, but a codebook kept with a project is only in that project. Choose one there, open
+  another project, and Themes, Codes and a document's codes said the codebook was not available until you picked
+  another one by hand. Now each project uses the chosen codebook when it has it and the SDG targets when it does not;
+  the first project keeps your choice, and Settings shows the codebook the open project uses. Documents added to the
+  other project get the SDG targets' keyword codes again (that step had failed quietly). No other result changes.
+
 ## 0.19.1 (November 2026): Rename a document, and a calmer document page
 
 You can now give a document a title of your own, from its row on the Documents page or from its page. A document's

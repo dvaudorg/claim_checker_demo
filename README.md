@@ -57,10 +57,10 @@ Windows from 0.15.4 on). Your projects and settings (the `enlens` folder in your
   impact claims tagged with UN SDG targets and compared with an expert Value Chain Assessment.
 
 <!-- new-in:start (written by `python tools/release.py prepare`: change the changelog entry, not this) -->
-## New in 0.19.1: Rename a document, and a calmer document page
+## New in 0.19.2: A framework from theory, and codebooks that stay in their project
 
-- **Rename a document.** Open a document's row on the Documents page, or its page, and press *Rename…* to give it a title of your own.
-- **Work that sends passages to Claude looks different in the sidebar.** While it runs, the work box has a grey rail with the cloud on its left edge and says *to Claude*; work on this computer keeps the plain box with the house.
+- **A codebook from theory is now a framework you shape on a page of its own.** *New codebook* › *From theory documents* asks which theory documents you read your documents through, and, if you like, what you want to find out; a draft page then opens.
+- **A codebook from theory no longer offers words a text merely uses often, nor a heading's single word without a sentence that defines it.** Codebooks made earlier are unchanged.
 <!-- new-in:end -->
 
 How it works, in the manual: [Explore your documents](docs/manual/explore.md) (working documents, the concept map),
