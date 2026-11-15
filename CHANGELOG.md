@@ -4103,7 +4103,7 @@ has no tool for citations yet.
 ## 0.13.6 (November 2026): updates that announce themselves, and room for add-ons
 
 The *Update* button now appears only when there is something to install, with a pop-up that says so, and *Settings*
-can look for an update by hand. Underneath, apps built on ENLENS (Margin is one) get room of their own: pages, jobs,
+can look for an update by hand. Underneath, apps built on ENLENS get room of their own: pages, jobs,
 tables, rules about who may read their text and kinds of AI task, added in their own files instead of edits to
 ENLENS's. Every answer still goes through the quote check, a person can overrule it, and nothing more leaves the
 computer.
@@ -4201,9 +4201,8 @@ Overview and the result page. Each has its extension point, read from one module
 - **What a page module adds** (`applyExtensions` in `registry.js`, which never replaces one of ENLENS's entries):
   pages (after ENLENS's own routes), features (a sidebar entry with its AI mark after its section's entries, and an
   Overview card with its own state line), sections (a sidebar heading and an Overview section), job kinds (a job's
-  icon, name and link in the sidebar; the link may be a function of the job, for apps with a page per item, such as
-  Margin's drafts), welcome cards (first run), and origins (the result page's link back to where a hypothesis comes
-  from).
+  icon, name and link in the sidebar; the link may be a function of the job, for apps with a page per item), welcome
+  cards (first run), and origins (the result page's link back to where a hypothesis comes from).
 - **Job kinds in one place.** `linkFor`, `kindIcon`, `kindText` and `withJob` moved from `app.js` into
   `JOB_KINDS` (`registry.js`). A job of a kind nobody names shows its own title (it showed its kind's code).
 - **The Overview is built from `FEATURES` and `SECTIONS`.** Each section's line and card size moved into
@@ -4253,11 +4252,10 @@ lists.
 
 ## 0.13.5 (November 2026): fixes found while building on ENLENS, and room for apps built on it
 
-Margin, a writing companion built on ENLENS, found a few ENLENS defects on the way, fixed them first and now gives
-them back. 0.13.5 also starts making room for apps built on ENLENS: until now such an app had to edit ENLENS's own
-files to change even its name or colours, and every one of those edits clashed with the next ENLENS release. For
-people who use ENLENS nothing changes apart from the fixes: every answer still goes through the quote check, a person
-can overrule it, and nothing more leaves the computer.
+Building an app on ENLENS found a few ENLENS defects; they are fixed here. 0.13.5 also starts making room for apps
+built on ENLENS: until now such an app had to edit ENLENS's own files to change even its name or colours, and every
+one of those edits clashed with the next ENLENS release. For people who use ENLENS nothing changes apart from the
+fixes: every answer still goes through the quote check, a person can overrule it, and nothing more leaves the computer.
 
 **Fixes.**
 - **Accented names in zips.** Zips made with Finder's *Compress* do not mark their file names as UTF-8, so accented
@@ -4537,8 +4535,7 @@ place, instead of *Quit ENLENS* and opening ENLENS again.
 **For developers.** `GET /api/update`, `POST /api/update` and `POST /api/restart` (`docs/API.md`); `GET /api/state`
 adds `can_restart`. `serve()` restarts with `os.execv` on macOS and Linux (the same process and terminal) and starts a
 new process on Windows; `restart_command()` builds the command. `tools/dev_server.py --update` is a stand-in update
-that restarts the dev server in place (`--update commits | on-disk | none | fails` for the other cases). The button
-and its endpoints come from Margin 0.2.1, where they were made first.
+that restarts the dev server in place (`--update commits | on-disk | none | fails` for the other cases).
 
 **Tests:** `tests/test_0131_update_button.py`: the check (a newer release, new commits on a git copy, up to date, a
 reason it cannot update), *Update and restart* (installs once, then restarts once; a second click refused; nothing

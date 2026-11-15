@@ -1,13 +1,11 @@
 # ENLENS roadmap
 
 Where ENLENS is going, and what each release builds. Items move to `CHANGELOG.md` as they are built; this file keeps
-what is planned and why. Written 6 November 2026 as a roadmap shared with Margin, revised 8 November 2026 after a
-review against ENLENS 0.14.6's code, and moved here on 10 November 2026. Margin, a writing companion built on ENLENS's
-code, keeps its own plans (drafts, citations written back into Word, finding literature, the outline) in its own
-repository; everything in this file is built in ENLENS, and Margin brings it in.
+what is planned and why. Written 6 November 2026, revised 8 November 2026 after a review against ENLENS 0.14.6's
+code, and moved here on 10 November 2026.
 
 The items keep their letters (A to N), so a changelog entry that names one (A1, H3, K1) still points here. A letter
-missing from a section (B1 to B4, C, E, …) is one of Margin's own.
+missing from a section (B1 to B4, C, E, …) is not planned for ENLENS.
 
 ## The rule: as little AI as possible
 
@@ -26,10 +24,6 @@ Each item below says its level. Where an item has an AI part, the AI part is opt
 what the AI says is still quoted, checked against the text and yours to overrule. Online lookups that are not AI
 (OpenAlex, Crossref) still send words off the computer: they follow each document's AI setting and are switched off
 by `--local-only`.
-
-**Where it is built.** Everything here is built in ENLENS. Margin is built on ENLENS's code and brings in each ENLENS
-release with its sync (`tools/sync_enlens.py` in Margin), so a feature both apps need, or one that changes code they
-share (`ingest.py`, `terms.py`, `routing.py`, `llm.py`, the task queue), is built here once and never twice.
 
 ## Where things stand (13 November 2026)
 
@@ -213,8 +207,7 @@ this), labels and checks read junk, and quotes fail to place.
   table read as prose is what makes most of today's garbled passages).
 - GROBID or Docling, when installed, for tables the rules cannot rebuild.
 
-**A4. A clean reading view** · Level 0 · ENLENS candidate (revised: it said "Margin first, then ENLENS", but the
-sync only brings ENLENS into Margin, so nothing could take it the other way, and shared work is built in ENLENS)
+**A4. A clean reading view** · Level 0 · ENLENS candidate
 - The document page shows the text as a clean reflowed article: headings, paragraphs, tables, captions apart, page
   markers in the margin, and what was set aside folded under *Left out of the text*.
 - Side by side with the original page (an image of the PDF page via `pypdfium2`), so you can see what the parser
@@ -244,8 +237,6 @@ sync only brings ENLENS into Margin, so nothing could take it the other way, and
   Tables in scanned pages stay unfound without GROBID or Docling (A1).
 ## B. Close the writing loop
 
-B1 to B4 and B6 (citations in Word, reference lists, the reference-list check, re-checking a draft) are Margin's.
-
 **B5. Retractions and corrections** · Level 0 (online lookup, not AI) · built in 0.18.1 (`retractions.py`; works with a DOI only)
 - Check every work in the bibliography and every cited work against Crossref's Retraction Watch data; warn on the
   claim's card and in the bibliography.
@@ -253,8 +244,6 @@ B1 to B4 and B6 (citations in Word, reference lists, the reference-list check, r
   per-document AI setting check and `--local-only` come with it from the first day.
 
 ## D. Connecting concepts
-
-D5 (concepts in the writing) is Margin's.
 
 **D1. A concept map** · Level 0 · built (14 November 2026, 0.19.0rc1) (`conceptmap.py`, the Concepts page)
 - A graph of the concepts that occur together in passages (weighted by how much more often than by chance, such as
@@ -289,7 +278,7 @@ D5 (concepts in the writing) is Margin's.
 
 ## F. Reading and notes
 
-F1 (a reading queue) and F3 (Zotero annotations) are Margin's. F2, F4 and F5 are built (0.16.0).
+F2, F4 and F5 are built (0.16.0).
 
 **F2. Notes and highlights on passages** · Level 0 · ENLENS candidate
 - Your own notes tied to exact words of a document, searchable, and usable as evidence for a claim (quote-checked
@@ -304,8 +293,6 @@ F1 (a reading queue) and F3 (Zotero annotations) are Margin's. F2, F4 and F5 are
   decisions and reviews. *Compare with an earlier version* and *Restore*, with the research log (F4) as their story.
 
 ## G. Exchange with other tools
-
-G1 to G4 (the rest of Margin's writing companion) are Margin's.
 
 **G5. Export to NVivo and ATLAS.ti** · Level 0 · built in 0.18.7
 - Codes, labels, quotes, memos and your decisions as a REFI-QDA (`.qdpx`) project.
@@ -355,7 +342,7 @@ G1 to G4 (the rest of Margin's writing companion) are Margin's.
   progress; startup kept short.
 
 **H6. Tidier code** · ENLENS candidate · `gui/server.py` split in 0.16, `claimcheck.py` in 0.18.1, `views/sources.js` in 0.18.4
-- Split the largest modules along the features they serve, so later changes stay small and syncs conflict less. The
+- Split the largest modules along the features they serve, so later changes stay small and clash less. The
   largest are `gui/server.py` (3,410 lines) and `claimcheck.py` (2,829). Not left to the end: each release splits
   the module it changes most, and the new reader starts in its own module (A1).
 
@@ -390,39 +377,26 @@ rejected answers or on request; new are the presets and the step from the local 
 - A sample of tasks answered by both routes, with their agreement (kappa, which ENLENS already computes), so you can
   see whether the local model is good enough for each kind of task on your own corpus.
 
-## J. Version control, releases, documentation and the ENLENS sync
+## J. Version control, releases and documentation
 
-How real products handle these, and what ENLENS and Margin would take from them. This is developer work: no AI is
-involved. J1 and J2 apply to **both apps**; J3 (the sync) and J5 are Margin's only and stay in Margin's roadmap; J4
-is ENLENS's only. When J is built, both release guides change with it: the shared steps go into the main ENLENS
-guide (Part A of the `margin-release` skill), so Margin's Part B shrinks to what is truly Margin's.
+How real products handle these, and what ENLENS takes from them. This is developer work: no AI is involved.
 
-### J0. One pipeline, two products
+### J0. What ENLENS's releases are like
 
-ENLENS and Margin get **the same pipeline**: the same workflows, the same `tools/release.py` commands, the same
-changelog fragments, documentation checks, branch names and steps. What differs is held in one short **product
-profile** per app (the same file that J3 stage 2 introduces for the app's name, folders and port), plus each app's own
-README and changelog. So:
+Every release takes the same steps: the same workflows, `tools/release.py` commands, changelog fragments,
+documentation checks and branch names. ENLENS is for scientists who rely on it, so:
 
-- **Built once, in ENLENS.** The pipeline is shared code like any shared feature: built in ENLENS first and brought
-  into Margin by the sync. Margin never edits the shared pipeline files; it changes only its profile, which the sync
-  leaves alone (as it does `README.md` and `CHANGELOG.md` today).
-- **The same habits.** A release is the same few commands in either repository, so switching between them needs no
-  thought, and a fix to the pipeline reaches both.
-- **Recognisably distinct.** Different names, looks, version numbers, release pace and, above all, audiences:
+- **Who the releases serve:** researchers using it in their work, and those who read or review that work.
+- **Pace:** careful: a release candidate before each minor release, in use for at least a week.
+- **CI:** public repository: free minutes, all three systems on every push, required checks before merging.
+- **Release notes:** plain language, grouped: *New*, *Changes that can alter your results*, *Fixed*, *Privacy*.
+- **README:** a front door for scientists: what it does, install, how to cite, privacy, the manual.
+- **Extras:** J4: citable versions, results you can trust across versions, a validation report, methods and privacy
+  documents.
 
-| | **ENLENS**: for scientists who rely on it | **Margin**: its author's own companion |
-| --- | --- | --- |
-| Who the releases serve | researchers using it in their work, and those who read or review that work | its author, to see what is going on |
-| Pace | careful: a release candidate before each minor release, in use for at least a week | as fast as useful: release when ready, release candidates optional |
-| CI | public repository: free minutes, all three systems on every push, required checks before merging | private: Linux on every push, three systems on release tags, checks advisory |
-| Release notes | plain language, grouped: *New*, *Changes that can alter your results*, *Fixed*, *Privacy* | short: what changed, what came from ENLENS, what is next |
-| README | a front door for scientists: what it does, install, how to cite, privacy, the manual | a short front page and the overview of J5 |
-| Extras | J4: citable versions, results you can trust across versions, a validation report, methods and privacy documents | J5: an overview of both apps and the roadmap |
+### J1. A release pipeline
 
-### J1. A release pipeline (both apps)
-
-**Now.** In both apps, pushing a tag `vX.Y.Z` runs `release.yml`: check that the versions agree, run the tests,
+**Now.** Pushing a tag `vX.Y.Z` runs `release.yml`: check that the versions agree, run the tests,
 build the wheel, try the one-line install on Linux, Windows and macOS, then make a draft release that a person
 publishes. That is a sound base (checksums, an install test, a person in the loop). The gaps are between
 releases: the version is typed in three places, the tests are renamed at every release, and there is no way to try
@@ -434,8 +408,7 @@ Linux only and without the anthropic, OCR and pdfminer extras.)
 1. **Continuous integration (CI) on every push.** A second workflow, `ci.yml`, runs the tests and a linter (`ruff`) on
    every push and pull request, on Linux, with the oldest and newest Python ENLENS supports (3.10 and 3.13). The full
    three-system install test stays on release tags. *Why*: a fault is found the hour it is made, while it is cheap
-   to fix. Which systems run on a push is a profile setting: ENLENS runs all three systems on every push (since
-   0.15.7 all three are required); Margin's profile can run Linux on pushes and all three systems on release tags.
+   to fix. ENLENS runs all three systems on every push (since 0.15.7 all three are required).
 2. **Work on branches, merge through pull requests.** Each feature gets a branch (`feature/word-citations`) and a
    pull request into `main` that CI must pass. Merge with *squash*, so `main` keeps one commit per feature. *Why*: even
    alone, `main` then stays releasable, and each change has a record of what and why. A branch ruleset can
@@ -448,17 +421,16 @@ Linux only and without the anthropic, OCR and pdfminer extras.)
    written by hand.
 4. **Changelog fragments.** Each change adds a small file, `changes/<topic>.md`, instead of editing `## Unreleased`;
    the release step joins them into the new `## X.Y.Z` entry and deletes them (as `towncrier` or `scriv` do).
-   Prose written for researchers stays as it is. *Why*: two branches, or a branch and an ENLENS sync, never edit the
-   same lines of `CHANGELOG.md`, which ends a common source of merge conflicts.
+   Prose written for researchers stays as it is. *Why*: two branches never edit the same lines of `CHANGELOG.md`, which ends a common source of merge conflicts.
 5. **A release pull request.** `python tools/release.py prepare` decides nothing but does all the typing: it
    collects the fragments into the changelog, updates *New in* in the README (J2), and opens a pull request
-   "ENLENS X.Y.Z" or "Margin X.Y.Z". Merging it tags the commit, and the tag starts `release.yml` as now. *Why*: the
+   "ENLENS X.Y.Z". Merging it tags the commit, and the tag starts `release.yml` as now. *Why*: the
    release is reviewed as one change before it exists (the pattern of `release-please`, without its commit-message
    rules).
 6. **Pre-releases and a beta channel.** `v0.10.0rc1` makes a GitHub pre-release. *Settings → Technical → Updates*
    gets *Stable* (the default) and *Try new versions early*, and the update button follows the chosen channel. *Why*:
-   a release is used on your own computer for a few days before everyone else gets it. ENLENS's profile requires a
-   release candidate before every minor release; Margin's does not. *ENLENS 0.15, in progress:* the candidate half is
+   a release is used on your own computer for a few days before everyone else gets it. ENLENS requires a release
+   candidate before every minor release. *ENLENS 0.15, in progress:* the candidate half is
    built (the version check orders `0.15.0rc1` before `0.15.0`, `release.py` takes candidate tags and gives their notes
    install lines of their own, `release.yml` drafts them as pre-releases, and the withdrawn 0.15.0 and 0.15.1 can be
    released for real). The beta channel in Settings comes in 0.15 (step 2). Going back from a 0.15 candidate to
@@ -487,10 +459,9 @@ ENLENS this changed (8 November 2026): what testing 0.15 needs comes first (item
 by topic, the old files included, at the owner's request). Item 2 waits for a branch ruleset, which only the owner can
 switch on.
 
-### J2. README and documentation (both apps)
+### J2. README and documentation
 
-**Now.** Both READMEs have the same layout (Margin's about 320 lines, ENLENS's about 350), set by the main release
-guide. *Install* and *Update* are clear, but the *New in* section and *Earlier releases* repeat `CHANGELOG.md`;
+**Now.** The README is about 350 lines long, its layout set by the release guide. *Install* and *Update* are clear, but the *New in* section and *Earlier releases* repeat `CHANGELOG.md`;
 *Exploring the documents*, *What a check does*, *A model per task* and *Privacy* repeat `docs/MANUAL.md`; and the git
 copy and the *Layout* table are for developers in the middle of a page for researchers. Each release edits text in
 two or three places, and they drift apart.
@@ -502,18 +473,14 @@ task, reference to look up, explanations to understand). Contributor material li
 
 **The plan:**
 
-1. **A README of about 100 lines, written for its audience** (each app's README stays its own and is not synced):
-   - *ENLENS*, for scientists: one line on what it is and a screenshot; *Install*; *Update*; *What ENLENS does* (six
-     or so bullets, each linking to its manual section); *New in 0.X* (three to five bullets, with whether they can
-     change results); *How to cite ENLENS* (J4); *Privacy and your documents* in one paragraph, linking to the privacy
-     statement; links to the manual and methods; *For developers* as a link.
-   - *Margin*, for its author: one line on what it is; *Install*; *Update*; *New in 0.X*; *What Margin adds to ENLENS*
-     (its own features, a few lines); *Where things stand* (J5); *For developers* as a link.
+1. **A README of about 100 lines, written for scientists:** one line on what it is and a screenshot; *Install*;
+   *Update*; *What ENLENS does* (six or so bullets, each linking to its manual section); *New in 0.X* (three to five
+   bullets, with whether they can change results); *How to cite ENLENS* (J4); *Privacy and your documents* in one
+   paragraph, linking to the privacy statement; links to the manual and methods; *For developers* as a link.
 2. **No copies.** *Earlier releases* leaves the README (the changelog and GitHub Releases hold them). The feature
-   descriptions move into the manual, where they mostly are already. Margin's manual keeps coming through the sync
-   with its own sections added, so it costs no extra writing.
-3. **`docs/DEVELOPING.md`** for developers: the git copy, the *Layout* table, tests, the dev server, the release
-   (J1) and the ENLENS sync (J3). `docs/EXTENDING.md` stays for add-ons.
+   descriptions move into the manual, where they mostly are already.
+3. **`docs/DEVELOPING.md`** for developers: the git copy, the *Layout* table, tests, the dev server and the release
+   (J1). `docs/EXTENDING.md` stays for add-ons.
 4. **The manual in parts:** *Getting started* (a first project, start to finish), a how-to page per feature,
    reference (settings, the command line, the API) and explanations (privacy, how a check works, limits). Optionally
    published as a site (MkDocs on GitHub Pages) built by CI.
@@ -526,11 +493,10 @@ Items 1 and 3 are done in ENLENS (0.14.0: the README of about 100 lines, `docs/D
 0.18.1 (*New in* between markers, written by `release.py sync-notes`; `tests/test_doc_links.py`). Item 4 in 0.18.4:
 the hub groups its pages by what the reader needs (*Start here*, a tutorial with the demo documents; *How to…*;
 *Look it up*; *How it works*, four explanation pages), and the task pages keep the steps. A published site (MkDocs)
-is not made: the manual stays in the repository, where Margin's sync finds it. Items 3 to 6 are
-shared files, built in ENLENS and synced. The README order in the main release guide (Part A)
-changes to ENLENS's new one; Margin's order goes into Part B.
+is not made: the manual stays in the repository. The README order in the release guide changes to ENLENS's new
+one.
 
-### J4. ENLENS for scientists (ENLENS only)
+### J4. ENLENS for scientists
 
 What a tool needs when its users publish with it, review with it, or have to justify it to an ethics board.
 
@@ -566,10 +532,8 @@ What a tool needs when its users publish with it, review with it, or have to jus
 
 ### Order for J as a whole
 
-1. In ENLENS: J1 items 1, 3, 4 and 11, the product profile (J0) and J2 items 3 and 6. Sync them into Margin.
-2. In Margin: J3 stage 1 and J5 items 1 and 2.
-3. In ENLENS: J2's new README and the rest of J1, then J4 (citation first, as it is the smallest). Sync.
-4. Both: J3 stage 2, then stage 3 when ready.
+1. J1 items 1, 3, 4 and 11, and J2 items 3 and 6.
+2. J2's new README and the rest of J1, then J4 (citation first, as it is the smallest).
 
 ## K. Your own codebook
 
@@ -1004,7 +968,7 @@ meaning too; and search by meaning set up only once per project. Built in 0.17.0
 - *Decided (the two open questions):* **its codes** are found as any document's (keyword pass and AI labelling), shown
   on its own page and as its own row at the foot of the profile's grid, and never added into a code's totals or the
   profile's counts: they show what the draft covers beside the corpus. **Its claims are not found by themselves**: no
-  rule finds a draft's claims well enough without AI (Level 0), and Margin already has the AI claim finder. Instead,
+  rule finds a draft's claims well enough without AI (Level 0). Instead,
   any words selected in a working document's text offer *Check against the corpus*, which opens *Hypotheses* with
   them filled in.
 - *Built (14 November 2026):* the document's page lists the checks started from it, each with its answer now, and
