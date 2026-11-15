@@ -1905,10 +1905,10 @@ in the project folder (`drafts/codebook-from-theory.json`, not shared through th
   documents; 404 without a draft.
 - `POST …/codebook-theory/draft/evidence` `{"concept": {"name", "meaning"?, "when_to_use"?, "words"?}, "skip"?:
   [passage ids], "k"?: 1 to 8 (4)}` → `{"passages": [{"quote", "doc_id", "title", "page", "start", "end", "project",
-  "passage_id", "matched", "found_by"}]}`: passages of the evidence documents only (never a theory or working
+  "passage_id", "matched", "marks", "found_by"}]}`: passages of the evidence documents only (never a theory or working
   document, nor the draft's own), found by the concept's `words` (without any, its name): a word counts as the field
   writes it (a phrase as a phrase: "repair knowledge" never finds "repair" alone), and `matched` lists the words
-  found in the quote. Of each passage the sentence (or two that follow each other) that holds the most of them
+  found in the quote, `marks` where they stand in it (`[start, end]` pairs in characters). Of each passage the sentence (or two that follow each other) that holds the most of them
   (`start`/`end` in the document's text); the passages with the most words first, one per document before a second
   of any. A sentence that could be no example is passed over: a question (an interview guide), a run of references,
   a table's cells, a line of figures. Where the words find fewer than `k` and the project has vectors of the chosen

@@ -154,7 +154,7 @@ def test_a_codebook_from_several_theory_documents(project, tmp_path):
     practice = ws.scalar("SELECT doc_id FROM documents WHERE text LIKE '%routinised way%'")
     a, b = _by_term(theorycodes.candidates(ws, meadows)), _by_term(theorycodes.candidates(ws, practice))
     assert a["flow"]["code"]["source_doc"] == meadows and b["flow"]["code"]["source_doc"] == practice
-    # the editor gives both "Flow"s their document's title (pickTheory), as here
+    # two documents' "Flow"s sent as two codes get their document's title, as here
     keep = [dict(a["stock"]["code"]), {**a["flow"]["code"], "code": "Flow (Thinking in systems)"},
             dict(b["practice"]["code"]), {**b["flow"]["code"], "code": "Flow (Practice theory)"}]
     # a sentence of the other chosen theory, offered as an example, is dropped (it is not marked as theory)

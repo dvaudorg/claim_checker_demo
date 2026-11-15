@@ -924,8 +924,8 @@ def read(ws: Workspace, backend, model: str, progress: Callable | None = None,
     else:
         n_core = sum(1 for g in frame.groups for c in g.concepts if c.core)
         if not 6 <= n_core <= 12:
-            problems.append(f"The framework marks {n_core} concept{'s' if n_core != 1 else ''} as core (6 to 12 were "
-                            "asked for): keep or leave out more by hand.")
+            problems.append(f"The AI put {n_core} concept{'s' if n_core != 1 else ''} in the codebook to start with "
+                            "(6 to 12 were asked for): add or take out more yourself.")
     model_used = used or next((b["used"] for b in batches if b.get("read")), None)
     reading.update(state="read" if (frame is not None or numbered) else "failed", model=model_used,
                    drafted=len(numbered), problems=problems[:8], frame_task=frame_task)
@@ -1040,7 +1040,7 @@ def evidence(ws: Workspace, concept: dict, k: int = 4, skip=(), embedder=None) -
     of an interview guide, a run of references, a table's cells) is passed over. Never from a theory or a working
     document, nor from the draft's own documents. Each {"quote", "doc_id", "title", "page", "start", "end" (in the
     document's text), "project", "passage_id", "matched" (the words found in the quote, as the field writes them),
-    "found_by"}. `skip`: passage ids not to offer again. With `embedder` (the project has vectors), passages found
+    "marks" (where they stand in the quote: [start, end] pairs, in characters), "found_by"}. `skip`: passage ids not to offer again. With `embedder` (the project has vectors), passages found
     by meaning alone fill the places the words leave empty."""
     from .docrole import not_evidence_docs
     from .search import rank_passages
@@ -1064,9 +1064,13 @@ def evidence(ws: Workspace, concept: dict, k: int = 4, skip=(), embedder=None) -
                      "WHERE p.passage_id=?", (p["passage_id"],))
         if not r or r[0]["text"] != p["text"]:
             return None
-        return {"quote": " ".join(p["text"][a:z].split()), "doc_id": p["doc_id"], "title": r[0]["title"],
+        quote = " ".join(p["text"][a:z].split())
+        # where the words stand in the quote (the page marks them: it must not match them a second way)
+        marks = sorted({(m.start(), m.end()) for w, rx in rxs if w in hit for m in rx.finditer(quote)})
+        marks = [list(x) for i, x in enumerate(marks) if not i or x[0] >= marks[i - 1][1]]
+        return {"quote": quote, "doc_id": p["doc_id"], "title": r[0]["title"],
                 "page": r[0]["page"], "start": r[0]["start"] + a, "end": r[0]["start"] + z, "project": project,
-                "passage_id": p["passage_id"], "matched": hit, "found_by": by}
+                "passage_id": p["passage_id"], "matched": hit, "marks": marks, "found_by": by}
 
     ranked = []
     for at, p in enumerate(found):

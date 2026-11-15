@@ -33,24 +33,20 @@ const sameSource = (a, b) => a.doc_id === b.doc_id && a.start === b.start;
 const sameExample = (a, b) => a.doc_id === b.doc_id && flat(a.quote) === flat(b.quote);
 
 // A quote with the words found in it marked as found by matching (soft teal, never the quote's yellow: DESIGN.md
-// 4.23). Returns [nodes, the words found], the words in the concept's own spelling.
-function marked(quote, words) {
-  const uniq = [...new Map(words.filter((w) => flat(w).length > 1).map((w) => [norm(w), flat(w)])).values()]
-    .sort((a, b) => b.length - a.length);
-  if (!uniq.length) return [[quote], []];
-  const esc = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
-  const rx = new RegExp(`(?<![\\p{L}\\p{N}])(${uniq.map(esc).join("|")})(?![\\p{L}\\p{N}])`, "giu");
-  const out = [], found = new Set();
+// 4.23). `marks`: where the search found them, [start, end] pairs counted in characters as the app's server counts
+// them (so the page never matches the words a second way, and marks what was matched: "diagnosing" for "diagnose").
+function marked(quote, marks) {
+  const chars = Array.from(quote);
+  const out = [];
   let at = 0;
-  for (const m of quote.matchAll(rx)) {
-    if (m.index > at) out.push(quote.slice(at, m.index));
-    out.push(foundWords(m[0]));
-    const w = uniq.find((x) => norm(x) === norm(m[0]));
-    if (w) found.add(w);
-    at = m.index + m[0].length;
+  for (const [a, z] of marks || []) {
+    if (!(Number.isInteger(a) && Number.isInteger(z)) || a < at || z <= a || z > chars.length) continue;
+    if (a > at) out.push(chars.slice(at, a).join(""));
+    out.push(foundWords(chars.slice(a, z).join("")));
+    at = z;
   }
-  out.push(quote.slice(at));
-  return [out, uniq.filter((w) => found.has(w))];
+  out.push(chars.slice(at).join(""));
+  return out;
 }
 
 export async function renderTheoryDraft(view) {
@@ -533,7 +529,7 @@ export async function renderTheoryDraft(view) {
     const shown = e.passages.filter((p) => !c.examples.some((x) => sameExample(x, p)));
     replace(box,
       shown.length ? shown.map((p) => {
-        const [nodes, found] = marked(flat(p.quote), [...words, ...(p.matched || [])]);
+        const nodes = marked(p.quote, p.marks), found = p.matched || [];
         return inset({ class: "td-passage" }, whereLine(p), h("p", { class: "serif td-quote-text" }, nodes),
           found.length ? h("p", { class: "muted small" }, `Matched: ${found.join(", ")}`) : p.found_by === "meaning" ? h("p", { class: "muted small" }, "Found by its meaning") : null,
           h("div", { class: "btn-row" },

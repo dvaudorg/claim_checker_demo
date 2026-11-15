@@ -224,9 +224,10 @@ def test_drafts_come_back_unticked_marked_and_without_the_level_0_candidates(pro
     assert " ".join(text[d["start"]:d["end"]].split()).lower() == NEW_CONCEPT[1] and d["page"] == 1
     assert c["code"]["description"].startswith(f"“{d['quote']}” (Thinking in systems, p. 1)")
     assert c["ticked"] is False
-    # the dialog: AI drafts are never ticked (only the terms Level 0 says are: `ticked`), and are marked "AI draft"
-    js = (ROOT / "src/enlens_claims/gui/static/views/codebooks.js").read_text(encoding="utf-8")
-    assert 'c.how === "defined") && !c.ai' in js and "c.ticked" in js and '"AI draft"' in js and '"Draft with AI"' in js
+    # the draft page (the dialog's tick list is gone): the AI reads on request, and its words are marked "AI draft"
+    js = (ROOT / "src/enlens_claims/gui/static/views/theory-draft.js").read_text(encoding="utf-8")
+    assert '"Read the theory"' in js and '"AI draft"' in js and "withAI(" in js
+    assert "Draft with AI" not in (ROOT / "src/enlens_claims/gui/static/views/codebooks.js").read_text(encoding="utf-8")
 
 
 def test_examples_still_come_only_from_the_evidence(project):
