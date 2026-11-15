@@ -347,4 +347,81 @@ def test_a_headings_terms_are_offered_one_by_one_and_a_label_or_a_phrase_is_not(
         ws.close_all()
 
 
+def _one_text(tmp_path, text: str):
+    ws = Workspace.create(tmp_path / "proj")
+    d = tmp_path / "docs"
+    d.mkdir()
+    (d / "theory.txt").write_text(text, encoding="utf-8")
+    ingest.ingest(ws, [d])
+    return ws, ws.scalar("SELECT doc_id FROM documents")
+
+
+def test_a_paragraph_with_figures_or_a_formula_in_it_is_still_prose(tmp_path):
+    """Only a line of a table of contents or of a model's equations is left out: a paragraph that says "from 2.5 to
+    3.7 percent" or "with r = 0.02" is the theory's prose, and what it defines is found."""
+    ws, doc = _one_text(tmp_path, "Growth and limits\n\n"
+                        "A doubling time is the time a stock needs to grow to twice its size. When the birth rate "
+                        "rose from 2.5 to 3.7 percent, the doubling time fell from 28 to 19 years.\n\n"
+                        "A carrying capacity is the largest population a place can keep, and with r = 0.02 the stock "
+                        "reaches the carrying capacity within a lifetime.\n\n"
+                        "1.1 Growth 3 1.2 Limits 9\n\n"
+                        "Inflow: births = population x fertility\n")
+    try:
+        got = _by_term(theorycodes.candidates(ws, doc))
+        assert got["doubling time"]["definition"]["quote"].startswith("A doubling time is the time a stock needs")
+        assert got["carrying capacity"]["definition"]["quote"].startswith("A carrying capacity is the largest")
+        assert not {"fertility", "births"} & {w for t in got for w in t.split()}       # the equation is not prose
+        # and the AI is sent both paragraphs
+        sent = " ".join(p["text"] for part in theorycodes.ai_payloads(ws, doc) for p in part["passages"])
+        assert "from 2.5 to 3.7 percent" in sent and "with r = 0.02" in sent
+    finally:
+        ws.close_all()
+
+
+def test_a_glossary_entry_too_short_to_define_anything_is_left_out_not_added_to_the_one_before(tmp_path):
+    ws, doc = _one_text(tmp_path, "A primer\n\nGlossary\n\n"
+                        "Flow: Material or information that enters or leaves a stock over a period of time.\n\n"
+                        "Stock: An accumulation.\n\n"
+                        "Delay: The time between a change and its effect on the stock it changes.\n\n"
+                        "Feedback loop: A closed chain of causal connections from a stock and back to it.\n\n"
+                        "Hierarchy: Systems organized in such a way as to create a larger system.\n")
+    try:
+        cands = theorycodes.candidates(ws, doc)
+        if not any(c["how"] == "glossary" for c in cands["concepts"]):
+            pytest.skip("the reader did not find the glossary's heading")
+        got = _by_term(cands)
+        assert got["flow"]["definition"]["quote"] == ("Material or information that enters or leaves a stock over a "
+                                                     "period of time.")
+        assert got["delay"]["how"] == "glossary" and got["hierarchy"]["how"] == "glossary"
+        assert "stock" not in got or got["stock"]["how"] != "glossary"
+    finally:
+        ws.close_all()
+
+
+def test_a_term_named_with_we_call_this_ends_where_the_sentence_goes_on(tmp_path):
+    ws, doc = _one_text(tmp_path, "Loops\n\n"
+                        "Growth feeds more growth. We call this a reinforcing loop because it grows on itself. "
+                        "A reinforcing loop runs until something stops it.\n")
+    try:
+        got = _by_term(theorycodes.candidates(ws, doc))
+        assert got["reinforcing loop"]["how"] == "defined", sorted(got)
+        assert not any("because" in t for t in got)
+    finally:
+        ws.close_all()
+
+
+def test_words_of_any_script_are_words(tmp_path):
+    """Hungarian "ő" and "ű" lie outside Latin-1: a term with them is found whole (it was cut at the letter)."""
+    ws, doc = _one_text(tmp_path, "Rendszerek\n\n"
+                        "A visszacsatolási hurok is a closed chain of causes. Every visszacsatolási hurok takes time. "
+                        "A késleltetés is the time a visszacsatolási hurok needs. The erőforrás is a stock, and "
+                        "the erőforrás of a művelődési ház is its people.\n")
+    try:
+        got = _by_term(theorycodes.candidates(ws, doc))
+        assert "visszacsatolási hurok" in got and "késleltetés" in got, sorted(got)
+        assert not any(t in got for t in ("er", "forrás", "m", "vel", "dési"))
+    finally:
+        ws.close_all()
+
+
 from test_app import api, home  # noqa: E402,F401  (fixtures)

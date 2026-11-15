@@ -62,7 +62,7 @@ document or from any of the documents you started from. So the labeller learns w
 Words set in italics are not offered (the readers do not keep slant).
 
 **Draft with AI.** Beside the concepts found without AI, *Draft with AI* asks the AI to draft the theory's concepts (with several documents, each section has its own button).
-It reads **the whole document**, a part at a time (about 22,000 characters a part: a book of 200 pages is some 18
+It reads **the whole document**, a part at a time (about 22,000 characters a part: a book of 200 pages is some 19
 parts, and the line under the button says how many; a model on this computer whose context length you set yourself
 gets smaller parts that fit it, and one set too small for any part says so), and gives each concept a short name, its definition quoted
 exactly from the theory with its page, and one line on why it is a concept of the theory and not one of its examples.

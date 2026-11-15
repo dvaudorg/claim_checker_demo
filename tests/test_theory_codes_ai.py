@@ -483,3 +483,48 @@ def test_a_part_fits_the_context_length_of_a_model_on_this_computer(long_project
     # with room kept for a reasoning model nothing fits 8,192 tokens: one line that says what to change
     with pytest.raises(ValueError, match="too small to read a theory document"):
         theorycodes._part_chars(Local(), {**fixed, "think": "default"})
+
+
+def test_a_stop_while_a_part_waits_for_claude_code_takes_the_other_parts_out_of_the_queue(long_project):
+    """Stop arrives inside the wait for a part (the wait raises): the parts not read must not stay in the queue for
+    the helpers to go on answering."""
+    from enlens_claims.llm import BackendError
+
+    ws, theory = long_project
+    ehome.save_settings({**ehome.load_settings(), "backend": "claude_code", "allow_claude_code": True})
+    n = len(theorycodes.ai_payloads(ws, theory))
+    stop = threading.Event()
+    be = ClaudeCodeBackend()
+    be.should_stop = stop.is_set
+    raised: list = []
+
+    def draft():
+        try:
+            theorycodes.draft_with_ai(ws, theory, be, "sonnet", should_stop=stop.is_set)
+        except BackendError as e:
+            raised.append(str(e))
+
+    th = threading.Thread(target=draft, daemon=True)
+    th.start()
+    for _ in range(200):
+        if ws.scalar("SELECT COUNT(*) FROM tasks WHERE kind='theory_codes' AND queued=1") == n:
+            break
+        th.join(0.05)
+    assert ws.scalar("SELECT COUNT(*) FROM tasks WHERE kind='theory_codes' AND queued=1") == n
+    stop.set()
+    th.join(20)
+    assert not th.is_alive() and raised == ["Stopped."]
+    assert ws.scalar("SELECT COUNT(*) FROM tasks WHERE kind='theory_codes' AND queued=1") == 0
+
+
+def test_a_concept_named_in_another_script_does_not_break_the_draft(project):
+    """The name comes as the document writes it: one without a Latin letter must not stop the drafts being put
+    together (it did: the search for the name in the text had no word to look for)."""
+    ws, theory, _ev = project
+    model = FakeModel()
+    model.complete = lambda kind, system, user, m, payload: json.dumps(_answer(user, (
+        ("Обратная связь", "the memory of the history of changing flows"), ("反馈回路", "Stocks change only through flows"),
+        NEW_CONCEPT)))
+    r = theorycodes.draft_with_ai(ws, theory, model, "claude-sonnet-5-5")
+    assert r["ok"] and {c["term"] for c in r["concepts"]} == {"Обратная связь", "反馈回路", "Changing flows"}
+    assert theorycodes._term_rx("…").search("anything") is None

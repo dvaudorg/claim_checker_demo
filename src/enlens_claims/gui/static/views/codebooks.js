@@ -341,8 +341,10 @@ async function pickTheory() {
       if (old && !weak) return false;
       const ticked = weak ? old.row[0].checked : (c.ticked !== undefined ? c.ticked : c.how === "defined") && !c.ai;
       const cb = h("input", { type: "checkbox", checked: ticked });
+      // (an example the person ticked on the row the AI's draft replaces stays ticked)
+      const kept = new Set(weak ? old.row[2].filter(([x]) => x.checked).map(([, e]) => `${e.doc_id}:${e.start}`) : []);
       const exBoxes = (c.suggested || []).filter((e) => !fromChosen.has(e.doc_id))
-        .map((e) => [h("input", { type: "checkbox", "aria-label": `Keep this example for ${c.term}` }), e]);
+        .map((e) => [h("input", { type: "checkbox", checked: kept.has(`${e.doc_id}:${e.start}`), "aria-label": `Keep this example for ${c.term}` }), e]);
       const row = [cb, c, exBoxes, r.title];
       rows.push(row);
       const el = h("div", { class: "cb-theme cb-theory" },

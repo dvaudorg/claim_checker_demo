@@ -14,6 +14,10 @@
   for a theory document are different ones, so a codebook started from it again will differ. Codebooks you already
   made are not changed.
 
+- **Terms in any alphabet are found whole.** The words of a theory document were read with Western European letters
+  only, so a Hungarian term with "ő" or "ű" was cut at that letter and a Cyrillic or Greek one was not seen at all.
+  Can change results, for the concepts offered from such a document.
+
 ### Under the hood
 
 - Prompt `theory-codes-v2` (was `-v1`): one `theory_codes` task for each part of the document (`theorycodes._ai_parts`,

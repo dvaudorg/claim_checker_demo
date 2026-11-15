@@ -68,7 +68,7 @@ from .textutil import split_sentences
 MAX_TERM_WORDS = 4
 MAX_CANDIDATES = 40
 MAX_EXAMPLES = 3
-_W = r"[A-Za-zÀ-ÖØ-öø-ÿ][\w'’-]*"
+_W = r"[^\W\d_][\w'’-]*"     # a word of any script (0.19.0: "[A-Za-zÀ-ÿ]" cut Hungarian "ő" and all of Cyrillic)
 _TERM = rf"((?:{_W}\s+){{0,{MAX_TERM_WORDS - 1}}}{_W})"
 # a term at the start of a sentence (an article before it allowed), then the defining words
 _SUBJECT = rf"^(?:(?:A|An|The)\s+)?{_TERM}"
@@ -81,6 +81,7 @@ _DEFINES = [
     re.compile(rf"{_SUBJECT}\s+(?:is|are)\s+(?:a|an|the)\s+", re.I),       # the plain one, last: see _WEAK_AT
 ]
 _WEAK_AT = len(_DEFINES) - 1   # "X is a …" alone does not make X a concept ("A tree is a system")
+_CALL_AT = 3                   # "we call this X": the term is followed by any words, not by a verb that ends it
 _NUMBERING = re.compile(r"^\s*(?:(?:chapter|part|section)\s+)?(?:\d+(?:\.\d+)*\.?|[IVXLC]+\.)\s+", re.I)
 
 
@@ -150,18 +151,26 @@ def _line_key(line: str) -> str:
     return re.sub(r"\d+", "#", " ".join(line.lower().split()))
 
 
-_SECTION_NUMBER = re.compile(r"(?<![\w.])\d+(?:\.\d+)+(?![\w.])")
+# a section's number before its title ("1.3 Practice theories"), not a figure in a sentence ("from 2.5 to 3.7 percent")
+_SECTION_NUMBER = re.compile(r"(?<![\w.])\d+(?:\.\d+)+\s+[^\W\d_a-z]")
 _ENDS_IN_PAGE = re.compile(r"\s\d{1,4}$")
 _SENTENCE_END_INSIDE = re.compile(r"[.!?]['”\")]?\s")
 
 
 def _contents_like(line: str) -> bool:
-    """A line of a table of contents or a list of figures: several section numbers ("1.2 … 1.3 …"), or a short line
-    without a sentence in it that ends in a page number."""
+    """A line of a table of contents or a list of figures: several numbered titles ("1.2 Feedback 9 1.3 Traps 21"),
+    or a short line without a sentence in it that ends in a page number. A paragraph with figures in it is prose."""
     s = line.strip()
     if len(_SECTION_NUMBER.findall(s)) >= 2:
         return True
     return len(s) <= 160 and bool(_ENDS_IN_PAGE.search(s)) and not _SENTENCE_END_INSIDE.search(s)
+
+
+def _equation(line: str) -> bool:
+    """A line of a model's equations ("Inflow: heating = discrepancy x 10%"): short, or one sign after another. A
+    paragraph that holds a formula ("with r = 0.02 the stock doubles …") is prose."""
+    n = line.count(" = ")
+    return n >= 3 or (n >= 1 and len(line.strip()) <= 120)
 
 
 def _clean_lines(lines: list[tuple[int, int]], text: str) -> tuple[list[tuple[int, int]], set[str]]:
@@ -174,8 +183,8 @@ def _clean_lines(lines: list[tuple[int, int]], text: str) -> tuple[list[tuple[in
     kept = []
     for a, z in lines:
         s = text[a:z]
-        if not re.search(_W, s) or _line_key(s) in repeated or _contents_like(s) or " = " in s:
-            continue                 # (" = ": a line of a model's equations)
+        if not re.search(_W, s) or _line_key(s) in repeated or _contents_like(s) or _equation(s):
+            continue
         kept.append((a, z))
     return kept, repeated
 
@@ -230,10 +239,10 @@ _PANEL = re.compile(r"^[A-Za-z]\)?[:.)]\s")                                 # a 
 MAX_HEADING_WORDS = 6
 MAX_FREQUENT = 12       # words offered for their frequency alone, after the defined terms and the headings
 _GLOSSARY_HEAD = re.compile(r"\b(glossary|definitions|key\s+(?:terms|concepts)|terminology)\b", re.I)
-_ENTRY_TERM = rf"{_W}(?:[ \-]{_W}){{0,4}}"
+_ENTRY_TERM = rf"{_W}(?: {_W}){{0,4}}"
 _ENTRY = re.compile(rf"^\s*(?:[•*·]\s*)?({_ENTRY_TERM})\s*(?::|\s[—–-]\s|—)\s*(?=\S)")
 # a second entry on the same line ("… of its components. Feedback loop: The mechanism …")
-_ENTRY_INLINE = re.compile(rf"(?<=[.!?”\"’])\s+(?=[A-Z][\w'’-]*(?:[ \-]{_W}){{0,4}}:\s+\S)")
+_ENTRY_INLINE = re.compile(rf"(?<=[.!?”\"’])\s+(?=[^\W\d_a-z][\w'’-]*(?: {_W}){{0,4}}:\s+\S)")
 MAX_GLOSSARY_CHARS = 60000
 
 
@@ -244,9 +253,8 @@ def _subject(raw: str, stop: frozenset[str]) -> str | None:
     if not words or len(words) > MAX_TERM_WORDS:
         return None
     low = [w.lower() for w in words]
-    if low[0] in stop or low[0] in _NOT_SUBJECT or low[-1] in stop or low[-1] in _NOT_SUBJECT:
-        return None
-    if any((w in stop or w in _NOT_SUBJECT) and w not in _INNER for w in low[1:-1]):
+    no = stop | _NOT_SUBJECT | _FUNCTION
+    if low[0] in no or low[-1] in no or any(w in no and w not in _INNER for w in low[1:-1]):
         return None
     t = " ".join(words)
     return t if 3 <= len(t) <= 60 and not t.isdigit() else None
@@ -267,6 +275,7 @@ def _glossary(lines: list[tuple[int, int]], text: str, headings: list) -> list[t
         end = min(end, h["end"] + MAX_GLOSSARY_CHARS)
         entries: list[tuple[str, tuple[int, int]]] = []
         n_lines = 0
+        open_entry = False
         for a, z in lines:
             if a < h["end"] or a >= end:
                 continue
@@ -275,11 +284,17 @@ def _glossary(lines: list[tuple[int, int]], text: str, headings: list) -> list[t
             for ca, cz in zip(cuts, cuts[1:]):
                 piece = text[a + ca:a + cz]
                 m = _ENTRY.match(piece)
-                if m and len(piece[m.end():].split()) >= MIN_DEFINITION_WORDS:
-                    entries.append((m.group(1).strip(), (a + ca + m.end(), a + ca + len(piece.rstrip()))))
-                elif entries and piece.strip():           # the entry before it runs on
+                if m:
+                    open_entry = len(piece[m.end():].split()) >= MIN_DEFINITION_WORDS
+                    if open_entry:      # (an entry too short to define anything is left out, not added to the last)
+                        entries.append((m.group(1).strip(), (a + ca + m.end(), a + ca + len(piece.rstrip()))))
+                elif entries and open_entry and piece.strip() and not text[entries[-1][1][1]:a + ca].strip():
+                    # the entry before it runs on: only on the very next line (a running head between two pages of
+                    # the glossary ends it)
                     t, (da, _dz) = entries[-1]
                     entries[-1] = (t, (da, a + ca + len(piece.rstrip())))
+                else:
+                    open_entry = False
         if len(entries) >= 3 and len(entries) * 2 >= n_lines and len(entries) > len(best):
             best = entries
     return best
@@ -288,6 +303,8 @@ def _glossary(lines: list[tuple[int, int]], text: str, headings: list) -> list[t
 def _term_rx(term: str) -> re.Pattern:
     """The term in running text, in the singular or the plural, across a line break or a hyphen."""
     words = re.findall(_W, term)
+    if not words:
+        return re.compile(r"(?!)")           # no word in it: found nowhere
     last = words[-1]
     stem = last[:-1] if len(last) > 4 and last.lower().endswith("s") and not last.lower().endswith("ss") else last
     return re.compile(r"(?<![\w'’-])" + r"[\s\-]+".join([re.escape(w) for w in words[:-1]] + [re.escape(stem)])
@@ -396,13 +413,11 @@ def candidates(ws: Workspace, doc_id: str, limit: int = MAX_CANDIDATES, with_exa
 
     # every run of one to four words that starts and ends with a content word, with the sentences that use it
     where: dict[str, list[int]] = {}
-    forms: dict[str, Counter] = {}
     for i, (a, z) in enumerate(sents):
-        words = re.findall(_W, text[a:z])
-        low = [w.lower() for w in words]
+        low = [w.lower() for w in re.findall(_W, text[a:z])]
         seen_here = set()
         for n in range(1, MAX_TERM_WORDS + 1):
-            for j in range(len(words) - n + 1):
+            for j in range(len(low) - n + 1):
                 g = low[j:j + n]
                 if g[0] in stop or g[-1] in stop or len(g[0]) < 3 or len(g[-1]) < 3 or g[0] in _FUNCTION \
                         or g[-1] in _FUNCTION:
@@ -410,24 +425,39 @@ def candidates(ws: Workspace, doc_id: str, limit: int = MAX_CANDIDATES, with_exa
                 if any((w in stop or w in _FUNCTION) and w not in _INNER for w in g[1:-1]):
                     continue
                 k = _norm(" ".join(g))
-                # the way the text writes it: a capital that only starts a sentence does not count
-                f = " ".join(words[j:j + n])
-                forms.setdefault(k, Counter())[f if f[1:] != f[1:].lower() else f.lower()] += 1
                 if k in seen_here:
                     continue
                 seen_here.add(k)
                 where.setdefault(k, []).append(i)
 
+    used_by: dict[str, list[int]] = {}
+
     def uses(term: str) -> list[int]:
         k = _norm(term)
         if k in where or len(term.split()) <= MAX_TERM_WORDS:
             return where.get(k, [])
-        rx = _term_rx(term)                      # a long heading ("shifting the burden to the intervenor")
-        return [i for i, (a, z) in enumerate(sents) if rx.search(text[a:z])]
+        if k not in used_by:
+            # a long heading ("shifting the burden to the intervenor"): looked for only in the sentences that use
+            # the rarest of its words
+            rx = _term_rx(term)
+            near = min((where.get(_norm(w.lower()), []) for w in re.findall(_W, term)
+                        if w.lower() not in stop and w.lower() not in _FUNCTION and len(w) >= 3), key=len, default=[])
+            used_by[k] = [i for i in near if rx.search(text[sents[i][0]:sents[i][1]])]
+        return used_by[k]
+
+    def form_of(term: str) -> str | None:
+        """The way the text writes a term most often (a capital that only starts a sentence does not count)."""
+        rx = _term_rx(term)
+        seen: Counter = Counter()
+        for i in uses(term)[:200]:
+            for m in rx.finditer(text[sents[i][0]:sents[i][1]]):
+                f = " ".join(m.group(0).split())
+                seen[f if f[1:] != f[1:].lower() else f.lower()] += 1
+        return seen.most_common(1)[0][0] if seen else None
 
     def shown(term: str, k: str) -> str:
-        f = forms.get(k)
-        t = f.most_common(1)[0][0] if f else term
+        f = form_of(term)
+        t = f or term
         ws_ = t.split()
         if len(ws_) > 1 and all(w[:1].isupper() or w.lower() in stop for w in ws_) or t.isupper() and not f:
             # a heading's capitals: "Seeking the Wrong Goal" as running text writes it (an abbreviation keeps its own)
@@ -490,12 +520,12 @@ def candidates(ws: Workspace, doc_id: str, limit: int = MAX_CANDIDATES, with_exa
                 or low[-1] in _NOT_SUBJECT or all(w in _STRUCTURE_KEYS or _norm(w) in _STRUCTURE_KEYS for w in low):
             return None
         t = " ".join(words)
-        return t if len(t) >= 3 and re.fullmatch(rf"{_W}(?:[ \-]{_W})*", t) else None
+        return t if len(t) >= 3 and re.fullmatch(rf"{_W}(?: {_W})*", t) else None
 
     def prose_after(n: int) -> bool:
         r = headings[n]
         until = headings[n + 1]["start"] if n + 1 < len(headings) else len(text)
-        first = next((i for i, st in enumerate(starts) if st >= r["end"]), len(sents))
+        first = bisect.bisect_left(starts, r["end"])
         return any(len(text[a:z].split()) >= 12 or (len(text[a:z].split()) >= 6 and text[a:z].rstrip()[-1:] in ".!?”\"")
                    for a, z in sents[first:first + 6] if a < until)
 
@@ -536,6 +566,10 @@ def candidates(ws: Workspace, doc_id: str, limit: int = MAX_CANDIDATES, with_exa
             if not m:
                 continue
             t = _subject(m.group(1), stop)
+            if not t and n_rx == _CALL_AT:
+                # "we call this a reinforcing loop because it grows": the words up to the first that joins
+                ws_ = m.group(1).split()
+                t = next((x for x in (_subject(" ".join(ws_[:n]), stop) for n in range(len(ws_) - 1, 0, -1)) if x), None)
             if t:
                 if n_rx == _WEAK_AT:
                     weak.setdefault(_norm(t), []).append(t)
@@ -582,18 +616,24 @@ def candidates(ws: Workspace, doc_id: str, limit: int = MAX_CANDIDATES, with_exa
             if ev_total >= 20000 and (n / total) < 3 * ((ev.get(k, 0) + 1) / ev_total):
                 continue            # the evidence uses the word about as much: not the theory's own
         ranked.append((-n * (1 + 0.6 * k.count(" ")), k))
+    # how often the most frequent phrase with a word in it comes
+    in_phrase: dict[str, int] = {}
+    for o, v in where.items():
+        if " " in o and len(v) >= 3:
+            for w in set(o.split()):
+                if len(v) > in_phrase.get(w, 0):
+                    in_phrase[w] = len(v)
     n_frequent = 0
     for _score, k in sorted(ranked):
         if n_frequent >= MAX_FREQUENT or len(found) >= limit:
             break
         n = len(where[k])
-        if any(k != o and k in o.split() and len(where[o]) >= 0.6 * n for o in where
-               if o.count(" ") > k.count(" ") and len(where[o]) >= 3):
+        if " " not in k and in_phrase.get(k, 0) >= 0.6 * n:
             continue
         if any(o != k and (o in k.split() or k in o.split() or o in k or k in o) and found[o]["how"] == "frequent"
                for o in found):
             continue                # one of "practice theory" and "practice theories", not both
-        t = forms[k].most_common(1)[0][0]
+        t = form_of(k) or k
         if _clean_term(t, stop):
             before = len(found)
             add(t, "frequent")
@@ -810,11 +850,12 @@ def _ai_parts(ws: Workspace, doc_id: str, terms: list[str], max_chars: int = AI_
              for k, r in enumerate(p, 1)] for p in parts]
 
 
-def ai_payloads(ws: Workspace, doc_id: str, max_chars: int = AI_MAX_CHARS) -> list[dict]:
+def ai_payloads(ws: Workspace, doc_id: str, max_chars: int = AI_MAX_CHARS, found: dict | None = None) -> list[dict]:
     """What the AI is given, one payload for each part of the document: its title, its Level-0 candidates (names
-    only, as hints), the part's number and the part's passages. `max_chars`: what one part may hold (`_part_chars`)."""
-    c = candidates(ws, doc_id, AI_MAX_CANDIDATES, with_examples=False)
-    terms = [x["term"] for x in c["concepts"]]
+    only, as hints), the part's number and the part's passages. `max_chars`: what one part may hold (`_part_chars`);
+    `found`: the document's candidates when the caller has them already."""
+    c = found or candidates(ws, doc_id, with_examples=False)
+    terms = [x["term"] for x in c["concepts"]][:AI_MAX_CANDIDATES]
     parts = _ai_parts(ws, doc_id, terms, max_chars)
     return [{"doc_id": doc_id, "title": c["title"], "candidates": terms, "part": i, "parts": len(parts),
              "passages": p} for i, p in enumerate(parts, 1)]
@@ -826,14 +867,15 @@ def ai_payload(ws: Workspace, doc_id: str) -> dict:
     return got[0] if got else {"doc_id": doc_id, "title": "", "candidates": [], "part": 1, "parts": 0, "passages": []}
 
 
-def make_ai_tasks(ws: Workspace, doc_id: str, model: str, max_chars: int = AI_MAX_CHARS) -> list[str]:
+def make_ai_tasks(ws: Workspace, doc_id: str, model: str, max_chars: int = AI_MAX_CHARS,
+                  found: dict | None = None) -> list[str]:
     """The draft's tasks, one for each part of the document (made once per input: the same text, candidates, prompt
     version and model give the same task, so a draft asked again reuses its answers). Returns their ids, in the
     document's order."""
     from . import prompts
     from .tasks import replace_task
 
-    payloads = ai_payloads(ws, doc_id, max_chars)
+    payloads = ai_payloads(ws, doc_id, max_chars, found)
     if not payloads:
         raise ValueError("This document has no text to read: read it again first.")
     tids = []
@@ -946,7 +988,9 @@ def ai_drafts(ws: Workspace, task_ids: str | list[str], skip: set[str] | None = 
         return []
     text = ws.scalar("SELECT text FROM documents WHERE doc_id=?", (doc_id,)) or ""
     out = []
-    for k, cs in by.items():
+    # (how often the text uses a concept only settles the order among those the parts rank near the top)
+    for k in sorted(by, key=lambda k: -rank[k])[:3 * AI_MAX_CONCEPTS]:
+        cs = by[k]
         rx = _term_rx(cs[0]["name"])
         uses = len(rx.findall(text))
 
@@ -992,7 +1036,8 @@ def draft_with_ai(ws: Workspace, doc_id: str, backend, model: str, progress: Cal
     if got is None:
         raise ValueError(NO_LOCAL if lv == "local" else NO_AI)
     be, call = got
-    tids = make_ai_tasks(ws, doc_id, call, _part_chars(be, readers.settings()))
+    found = candidates(ws, doc_id, with_examples=False)      # once for the draft: the hints, and what is its own
+    tids = make_ai_tasks(ws, doc_id, call, _part_chars(be, readers.settings()), found)
     n = len(tids)
     if progress:
         progress(0, n)
@@ -1033,10 +1078,13 @@ def draft_with_ai(ws: Workspace, doc_id: str, backend, model: str, progress: Cal
                 problems += [f"part {i + 1}: {e}" for e in errs[:2]]
     finally:
         runs_mod.finish(ws, rid, len(read))
+        if len(read) < n and (halted == "stopped" or (halted is None and should_stop and should_stop())):
+            # stopped between two parts, or while one waited (Claude Code's wait raises): the parts not read leave
+            # the queue with the draft, so no helper goes on answering them (the parts read are kept)
+            from . import taskqueue
+
+            taskqueue.withdraw(ws, task_ids=[t for t in tids if t not in read])
     if halted:
-        if halted == "stopped":   # the parts not yet read leave the queue with the draft (the ones read are kept)
-            with ws.connect() as cx:
-                cx.execute(f"UPDATE tasks SET queued=0 WHERE task_id IN ({','.join('?' * n)}) AND status!='done'", tids)
         return {"doc_id": doc_id, "title": title, "task_id": tids[0], "task_ids": tids, "parts": n,
                 "parts_read": len(read), "ok": False, "stopped": halted == "stopped",
                 "withdrawn": halted == "withdrawn", "why": None if halted == "stopped" else WITHDRAWN,
@@ -1045,8 +1093,7 @@ def draft_with_ai(ws: Workspace, doc_id: str, backend, model: str, progress: Cal
     reused = ok and reused
     # the terms the document defines itself stay as they are; a heading or a frequent word the AI drafts too is
     # offered with the AI's definition (the page replaces its row)
-    own = {_norm(c["term"]) for c in candidates(ws, doc_id, with_examples=False)["concepts"]
-           if c["how"] in ("glossary", "defined")}
+    own = {_norm(c["term"]) for c in found["concepts"] if c["how"] in ("glossary", "defined")}
     concepts = ai_drafts(ws, read, own) if ok else []
     in_parts = f" in {n} parts" if n > 1 else ""
     missed = f" ({n - len(read)} of the {n} parts could not be read: the AI’s quotes were not found in them)" \
