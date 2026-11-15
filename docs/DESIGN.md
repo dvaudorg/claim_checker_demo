@@ -584,12 +584,14 @@ choice). **Looks:** a floating box under its button
 (the card's white, an edge, 8 px corners, the large shadow); rows of a 14 px icon and a verb; the current row soft teal;
 a dangerous row in red, last, after a line; a row may say a quiet fact after its words (the project's *6 documents · 3
 answers*) or go somewhere (*Manage projects*). Its button is a small quiet button: *More* with the more icon, or the
-current value and a chevron (the project switch, whose look is [5.1](#51-the-sidebar)'s). Escape, a choice or a click
+current value and a chevron (the project switch, whose look is [5.1](#51-the-sidebar)'s). In a list where every row
+has one (the research log's entries), it is the more icon alone, a small [icon button](#42-icon-buttons) whose name and
+tooltip say *More*, so the list is not a column of buttons (`iconOnly: true`). Escape, a choice or a click
 outside closes it. Where a frame would cut the open box (a table that scrolls, its last row), the box floats over the
 page instead: its end under the button's end, or its start under the button's start when that keeps it over the frame;
 a scroll of the page or a resize closes it, a scroll of its own list does not. Where the box fits inside every frame
 around it (the project switch, a menu in the drawer), it hangs from its button. **Make it:** `menu({ items: [{ text, icon, onClick, href, meta, danger, current }, "sep"], text,
-trigger, listClass })`; `trigger` gives the summary's own content. **Lives in:** `components.css` § 4.17.
+trigger, iconOnly, listClass })`; `trigger` gives the summary's own content. **Lives in:** `components.css` § 4.17.
 
 **No popover panels for running work.** Work shows in the fixed [status area](#52-the-status-area-and-the-last-row);
 the queue's controls live in Settings (*Work waiting for Claude Code*). Popovers hold explanations and short menus only.
@@ -701,9 +703,10 @@ are such rows: in an entry ENLENS wrote, the item's quoted name is its title lin
 home…”*), not the whole sentence; where the words do not quote it, and under your own entry (your words, in serif), the
 item is named after *About:*. On the Research log page one entry is one row, in a readable column (at most 52em): the
 time in a narrow column of its own, the group's icon, the words, a reason as the indented *Why:* line under them, a
-quiet line of facts (a colleague's person mark, the sharing state of an entry you wrote, *edited …*), and at the row's
-end one *More* menu with what can be done to it (*Say why* or *Change why*, *Edit*, *Compare with before*, and last,
-after a line, *Remove…*); no button stands under an entry (`.log-by-time`). In the drawer's narrow column the time
+quiet line of facts (a colleague's person mark, the sharing state of an entry you wrote as its tag, *edited …*), and at
+the row's end one *More* menu, the more icon alone, with what can be done to it (*Say why* or *Change why*, *Edit*,
+*Share* or *Unshare*, *Compare with before*, and last, after a line, *Remove…*); no button stands under an entry
+(`.log-by-time`). In the drawer's narrow column the time
 joins the quiet line, and the actions stay on the page. Entries you wrote and entries a colleague wrote are two groups
 of the log's *Show* list (*Your own entries*, *Your colleagues' entries*), never one.
 

@@ -5,7 +5,7 @@ import { featureEyebrow } from "../features.js";
 import { App, api, h, icon, clear, toast, showError, failedLoad, fmt, pageHead, P, confirmDialog, download, downloadLinks,
   debounce, session, dialog, button, searchField, select, textarea, menu, link, personMark, emptyState, latest, plural } from "../lib.js";
 import { compareVersion } from "./versions.js";
-import { shareInline, sharingOf } from "./share.js";   // 0.18 (L1)
+import { shareTag, shareItem, unshareItem, sharingOf } from "./share.js";   // 0.18 (L1)
 
 const GROUP_ICON = { entries: "note", colleagues: "users", documents: "book-open", checks: "flask", themes: "shapes",
   codebooks: "book-marked", history: "undo", together: "users", other: "circle" };
@@ -145,20 +145,27 @@ export async function renderLog(view) {
     const clock = new Date(e.at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
     const time = h("time", { class: "log-time", datetime: e.at, title: fmt.date(e.at) }, clock);
     const who = entryWho(e), about = entrySubject(e, href);
-    // 0.18 (L1): an entry you wrote has its sharing state, and Share / Unshare, in its quiet line
-    const share = e.kind === "entry" && e.mine && shares.get(e.entry_id) ? shareInline(shares.get(e.entry_id), () => { sharesStale = true; return load(); }, { owner: false }) : null;
+    // 0.18 (L1): an entry you wrote has its sharing state as a tag in its quiet line; Share and Unshare are in its menu
+    const shared = e.kind === "entry" && e.mine ? shares.get(e.entry_id) : null;
+    const share = shared ? shareTag(shared) : null;
     const meta = who || share || about || e.edited_at ? h("div", { class: "log-meta" }, who, share, about,
       e.edited_at ? h("span", { class: "muted" }, `edited ${fmt.dateShort(e.edited_at)}`) : null) : null;
     const why = e.why ? h("p", { class: "log-why" }, h("strong", {}, "Why: "), e.why) : null;
     const items = [];
     if (e.can_why && e.kind !== "entry") items.push({ text: e.why ? "Change why" : "Say why", icon: "quote", onClick: () => editWhy(e) });
     if (e.can_edit) items.push({ text: "Edit", icon: "type", onClick: () => editEntry(e) });
+    if (shared && shared.can_change) {
+      const on = shared.state === "shared";
+      items.push({ text: on ? "Unshare" : shared.state === "withdrawn" ? "Share again" : "Share", icon: on ? "undo" : "users",
+        title: on ? "Stop sending it to your colleagues (what they have stays with them)" : "Give it to your colleagues with your work",
+        onClick: async () => { if (await (on ? unshareItem(shared) : shareItem(shared))) { sharesStale = true; load(); } } });
+    }
     if (e.has_version && VERSION_KIND[e.subject_kind]) {
       items.push({ text: "Compare with before", icon: "history", title: "What changed since just before this, and Restore",
         onClick: () => compareVersion({ kind: VERSION_KIND[e.subject_kind], key: e.subject_id, versionId: e.version_id, onRestored: load }) });
     }
     if (e.can_edit) items.push("sep", { text: "Remove…", icon: "trash", danger: true, onClick: () => removeEntry(e) });
-    const more = items.length ? menu({ class: "log-more", label: `More for the entry of ${fmt.date(e.at)}`, items }) : null;
+    const more = items.length ? menu({ class: "log-more", iconOnly: true, label: `More for the entry of ${fmt.date(e.at)}`, items }) : null;
     return h("li", { class: `log-entry log-${e.group}` + (e.kind === "entry" ? " log-own" : "") }, time,
       h("span", { class: "log-icon", "aria-hidden": "true" }, icon(GROUP_ICON[e.group] || "circle", { size: 15 })),
       h("div", { class: "log-body" }, entryText(e, href), why, meta), more);

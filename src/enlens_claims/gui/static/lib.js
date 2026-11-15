@@ -1170,10 +1170,12 @@ export function searchField(opts = {}) {
 // summary holds those children and takes its look from where it is placed (the project switch, docs/DESIGN.md 5.1).
 // listClass: the list's own class for placement. Escape and a click outside close it.
 export function menu(opts = {}) {
-  const [o, attrs] = split(opts, ["items", "text", "label", "title", "trigger", "listClass"]);
+  const [o, attrs] = split(opts, ["items", "text", "label", "title", "trigger", "listClass", "iconOnly"]);
   const list = h("div", { class: o.listClass ? `${UI.menu} ${o.listClass}` : UI.menu, role: "menu" });
+  // iconOnly: the more icon alone (a small icon button named and tipped "More"), where every row of a list has a menu
   const trigger = o.trigger
     ? h("summary", { "aria-haspopup": "menu", "aria-label": o.label || null, title: o.title || null }, o.trigger)
+    : o.iconOnly ? h("summary", { class: UI.iconButtonSm, "aria-haspopup": "menu", "aria-label": o.label || "More", title: o.title || "More" }, icon("more-horizontal", { size: 16 }))
     : h("summary", { class: `${UI.button.quiet} ${UI.sm}`, "aria-haspopup": "menu", "aria-label": o.label || null, title: o.title || null },
       icon("more-horizontal", { size: 14 }), o.text || "More");
   const det = h("details", withClass("menu", attrs), trigger, list);
