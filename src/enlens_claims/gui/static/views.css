@@ -722,6 +722,8 @@ p.dv-selnote { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; 
 .cb-theory-examples { display: flex; flex-direction: column; gap: var(--space-1); padding-left: var(--space-5); }
 .cb-theory-example { display: flex; gap: var(--space-2); align-items: flex-start; }
 .cb-theory-ai { margin: var(--space-2) 0 var(--space-3); }
+/* 0.19: a theory's concepts in their own list; with several theories, one group (a .cb-run) per document */
+.cb-theory-list { display: flex; flex-direction: column; gap: 12px; }
 .cb-theme-name { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; }
 .cb-steps { display: inline-flex; gap: 2px; }
 .cb-step { min-height: 0; }

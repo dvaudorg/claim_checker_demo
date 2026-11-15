@@ -1815,7 +1815,9 @@ terms.
   "suggested": [examples from the evidence documents: {"quote", "doc_id", "title", "page", "start", "end",
   "project"}]}]}`.
 - Then `POST /api/projects/{p}/codebooks` with `"start": "theory"` and `"source": {"codes": [the drafts kept, with the
-  examples ticked], "doc_id"}`; an example from a theory document is dropped.
+  examples ticked], "doc_ids": [the documents they come from]}` (`"doc_id"` for one still works); an example from a
+  theory document, or from any of `doc_ids`, is dropped. 0.19: with codes from more than one document, each
+  document's codes become a group named after it (a draft code's `source_doc` says which; it is not stored).
 
 **Concepts: paths, time and groups** (roadmap D3, D4, `conceptpaths.py`).
 
