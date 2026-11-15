@@ -64,8 +64,13 @@ def test_the_documents_page_follows_the_running_job():
     # the card consults the running job: heading, counts from its progress, a disabled button, no active one
     assert "if (indexJob)" in draw
     assert "Setting up search by meaning…" in draw and "indexJob.progress" in draw
-    running = draw[draw.index("if (indexJob)"):draw.index("if (!s.passages)")]
+    running = draw[draw.index("if (indexJob)"):draw.index("s.embedded ?")]
     assert "disabled: true" in running and "Set up search by meaning" not in running
+    # on and complete, nothing needs you: one quiet line, no card (and never while a job runs)
+    settled = draw[draw.index("if (settled)"):draw.index("const indexCard = card(")]
+    assert "!indexJob" in draw[:draw.index("if (settled)")]
+    assert "docs-index-line" in settled and "Search by meaning is on" in settled and "return;" in settled
+    assert "Search by meaning is on" not in draw[draw.index("const indexCard = card("):]
     # started here: the job is kept for the card; found after a reload: the same
     assert js.count("followIndex(") >= 3
     assert "indexJob = indexing" in js

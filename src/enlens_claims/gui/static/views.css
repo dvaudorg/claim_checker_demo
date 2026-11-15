@@ -193,6 +193,8 @@ html:has(.bulk-stick:not([hidden])) { scroll-padding-bottom: 6rem; }
 .docs-manifest-note { margin: 0; }
 .docs-check-link { margin-top: var(--space-2); }
 .docs-index-sub { margin: var(--space-1) 0 0; }
+/* search by meaning, on and complete: one quiet line in place of the card (nothing needs you) */
+.docs-index-line { margin: 0; }
 .docs-index-progress { margin-top: var(--space-3); }
 .docs-nr-actions { margin-top: var(--space-2); }
 .docs-kept-note { margin: var(--space-2) 0 var(--space-1); }
