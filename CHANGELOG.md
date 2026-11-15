@@ -2,6 +2,10 @@
 
 ## 0.19.1 (November 2026): Rename a document, and a calmer document page
 
+You can now give a document a title of your own, from its row on the Documents page or from its page. A document's
+page opens with less on it, the sidebar shows which work goes to Claude and which stays on this computer, and *Draft
+with AI* in *Codebook from theory* can be started from the dialog itself. No result changes.
+
 ### New
 
 - **Rename a document.** Open a document's row on the Documents page, or its page, and press *Rename…* to give it a
@@ -75,6 +79,12 @@
 - `tests/test_document_rename.py`: a title of one's own wins over the bibliography's and comes back off with *Use the
   title it had before*; the search index follows it; the research log says so; the API, the list's opened row and the
   page offer it; the theory dialog carries its own *Start Claude Code*.
+
+### Not yet done
+
+- A renamed title stays in your copy of a shared project; colleagues keep the title they have. It was not tried in a
+  real shared folder.
+- The theory dialog's *Start Claude Code* was tried with the stand-in Claude Code only, not a real signed-in one.
 
 ## 0.19.0 (November 2026): Your own drafts, a concept map, codebooks from other programs and from theory, and reader 6
 
