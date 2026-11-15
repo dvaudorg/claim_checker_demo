@@ -275,7 +275,7 @@ def test_the_routes_offer_it_and_run_it_as_a_job(api, tmp_path):  # noqa: F811
     assert job["state"] == "done", job
     got = job["result"]
     # the offline demo offers the Level-0 candidates the passages use: the terms the theory defines itself are left
-    # out as repeats (a heading or a frequent word may come back with the sentence the draft chose)
+    # out as repeats (a heading may come back with the sentence the draft chose)
     assert got["ok"] and got["model"] and all(c["ai"] and c["how"] == "ai" for c in got["concepts"])
     assert got["parts"] == got["parts_read"] == 1 and offer["parts"] == 1
     level0 = {c["term"].lower() for c in api("GET", f"/api/projects/Lens/codebook-theory/{theory}")[1]["concepts"]
