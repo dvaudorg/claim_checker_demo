@@ -45,7 +45,7 @@ def test_the_head_says_each_thing_once():
     # the way to the original is the last of the facts; the highlighted copy and More are the head's actions
     facts = js[js.index("facts: [fileSaysMore"):js.index("    meta: [")]
     assert facts.rstrip().endswith('"Open the original" })],') and 'class: "dv-orig"' in facts
-    assert "actions: [copyBtn, moreSlot] }));" in js and "dv-head-row" not in js
+    assert "actions: [renameBtn, copyBtn, moreSlot] }));" in js and "dv-head-row" not in js
     assert "dv-head-row" not in _js("views.css")
 
 

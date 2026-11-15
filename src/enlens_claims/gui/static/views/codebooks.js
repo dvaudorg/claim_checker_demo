@@ -8,7 +8,7 @@
 // words are marked *AI draft* until you rewrite them.
 import { featureEyebrow, viewTabs, withAI } from "../features.js";
 import { App, api, h, icon, replace, clear, toast, showError, failedLoad, fmt, pageHead, P, plural, confirmDialog, download,
-  dialog, field, switchControl, watchJob, emptyState, shortTitle, session, button, iconButton, downloadButton, link, menu, notice, card, tag, input, select, textarea, choice, optionCards, readsLine, aiWhere, inset, workState, personMark, compare, readTextFile, setBusy } from "../lib.js";
+  dialog, field, switchControl, watchJob, emptyState, shortTitle, session, button, iconButton, downloadButton, link, menu, notice, card, tag, input, select, textarea, choice, optionCards, readsLine, aiWhere, inset, workState, personMark, compare, readTextFile, setBusy, startClaude } from "../lib.js";
 import { forgetFrameworks } from "./options.js";
 import { showHistory, askWhy } from "./versions.js";
 import { shareBar } from "./share.js";   // 0.18 (L1)
@@ -369,6 +369,7 @@ async function pickTheory() {
     // the AI part: a button with its AI mark, and the AI line under it; or one line on why it is not offered
     let aiPart = null;
     let drafting = false;
+    const startSlot = h("div", { class: "cb-theory-start" });   // Start Claude Code while the draft waits for it
     const draftWithAI = async (btn) => {
       if (drafting) return;
       drafting = true;
@@ -380,6 +381,12 @@ async function pickTheory() {
         jobId = res.job.id;
         if (!list.isConnected) { api("POST", `/api/jobs/${P(jobId)}/cancel`).catch(() => {}); return; }   // closed while asking
         jobs.add(jobId);
+        // 0.19.1: this dialog covers the sidebar, so its Start was out of reach while the draft waited for Claude Code:
+        // the dialog has the same Start Claude Code under the AI line, until the draft comes back
+        try {
+          const q = await api("GET", `/api/projects/${P(App.project)}/queue`);
+          if (q.route === "claude_code" && offer.reader !== "local" && list.isConnected) replace(startSlot, startClaude(App.project, { command: q.command, foldType: true, always: true }));
+        } catch (_) { /* the sidebar's Start, as before */ }
         const job = await watchJob(jobId).promise;
         if (!list.isConnected) return;   // the dialog was closed meanwhile
         if (job.state !== "done") { if (job.error) toast(job.error, "error"); return; }
@@ -409,6 +416,7 @@ async function pickTheory() {
       } catch (e) { showError(e); }
       finally {
         drafting = false;
+        clear(startSlot);
         if (jobId) jobs.delete(jobId);
         if (btn.isConnected) { setBusy(btn, false); if (drafted) { btn.disabled = true; btn.textContent = "Drafted with AI"; } }
       }
@@ -418,7 +426,7 @@ async function pickTheory() {
       aiPart = h("div", { class: "cb-theory-ai" }, h("div", { class: "btn-row" }, withAI(draftBtn)),
         offer.reader === "local"   // the AI line under the action, as everywhere (DESIGN.md 4.4)
           ? aiWhere(`The AI on this computer reads this whole document${offer.parts > 1 ? `, in ${offer.parts} parts` : ""}: the text never leaves it.`, "local")
-          : readsLine(`this whole document${offer.parts > 1 ? `, in ${offer.parts} parts` : ""}`));
+          : readsLine(`this whole document${offer.parts > 1 ? `, in ${offer.parts} parts` : ""}`), startSlot);
     } else if (offer && offer.why) {
       aiPart = h("p", { class: "muted small cb-theory-ai" }, offer.why);
     }

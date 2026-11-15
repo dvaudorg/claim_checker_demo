@@ -131,6 +131,7 @@
 .doc-detail-grid dd { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; min-width: 0; margin: 0; }
 .doc-detail-grid .seg { min-width: 0; flex-wrap: wrap; }
 .doc-detail-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
+.doc-rename-btn { margin-left: auto; }   /* 0.19.1: Rename… beside Remove…, at the right */
 .doc-why { max-width: 100%; margin-left: var(--space-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* a long file name breaks after _ or - (its <wbr>), and only a part longer than the line breaks inside */
 .doc-file { font-size: var(--fs-xs); color: var(--muted); font-family: var(--font-mono); overflow-wrap: break-word; min-width: 0; }

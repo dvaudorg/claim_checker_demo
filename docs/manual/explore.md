@@ -213,6 +213,12 @@ it:
 choose (exact boxes with the PDF layout reader, whole lines otherwise, text recognition for scanned pages), and a note
 listing any quote it could not place. Other documents come as an HTML copy.
 
+*Rename…* (on its page, and in its row on the Documents page once you open it) gives the document a title of your own.
+It is used everywhere in the project: the Documents list, results, Search, the bibliography and exports. It stays when
+the bibliography links the document to a work, or a new reading finds another title; *Use the title it had before*
+gives back the work's title, or the one read from the file. The file, its text and every result stay as they were,
+and the research log notes the change. In a shared project the new title is in your copy only.
+
 ### Theory documents
 
 A book or paper your research is read *through* (a theory of practice, a systems text) is not evidence about your

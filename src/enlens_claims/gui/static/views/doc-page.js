@@ -6,7 +6,7 @@ import { App, api, h, icon, replace, clear, toast, showError, fmt, pageHead, P, 
 import { blockUnit, originalLink } from "./result.js";
 import { colourPicker, editNote, removeNote, useAsEvidence, noteCard } from "./notes.js";
 import { roleBox } from "./doc-role.js";   // 0.18.1 K2: theory documents
-import { keep, kindCount, repeatsTitle } from "./doc-shared.js";
+import { keep, kindCount, repeatsTitle, renameDocument } from "./doc-shared.js";
 import { leaveOut } from "./doc-leave-out.js";
 import { readingPanel, pagePanel } from "./doc-reading.js";
 import { codesPanel } from "./doc-codes.js";
@@ -60,6 +60,11 @@ export async function renderDocument(view, [docId], query) {
   const bibName = d.bib ? d.bib.cite || d.bib.title : null;
   const copyBtn = downloadButton({ title: "A copy of the document with its quotes and labels highlighted", onClick: () => highlightedCopy() }, "Download a highlighted copy");
   const moreSlot = h("div", { class: "dv-more-slot" });
+  // 0.19.1: rename it; the page is drawn again with its new title
+  const renameBtn = button({ kind: "quiet", sm: true, class: "dv-rename", title: "Give this document a title of your own", onClick: async () => {
+    const res = await renameDocument(project, { doc_id: docId, title: d.title, file: d.file, named: d.named });
+    if (res) window.dispatchEvent(new HashChangeEvent("hashchange"));
+  } }, icon("type", { size: 13 }), "Rename…");
   view.appendChild(pageHead(title, { display: true, back: [back, { href: "#/sources", text: "All documents" }],
     facts: [fileSaysMore ? d.file : null, KIND_TEXT[d.kind] || d.kind || "", d.n_pages ? `${d.n_pages} pages` : null,
       reading ? (d.paragraphs ? plural(d.paragraphs, "paragraph") : null)
@@ -75,7 +80,7 @@ export async function renderDocument(view, [docId], query) {
       // 0.13.3: the heading is the title of the work; the one read from the file stays visible, on a line of its own
       d.file_title ? h("p", { class: "muted small dv-file-title" }, "Title in the file: ", h("span", { class: "serif" }, d.file_title)) : null,
       span ? h("p", { class: "muted small dv-span-note" }, hit >= 0 ? (span.whole ? `The excerpt from the result is highlighted, in ${blocks[hit].label.toLowerCase()}.` : `The quote from the result is highlighted, in ${blocks[hit].label.toLowerCase()}.`) : "The quote could not be placed in this text.") : null],
-    actions: [copyBtn, moreSlot] }));
+    actions: [renameBtn, copyBtn, moreSlot] }));
   let docRole = null;   // 0.19.0 (N3): a working document's selection offers Check against the corpus
   view.appendChild(await roleBox(project, docId, d.title || d.file || "this document", (r) => { docRole = r; }, moreSlot));   // 0.18.1 K2: theory or evidence
 
