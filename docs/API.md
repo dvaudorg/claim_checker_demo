@@ -498,7 +498,7 @@ computer has not got the space's keys: a project copied from elsewhere; ask for 
   "holds" | "stays"} (what removing that member does to the sharing)}, "left_to_do": [{"id", "who", "text", "at",
   "check"}] (a share ENLENS could not stop after a removal; "check": ENLENS looks about once an hour and takes it away
   when the share is gone), "restored": null | {"at", "files", "text"} (files missing from the space were written
-  again), "refused": null | {"at", "text"} (the drive refused the app password)}`. The last three are the Team tab's
+  again), "refused": null | {"at", "text"} (the drive refused the app password)}`. The last three are the Team page's
   standing notices.
 - `GET /api/space/links` → the services' pages the set-up opens (`b2_signup`, `b2_keys`, `b2_caps`, `r2_signup`,
   `r2_dashboard`, `r2_token`: the link that fills in Cloudflare's token form; `webdav_surfdrive`, `webdav_nextcloud`:
@@ -553,7 +553,7 @@ computer has not got the space's keys: a project copied from elsewhere; ask for 
 - `DELETE /api/projects/<p>/space` → the status: this copy stops using the space and forgets its keys (nothing in the
   space is removed). `DELETE …/shared-folder` does the same for a project with a space.
 - `POST /api/projects/<p>/space/dir {"path"}`: a space kept in a folder of this computer, sealed as at a service, for
-  trying the Team tab (only with `ENLENS_TRY_SPACES=1`, as `tools/dev_server.py --space` sets it; 404 otherwise).
+  trying the Team page (only with `ENLENS_TRY_SPACES=1`, as `tools/dev_server.py --space` sets it; 404 otherwise).
 
 **Looking by itself every couple of minutes (0.17.0, roadmap L3: `gui/poller.py`, `gui/api_poller.py`).** A thread of
 the app starts a round (`folder.sync_now`, the job above, marked `"background": true`) for each project with a shared
@@ -1813,7 +1813,7 @@ terms.
   [{"hyp_id", "text", "excerpts"}]}}`: what was made with the document in.
 - `PUT /api/projects/{p}/documents/{d}/role` `{"role": "theory" | null, "why"?}` → `{"doc_id", "role", "changed",
   "impact"}`. 400 for any other role, 404 for no such document. Under an owner, a Member's mark becomes a proposal at
-  the Team tab's next look (as *Leave out* does).
+  the Team page's next look (as *Leave out* does).
 - 0.18.6: `GET …/documents/{d}/role` also gives `"nonscientific": bool` and, when it is, `"answers": [{"hyp_id",
   "text", "status", "status_text", "all", "all_text"}]` (each check that read it, its answer now and counting the
   non-scientific documents). `PUT /api/projects/{p}/documents/{d}/nonscientific` `{"nonscientific": true | false,

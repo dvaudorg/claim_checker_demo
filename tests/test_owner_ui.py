@@ -67,10 +67,10 @@ def test_the_owner_has_its_rules_in_the_views_stylesheet():
 
 def test_the_section_comes_before_the_people_with_its_own_data_and_number():
     assert 'import { OWNER_SECTION, ownerMarks, ownerPerson } from "./owner.js";   // 0.18 L2' in TEAM
-    # roles (mock-up B): "Waiting for your word" is the tab's first section, before the shared folder
-    assert 'addTeamSection(OWNER_SECTION, { before: "state" });' in TEAM
-    # TEAM_SECTIONS is filled before the section is added (the call comes after the list and the function)
-    assert TEAM.index("export const TEAM_SECTIONS") < TEAM.index("addTeamSection(OWNER_SECTION")
+    # roles (mock-up B): "Waiting for your word" is Activity's first section, before the first invite and the folder
+    assert 'addTeamSection(OWNER_SECTION, { before: "first-invite" });' in TEAM
+    # TEAM_ACTIVITY_SECTIONS is filled before the section is added (the call comes after the list and the function)
+    assert TEAM.index("export const TEAM_ACTIVITY_SECTIONS") < TEAM.index("addTeamSection(OWNER_SECTION")
     # a section reads its own answer with the tab's refresh, and a failed read keeps what was there
     assert "const loads = sections.filter((s) => s.load);" in TEAM    # the tab's sections, or the Team page's
     assert "Promise.all(loads.map((s) => s.load(project).catch(keep(ctx.data[s.key]))))" in TEAM

@@ -1459,10 +1459,10 @@ export function workState(state, words, time) {
     h("span", {}, words), time !== undefined && time !== null ? h("span", { class: "work-state-time" }, fmt.secs(time)) : null);
 }
 
-// The drawer: your own working space beside any page (the research log; in 0.18 also working together). One panel on
-// the right, opened by one button in the same place on every page (drawerButton()). Its head shows the title, or, when
-// it holds two or more tabs, the tabs (tabs: [{ key, label, icon }], current, onTab(key): the head's view tabs); then at
-// most one control (a choice) and the close button. `sections` are its body's parts, top to bottom, each drawn by its
+// The drawer: your own working space beside any page (the research log). One panel on the right, opened by one button
+// in the same place on every page (drawerButton()). Its head shows an icon and the title, or, when it holds two or more
+// tabs, the tabs (tabs: [{ key, label, icon }], current, onTab(key): the head's view tabs; nothing uses them now); then
+// at most one control (a choice) and the close button. `sections` are its body's parts, top to bottom, each drawn by its
 // content's own components (a write box, a list); the last may grow and scroll. `foot`: one link to the whole view.
 // A new tab is a new entry in `tabs` whose onTab draws its own sections (setSections()); a new section is one more
 // element in `sections`. Opening and closing: body[data-drawer="open"], set by setDrawerOpen().
@@ -1486,21 +1486,23 @@ export function drawerButton({ id, controls, label, icon: ic, onClick, title }) 
   return h("button", { class: `${UI.button.standard} ${UI.sm} btn-opens drawer-btn`, id, type: "button", "aria-expanded": "false",
     "aria-controls": controls, title: title || null, onClick }, icon(ic, { size: 15 }), h("span", { class: "drawer-btn-text" }, label));
 }
-// The team line: the project switch's second row in a project that has a team. A button of the "opens beside" kind:
-// it opens the drawer at its Team tab and is soft teal while that tab shows. Its end says the team's state in fixed
-// words. set({ kind, words, count }): kind "ok" | "running" | "attention"; count: what is new, in words ("3 new").
-export function teamLine({ id, controls, onClick }) {
-  const name = h("span", { class: "team-line-name" }, "Team");
-  const state = h("span", { class: "team-line-state" });
-  const el = h("button", { class: "btn-opens team-line", id, type: "button", "aria-expanded": "false", "aria-controls": controls, onClick });
+// The Team entry: the sidebar's entry of the Team place (#/team), the one entry that carries a state. A link like any
+// entry (current: soft teal, set by the router's aria-current); in a project with a team its end says the team's
+// state in fixed words. set({ kind, words, count }): kind "ok" | "running" | "attention" (amber, the triangle in place
+// of the users icon); count: what is new, in words ("3 new"). set() with nothing: no team, no state.
+export function teamEntry({ id } = {}) {
+  const ic = h("span", { class: "nav-icon" });
+  const name = h("span", {}, "Team");
+  const state = h("span", { class: "team-entry-state" });
+  const el = h("a", { href: "#/team", "data-route": "team", id: id || null, class: "team-entry" }, ic, name, state);
   el.set = ({ kind = "ok", words = "", count = null } = {}) => {
-    el.setAttribute("data-kind", kind);
-    replace(el, icon(kind === "attention" ? "alert-triangle" : "users", { size: 15 }), name, state);
-    replace(state, kind === "running" ? h("span", { class: "running-dot", "aria-hidden": "true" }) : null,
+    const said = count || words;
+    el.setAttribute("data-kind", said ? kind : "none");
+    replace(ic, icon(said && kind === "attention" ? "alert-triangle" : "users", { size: 18 }));
+    replace(state, said && kind === "running" ? h("span", { class: "running-dot", "aria-hidden": "true" }) : null,
       count ? tag({ kind: "count", class: "tab-count" }, count) : words);
-    const said = `Team${count || words ? `: ${count || words}` : ""}. Opens the Team tab beside the page`;
-    el.setAttribute("title", said);
-    el.setAttribute("aria-label", said);
+    el.setAttribute("aria-label", said ? `Team, ${said}` : "Team");
+    el.setAttribute("title", said ? `Team: ${said}. The people you work with, what came in and what you shared` : "Team: work on this project with colleagues");
   };
   el.set();
   return el;

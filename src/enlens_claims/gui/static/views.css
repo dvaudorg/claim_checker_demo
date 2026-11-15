@@ -1720,16 +1720,17 @@ html:has(.cb-savebar:not([hidden])) { scroll-padding-bottom: 6rem; }
 .move-settings { margin: 6px 0 0; padding-left: 1.2em; }
 
 /* ==== Working together */
-/* 0.18: the Team tab of the drawer beside every page (views/team.js, the owner's section views/owner.js), and an item's
-   sharing on its own page and in lists (views/share.js). Built of the components (docs/DESIGN.md 5.5): these rules
-   place them, and give the tab's own pieces (its sections, the sync state's second line) their look. */
+/* 0.18: the Team place (#/team: the set-up, or Activity and People and settings; views/team.js, the owner's sections
+   views/owner.js), and an item's sharing on its own page and in lists (views/share.js). Built of the components
+   (docs/DESIGN.md 5.5): these rules place them, and give the page's own pieces (its sections, the sync state's second
+   line) their look. */
 /* an item's sharing: the row under its page's title (shareBar), and the quiet row in a card of a list (shareInline) */
 .share-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px var(--space-2); margin: 0 0 var(--space-4); }
 .page-head + .share-bar, .result-head .share-bar { margin-top: 0; }
 /* an item's sharing choice and the line that says where a shared item goes */
 .share-bar .share-where { flex: 1 1 100%; margin: 0; color: var(--text-2); font-size: var(--fs-small); }
 .share-inline { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
-/* the Team tab: sections divided by a line, each under a small heading the panel can focus */
+/* the Team panel: sections, each under a heading the panel can focus (on the page each section is a card) */
 .team-empty { margin: 4px 0 8px; }
 .team-section { padding: 12px 0; border-bottom: 1px solid var(--border); }
 .team-section:first-of-type { padding-top: 0; }
@@ -1790,10 +1791,11 @@ html:has(.cb-savebar:not([hidden])) { scroll-padding-bottom: 6rem; }
 /* a section's one line with its help mark after it */
 .team-lead { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; margin: 0 0 8px; }
 .team-where-fold { margin-top: var(--space-2); }
-/* the Team page (#/team): each section a card (card()), its heading the card's section title */
+/* the Team page (#/team): each section a card (card()), its heading the card's section title; ?at= scrolls a heading
+   to the top, clear of the drawer's button band */
 .team-page { max-width: 52rem; }
 .team-page .team-section { padding: 0; border-bottom: 0; }
-.team-page .team-h { margin: 0 0 12px; font-size: var(--fs-section); }
+.team-page .team-h { margin: 0 0 12px; font-size: var(--fs-section); scroll-margin-top: 64px; }
 /* the owner's section: proposals as small cards, what was declined and answered, the owner's setting */
 .owner-who { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
 .owner-notice { margin: 0 0 var(--space-3); }

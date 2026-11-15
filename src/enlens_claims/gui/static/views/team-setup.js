@@ -11,7 +11,7 @@ import { App, api, h, replace, toast, showError, P, field, switchControl, helpMa
   dialog, listRow, listGroup, aiWhere, optionCards, setBusy } from "../lib.js";
 import { zipButton, ZIP_WORDS } from "./share.js";
 import { cleanPath, folderAsSeen, KEEP_OUT_LABEL, KEEP_OUT_HELP } from "./team-state.js";
-import { setupDialog, joinDialog } from "./team-space.js";
+import { setupDialog, joinDialog, firstRound } from "./team-space.js";
 
 const mac = () => /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent || "");
 const win = () => /Win/i.test(navigator.platform || navigator.userAgent || "");
@@ -39,6 +39,8 @@ export const WHERE = [
 ];
 
 const noTeam = (ctx) => !ctx.status.folder && !ctx.status.space;
+  await ctx.refresh({ force: true });
+}
 
 // ---- the cloud folders this computer has, and a colleague's shared folder for this project among them
 let cloudAnswer = null;
@@ -204,8 +206,7 @@ export async function folderDialog(ctx, { path: start = "" } = {}) {
           if (named) App.refresh().catch(() => {});   // the name, for the other pages (after the folder: no read beside it)
         }
         toast("This project now works through the shared folder. The first round starts now.", "ok");
-        await ctx.refresh({ force: true });
-        ctx.startRound();
+        await firstRound(ctx);
         return true;
       } }],
     onOpen() { (start ? document.getElementById("team-use-folder") : nameField ? name : path).focus(); },

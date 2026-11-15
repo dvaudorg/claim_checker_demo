@@ -36,6 +36,13 @@ const typeAddress = (href, id) => {
   return row;
 };
 
+// The first round of a project that has just got its team. It is started before the page reads the project again: the
+// page then draws itself anew (set-up → the team's views, team.js renderTeam) and finds the round running, so the new
+// page follows it. (The panel in `ctx` is the old page's: its own startRound() would follow the round on a page that
+// is gone.)
+export async function firstRound(ctx) {
+  try { await api("POST", `/api/projects/${P(ctx.project)}/shared-folder/sync`, {}); } catch (e) { showError(e); }
+
 // Where secrets are kept on this computer, in words for a form's help ("file": ENLENS's own file, readable by this
 // person only; otherwise the system's keychain)
 const keptIn = (backend) => (backend === "file" ? "Kept in a file in ENLENS’s folder that only you can read" : "Kept in this computer’s keychain");
@@ -173,8 +180,7 @@ export async function setupDialog(ctx, service, { move = false } = {}) {
             toast(`Share the new folder with ${mv.share_by_hand.join(", ")} in the drive’s website: their copies follow once they can open it.`, "warn", { ttl: 20000 });
           }
           lock.on = false;
-          await ctx.refresh({ force: true });
-          ctx.startRound();
+          if (move) { await ctx.refresh({ force: true }); ctx.startRound(); } else await firstRound(ctx);
           // Backblaze: the last step, what to do there now (unless ENLENS had to keep the pasted key: its warning says so)
           if (afterAt >= 0 && !warnings.some((w) => /master key/.test(w))) {
             ready = true;
@@ -278,8 +284,7 @@ export async function joinDialog(ctx) {
           } else {
             await api("POST", `${S(ctx.project)}/join`, { link: l, drive: driveBody() });
             toast("You joined the team’s storage space. The first round starts now.", "ok");
-            await ctx.refresh({ force: true });
-            ctx.startRound();
+            await firstRound(ctx);
           }
           return true;
         } catch (e) {
@@ -390,7 +395,7 @@ async function drivePasswordDialog(ctx, dav, sp) {
   });
 }
 
-async function inviteDialog(ctx) {
+export async function inviteDialog(ctx) {
   const name = input({ id: "space-invite-name", maxlength: 80, placeholder: "e.g. Ben de Wit", autocomplete: "off" });
   const dav = ctx.status && ctx.status.space && ctx.status.space.drive;
   const driveUser = input({ id: "space-invite-drive-user", maxlength: 200, autocomplete: "off", spellcheck: "false" });
