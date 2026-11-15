@@ -59,11 +59,11 @@ Windows from 0.15.4 on). Your projects and settings (the `enlens` folder in your
 <!-- new-in:start (written by `python tools/release.py prepare`: change the changelog entry, not this) -->
 ## New in 0.19.0rc2: Reader 6 and documents in two languages, a codebook from several theories, and sync that settles
 
-- **Keep one language of a document in two.** A journal that prints each article in two languages, column beside column, gave every finding twice: search by meaning found both, a check could quote the translation.
 - **A codebook from several theory documents at once.** *New codebook*, *From theory documents* now lets you tick every theory the research is read through (those marked as theory are ticked to begin with), not just one.
+- **Keep one language of a document in two.** A journal that prints each article in two languages, column beside column, gave every finding twice: search by meaning found both, a check could quote the translation.
 - **Settings → Updates links to ENLENS's code on GitHub.** Beside *Report a problem*, a *Source code* link opens the repository, with its releases and the roadmap.
+- **Reader 6 reads PDFs more cleanly: hidden text, publishing details, the title and running heads.** Some publishers (MDPI among them) make a figure by showing a window onto a whole draft page; reader 5 read the hidden rest of that page too. Can change results.
 - **Reader 6 also keeps the two languages of a document apart.** Reader 5 sometimes put a paragraph of each language into one passage, where a column ended without a full stop and the next started in lower case. Can change results.
-- **Reader 6 reads PDFs more cleanly: text a figure hides, publishing details at the foot of the first page, the title and running heads.** Some publishers (MDPI among them) make a figure by showing a window onto a whole draft page; reader 5 read the hidden rest of that page too. Can change results.
 <!-- new-in:end -->
 
 How it works: [Work together](docs/manual/together.md) in the manual. Every release, with what was not tested:
