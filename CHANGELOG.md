@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.19.4 (November 2026): Your local model's own panel, and labelling that goes on without it
+
+Your local model now has its own panel, like Claude Code's. It says what waits for the model, how much memory it needs
+against what this computer has free, and lets you start it. Labelling on the Codes page no longer stops when the local
+model cannot start: Claude labels the rest, and the local model's passages wait. Nothing in this release changes a
+result.
+
+### New
+
+- **Your local model has its own panel, like Claude Code's.** Wherever work waits for the local model (passages of
+  documents marked Only a local AI on the Codes page, excerpts on a hypothesis's result), a panel says so, built like
+  the Claude Code panel so the two read as one family: what waits, the model, *Start*, and where the text goes. It is
+  told apart by its white ground and *On this computer* with the house over it, and it shows what Claude Code's panel
+  has no need of: how much memory the model needs against what this computer has free now. While the model reads, the
+  panel says what it is doing, above Claude Code's panel when both work.
+
+### Fixed
+
+- **Labelling no longer stops when the local model cannot start.** On the Codes page with Claude as the AI, a project
+  whose documents fell back to "Only a local AI" stopped the whole run with "qwen3.5:9b was not started: it needs
+  about 8.1 GB of memory…" after a passage or two, although Claude could read every other passage; the page had said
+  only that Claude reads them. Now the local model's passages are read first, and when it cannot start (too little
+  memory free, or it does not answer) they wait while Claude labels the rest. The panel says why, with *Start it
+  anyway*, and the page says beforehand how many passages the local model reads. Does not change results.
+- **The codes addressed most: a code's name no longer runs over its description.** On the Codes page, the list kept a
+  narrow column for the code, made for a short mark such as "8.5". With a codebook whose codes are names (your own, or
+  one drafted from theory: "Practice-arrangement bundle"), the name was printed over the description beside it and
+  neither could be read. A name now has the room it asks: it is set in the interface's face, as in the grid below, and
+  wraps in a column the rows share, so the bars and counts line up; the description beside a name takes two lines, and
+  hovering it shows the whole text. Short marks look as before. Does not change results.
+
+### Tests
+
+- `tests/test_local_panel.py`: with too little memory the local model's passages wait and Claude labels the rest;
+  *Start it anyway* reads them; the local model reads first; a local model that does not answer leaves its passages
+  waiting; the memory the panel shows; the page hears when the local model was refused or has ended; the panel is
+  built like Claude Code's.
+- A Stop test of the theory draft accepts both ways a stop is honoured (inside the wait, or between two parts): it
+  failed by timing on Linux.
+
+### Not yet done
+
+- Tried with stand-ins for Ollama and for a computer short of memory, not with a real local model under memory
+  pressure.
+- The panel is on the Codes page and a hypothesis's result; other places where the local model reads (themes, a
+  theory draft) still show only the job's line.
+
 ## 0.19.3 (November 2026): See what is sent, code names that fit the grid, and leaving out a figure
 
 You can now see, word for word, what Claude Code would send to Anthropic before it takes the next batch of work. A
