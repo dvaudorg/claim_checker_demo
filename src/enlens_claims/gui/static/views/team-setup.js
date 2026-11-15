@@ -39,8 +39,6 @@ export const WHERE = [
 ];
 
 const noTeam = (ctx) => !ctx.status.folder && !ctx.status.space;
-  await ctx.refresh({ force: true });
-}
 
 // ---- the cloud folders this computer has, and a colleague's shared folder for this project among them
 let cloudAnswer = null;

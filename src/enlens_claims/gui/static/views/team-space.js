@@ -42,6 +42,8 @@ const typeAddress = (href, id) => {
 // is gone.)
 export async function firstRound(ctx) {
   try { await api("POST", `/api/projects/${P(ctx.project)}/shared-folder/sync`, {}); } catch (e) { showError(e); }
+  await ctx.refresh({ force: true });
+}
 
 // Where secrets are kept on this computer, in words for a form's help ("file": ENLENS's own file, readable by this
 // person only; otherwise the system's keychain)
