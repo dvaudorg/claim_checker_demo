@@ -646,6 +646,8 @@ its own)
   terms, words set in italics or defined in the text: *a stock is …*); the optional AI part drafts the list and the
   definitions, each quote checked against the text as everywhere, marked as a draft to edit. The codebook is then an
   ordinary K1 codebook: edited, tried before labelling, used in checks and exports.
+  Since 0.19 several theory documents can be ticked at once (the researcher's framework drew on five authors): one
+  section and one group of codes per document, each author's own definition kept when two define the same concept.
 - Related: N3 (your own working documents) is the other document that is kept in a project but is never a source;
   both are a document's role, one mark with three values (evidence, theory, working document), built with N3.
 - *Already in ENLENS:* a check can be limited to some documents by hand; the reader recognises *Theory* and
