@@ -342,7 +342,7 @@ F2, F4 and F5 are built (0.16.0).
   progress; startup kept short.
 
 **H6. Tidier code** · ENLENS candidate · `gui/server.py` split in 0.16, `claimcheck.py` in 0.18.1, `views/sources.js` in 0.18.4
-- Split the largest modules along the features they serve, so later changes stay small and syncs conflict less. The
+- Split the largest modules along the features they serve, so later changes stay small and clash less. The
   largest are `gui/server.py` (3,410 lines) and `claimcheck.py` (2,829). Not left to the end: each release splits
   the module it changes most, and the new reader starts in its own module (A1).
 
