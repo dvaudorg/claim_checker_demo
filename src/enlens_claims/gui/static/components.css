@@ -950,30 +950,30 @@ span.passage-broken, span.passage-broken > span { display: block; }
   .compare-sides { grid-template-columns: minmax(0, 1fr); }
 }
 
-/* ==== 4.28 Steps */
+/* ==== 4.28 Guided steps */
 /* A task done in a fixed order, one step at a time (setting up a storage space). A numbered circle per step on a rail:
    the step in hand has the teal circle and is open; a step done has a tick and its title; a step to come its title,
-   muted. Made by steps(). The state is the item's data-state (done, current, todo). */
-.steps { display: grid; margin: 0; padding: 0; list-style: none; }
-.step { position: relative; display: grid; grid-template-columns: 28px minmax(0, 1fr); column-gap: 12px; padding-bottom: 16px; }
-.step:last-child { padding-bottom: 0; }
-.step::before { content: ""; position: absolute; top: 32px; bottom: 4px; left: 13.5px; width: 1px; background: var(--border-strong); }
-.step:last-child::before { display: none; }
-.step-mark {
+   muted. Made by guidedSteps(). The state is the item's data-state (done, current, todo). */
+.guided-steps { display: grid; margin: 0; padding: 0; list-style: none; }
+.guided-step { position: relative; display: grid; grid-template-columns: 28px minmax(0, 1fr); column-gap: 12px; padding-bottom: 16px; }
+.guided-step:last-child { padding-bottom: 0; }
+.guided-step::before { content: ""; position: absolute; top: 32px; bottom: 4px; left: 13.5px; width: 1px; background: var(--border-strong); }
+.guided-step:last-child::before { display: none; }
+.guided-step-mark {
   display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%;
   background: var(--surface-3); color: var(--text-2); font-size: var(--fs-small); font-weight: var(--fw-strong); font-variant-numeric: tabular-nums;
 }
-.step[data-state="current"] .step-mark { background: var(--accent); color: var(--on-accent); }
-.step[data-state="done"] .step-mark { color: var(--text); }
-.step-main { min-width: 0; }
-.step-title { margin: 0; padding-top: 4px; font-size: var(--fs-body); font-weight: var(--fw-strong); line-height: 1.4; }
-.step-title:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--radius-ctl); }
-.step[data-state="done"] .step-title { color: var(--text-2); font-weight: inherit; }
-.step[data-state="todo"] .step-title { color: var(--muted); font-weight: inherit; }
-.step-body { display: grid; gap: 10px; margin-top: 6px; }
-.step-body[hidden] { display: none; }
-.step-body > p, .step-body > .field { margin: 0; }
-.step-move { margin-top: 2px; }
+.guided-step[data-state="current"] .guided-step-mark { background: var(--accent); color: var(--on-accent); }
+.guided-step[data-state="done"] .guided-step-mark { color: var(--text); }
+.guided-step-main { min-width: 0; }
+.guided-step-title { margin: 0; padding-top: 4px; font-size: var(--fs-body); font-weight: var(--fw-strong); line-height: 1.4; }
+.guided-step-title:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--radius-ctl); }
+.guided-step[data-state="done"] .guided-step-title { color: var(--text-2); font-weight: inherit; }
+.guided-step[data-state="todo"] .guided-step-title { color: var(--muted); font-weight: inherit; }
+.guided-step-body { display: grid; gap: 10px; margin-top: 6px; }
+.guided-step-body[hidden] { display: none; }
+.guided-step-body > p, .guided-step-body > .field { margin: 0; }
+.guided-step-move { margin-top: 2px; }
 
 /* ==== 5.1 The sidebar */
 /* The places of the app. One window-high column that never scrolls as a whole: the brand, the project switch and Find

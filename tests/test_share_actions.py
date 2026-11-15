@@ -204,7 +204,9 @@ def test_each_item_page_has_its_share_state():
     assert 'cb.where === "bundled" ? null : shareBar("codebook", cb.name)' in codebooks and "}), sharing);" in codebooks
     notes, log, concepts = _js("views/notes.js"), _js("views/log.js"), _js("views/concepts.js")
     assert 'sharingOf("note")' in notes and "share: data.shares && data.shares.get(n.note_id)" in notes
-    assert 'sharingOf("log")' in log and 'e.kind === "entry" && shares.get(e.entry_id)' in log
+    assert 'sharingOf("log")' in log and 'e.kind === "entry" && e.mine ? shares.get(e.entry_id) : null' in log
+    # the entry's state is a tag in its quiet line; Share and Unshare are rows of its More menu, not a button under it
+    assert "shareTag(shared)" in log and "on ? unshareItem(shared) : shareItem(shared)" in log and "shareInline" not in log
     assert 'sharingOf("link")' in concepts and '[lk.a, lk.b].sort().join("|")' in concepts
 
 

@@ -57,6 +57,7 @@ looks like this. **A piece that cannot be named from this table is a misfit.**
 | A judgement that does not count | Its pill with no fill and a dashed edge (the one dashed edge on a pill) | [Judgement badge](#49-judgement-badges) |
 | Who did it | The person icon and *You* or initials, in a tag | [Person mark](#410-tags-and-counts) |
 | Two versions of one thing | Two grey boxes side by side, *Keep mine* / *Keep theirs* under them | [Comparison](#427-comparisons) |
+| A task done in a fixed order, and where I am in it | Numbered circles on a rail: the step in hand teal and open, the ones done ticked, the ones to come muted | [Guided steps](#428-guided-steps) |
 | This needs me | Amber with the warning triangle | [Attention tag](#410-tags-and-counts), [notice](#412-notices), [status area](#52-the-status-area-and-the-last-row) |
 | Something went wrong | Red with the alert circle | [Error notice](#412-notices), [toast](#415-toasts) |
 | Something to know before going on | A grey box with an icon | [Notice](#412-notices) |
@@ -831,6 +832,27 @@ content in its own face; the actions under both: *Keep mine*, *Keep theirs* (sma
 *Earlier versions*). **Make it:** `compare({ left: { title, meta, body }, right: { … }, actions })`. **Lives in:**
 `components.css` § 4.27.
 
+### 4.28 Guided steps
+
+**Means:** a task done in a fixed order, one step at a time, and where you are in it. **Use:** a set-up a person does
+once, partly outside the app, and must not lose their place in: a storage space for the team (an account at the
+service, a key made there, the key pasted here). **Not for:** a form whose fields can be filled in any order (fields
+under one another), a list of facts or of ways to choose from (a list, [option cards](#47-option-cards)), work the app
+does by itself (a [work state](#421-progress-and-work-states) and its list of steps under way), the first-run pages' three stages, which are pages of
+their own. **Looks:** a numbered circle per step on a thin rail down the left. The step in hand has the teal circle
+and a title in 600, and is open: what to do, in one or two short sentences, with its fields; what cannot be undone
+later is an attention [notice](#412-notices), not a sentence among the others. A step done has a tick in a grey
+circle and its title in secondary text; a step to come its number and its title, muted: the whole way is in view from
+the start. Under an open step, one small button goes on, in the words of what the person has just done (*I have an
+account*, *I see the key*; *Next step* when there is nothing better), and from the second step a small quiet *Back*.
+The last step that asks for something has no button of its own: the dialog's or card's main button ends the task and
+waits until that step is open. A step may follow it for what is left to do afterwards, shown once the task is done,
+with no buttons. **Keys and words:** moving on puts the focus in the opened step's first field (or on its title); each
+title says its place to a screen reader (*Step 2 of 3*, *done*), and the step in hand is `aria-current="step"`.
+**Make it:** `guidedSteps({ label, steps: [{ title, body, next, back }], current, onStep })` (`next: false`, `back: false`: a
+step without that button); `.go(i)` opens a step from code, `.at()` says which is open. **Lives in:**
+`components.css` § 4.28.
+
 ---
 
 ## 5 The navigation's pieces
@@ -900,7 +922,7 @@ none needs a look of its own. **Looks**, **Make it** and **Lives in:** each piec
 | A document this copy does not hold | its title in plain serif, the tag *not on this computer*, the small quiet button *Add its file*, wherever a document title shows | `absentDocument(title, { onAdd })` |
 | *Share*, *Unshare* in a list (a card of notes, a row of the Team tab) | small buttons (*Unshare* quiet); for many rows, check boxes and a row of small buttons above the list | `button()` |
 | The sync state: synced, syncing, offline, the folder not reachable, a copy that needs a newer ENLENS | a [work state](#421-progress-and-work-states) (done, running, not running, needs you), in the drawer's head, small in the status area and, in a few words, on the team line | `workState()` |
-| Setting up the shared folder | a [card](#411-cards) on the Team page: a field with a mono path and *Choose folder…* (a small button), the cloud folders as list rows, how to bring a colleague's folder here in a small [fold](#422-folds), a switch with its explanation behind a [help mark](#418-help-notes-and-defined-terms), the main action, and one line of where text goes with the folder icon | `card()`, `field()`, `fold({ sm: true })`, `switchControl()`, `helpMark()`, `aiWhere(sentence, "folder")` |
+| Setting up a team (the Team page of a project without one) | one [card](#411-cards) per thing a person came to do, its title a verb phrase: *Start a team for this project* (where the team's shared work is kept as [option cards](#47-option-cards), each named by what it is and who it suits, one of them *Recommended*; one main button whose words follow the chosen card, *Set up at Backblaze…*; one line of what will be kept there, with the folder icon), *Join a colleague's team* (*Join with an invite link…*, main, and a small button for the folder a colleague shares) and *Send it once, as a file* (two downloads). A colleague's shared folder already on this computer is offered first, in an info [notice](#412-notices) with *Use this folder…*. A storage space is then set up in a dialog of [guided steps](#428-guided-steps); a shared folder is chosen in a dialog: the cloud folders as list rows, *Choose folder…* (a small button), how to bring a colleague's folder here in a small [fold](#422-folds), a field with a mono path, a switch with its explanation behind a [help mark](#418-help-notes-and-defined-terms), the main action, and one line of where text goes with the folder icon. Joining asks where the team's project goes with two option cards (*A new project*, *This project*) | `card()`, `optionCards()`, `guidedSteps()`, `dialog()`, `field()`, `fold({ sm: true })`, `switchControl()`, `helpMark()`, `aiWhere(sentence, "folder")` |
 | The Team tab and the Team page | the tab holds the day-to-day (what waits for your word, the sync state, problems, what came in, what you shared) in labels, counts, states and buttons, with one quiet line naming the team and linking *Manage the team*; the Team page (`#/team`, from the project menu's *Manage the team*) holds the team itself, one [card](#411-cards) per section: where it is, the people, the owner, the switches, how often, the downloads, leaving. A sentence that explains goes behind a help mark or into a fold, never as prose in the tab | `teamPanel({ sections, page })`, `card()`, `helpMark()`, `fold()` |
 | A switch with a long explanation (*Keep documents marked Only a local AI or No AI out of the shared folder*) | a [switch](#48-form-fields) whose help line holds the two or three sentences of what it does and does not do; the same in the set-up card and in Settings | `switchControl(label, on, { help })` |
 | Rows in the drawer, a person row | [list rows](#420-tables-lists-and-dense-places): a person mark, the item as a title link, a time, one or two small quiet buttons; a quiet second line (a colleague's ENLENS version) that becomes an attention tag only when it matters; grouped by person or day | `listGroup()`, `listRow({ sub, warn })` |

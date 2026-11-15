@@ -1398,7 +1398,7 @@ export function compare({ left, right, actions, label }) {
     h("div", { class: "compare-sides" }, side(left), side(right)), actions ? h("div", { class: "compare-actions btn-row" }, actions) : null);
 }
 
-// Steps: a task done in a fixed order, one step at a time (setting up a storage space; docs/DESIGN.md 4.28). A numbered
+// Guided steps: a task done in a fixed order, one step at a time (setting up a storage space; docs/DESIGN.md 4.28). A numbered
 // rail down the left: the step in hand is open, the ones done show a tick and their title, the ones to come their
 // title in muted words, so the whole way is in view from the start.
 // steps: [{ title, body, next }]: title says what to do, body how (its lines and fields), next the words of the small
@@ -1408,23 +1408,23 @@ export function compare({ left, right, actions, label }) {
 // label: the list's name for a screen reader. current: the step open at first. onStep(i): after every move.
 // .go(i) opens a step from code, .at() says which is open, .count how many there are. Fields of a closed step stay in
 // the page (hidden), so a form reads them all at the end.
-export function steps(opts = {}) {
+export function guidedSteps(opts = {}) {
   const [o, attrs] = split(opts, ["label", "steps", "current", "onStep"]);
   const list = (o.steps || []).filter(Boolean);
   const last = list.length - 1;
   let at = Math.min(Math.max(0, o.current || 0), Math.max(0, last));
   const parts = list.map((s, i) => {
-    const mark = h("span", { class: "step-mark", "aria-hidden": "true" });
+    const mark = h("span", { class: "guided-step-mark", "aria-hidden": "true" });
     const said = h("span", { class: "visually-hidden" });
-    const title = h("h3", { class: "step-title", tabindex: "-1" }, said, s.title);
+    const title = h("h3", { class: "guided-step-title", tabindex: "-1" }, said, s.title);
     const onward = i < last && s.next !== false, back = i > 0 && s.back !== false;
-    const move = onward || back ? h("div", { class: "btn-row step-move" },
-      onward ? button({ sm: true, class: "step-next", onClick: () => go(i + 1, true) }, s.next || "Next step") : null,
-      back ? button({ kind: "quiet", sm: true, class: "step-back", onClick: () => go(i - 1, true) }, "Back") : null) : null;
-    const body = h("div", { class: "step-body" }, s.body, move);
-    return { li: h("li", { class: "step" }, mark, h("div", { class: "step-main" }, title, body)), mark, said, title, body };
+    const move = onward || back ? h("div", { class: "btn-row guided-step-move" },
+      onward ? button({ sm: true, class: "guided-step-next", onClick: () => go(i + 1, true) }, s.next || "Next step") : null,
+      back ? button({ kind: "quiet", sm: true, class: "guided-step-back", onClick: () => go(i - 1, true) }, "Back") : null) : null;
+    const body = h("div", { class: "guided-step-body" }, s.body, move);
+    return { li: h("li", { class: "guided-step" }, mark, h("div", { class: "guided-step-main" }, title, body)), mark, said, title, body };
   });
-  const el = h("ol", withClass("steps", { "aria-label": o.label || "Steps", ...attrs }), parts.map((x) => x.li));
+  const el = h("ol", withClass("guided-steps", { "aria-label": o.label || "Steps", ...attrs }), parts.map((x) => x.li));
   const paint = () => parts.forEach((x, i) => {
     const state = i < at ? "done" : i === at ? "current" : "todo";
     x.li.dataset.state = state;

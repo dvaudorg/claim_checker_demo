@@ -94,7 +94,7 @@ def test_a_component_is_styled_in_one_section_only():
 # placement"); a page may import one under another name (card as cardBox)
 COMPONENT_HELPERS = {"button", "iconButton", "downloadButton", "fileButton", "link", "tag", "notice", "card", "fold",
                      "choice", "optionCards", "input", "select", "textarea", "searchField", "menu", "drawer", "statusBadge",
-                     "personMark", "listRow", "listGroup", "inset", "stopButton", "switchControl", "absentDocument",
+                     "personMark", "listRow", "listGroup", "inset", "stopButton", "switchControl", "absentDocument", "guidedSteps",
                      "field", "helpMark", "downloadLinks", "pageHead", "tabs", "strongerMark",
                      # the AI line: its attributes come after its sentence, aiWhere(text, where, { class })
                      "aiWhere", "readsLine",
@@ -596,7 +596,7 @@ def test_every_helper_is_on_the_reference_page():
                "drawerButton", "field", "switchControl", "rangeControl", "spinner", "emptyState", "statusBadge", "gradeBadge",
                "codeChip", "pageHead", "downloadLinks", "helpMark", "popNote", "toast", "dialog", "confirmDialog", "heatCell", "heatGrid",
                "strongerMark", "aiTag", "viewTabs", "featureEyebrow", "personMark", "reviewedMark", "severityTag", "compare",
-               "shareState", "absentDocument", "listRow", "listGroup", "noticeList", "teamLine"]
+               "shareState", "absentDocument", "listRow", "listGroup", "noticeList", "teamLine", "guidedSteps"]
     for name in helpers:
         assert re.search(rf"export function {name}\(", LIB + (STATIC / "features.js").read_text(encoding="utf-8")), name
         assert re.search(rf"\b{name}\(", ref), f"{name} is not drawn on the reference page (views/design.js)"

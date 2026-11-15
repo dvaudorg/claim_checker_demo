@@ -19,8 +19,9 @@ MANUAL = " ".join(MANUAL_FILE.read_text(encoding="utf-8").split())   # the manua
 
 
 def _setup_dialog():
-    start = JS.index("export async function setupDialog")
-    return JS[start:JS.index("\n}\n", start)]
+    """The set-up: each service's steps (serviceSteps) and the dialog that walks them (setupDialog)."""
+    start = JS.index("function serviceSteps(")
+    return JS[start:JS.index("\n}\n", JS.index("export async function setupDialog"))]
 
 
 def test_both_sign_up_addresses_are_given_to_copy():

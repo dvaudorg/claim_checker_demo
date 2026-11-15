@@ -1859,6 +1859,7 @@ html:has(.cb-savebar:not([hidden])) { scroll-padding-bottom: 6rem; }
 /* a piece that takes the whole row of its sample */
 .dz-show > .notice, .dz-show > .dz-frame { flex-basis: 100%; }
 .dz-show > .log-entries { flex: 1 1 100%; max-width: 34em; }
+.dz-show > .dz-steps { flex: 1 1 100%; max-width: 34em; }
 /* a sample list of boxes in a card */
 .dz-list { margin: 0; padding: 0; list-style: none; gap: var(--space-2); }
 /* a sample list or set of pieces: the row's width, no wider than a drawer's page column */

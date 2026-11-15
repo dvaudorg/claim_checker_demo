@@ -11,7 +11,7 @@ import {
   h, icon, toast, dialog, confirmDialog, popNote, helpMark, field, switchControl, rangeControl, spinner, emptyState,
   statusBadge, gradeBadge, codeChip, pageHead, downloadLinks, heatCell, heatGrid, heatHead, strongerMark,
   button, downloadButton, fileButton, iconButton, link, tag, notice, card, fold, choice, optionCards, input, select,
-  textarea, searchField, menu, workState, aiWhere, drawer, drawerButton, teamLine, personMark, reviewedMark, severityTag, compare,
+  textarea, searchField, menu, workState, aiWhere, drawer, drawerButton, teamLine, personMark, reviewedMark, severityTag, compare, guidedSteps,
   shareState, absentDocument, listRow, listGroup, noticeList, tabs, judgementIcon, readsLine, stopButton, proposalCard, decisionCard, inset,
   passageNode, foundWords
 } from "../lib.js";
@@ -453,6 +453,14 @@ export async function renderDesign(page) {
       compare({ left: { title: personMark(["you"]), meta: h("span", {}, "Today 10:02"), body: h("p", { class: "serif" }, "Supports: the survey covers 4,000 workers.") },
         right: { title: personMark(["Anna de Vries"]), meta: h("span", {}, "Yesterday 16:40"), body: h("p", { class: "serif" }, "Not about this hypothesis.") },
         actions: [button({ sm: true }, "Keep mine"), button({ sm: true }, "Keep theirs"), button({ kind: "quiet", sm: true }, "Keep both")] })),
+
+    section("4.28", "Guided steps", "A task done in a fixed order, one step at a time: the step in hand open, the ones done ticked, the ones to come in view.",
+      sample("Setting up a storage space, at its second step (guidedSteps()); the task's main button stands under the steps and waits for the last one",
+        guidedSteps({ label: "A sample of steps", class: "dz-steps", current: 1, steps: [
+          { title: "Make a free account", next: "I have an account", body: [h("p", {}, "Open the service's address in your browser.")] },
+          { title: "Make a key for ENLENS", next: "I see the key", body: [h("p", {}, "Open ", h("strong", {}, "Application Keys"), " in the menu and make a new key."),
+            notice({ kind: "attention", role: "note" }, h("p", {}, "What cannot be changed afterwards is said as a notice."))] },
+          { title: "Paste the key here", next: false, body: [field("Key", input({ mono: true }))] }] }))),
 
     section("5.1", "The sidebar", "The places of the app. The live sidebar is beside this page; these are its pieces.",
       sample("The project switch", side(projectSwitch())),

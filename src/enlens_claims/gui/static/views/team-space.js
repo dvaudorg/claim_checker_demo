@@ -1,7 +1,7 @@
 // 0.18.0rc2 (roadmap L6): a storage space of the team's own, on the Team page (team.js). The set-up is offered by the
 // Team page of a project without a team (team-setup.js: Backblaze for most research groups, the institution's drive
 // over WebDAV (SURFdrive, SURF Research Drive, a Nextcloud), Cloudflare for large teams that grow quickly) and runs
-// here, step by step in a dialog (setupDialog: the steps of docs/DESIGN.md 4.28, one thing to do at a time). With a
+// here, step by step in a dialog (setupDialog: the guided steps of docs/DESIGN.md 4.28, one thing to do at a time). With a
 // space, a section says where it is, the invites waiting and what was set aside (its members are the page's people
 // list, with Remove…). The owner (the copy that keeps the space's keys) invites, removes and moves. Joining a team as
 // a new project is also in the sidebar's project menu (Join a team…, app.js). Built on gui/api_space.py; the round
@@ -11,7 +11,7 @@
 // ENLENS could not stop after a removal (until the owner says it is done, or a round sees it gone), and files missing
 // from the space that were written again.
 import { App, api, h, toast, showError, P, plural, field, button, link, input, select, fold, noticeList, notice, dialog,
-  confirmDialog, listRow, listGroup, watchJob, navigate, textarea, copyLine, steps, optionCards } from "../lib.js";
+  confirmDialog, listRow, listGroup, watchJob, navigate, textarea, copyLine, guidedSteps, optionCards } from "../lib.js";
 
 const S = (project) => `/api/projects/${P(project)}/space`;
 let LINKS = null;
@@ -40,7 +40,7 @@ const typeAddress = (href, id) => {
 // person only; otherwise the system's keychain)
 const keptIn = (backend) => (backend === "file" ? "Kept in a file in ENLENS’s folder that only you can read" : "Kept in this computer’s keychain");
 
-// What each service's set-up asks, as steps (docs/DESIGN.md 4.28): { steps: [{ title, body, next }], read(), missing(body) }.
+// What each service's set-up asks, as guided steps (docs/DESIGN.md 4.28): { steps: [{ title, body, next }], read(), missing(body) }.
 // `missing` says what is still to enter, and at which step.
 function serviceSteps(service, L) {
   if (service === "b2") {
@@ -54,7 +54,7 @@ function serviceSteps(service, L) {
           notice({ kind: "attention", role: "note" }, h("p", {}, "On the sign-up form, choose ", h("strong", {}, "EU Central"), " as the region before you press Create Account. It cannot be changed afterwards.")),
           h("p", { class: "muted small", id: "space-b2-robot" }, "No payment card is needed. If Backblaze keeps asking whether you are a robot, use another browser, such as Safari, Chrome or Edge.")] },
         { title: "Make a key for ENLENS", next: "I see the key", body: [
-          h("p", {}, "Signed in to Backblaze, open ", h("strong", {}, "Application Keys"), " in the menu on the left and press ", h("strong", {}, "Generate New Master Application Key"), "."),
+          h("p", {}, "In that browser, signed in to Backblaze, open ", h("strong", {}, "Application Keys"), " in the menu on the left and press ", h("strong", {}, "Generate New Master Application Key"), "."),
           h("p", { class: "muted small" }, "Backblaze then shows two parts, a keyID and an applicationKey, once. Leave that page open.")] },
         { title: "Paste the key here", next: false, body: [
           field("keyID", keyId),
@@ -125,7 +125,7 @@ export async function setupDialog(ctx, service, { move = false } = {}) {
   let ready = false;                                   // the space is set up: the last step says what is left to do
   const confirmBtn = () => document.querySelector("#dialogs dialog[open] #dlg-confirm");
   const cancelBtn = () => document.querySelector("#dialogs dialog[open] #dlg-cancel");
-  const way = steps({ label: "Setting up the storage space", id: "space-steps", steps: list,
+  const way = guidedSteps({ label: "Setting up the storage space", id: "space-steps", steps: list,
     onStep: (i) => { const b = confirmBtn(); if (b && !ready) b.disabled = i < paste; } });
   const where = service === "b2" ? "at Backblaze" : service === "r2" ? "at Cloudflare" : "in your institution’s drive";
   const doneWords = move ? "The team moves to the new storage space." : "The storage space is ready. Next: invite your colleagues from the Team page.";
@@ -191,7 +191,7 @@ export async function setupDialog(ctx, service, { move = false } = {}) {
       } }],
     onOpen(dlg) {
       const b = dlg.querySelector("#dlg-confirm"); if (b) b.disabled = way.at() < paste;
-      const f = dlg.querySelector(".step[data-state='current'] input"); (f || dlg.querySelector(".step[data-state='current'] .step-title")).focus();
+      const f = dlg.querySelector(".guided-step[data-state='current'] input"); (f || dlg.querySelector(".guided-step[data-state='current'] .guided-step-title")).focus();
     },
   });
   if (ready) toast(doneWords, "ok", { ttl: 9000 });

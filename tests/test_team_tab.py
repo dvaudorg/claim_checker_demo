@@ -26,6 +26,7 @@ from test_app import api, home  # noqa: F401  (fixtures)
 STATIC = Path(__file__).resolve().parents[1] / "src" / "enlens_claims" / "gui" / "static"
 TEAM = (STATIC / "views" / "team.js").read_text(encoding="utf-8")
 STATE = (STATIC / "views" / "team-state.js").read_text(encoding="utf-8")
+SETUP = (STATIC / "views" / "team-setup.js").read_text(encoding="utf-8")   # the Team page of a project without a team
 DRAWER = (STATIC / "views" / "logdrawer.js").read_text(encoding="utf-8")
 VIEWS = (STATIC / "views.css").read_text(encoding="utf-8")
 # 0.17.0 (design guide): team.css and the Team tab's part of navigation.css are folded into views.css, one block
@@ -128,8 +129,10 @@ def test_the_tab_keeps_the_day_to_day_and_the_page_the_team():
     assert TEAM.count('}, "Nothing yet.")') == 2 and "Nothing yet. What your colleagues share" not in TEAM
     assert '{ label: "About documents that stay here", text: KEEP_OUT_HELP }' in TEAM
     assert 'helpMark("About documents not on this computer", NOT_HERE_HELP)' in TEAM
-    assert '"Your colleague’s folder is not here yet?"' in TEAM           # the OneDrive how-to in a fold by the field
-    assert 'helpMark("About storage spaces", SPACE_HELP)' in space and '"A storage space (recommended)"' in space
+    assert '"Your colleague’s folder is not here yet?"' in SETUP          # the OneDrive how-to in a fold by the field
+    # without a team the page says what a person came to do, not how the storage works (views/team-setup.js)
+    assert '"Start a team for this project"' in SETUP and '"Join a colleague’s team"' in SETUP and '"Send it once, as a file"' in SETUP
+    assert 'helpMark("How working together works", HOW_HELP)' in SETUP and "A storage space (recommended)" not in space + SETUP
     # the sync state in one line: its second line only when it needs you, else the tooltip
     assert 'const SAY_SUB = new Set(["running", "busy", "offline", "failed", "never"]);' in TEAM and "ws.title = s.sub;" in TEAM
     tab = TEAM[TEAM.index("function stateSection(ctx) {"):TEAM.index("// The Team page: how often rounds run")]
@@ -143,20 +146,20 @@ def test_no_inline_look_and_no_link_drawn_as_a_button():
 
 
 def test_the_words_of_the_brief():
-    assert "The folder will hold the documents’ text and files, and only what you share of your own work. " in TEAM
-    assert "Keep documents marked Only a local AI or No AI out of the shared folder" in TEAM
+    assert "The folder will hold the documents’ text and files, and only what you share of your own work. " in SETUP
+    assert "Keep documents marked Only a local AI or No AI out of the shared folder" in STATE and "KEEP_OUT_LABEL" in TEAM and "KEEP_OUT_LABEL" in SETUP
     assert "It is on for the whole team because" in TEAM
     assert "Mark as seen" in TEAM and "Sync now" in TEAM and "Stop using this folder" in TEAM
     # a document not on this computer: absentDocument() (lib.js), with "Add its file", to the Documents page
     assert "absentDocument(d.title || d.doc_id, { onAdd: () => navigate(\"#/sources\") })" in TEAM
     assert '"Add its file"' in (STATIC / "lib.js").read_text(encoding="utf-8")
     assert "Pause" in TEAM and "Resume" in TEAM and "How often ENLENS looks" in TEAM
-    assert "C:\\\\Users\\\\Anna" in TEAM and "/Users/anna/" in TEAM          # a path for Windows and for a Mac
+    assert "C:\\\\Users\\\\Anna" in SETUP and "/Users/anna/" in SETUP        # a path for Windows and for a Mac
     # the server's refusal is shown as it is, by the field
-    assert "if (e.status === 400) showErr(e.message);" in TEAM and 'role: "alert", id: "team-folder-error"' in TEAM
+    assert "if (e.status === 400) showErr(e.message);" in SETUP and 'role: "alert", id: "team-folder-error"' in SETUP
     # (final check: choosing the folder again never turns the switch off by itself; untouched, it is not sent)
-    assert ('typed.keepOut === null ? { path: p } : { path: p, keep_out: typed.keepOut }' in TEAM
-            and 'typed.keepOut ?? !!(st.keep_out || {}).mine' in TEAM and 'keepOut: null' in TEAM)
+    assert ('keepOut === null ? { path: p } : { path: p, keep_out: keepOut }' in SETUP
+            and 'switchControl(KEEP_OUT_LABEL, !!(st.keep_out || {}).mine' in SETUP and 'let keepOut = null;' in SETUP)
     assert 'api("DELETE", `/api/projects/${P(ctx.project)}/shared-folder`' in TEAM
     assert 'api("POST", `/api/projects/${P(ctx.project)}/shared-folder/sync`' in TEAM
     assert 'api("PUT", `/api/projects/${P(ctx.project)}/shared-folder/keep-out`, { keep_out: want })' in TEAM
@@ -168,15 +171,17 @@ def test_the_panel_redraws_only_what_changed_and_keeps_the_place():
     when the app's answers changed, keeps what was typed in the set-up, finds the focus again by id, and follows only
     its own project's round."""
     assert "if (force || sig !== drawn) { drawn = sig; draw(); } else updateLine();" in TEAM
-    assert "typed.path = path.value" in TEAM and "value: typed.path" in TEAM and "typed.error" in TEAM
+    # the set-up keeps the chosen place across a redraw; the folder form is a dialog, which no redraw reaches
+    assert "typed.where = v;" in SETUP and 'title: "Use a folder your team shares"' in SETUP
     assert 'fa.matches("input[type=text], textarea, select")' in TEAM
     assert "document.getElementById(had.id)" in TEAM and "textContent.trim() === keep.text" not in TEAM
     assert "(j.project && j.project !== project)" in TEAM and "if (watching) { watching.w.stop(); watching = null; }" in TEAM
     assert "e.status === 404 ? null : prev" in TEAM                       # only a 404 means "no poller yet"
     assert 'role: "status", "aria-live": "polite"' in TEAM and '["offline", "paused", "failed"]' in TEAM
-    for i in ("team-keep-out", "team-pause-all", "team-setup-keep-out", "team-sync-now", "team-mark-seen", "team-leave"):
+    for i in ("team-keep-out", "team-pause-all", "team-sync-now", "team-mark-seen", "team-leave"):
         assert f'"{i}"' in TEAM, i
-    assert 'ctx.focusHeading("state")' in TEAM and 'ctx.focusHeading("space-setup")' in TEAM and 'ctx.focusHeading("folder")' in TEAM
+    assert '"team-setup-keep-out"' in SETUP
+    assert 'ctx.focusHeading("state")' in TEAM and 'ctx.focusHeading("space-setup")' in TEAM
     assert "setTeamCount(0); if (team) team.refresh();" in DRAWER         # another project: its own count
     assert 'h("h2", { class: "visually-hidden" }, "Team")' in DRAWER and 'closeLabel: "Close the panel"' in DRAWER
 

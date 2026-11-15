@@ -5,7 +5,7 @@
 // folders, a notice offers it.
 // Where the shared work is kept is an option card each (docs/DESIGN.md 4.7), named by what it is and who it suits; the
 // card's one main button says what pressing it starts. A storage space is then set up step by step in a dialog
-// (team-space.js setupDialog, the steps of 4.28); a shared folder is chosen in a dialog here (folderDialog).
+// (team-space.js setupDialog, the guided steps of 4.28); a shared folder is chosen in a dialog here (folderDialog).
 // The sections are drawn by the Team page's panel (team.js teamPanel, `ctx`); placed in views.css ("Working together").
 import { App, api, h, replace, toast, showError, P, field, switchControl, helpMark, button, link, input, fold, notice,
   dialog, listRow, listGroup, aiWhere, optionCards, setBusy } from "../lib.js";
