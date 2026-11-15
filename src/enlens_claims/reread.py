@@ -965,11 +965,25 @@ def _plan(ws: Workspace, cx, doc_id: str, new_doc, m: _Map | None = None,
     texts = {r[0]: r[1] for r in cx.execute("SELECT claim_id, text FROM user_claims")}
     breaks = _breaks(ws, [(pid, doc_id, by_old[pid].start, by_old[pid].end)
                           for s, pids in subjects.items() if s[0] == "user_claim" for pid in pids])
+    # 0.19.0rc2: a subject's rows on this document that are not on the reading moved (they name the new reading's
+    # passages already: a colleague's, brought in from their newer reading): their passages are taken, as by another
+    # excerpt of the subject (two rows of one check on one passage broke the move, UNIQUE on judgements)
+    taken: dict[tuple, set[str]] = defaultdict(set)
+    lo, hi = f"{doc_id}:", f"{doc_id};"
+    for sk, sid, pid in cx.execute("SELECT subject_kind, subject_id, passage_id FROM verifications WHERE passage_id >= ? "
+                                   "AND passage_id < ?", (lo, hi)).fetchall():
+        if pid not in old_set:
+            taken[(sk, sid)].add(pid)
+    for sql in ("SELECT claim_id, passage_id FROM judgements WHERE passage_id >= ? AND passage_id < ?",
+                "SELECT subject_id, passage_id FROM second_opinions WHERE passage_id >= ? AND passage_id < ?"):
+        for sid, pid in cx.execute(sql, (lo, hi)).fetchall():
+            if pid not in old_set:
+                taken[("user_claim", sid)].add(pid)
     keys: dict[tuple, dict[str, str]] = {}
     anchors: dict[tuple, dict] = defaultdict(dict)
     for s, pids in subjects.items():
         keys[s] = _excerpt_keys(m, s, sorted(pids, key=lambda x: by_old[x].start), by_sp, tomb, plan, texts, old_page,
-                                anchors[s])
+                                anchors[s], taken.get(s, set()))
     jby = defaultdict(list)
     for j in jrows:
         jby[(("user_claim", j["claim_id"]), j["passage_id"])].append(j)
@@ -1295,11 +1309,11 @@ def _map_payload(obj: Any, f) -> Any:
 
 
 def _excerpt_keys(m: _Map, s: tuple, pids: list[str], by_sp: dict, tomb: dict, plan: _Plan, texts: dict,
-                  old_page, anchors: dict) -> dict[str, str]:
+                  old_page, anchors: dict, taken: set[str] = frozenset()) -> dict[str, str]:
     """The new passage of each excerpt of one subject (a check's part, an SDG pack claim): the passage holding its
     quote (the AI's; and the person's judgement in force must be found too), or without a quote the passage most of
     its text is in; a tombstone where that cannot be found, or where another excerpt of the subject took the
-    passage."""
+    passage (one moved with it, or one already on the new reading: `taken`)."""
     found = []
     for pid in pids:
         p = m.by_old[pid]
@@ -1321,7 +1335,7 @@ def _excerpt_keys(m: _Map, s: tuple, pids: list[str], by_sp: dict, tomb: dict, p
         found.append((pid, ok, anchor, why, key_q, at, p))
     order = sorted(found, key=lambda x: (not x[1], x[2] is None, x[2][0] if x[2] else x[6].start))
     out: dict[str, str] = {}
-    used: set[str] = set()
+    used: set[str] = set(taken)
     for pid, ok, anchor, why, q, at, p in order:
         key = (m.passage_at(anchor[0]).pid if anchor else m.main.get(pid)) if ok else None
         if key is not None and key in used:
@@ -1571,6 +1585,10 @@ def _apply(ws: Workspace, cx, doc_id: str, plan: _Plan, info: dict, new_doc, who
                 __version__, text_fp(new_doc.text), raw.ocr_pages if raw.kind == "pdf" else drow.get("ocr_pages"),
                 raw.scanned_pages if raw.kind == "pdf" else drow.get("scanned_pages"), json.dumps(fps), sent, doc_id))
     ingest.store_reading(cx, new_doc, doc_id)  # with the person's corrections of its blocks applied again
+    # 0.19.0rc2: a reading made here is this copy's person's own; a mark that an earlier reading was made for a
+    # colleague's accepted proposal (`ownership.move_now` sets it again after this, when that is why) goes, or the
+    # owner's own new reading of a document removed and added since would never reach the project
+    cx.execute("UPDATE canon_seen SET read_from=NULL WHERE doc=?", (doc_id,))
     for sql, args in plan.after:
         cx.execute(sql, args)
     ws.bump_corpus(cx)
