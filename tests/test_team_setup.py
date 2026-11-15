@@ -108,3 +108,53 @@ def test_guided_steps_is_a_component():
         assert rule in sec, rule
     # its name and classes are its own: the progress panel's steps (4.21) are another thing
     assert not re.search(r"(?<![\w-])\.step(?![\w-])", sec)
+
+
+# ---- the steps, run: lib.js builds the DOM, so Node runs it with the stand-in document of tests/_fakedom.py
+PROBE = r"""
+const { guidedSteps, h } = await import(LIB);
+const moves = [];
+const el = guidedSteps({ label: "Setting up", onStep: (i) => moves.push(i), steps: [
+  { title: "Make an account", next: "I have an account", body: [h("p", {}, "one")] },
+  { title: "Make a key", body: [h("p", {}, "two")] },
+  { title: "Paste the key", next: false, body: [h("p", {}, "three")] },
+  { title: "Afterwards", back: false, body: [h("p", {}, "four")] }] });
+const items = () => el.children;
+const state = () => items().map((li) => li.dataset.state);
+const body = (li) => li.children[1].children[1];
+const buttons = (li) => { const b = body(li); const row = b.children[b.children.length - 1]; return row && row.className.includes("guided-step-move") ? row.children.map((x) => x.textContent) : []; };
+const press = (li, words) => { const b = body(li); b.children[b.children.length - 1].children.find((x) => x.textContent === words).click(); };
+const out = { label: el.getAttribute("aria-label"), count: el.count };
+out.start = { state: state(), open: items().map((li) => !body(li).hidden), buttons: items().map(buttons), current: items().map((li) => li.getAttribute("aria-current")) };
+out.said = items().map((li) => li.children[1].children[0].textContent);
+press(items()[0], "I have an account");
+out.second = { state: state(), at: el.at(), focusOnTitle: document.activeElement === items()[1].children[1].children[0], mark: items()[0].children[0].textContent, said: items()[0].children[1].children[0].textContent };
+press(items()[1], "Back");
+out.back = el.at();
+el.go(3);
+out.last = { state: state(), at: el.at(), open: items().map((li) => !body(li).hidden) };
+el.go(99); out.clamped = el.at();
+out.moves = moves;
+console.log(JSON.stringify(out));
+"""
+
+
+def test_the_steps_walk_one_at_a_time(tmp_path):
+    import pytest
+
+    from _fakedom import NODE, run
+    if not NODE:
+        pytest.skip("node is not installed")
+    out = run(PROBE, tmp_path)
+    assert out["label"] == "Setting up" and out["count"] == 4
+    assert out["start"]["state"] == ["current", "todo", "todo", "todo"] and out["start"]["open"] == [True, False, False, False]
+    assert out["start"]["current"] == ["step", None, None, None]
+    # each open step goes on in its own words; the step the main button ends has no Next; the step after has no Back
+    assert out["start"]["buttons"] == [["I have an account"], ["Next step", "Back"], ["Back"], []]
+    assert out["said"] == ["Step 1 of 4: Make an account", "Step 2 of 4: Make a key", "Step 3 of 4: Paste the key", "Step 4 of 4: Afterwards"]
+    assert out["second"]["state"] == ["done", "current", "todo", "todo"] and out["second"]["at"] == 1
+    assert out["second"]["focusOnTitle"] is True and out["second"]["said"] == "Step 1 of 4, done: Make an account"
+    assert out["second"]["mark"] == ""          # a tick (an icon), no number
+    assert out["back"] == 0
+    assert out["last"]["state"] == ["done", "done", "done", "current"] and out["last"]["open"] == [False, False, False, True]
+    assert out["clamped"] == 3 and out["moves"] == [1, 0, 3, 3]
