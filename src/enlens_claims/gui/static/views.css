@@ -683,7 +683,6 @@ p.dv-selnote { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; 
 .pf-top-bar > span { display: block; height: 100%; background: var(--accent); border-radius: var(--radius-pill); }
 .pf-top-n { font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
 /* the documents × codes grid (the map component) */
-.pf-code-head { position: relative; font-family: var(--font-mono); font-size: var(--fs-xs); white-space: nowrap; text-align: center; min-width: 3em; cursor: help; }
 .pf-cell { min-width: 2.6em; font-size: var(--fs-small); color: var(--text-2); }
 /* The levels above outrank the row hover (`.row-link:hover .map-cell`: td + two classes), so the darkest cells keep
    their light numbers on their own ground; the hovered row is marked by its document cell and empty cells, the hovered
@@ -1004,7 +1003,6 @@ html:has(.cb-savebar:not([hidden])) { scroll-padding-bottom: 6rem; }
 .th-doclist .muted { white-space: nowrap; }
 .th-job .grow { min-width: 0; }
 /* The levels outrank the row hover (`.row-link:hover .map-cell`), so the heat colours stay */
-.th-code-head { font-family: var(--font-mono); font-size: var(--fs-xs); white-space: nowrap; text-align: center; min-width: 3em; cursor: help; }
 .th-fw .select { width: auto; }
 .th-runs .th-run-now td { background: var(--surface-2); }
 @media (max-width: 860px) {

@@ -1642,6 +1642,22 @@ export function heatCell(n, max, label, prefix, onClick) {
       : [h("span", { class: "visually-hidden" }, `${label}: `), n ? String(n) : h("span", { "aria-label": "none" }, "·")]);
 }
 
+// The head of a column of codes in a heat grid (components.css, 4.25 The heat grid). `text` is the code as it is
+// written; `title` is what hovering says (the code with its description); `spoken` is read out in place of the code
+// where the code alone says little ("3.4"). How the heads are set is the grid's choice, not the column's: heatGrid()
+// looks at all of them (NAMED_HEAD).
+export function heatHead(text, { title, spoken } = {}) {
+  return h("th", { scope: "col", class: "heat-head", title: title || text },
+    h("span", { class: "heat-head-turn" }, h("span", { class: "heat-head-text", "aria-hidden": spoken ? "true" : null }, text)),
+    spoken ? h("span", { class: "visually-hidden" }, spoken) : null);
+}
+// Codes are either short marks ("3.4", "SDG 12") or names (a codebook of your own: "Public trust in medical AI", up to
+// 40 characters). A mark stands upright in the mono over a narrow column. A grid with a head longer than NAMED_HEAD
+// characters has names (`.heat-named`): each is wrapped over a column of its own (NAME_COL rem at least) while the
+// grid fits its frame that way. Once it would not, a name per column shows four of thirty codes at a time, so the
+// names are set at a slant over narrow columns instead (`.heat-slant`), which shows most of them at once.
+const NAMED_HEAD = 10, NAME_COL = 6.5;
+
 // 0.18.2: a heat grid in its frame (components.css, 4.25 The heat grid). Both of its axes are data, so a grid wider
 // than the page still scrolls sideways, but never silently: while columns are out of sight, a bar above it says which
 // show ("Documents 1–6 of 23"), with arrows that move it a frame at a time, and Full screen, which lays the grid over
@@ -1650,6 +1666,24 @@ export function heatCell(n, max, label, prefix, onClick) {
 // buttons keep working; following a link from there (a cell, a title) closes the layer, as the page changes under it.
 // `label` names the grid (its region, the layer's title); `unit` is what its columns are, in the plural.
 export function heatGrid(table, { label, unit = "columns" } = {}) {
+  const texts = [...table.querySelectorAll("thead .heat-head-text")];
+  const named = texts.some((t) => t.textContent.length > NAMED_HEAD);
+  table.classList.toggle("heat-named", named);
+  // the head of the column under the pointer (or holding the focus) is marked, so that a name is found from a cell far
+  // below it
+  let at = null;
+  const markHead = (e) => {
+    const cell = e.target.closest ? e.target.closest("td.map-cell") : null;
+    const head = cell && table.tHead && table.tHead.rows[0] ? table.tHead.rows[0].cells[cell.cellIndex] : null;
+    if (head === at) return;
+    if (at) at.removeAttribute("data-at");
+    at = head || null;
+    if (at) at.setAttribute("data-at", "");
+  };
+  table.addEventListener("mouseover", markHead);
+  table.addEventListener("focusin", markHead);
+  table.addEventListener("mouseleave", () => markHead({ target: table }));
+  table.addEventListener("focusout", () => markHead({ target: table }));
   const wrap = h("div", { class: "map-wrap", role: "region", "aria-label": label }, table);
   const frame = h("div", { class: "heat-frame" }, wrap);
   const where = h("span", { class: "heat-where" });
@@ -1677,6 +1711,18 @@ export function heatGrid(table, { label, unit = "columns" } = {}) {
 
   // which columns show: those whose head lies whole between the first column (it stays) and the frame's right edge
   const measure = () => {
+    // names: wrapped, a column each, while the grid fits its frame that way (reckoned, not tried, so the grid never
+    // flips to and fro); else slanted, the header row as tall as the longest of them asks
+    if (named && wrap.clientWidth) {
+      const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+      const first = table.tHead.rows[0].cells[0];
+      const slant = (parseFloat(getComputedStyle(first).minWidth) || 0) + texts.length * NAME_COL * rem > wrap.clientWidth;
+      table.classList.toggle("heat-slant", slant);
+      // a name of length l at 45° rises l/√2; its two lines and the space under and over it take 2.3rem more
+      const tall = slant ? `${Math.ceil(Math.max(0, ...texts.map((t) => t.offsetWidth)) * Math.SQRT1_2 + 2.3 * rem)}px` : "";
+      const headRow = table.tHead.rows[0];
+      if (headRow.style.height !== tall) headRow.style.height = tall;
+    }
     const over = wrap.scrollWidth > wrap.clientWidth + 1;
     box.toggleAttribute("data-over", over);
     if (over) wrap.setAttribute("tabindex", "0"); else wrap.removeAttribute("tabindex");
@@ -1693,7 +1739,9 @@ export function heatGrid(table, { label, unit = "columns" } = {}) {
   let queued = false;
   const later = () => { if (queued) return; queued = true; requestAnimationFrame(() => { queued = false; measure(); }); };
   wrap.addEventListener("scroll", later, { passive: true });
-  if ("ResizeObserver" in window) { const ro = new ResizeObserver(later); ro.observe(wrap); ro.observe(table); }
+  // the first measure comes before the grid is first painted, so its names are never seen to change their setting
+  let seen = false;
+  if ("ResizeObserver" in window) { const ro = new ResizeObserver(() => { if (seen) later(); else { seen = true; measure(); } }); ro.observe(wrap); ro.observe(table); }
   else window.addEventListener("resize", later);
 
   let layer = null, stand = null;
