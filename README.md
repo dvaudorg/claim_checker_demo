@@ -105,7 +105,7 @@ assessment, [docs/PRIVACY.md](docs/PRIVACY.md).
   privacy, the command line and the SDG pack.
 - [How ENLENS works, for a methods section](docs/METHODS.md), and [what leaves the computer, for an ethics
   application](docs/PRIVACY.md).
-- [Which model each task needs](docs/MODEL_CHOICE.md): how the models are chosen, and (once made) the runs on the pilot.
+- [Which model each task needs](docs/MODEL_CHOICE.md): how the models are chosen, and how good they are.
 - [The app's HTTP API](docs/API.md), for scripts and other programs.
 - Add-ons: [building an app on ENLENS](docs/EXTENDING.md), with an add-on's own [manual](docs/ADDON_MANUAL.md) and
   [API](docs/ADDON_API.md).
