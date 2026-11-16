@@ -57,12 +57,10 @@ Windows from 0.15.4 on). Your projects and settings (the `enlens` folder in your
   impact claims tagged with UN SDG targets and compared with an expert Value Chain Assessment.
 
 <!-- new-in:start (written by `python tools/release.py prepare`: change the changelog entry, not this) -->
-## New in 0.19.13: The AI run panel: two sides, and the local model's own Start
+## New in 0.19.14: Claude Code is asked for once, and Enter confirms once
 
-- **One panel for every place where AI runs: this computer on the left, Claude on the right.** A check, reading more, a second opinion, naming themes, judging pairs, labelling, following references, reading a theory.
-- **Two parts, two starts.** When a job has work for both engines, both sides wait with their own Start: the model on this computer starts only when you press its Start (one press covers the job).
-- **The local model starts only when you press its own Start.** In work that Claude also does (a check, labelling passages, naming themes, judging pairs of terms, reading theory documents).
-- **At your plan's usage limit, "Carry on with the local model" offers its Start** instead of starting the local model by itself.
+- **Once Claude Code has answered its part, nothing asks for Claude Code again.** Reading more excerpts of a check that also has excerpts marked Only a local AI: Claude Code answered its part in seconds, then the local model read its own for a few minutes.
+- **Enter in a "type the name to confirm" box no longer opens the box again.** Removing a project (or emptying one) with Enter instead of the button did remove it, but the same key press then reopened the dialog, empty, as if it had not worked.
 <!-- new-in:end -->
 
 How it works, in the manual: [Explore your documents](docs/manual/explore.md) (working documents, the concept map),
