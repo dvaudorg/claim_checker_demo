@@ -5,7 +5,7 @@
 // pointer is replaced, a running spinner does not restart and the page does not flicker. The pieces (the sides, the
 // split bar, the start row) are in lib.js.
 import { App, api, h, icon, replace, clear, fmt, cancelJob, showError, memoryRefused, watchJob, TERMINAL, P, button, card, fold, link, notice, stopButton,
-  setBusy, inStep, aiSide, aiSides, placeSide, redrawSide, sideFigures, setHalf, sidePct, modelFigures, readsLine, aiWhere, aiLead } from "../lib.js";
+  setBusy, plural, inStep, aiSide, aiSides, placeSide, redrawSide, sideFigures, setHalf, sidePct, modelFigures, readsLine, aiWhere, aiLead } from "../lib.js";
 
 const STEP_ICON = { pending: "circle", running: "loader", done: "check", waiting: "clock" };
 // 0.19.4: the backends of Settings that are a model on this computer
@@ -368,7 +368,7 @@ export class AiRun {
         if (what && what.textContent !== words) what.textContent = words;
         const c = side.querySelector(".ab-count");
         const r = o.running;
-        const cw = [r.total ? `${fmt.num(r.done || 0)} of ${fmt.num(r.total)} ${noun}s done` : "", r.seconds ? fmt.secs(r.seconds) : ""].filter(Boolean).join(" · ");
+        const cw = [r.total ? `${fmt.num(r.done || 0)} of ${plural(r.total, noun)} done` : "", r.seconds ? fmt.secs(r.seconds) : ""].filter(Boolean).join(" · ");
         if (c && c.textContent !== cw) c.textContent = cw;
         sidePct(side, r.total ? 100 * (r.done || 0) / r.total : null);
       }

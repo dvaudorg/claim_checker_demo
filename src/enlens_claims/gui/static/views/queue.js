@@ -2,7 +2,7 @@
 // this project, kind by kind: do first, hold or go on, remove; Start Claude Code with its speed and helpers; or answer
 // it with the AI model of Settings. (Until 0.16.1 this was the queue panel at the foot of the sidebar; the sidebar now
 // shows only the work's essentials, in its status area, and links here.)
-import { App, api, h, icon, replace, toast, showError, confirmDialog, P, watchJob, button, card, tag, withAI, readsLine, notice, queueAiLine, TERMINAL,
+import { App, api, h, icon, replace, toast, showError, confirmDialog, P, watchJob, button, card, tag, withAI, readsLine, aiWhere, notice, queueAiLine, TERMINAL,
   aiButton, aiSide, aiSides, aiSeat, placeSide, redrawSide, sideFigures, modelFigures, cancelJob, setBusy } from "../lib.js";
 import { aiRun } from "./progress.js";
 
@@ -42,7 +42,7 @@ export function queueSection() {
       if (L.gate !== "wait") return { ...base, model, memory: null, noun: L.noun || "task", running: { phase: m.who === "local" && m.phase !== "ready" ? m.phase || "waiting" : "waiting", seconds: m.seconds }, count: L.waiting,
         onStop: async () => { await api("POST", `/api/jobs/${P(gated.id)}/local/stop`, {}); draw(); } };
       return { ...base, model, memory: L.memory || base.memory, problem: L.problem || base.problem, noun: L.noun || "task", count: L.waiting,
-        sub: `For “${gated.title}”.`,
+        sub: `For “${String(gated.title || "").replace(/[.?!]+$/, "")}”`,
         onStart: async (force) => { await api("POST", `/api/jobs/${P(gated.id)}/local/start`, { force: !!force }); draw(); } };
     }
     const limit = q && q.at_limit && q.at_limit.offer_local;
@@ -120,7 +120,8 @@ export function queueSection() {
     // where the tasks' text goes (docs/DESIGN.md 4.4): under the card's AI actions. With Claude Code, under its panel;
     // with another AI, under "Answer them here instead"
     if (s.backend === "claude_code") parts.push(queueAiLine(q.privacy, kinds.length ? App.project : null));
-    if (wantLocal) parts.push(readsLine("the tasks for your local model", { model: (localStatus || {}).model }));
+    // the local model's own line (readsLine() names the AI of Settings, which is Claude here)
+    if (wantLocal) parts.push(aiWhere(`Your local model (${(localStatus || {}).model || App.settings().restricted_model || "chosen in Settings › AI"}) reads its part on this computer: it never leaves it.`, "local"));
     if (kinds.length && s.backend !== "claude_code") {
       const go = aiButton({ sm: true, disabled: !!(hereRun && hereRun.job && !TERMINAL.has(hereRun.job.state)), onClick: async () => {
         setBusy(go, true);

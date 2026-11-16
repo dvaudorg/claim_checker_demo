@@ -2591,7 +2591,9 @@ function cloudSide(o) {
     // the words of the job are drawn only while it waits: at work, a new count of the job's never redraws its Stop
     const says = state === "wait" || state === "other" || state === "missing";
     const key = JSON.stringify([state, says && jq.text, says && jq.estimate, paused && (jq.paused_text || q.paused_text), cmd, q.thought && q.thought.chosen, q.speed && q.speed.chosen,
-      (q.speed && q.speed.helpers || []).length, q.claude && q.claude.signed_in, r.exit_code, r.stopped, r.parallel, !!r.helpers]);
+      // the helpers listed (one per kind of work that waits) are shown only while it waits: at work, the list
+      // shrinking as the queue empties must not draw its Stop again
+      state === "wait" && (q.speed && q.speed.helpers || []).length, q.claude && q.claude.signed_in, r.exit_code, r.stopped, r.parallel, !!r.helpers]);
     if (key === drawn) {   // nothing to redraw: only the counts in place
       const c = el.querySelector(":scope > .ab-count");
       if (c && state === "run") c.textContent = runCount(q, r);

@@ -64,7 +64,8 @@ document.hasFocus = () => false;
 globalThis.requestAnimationFrame = (f) => setTimeout(f, 0);
 // the app's answers: the project's queue (Claude Code at work)
 const QUEUE = { route: "claude_code", can_start: true, waiting: 2, being_answered: 1, command: "/enlens-run p", privacy: null,
-  runner: { running: true, seconds: 30, parallel: 2 }, claude: { found: true, signed_in: true } };
+  runner: { running: true, seconds: 30, parallel: 2 }, claude: { found: true, signed_in: true },
+  speed: { chosen: "normal", options: { normal: 2 }, helpers: [{ helper: "checker", name: "checker", models: ["m"], kinds: ["check"], waiting: 2 }] } };
 globalThis.fetch = async (url) => ({ ok: true, status: 200, text: async () => JSON.stringify(String(url).includes("/queue") ? QUEUE : {}) });
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const walk = (n, f) => { f(n); for (const c of n.childNodes || []) walk(c, f); };
@@ -101,6 +102,11 @@ for (const poll of [fromLocal(local(3), at++), fromQueue(local(3)), fromLocal(lo
   if (stopLocal) out.sameLocalStop.push(s === stopLocal);
   stopLocal = stopLocal || s;
 }
+// Claude's queue empties while it works (no helper listed any more): its side looks again by itself (every 4 s)
+QUEUE.waiting = 0; QUEUE.speed.helpers = [];
+await new Promise((r) => setTimeout(r, 4600));
+out.keptAfterQueueEmptied = find(panel.sides.cloud, "Stop Claude Code") === stopClaude && stopClaude.isConnected;
+out.countNow = (panel.sides.cloud.querySelector(".ab-count") || {}).textContent || "";
 // Stop qwen pressed (the gate waits) while the model still reads: it says when it stops, and offers no Stop
 panel.update(fromLocal(local(1, "wait"), at++));
 out.stopping = panel.sides.local.textContent.includes("Stops after the excerpts in hand");
@@ -126,6 +132,7 @@ def test_both_engines_at_work_replace_no_button_and_count_right(tmp_path):
     # the count: the most that waited (3), less what still waits; it moves as they are read
     assert out["counts"][0].startswith("0 of 3 excerpts done"), out
     assert out["counts"][2].startswith("1 of 3 excerpts done") and out["counts"][4].startswith("2 of 3 excerpts done"), out
+    assert out["keptAfterQueueEmptied"] and "still waiting" not in out["countNow"], out   # its count, written in place
     assert out["stopping"] and out["stopGone"], out
     assert "of" not in out["noCount"], out
 

@@ -829,9 +829,13 @@ h2 .defined-wrap { font-size: var(--fs-small); font-weight: var(--fw-regular); }
 .ab-rowtile { display: inline-flex; flex: none; }
 .ab-rowtile > .ar-tile { width: 22px; height: 22px; border-radius: var(--radius-sm); }
 .ab-rowseat > .ar-tile { border: 1px dashed var(--border-strong); background: none; color: var(--faint); }
-/* the row's state words are never cut: they take a second line instead (a job's own title may still be cut) */
+/* the row's state words are never cut: its button goes under them (.work-mid), and the status area grows to hold
+   it; a word too long still wraps rather than being cut (a job's own title may still be cut) */
 .work-box.ab-row .work-sub-text, .work-box.ab-row.work-stalled .work-text { overflow: visible; white-space: normal; overflow-wrap: break-word; }
 .work-box.ab-row .work-sub { align-items: flex-start; }
+.work-box.ab-row .work-mid { display: flex; flex: 1; flex-direction: column; align-items: flex-start; gap: 5px; min-width: 0; }
+.work-box.ab-row .work-mid > .work-main { align-self: stretch; }
+.status-area:has(> .work-box.ab-row:not([hidden])) { height: auto; min-height: 66px; }
 @media (prefers-reduced-motion: reduce) {
   .ar-full > .progress-head::before, .ar-lead::before, .ab-half.ab-indet > i { animation: none; }
   .ar-waiting > .progress-head::before { opacity: .55; }

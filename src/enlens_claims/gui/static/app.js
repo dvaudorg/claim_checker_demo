@@ -323,12 +323,15 @@ async function drawStatus() {
   const cloudStalled = !runner && (hold.length || (q && waiting && !answering && s.backend === "claude_code"));
   if (localWait && cloudStalled) {   // both wait: two starts do not fit the row; it opens the job's page, where both are
     const v = jobRow(localWait), n = Math.max(waiting, hold.length);
-    w = { kind: "stalled", icon: "pause", main: "Not running", sub: `${fmt.num(localWait.local.waiting)} here · ${fmt.num(n)} to Claude`, href: v.href || "#/settings/queue",
+    w = { kind: "stalled", icon: "pause", main: "Not running", sub: `${fmt.num(localWait.local.waiting)} here · ${fmt.num(n)} for Claude`, href: v.href || "#/settings/queue",
       tip: "Two parts wait for you: one for the model on this computer, one for Claude Code. Open the work to start them.", act: "open-job", local: "need", cloudHalf: "need", job: localWait.id };
   } else if (localWait && !cloudStalled && !going.some((j) => j !== localWait && !j.local)) {
     const v = jobRow(localWait), L = localWait.local;
-    w = { kind: "stalled", icon: "pause", main: "Not running", sub: `${plural(L.waiting, L.noun || "passage")} ${L.waiting === 1 ? "waits" : "wait"}`, href: v.href,
-      tip: `Nothing reads this yet: it waits for you to start ${L.model || "your local model"}.`, act: L.memory && L.memory.short ? "open-job" : "start-local", local: "need", job: localWait.id };
+    // the job's work for Claude (being answered, or done): its tile and half, not the empty seat
+    const cloudToo = !!localWait.queue || localWait.where === "cloud";
+    w = { kind: "stalled", icon: "pause", main: "Not running", sub: `${plural(L.waiting, L.noun || "passage")} ${L.waiting === 1 ? "waits" : "wait"}${cloudToo ? " here" : ""}`, href: v.href,
+      tip: `Nothing reads this yet: it waits for you to start ${L.model || "your local model"}.`, act: L.memory && L.memory.short ? "open-job" : "start-local", local: "need", job: localWait.id,
+      cloudHalf: cloudToo ? (runner || answering ? "run" : "done") : undefined };
   } else if (cloudStalled) {
     const n = Math.max(waiting, hold.length);
     w = { kind: "stalled", icon: "pause", main: q && q.paused ? "Paused" : "Not running", sub: `${tasksWord(n)} waiting`,
@@ -345,7 +348,7 @@ async function drawStatus() {
     if (localRuns) w.local = "run";
     else if (j.local && (j.local.waiting || 0) > 0) w.local = j.local.gate === "wait" ? "need" : "run";
     if (j.queue || j.where === "cloud" || (j.where == null && App.privacy().where === "cloud")) w.cloudHalf = runner || answering ? "run" : waiting ? "need" : "wait";
-    if (w.cloudHalf === "need" && w.local === "run") w.sub = `Reading here · ${fmt.num(waiting)} for Claude`;
+    if (w.cloudHalf === "need" && w.local === "run") w.sub = `Reads here · ${fmt.num(waiting)} for Claude`;
   } else if (runner) {
     w = { kind: "running", where: "cloud", main: "Claude Code is working", sub: `${(waiting + answering).toLocaleString()} to go`, href: "#/settings/queue", tip: "Claude Code answers the work waiting for it, on your Claude plan.", cloudHalf: "run" };
   } else if (q && waiting) {
@@ -410,7 +413,10 @@ async function drawStatus() {
       const seat = (where) => h("span", { class: `ab-rowtile ab-rowseat ar-${where}`, title: where === "cloud" ? "Nothing in this work goes to Claude" : "No model on this computer works in this" },
         h("span", { class: "ar-tile", "aria-hidden": "true" }, icon(where === "cloud" ? "cloud" : "house", { size: 13 })),
         h("span", { class: "visually-hidden" }, where === "cloud" ? "Nothing in this work goes to Claude." : "No model on this computer works in this."));
-      replace(box, bar, w.local ? tile("local") : ai ? seat("local") : null, main, act, w.cloudHalf ? tile("cloud") : ai ? seat("cloud") : null);
+      // between its two tiles the row has no room for its words and a button side by side: the button goes under the
+      // words (the status area grows a line), so no state word is ever cut
+      const mid = ai && act ? h("div", { class: "work-mid" }, main, act) : null;
+      replace(box, bar, w.local ? tile("local") : ai ? seat("local") : null, mid || main, mid ? null : act, w.cloudHalf ? tile("cloud") : ai ? seat("cloud") : null);
     }
   }
   let again = active.length ? 2000 : q && (waiting || answering || runner) ? 5000 : s.backend === "claude_code" ? 15000 : 0;

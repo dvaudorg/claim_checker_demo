@@ -94,7 +94,10 @@ def test_cloud_work_has_its_own_shape_in_the_sidebar():
     assert 'j.where == null && App.privacy().where === "cloud"' in js   # the AI of Settings, when Claude
     assert 'w = { kind: "running", where: "cloud", main: "Claude Code is working"' in js and 'cloudHalf: "run"' in js
     # the engine with no work keeps its seat, a dashed tile, at its end (BUILD: every single-engine panel, the row too)
-    assert 'replace(box, bar, w.local ? tile("local") : ai ? seat("local") : null, main, act, w.cloudHalf ? tile("cloud") : ai ? seat("cloud") : null);' in js
+    assert 'replace(box, bar, w.local ? tile("local") : ai ? seat("local") : null, mid || main, mid ? null : act, w.cloudHalf ? tile("cloud") : ai ? seat("cloud") : null);' in js
+    # its button under the words (no state word cut between the two tiles), the status area a line taller then
+    assert 'const mid = ai && act ? h("div", { class: "work-mid" }, main, act) : null;' in js
+    assert ".status-area:has(> .work-box.ab-row:not([hidden])) { height: auto; min-height: 66px; }" in css
     assert ".work-box.ab-row {" in css and ".ab-rowbar {" in css and ".work-rail" not in css
     assert "--accent" not in css[css.index(".work-box.ab-row {"):css.index(".sidebar-app {")]
 
