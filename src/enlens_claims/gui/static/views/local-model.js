@@ -62,6 +62,7 @@ function getOllama(app) {
         const r = await api("POST", "/api/ollama/start", {});
         if (r.job) { followInstall(r.job, area, btn); return; }   // an install is still running: its progress instead
         if (r.running) { answersAlready(area, btn); return; }
+        lastStart = Date.now();   // 0.19.15: the card drawn again while it starts goes on saying so
         startedWait(area, btn);
       } catch (e) { showError(e); btn.disabled = false; }
     });
@@ -83,18 +84,16 @@ function getOllama(app) {
   api("GET", "/api/jobs").then((r) => {
     const j = ((r && r.jobs) || []).find((x) => x.kind === "ollama-install" && !TERMINAL.has(x.state));
     if (j && app.how !== "terminal") { followInstall(j, area, btn0); return; }
-    // 0.18.0rc2 (M8): Ollama is on this computer but does not answer: ENLENS starts it itself, once a minute at most
-    // (the card is drawn again whenever the page looks again); the button stays for when that did not work
-    if (app.installed && box.isConnected) {
-      if (Date.now() - lastAutoStart > 50000) { lastAutoStart = Date.now(); startByItself(area, btn0); }
-      else startedWait(area, btn0, STARTING, 60000 - (Date.now() - lastAutoStart));   // the card was drawn again meanwhile
-    }
+    // 0.19.15: Ollama on this computer but not running is no longer started by the card itself (0.18.0rc2 did, once a
+    // minute): nothing AI starts until the person presses. Start Ollama does it, and so does the first Start of a model.
+    // Only the press just made (Start Ollama, or Install Ollama's last step) is followed while it starts
+    if (app.installed && box.isConnected && Date.now() - lastStart < 60000) startedWait(area, btn0, STARTING, 60000 - (Date.now() - lastStart));
   }).catch(() => {});
   return box;
 }
 
-let lastAutoStart = 0;
-const STARTING = "Ollama was not running, so ENLENS is starting it. A moment…";
+let lastStart = 0;
+const STARTING = "Starting Ollama. A moment…";
 
 async function startByItself(area, btn) {
   btn.disabled = true;
@@ -215,7 +214,7 @@ function followInstall(job, area, btn) {
       // 0.18.0rc2 (M8): installed but not answering: ENLENS starts it, as the install's last step did, and waits; nothing
       // is left for the person to open
       if (btn) btn.hidden = true;
-      lastAutoStart = Date.now();
+      lastStart = Date.now();
       startByItself(area, btn || h("button"));
       return;
     }

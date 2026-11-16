@@ -783,7 +783,10 @@ compact side the choices, the model's row and the AI line sit in the fold (*Opti
 
 **Two parts, two starts.** A job with work for both engines has both sides open, each with its own Start; nothing
 starts the model on this computer by itself (job.local's gate waits for its Start: one Start covers the job, *Stop
-qwen3.5:9b* puts it back), and the two run side by side once started, in either order.
+qwen3.5:9b* puts it back), and the two run side by side once started, in either order. **Nothing loads before a
+click** (0.19.15): not when ENLENS opens (the icon no longer starts Ollama), not when a page is drawn; Ollama starts at
+the first request of a model a person started. A Stop lets go of the model's memory at once (the job's *Stop*: every
+local model it asked; *Stop qwen3.5:9b*: once the item in hand is put down).
 
 **Motion.** Only the head moves: a slow breath (5 s) while it waits for you, a teal flow once in 15 s while something
 works; the engine start's nudge takes the same breath. Each starts from the clock (`inStep()`, `--ar-sync`), so the

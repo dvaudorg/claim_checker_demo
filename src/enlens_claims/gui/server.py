@@ -161,6 +161,13 @@ class App(LibraryMixin, QueueMixin):
         s = self.settings()
         if k and k > int(s.get("k") or 8):
             s = {**s, "k": k}
+        if s.get("backend") == "auto":
+            # 0.19.15: ENLENS no longer starts Ollama when it opens. Only the jobs a person starts come here (an AI
+            # button), and "automatic" must find a running server to choose its model: Ollama starts now, if it is on
+            # this computer. A chosen Ollama model starts it at its first request instead (OllamaBackend.wake).
+            from .. import ollama_setup
+
+            ollama_setup.wake(s.get("ollama_url") or None)
         be, model = home.make_backend(s, self.api_key(), kinds=kinds)
         return be, model
 
