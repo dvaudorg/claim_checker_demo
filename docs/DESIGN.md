@@ -941,14 +941,16 @@ the list of places scrolls; the brand, the project, Find and the foot stay. **Li
 ### 5.2 The status area and the last row
 
 **Means:** which AI works for you and where text goes, or the work it is doing now. **The status area has one fixed size** (66 px; 58 px in a window under 760 px high): normally the AI line's card;
-while work runs or waits, the work box in exactly that space. Never a popover.
+while work runs or waits, the work box in exactly that space. The one exception: the AI run panel's row with a button
+(*Start*, *Open*, *Cancel*) has no room for its words and the button between its two tiles, so the button goes under
+the words and the area grows a line; a state word is never cut. Never a popover.
 
 | State | Looks |
 | --- | --- |
 | The AI line | the cloud or the house, the AI's name (*Claude, on your plan*), what leaves the computer; on hover or focus a card of details opens upwards (the account, the model, where to change it) |
 | Set-up not finished, no AI model yet, Demo mode | the same card in the attention look: the triangle, amber |
 | Work running | a teal edge; the running dot, what runs, the time; under it how many more. The AI's work is the [AI run panel](#421-progress-and-work-states)'s row: the split bar along its top, the house on its ink tile at the left end when the model on this computer works (the tooltip names the model), the cloud on its hollow tile at the right end when passages go to Claude (a grey box when only Claude works), both in one job; other work says where it runs in words (*This computer*, *Crossref*) |
-| Work not running or waiting | amber: a pause mark, *Not running*, *N tasks waiting* (for whom: its tooltip and its tile); one action, *Start* (a small main button) for the engine its row shows; when both engines of one job wait, *Open* (two starts do not fit the row: the job's page has both) |
+| Work not running or waiting | amber: a pause mark, *Not running*, *N tasks waiting* (for whom: its tooltip and its tile); one action, *Start* (a small main button) for the engine its row shows; when both engines of one job wait, *Open* (two starts do not fit the row: the job's page has both). The engine with no work in it keeps its seat: a dashed tile at its end |
 
 The box's words are the link to where the work shows; its one button is always an action. The status area is the AI's
 own place (the AI line, the AI's name), so its *Start* carries no AI mark; *Start Claude Code* anywhere else does. **The last row:**
