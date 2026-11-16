@@ -57,9 +57,9 @@ Windows from 0.15.4 on). Your projects and settings (the `enlens` folder in your
   impact claims tagged with UN SDG targets and compared with an expert Value Chain Assessment.
 
 <!-- new-in:start (written by `python tools/release.py prepare`: change the changelog entry, not this) -->
-## New in 0.19.8: Judge it yourself instead of starting the local model
+## New in 0.19.9: Hear when your work has finished
 
-- **Judge it myself, instead of starting the local model.** When excerpts of documents marked Only a local AI wait for your local model, the panel on the result now offers *Judge it myself* first, then *Start <model>*. Can change results.
+- **ENLENS tells you when work has finished.** Work you started that took more than 20 seconds (a check, documents being added, your local model answering the queue) sends a notification from your computer when it has finished.
 <!-- new-in:end -->
 
 How it works, in the manual: [Explore your documents](docs/manual/explore.md) (working documents, the concept map),
