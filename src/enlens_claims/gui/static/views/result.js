@@ -1369,8 +1369,8 @@ export async function renderResult(view, [hypId], query) {
             : chosen ? `You chose to judge ${chosen} of these yourself rather than start the local model; no AI may read the others (their documents are marked No AI, or Only a local AI without a local model). Your judgement counts like any other.`
             : "No AI may read these (their documents are marked No AI, or Only a local AI without a local model). Your judgement counts like any other."),
           // 0.19.12: changed your mind: the local model reads them after all (what you judged meanwhile still counts)
-          chosen ? [h("div", { class: "btn-row local-again" }, withAI(button({ sm: true, title: "They wait for your local model again, and it starts reading them on this computer. Judgements you gave meanwhile stay and still count.",
-            onClick: (e) => localAgain(e.currentTarget, chosen) }, chosen === 1 ? "Let the local model read it" : "Let the local model read them"))), aiWhere(localReads(), "local")] : null));
+          chosen ? [h("div", { class: "btn-row local-again" }, withAI(aiButton({ sm: true, title: "They wait for your local model again, and it starts reading them on this computer. Judgements you gave meanwhile stay and still count.",
+            onClick: (e) => localAgain(e.currentTarget, chosen) }, chosen === 1 ? "Read it again" : "Read them again"))), aiWhere(localReads(), "local")] : null));
         card.append(...evList(forYou, part));
       }
       if (rest.length) {
@@ -1474,7 +1474,7 @@ export async function renderResult(view, [hypId], query) {
           isNew ? tag({}, "new") : null),
         (rd.parts || []).length > 1 ? h("p", { class: "round-readers" }, icon("house", { size: 12 }), " ", rd.parts.map((x) => READ_BY_ROUND[x.read_by] ? READ_BY_ROUND[x.read_by](x.passages) : `${x.passages}`).join(" · ")) : null,
         rd.ai_note ? h("p", { class: "ai-note" }, icon("quote", { size: 13 }), h("span", {}, corrected ? "The AI's note, before your corrections: " : "The AI's note: ", rd.ai_note)) : null,
-        strongerLine(rd)));
+        strongerLine(rd, r)));
     }
     const tried = triedTerms.get(part.claim_id) || [];
     if (tried.length) box.appendChild(h("div", { class: "round-row" }, h("p", { class: "round-head" }, icon("search-x", { size: 13 }), h("span", {}, `You also tried ${tried.join(", ")}: nothing new was found.`))));
@@ -1527,8 +1527,9 @@ export async function renderResult(view, [hypId], query) {
     if (job.error_kind !== "memory") { showError({ message: job.error, kind: job.error_kind }); return; }
     const go = await confirmDialog({ title: "Too little memory free for your local model", message: h("div", {},
       h("p", {}, job.error),
-      h("p", {}, "You can start it anyway: the computer may then become very slow, or stop answering for a while, until the model has finished.")),
-      confirmText: "Start it anyway" });
+      h("p", {}, "You can start it anyway: the computer may then become very slow, or stop answering for a while, until the model has finished."),
+      aiWhere(localReads(), "local")),
+      confirmText: "Start it anyway", confirmIcon: "play", danger: false });
     if (go) { try { await startReadLocal(true); } catch (e) { showError(e); } }
   }
 
@@ -1550,8 +1551,8 @@ export async function renderResult(view, [hypId], query) {
   }
 
   // What a stronger model did with one search (0.11.2: asking for one is in "Ask another AI model", for the whole result)
-  function strongerLine(rd) {
-    if (rd.waiting) return h("div", { class: "muted small" }, icon("inbox", { size: 12 }), " Waiting for Claude Code.");
+  function strongerLine(rd, r = {}) {
+    if (rd.waiting) return queueNotice({ text: "Claude Code reads this search's excerpts", command: r.queue_command }, { foldType: true });
     if (rd.stronger_waiting) return h("div", { class: "muted small" }, icon("inbox", { size: 12 }), " A stronger model reads these excerpts again; until then the first reading counts.");
     if (rd.stepped_up) return h("div", { class: "muted small" }, icon("layers", { size: 12 }), " A stronger model read these excerpts again; its reading counts (each changed excerpt shows the first one).");
     return null;
@@ -1803,11 +1804,13 @@ export async function renderResult(view, [hypId], query) {
       title: "Ask the AI to read this excerpt again?",
       body: h("div", {},
         h("p", {}, "The AI reads only this excerpt again, on its own. Its new judgement replaces its earlier one on this card; the earlier one stays visible."),
+        // who reads it, and where its text goes (an excerpt of a document marked Only a local AI stays here)
+        p.access === "local" ? aiWhere(`Your local model (${App.settings().restricted_model || "chosen in Settings › AI"}) reads it on this computer: it never leaves it.`, "local") : readsLine("this excerpt"),
         p.user_verdict ? h("p", {}, h("strong", {}, "Your own judgement is not changed and still counts."), " The AI's reading is for comparison.") : h("p", {}, "If you have judged it yourself, your judgement stays and still counts."),
         h("div", { class: "field" }, h("label", { class: "field-label", for: "reread-note" }, p.user_note ? "Your comment is given to the AI as a hint (change it here, or empty the box for a re-read without a hint)" : "A hint for the AI (optional: leave it empty for a re-read without a hint)"), note,
           h("div", { class: "field-help" }, "The hint is added to the AI's instructions as “A reader noted: …”. The AI may simply follow it, so judge the excerpt yourself afterwards."),
           keepRow)),
-      actions: [{ text: "Cancel", value: false }, { text: "Read it again", value: true, primary: true, id: "dlg-confirm" }],
+      actions: [{ text: "Cancel", value: false }, { text: "Read it again", value: true, primary: true, id: "dlg-confirm", icon: "play" }],
       onOpen() { syncKeep(); note.focus(); },
     });
     if (!ok) return;

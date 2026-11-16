@@ -809,17 +809,26 @@ export async function renderCodebook(view, [name]) {
   async function askDraft(c, btn) {
     const k = defineKey(c);
     if (definingNow.has(keyNow(k))) return;
-    definingNow.add(k);
     setBusy(btn, true);
+    let res;
     try {
       const group = (groupsInOrder().find((g) => g.group === c.group) || {}).group_name || "";
-      const res = await api("POST", `${base}/define`, { code: c.code, group, examples: exampleRefs(c) });
+      res = await api("POST", `${base}/define`, { code: c.code, group, examples: exampleRefs(c) });
+    } catch (e) { showError(e); if (btn.isConnected) setBusy(btn, false); return; }
+    await followDraft(k, res.job.id, btn);
+  }
+  // the drafting job, followed until its draft is in; a local model refused for memory gets its side (jobFailed: its
+  // Start runs the job again, followed here the same way)
+  async function followDraft(k, jobId, btn) {
+    definingNow.add(k);
+    try {
       // 0.19.13: the AI run panel under the field while it drafts (not the button's spinner alone)
       const m = new MiniJob({ title: "The AI drafts a definition from the examples", noun: "passage" });
       const box = defineBoxes.get(keyNow(k));
       if (box) box.appendChild(m.el);
-      const job = await watchJob(res.job.id, (j) => m.update(j)).promise;
-      if (job.state !== "done") { if (job.error) toast(job.error, "error"); return; }
+      const job = await watchJob(jobId, (j) => m.update(j)).promise;
+      if (job.state === "error") { jobFailed(job, (j) => followDraft(k, j.id, null)); return; }
+      if (job.state !== "done") return;
       const got = job.result || {};
       if (got.stopped) return;
       if (got.withdrawn) { toast(got.why || "The request was taken back before the AI answered. Try again.", "warn"); return; }
@@ -831,7 +840,7 @@ export async function renderCodebook(view, [name]) {
       const now = keyNow(k);
       definingNow.delete(k);
       definingNow.delete(now);
-      if (btn.isConnected) setBusy(btn, false);
+      if (btn && btn.isConnected) setBusy(btn, false);
       // only this code's define box is made again (the draft, or a button no longer busy): the person may be typing
       if (body.isConnected) refreshDefineBox(now);
     }

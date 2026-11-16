@@ -459,10 +459,13 @@ async function renderRun(view, runId, info, query) {
   }
   function followNew(jobId, name) {
     finding = true;
-    const m = new MiniJob({ title: name ? `Finding a new theme in place of “${shortTitle(name, 50)}”` : "Finding a new theme", engines: [] });   // no AI: search by meaning
-    replace(newJob, h("div", { class: "th-new-job" }, m.el,
+    // no AI (search by meaning, on this computer): the plain bar of work that is not the AI's, not the AI run panel
+    const title = name ? `Finding a new theme in place of “${shortTitle(name, 50)}”` : "Finding a new theme";
+    const line = h("div", { "aria-live": "polite" });
+    const stop = stopButton({ onClick: async () => { setBusy(stop, true); try { await api("POST", `/api/jobs/${P(jobId)}/cancel`); } catch (e) { showError(e); setBusy(stop, false); } } });
+    replace(newJob, h("div", { class: "th-new-job" }, h("div", { class: "row th-new-line" }, h("div", { class: "grow" }, line), stop),
       h("p", { class: "muted small th-new-help" }, "On this computer, without AI: the passages that fit their own theme least well are grouped by what they share into a new theme, named by its key terms. The themes it takes passages from keep their names.")));
-    const w = watchJob(jobId, (job) => m.update(job));
+    const w = watchJob(jobId, (job) => { replace(line, simpleProgress(job, () => title)); stop.hidden = TERMINAL.has(job.state); });
     watchers.push(w);
     w.promise.then(async (job) => {
       finding = false;

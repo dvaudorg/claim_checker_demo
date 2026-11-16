@@ -112,7 +112,6 @@ export function refsPanel(ctx) {
     clear(body);
     const st = data.status || {};
     const chains = data.chains || [];
-    const where = App.privacy();
     body.appendChild(h("p", { class: "small dv-refs-lead" }, "The AI reads the document three passages at a time and links “it”, “they” or “the study” to the name they stand for. Every mention it reports is checked against the text. It is a reading aid: the AI misses some references."));
     const left = Math.max(0, (st.windows_total || 0) - (st.windows_read || 0));
     body.appendChild(h("p", { class: "muted small dv-refs-note" },
@@ -127,7 +126,7 @@ export function refsPanel(ctx) {
           st.windows_read ? `Go on where it stopped (${plural(left, "stretch", "stretches")} left)` : "Follow the references in this document")) : h("span", { class: "it small" }, icon("check", { size: 13 }), " The AI has read the whole document.")));
       body.appendChild(fold({}, "Only for one name", h("p", { class: "muted small dv-names-fast" }, "Faster: the AI reads only the passages where the name occurs."), h("div", { class: "row dv-name-row" }, name, withAI(nameBtn))));
       // where the passages go, once for the panel, at its foot (docs/DESIGN.md 4.4)
-      if (where.where === "cloud" || where.where === "local") body.appendChild(readsLine("the passages it needs", { class: "dv-refs-reads" }));
+      body.appendChild(readsLine("the passages it needs", { class: "dv-refs-reads" }));   // demo mode too: its own line
     }
     if (!chains.length) {
       if (st.windows_read) body.appendChild(h("p", { class: "muted small" }, left ? "No references found yet in the stretches read." : "The AI found no references to follow in this document."));

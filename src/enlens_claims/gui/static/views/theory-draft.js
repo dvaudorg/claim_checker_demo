@@ -8,7 +8,7 @@
 // when *Make the codebook* turns the concepts in the codebook into codes. Every change is kept in the draft as you work.
 import { forgetFrameworks } from "./options.js";
 import { aiRun } from "./progress.js";
-import { App, api, h, icon, replace, clear, toast, showError, failedLoad, fmt, pageHead, P, plural, confirmDialog, dialog, field, watchJob, cancelJob, emptyState, shortTitle, session, debounce, button, setButtonKind, iconButton, stopButton, link, notice, card, tag, inset, input, select, textarea, choice, fold, readsLine, aiWhere, workState, withAI, aiTag, foundWords, searchHref, setBusy, spinner, cap, aiButton } from "../lib.js";
+import { App, api, h, icon, replace, clear, toast, showError, failedLoad, fmt, pageHead, P, plural, confirmDialog, dialog, field, watchJob, emptyState, shortTitle, session, debounce, button, setButtonKind, iconButton, stopButton, link, notice, card, tag, inset, input, select, textarea, choice, fold, readsLine, aiWhere, workState, withAI, aiTag, foundWords, searchHref, setBusy, spinner, cap, aiButton, jobFailed } from "../lib.js";
 
 const MAX_CONCEPTS = 60;   // theoryframe.MAX_CONCEPTS
 const MAX_EXAMPLES = 8;    // a code keeps at most this many examples (codebooks.MAX_EXAMPLES)
@@ -286,16 +286,11 @@ export async function renderTheoryDraft(view) {
     const res = j.result || {};
     job = null;
     await reload();
-    if (j.state === "error") toast(j.error || "The reading did not work.", "error");
+    if (j.state === "error") jobFailed(j, () => reload());   // memory: the local side, whose Start reads it again (followed after the reload)
     else if (j.state !== "done" || res.stopped) toast("The reading is stopped. The draft is as it was.", "info");
     else if (res.withdrawn) toast("The request was taken back before the AI answered. Read again.", "warn");
     else if (res.ok) toast(`The theory is read: ${plural(res.concepts || 0, "concept")} in ${plural(res.groups || 0, "group")}. Open each to check its words.`, "ok");
     else if (res.state === "read") toast("The AI could not put the framework together: the concepts are each document’s, not grouped. The card above says why.", "warn");
-  }
-  async function stopReading() {
-    const id = (job && job.id) || draft.reading.job;
-    if (!id) return;
-    try { await cancelJob(id); } catch (e) { showError(e); }
   }
 
   // ---- The framework

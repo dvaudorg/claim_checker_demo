@@ -197,7 +197,7 @@ export async function renderDesign(page) {
     h("td", { class: "kw-left" }, h("span", {}, left)),
     h("td", { class: "kw-node" }, h("mark", {}, node)),
     h("td", { class: "kw-right" }, right),
-    h("td", { class: "kw-act" }, button({ kind: "quiet", sm: true, icon: "flask" }, "Check")));
+    h("td", { class: "kw-act" }, aiButton({ kind: "quiet", sm: true }, "Check")));
 
   // ---- 4.26: an excerpt card
   const excerpt = (grade, reviewed) => h("article", { class: `ev ev-${grade}`, "data-reviewed": reviewed ? "1" : null },
@@ -355,7 +355,7 @@ export async function renderDesign(page) {
           h("p", {}, "Its head (card({ title, help, action })): a title and at most a help mark and one action. A card holds at most one box, never a card."))),
       sample("A card with AI actions: one AI mark for its row, its AI line last",
         card({ title: "A card with AI actions", titleId: "dz-ai-card-h" },
-          h("div", { class: "btn-row" }, withAI(button({ sm: true }, "Ask a stronger model"), button({ sm: true }, "Get a second opinion"))),
+          h("div", { class: "btn-row" }, withAI(aiButton({ sm: true }, "Ask a stronger model"), aiButton({ sm: true }, "Get a second opinion"))),
           aiWhere("A card that holds AI actions ends with its AI line."))),
       sample("The one box a card may hold (inset()): one of a list in a card, and one not in force yet (tentative)", card({ as: "div" },
         h("ul", { class: "stack dz-list" }, inset({ as: "li" }, link({ kind: "title", serif: true, href: HERE }, "Commuting"), h("span", { class: "muted small" }, " · the same thing, said by 4 documents")),
@@ -538,7 +538,7 @@ export async function renderDesign(page) {
           textarea({ hyp: true, rows: 2, id: "dz-hyp", placeholder: "A hypothesis, or several: one per line" }),
           h("div", { class: "hint-row" }, h("span", { class: "hyp-hint-main" }, "One sentence that could be true or false; for several, one per line."),
             h("span", { class: "hyp-hint-side" }, fileButton({ kind: "quiet", icon: "upload" }, h("input", { type: "file" }), "Load a spreadsheet (CSV) or text file")))),
-        h("div", { class: "btn-row hyp-actions" }, withAI(button({ kind: "main", icon: "flask" }, "Check 3"), button({ icon: "eye" }, "Look before checking"))),
+        h("div", { class: "btn-row hyp-actions" }, withAI(aiButton({ kind: "main" }, "Check 3"), aiButton({}, "Look before checking"))),
         readsLine("the excerpts it needs", { class: "hyp-reads" })),
       answersTable()),
 

@@ -1,5 +1,5 @@
 // Settings: model service, embeddings, check defaults, frameworks, model test, data folder.
-import { saveBlob, App, api, h, icon, tabs, replace, clear, toast, showError, fmt, pageHead, watchJob, P, field, switchControl, rangeControl, confirmDialog, dialog, download, VERSION, TERMINAL, strictness, statusBadge, copyLine, tesseractHelp, helpMark, rememberClaude, claudeAccount, appName, Updates, checkUpdate, speedPicker, saveSpeed, thoughtPicker, saveThought, choice, planTier, button, card, fold, link, notice, downloadButton, input as fieldInput, select as selectField, tag, optionCards, readsLine, stopButton, inset, workState, aiWhere, myLink, WhatsNew, loadWhatsNew, showWhatsNew, whatsNewLink, aiButton, setBusy } from "../lib.js";
+import { saveBlob, App, api, h, icon, tabs, replace, clear, toast, showError, fmt, pageHead, watchJob, P, field, switchControl, rangeControl, confirmDialog, dialog, download, VERSION, TERMINAL, strictness, statusBadge, copyLine, tesseractHelp, helpMark, rememberClaude, claudeAccount, appName, Updates, checkUpdate, speedPicker, saveSpeed, thoughtPicker, saveThought, choice, planTier, button, card, fold, link, notice, downloadButton, input as fieldInput, select as selectField, tag, optionCards, readsLine, stopButton, inset, workState, aiWhere, myLink, WhatsNew, loadWhatsNew, showWhatsNew, whatsNewLink, aiButton, setBusy, aiSide, aiSides } from "../lib.js";
 import { withAI } from "../features.js";
 import { aiRun } from "./progress.js";
 import { restrictedModelCard, termsPanel } from "./ai-access.js";
@@ -808,7 +808,12 @@ function reproSection(s) {
   const test = aiButton({ sm: true }, "Test whether answers repeat");
   test.addEventListener("click", async () => {
     setBusy(test, true);
-    replace(out, h("p", { class: "muted small" }, "Asking the model the same short question twice…"));
+    // one call: the AI run panel's compact look, its one engine at work, then the result
+    const p = App.privacy();
+    const what = "Asking the model the same short question twice";
+    replace(out, p.where === "local" ? aiSides(aiSide({ where: "local", model: String(p.detail || "").split(" · ").pop() || null, running: { phase: "waiting" }, compact: true }), null, { compact: true })
+      : p.where === "cloud" ? aiSides(null, aiSide({ where: "cloud", state: "run", what }), { compact: true })
+      : h("p", { class: "muted small" }, `${what}…`));
     try {
       const r = await api("POST", "/api/servers/repeatable", {});
       replace(out, notice({ kind: r.repeatable ? "done" : "attention" },
@@ -849,11 +854,12 @@ function testSection(s, watchers) {
     const pb = h("div", { class: "pb" });
     const holder = card({ as: "div", title: "Testing", level: "h3", action: stop }, pb);
     replace(out, holder);
-    const run = aiRun({ size: "compact", stop: false, noun: "task",
+    // the panel (not `run`: that is the button, which comes back once the test has ended)
+    const panel = aiRun({ size: "compact", stop: false, noun: "task",
       label: (job) => { const p = job.progress || {}; return p.total ? `Task ${Math.min((p.done || 0) + 1, p.total)} of ${p.total}${p.task ? " · " + p.task : ""}` : "Starting…"; } });
-    replace(pb, run.el);
+    replace(pb, panel.el);
     const watcher = watchJob(jobId, (job) => {
-      run.update(job);
+      panel.update(job);
       if (TERMINAL.has(job.state)) stop.hidden = true;
     });
     watchers.push(watcher);
