@@ -25,10 +25,14 @@ from enlens_claims.gui.api_common import Jobs
 
 
 def _job(state="done", seconds=60.0, background=False, project="Repair cafés", title="Your local model answers"
-         " its share of the queue", error=None):
+         " its share of the queue", error=None, kind="queue-local-mix", stopped=False, waited=300.0):
     now = time.time()
-    return SimpleNamespace(id="j1", state=state, created=now - seconds, finished=now, background=background,
-                           project=project, title=title, error=error)
+    cancel = threading.Event()
+    if stopped:
+        cancel.set()
+    return SimpleNamespace(id="j1", kind=kind, state=state, created=now - seconds - waited, started=now - seconds,
+                           finished=now, background=background, project=project, title=title, error=error,
+                           cancel=cancel)
 
 
 def _done(code=0, out="", err=""):
@@ -44,8 +48,22 @@ def test_only_long_work_the_person_started_and_did_not_stop_tells_them():
     assert notify.wanted(_job(state="error"), "away", away)
     assert not notify.wanted(_job(state="cancelled"), "away", away)   # they stopped it themselves
     assert not notify.wanted(_job(seconds=5), "away", away)           # over while they still look
-    assert not notify.wanted(_job(background=True), "away", away)     # the shared folder's round
+    assert not notify.wanted(_job(background=True, kind="folder-sync"), "away", away)  # the shared folder's round
     assert not notify.wanted(_job(), "off", away)
+
+
+def test_work_that_was_stopped_never_says_finished_even_with_what_it_had_made():
+    # a job stopped by the person, by Quit or by an update can end "done" with its partial result (api_common.Jobs)
+    assert not notify.wanted(_job(stopped=True), "always", 0.0)
+
+
+def test_waiting_for_its_turn_does_not_count_as_running():
+    assert not notify.wanted(_job(seconds=5, waited=600), "always", 0.0)
+    assert "(took 5 s)" in notify.note_for(_job(seconds=5, waited=600))[1]
+
+
+def test_the_local_model_at_the_usage_limit_tells_the_person_though_the_app_started_it():
+    assert notify.wanted(_job(background=True, kind="queue-local-limit"), "away", 0.0)
 
 
 def test_away_means_no_tab_in_front_and_always_means_always():
@@ -77,7 +95,7 @@ def test_a_job_that_ends_sends_one_note_from_a_thread_of_its_own(monkeypatch):
     jobs.ended.append(lambda job: notify.job_ended(app, job, send=send))
 
     def work(job):
-        job.created -= 60   # as if it had run a minute
+        job.started -= 60   # as if it had run a minute
         return {"ok": True}
 
     jobs.start("check", "Checking a hypothesis", "Repair cafés", work, uses_model=False)
@@ -178,13 +196,68 @@ def test_mac_the_notifier_is_made_once_and_each_note_waits_in_its_folder(tmp_pat
     assert plist["CFBundleName"] == "ENLENS" and plist["LSUIElement"] is True
     assert plist["CFBundleIdentifier"] == "org.enlens.notifier.enlens" and plist["CFBundleVersion"] == notify.MAC_STAMP
     assert plist.get("CFBundleIconFile") == "ENLENS" and "CFBundleIconName" not in plist
+    assert len(list((tmp_path / "pending").glob("*.wake"))) == 1   # this opening is ENLENS's, not a click
     notes = list((tmp_path / "pending").glob("*.note"))
     assert len(notes) == 1 and notes[0].read_text(encoding="utf-8") == "Finished\nChecking (took 2 min)\n"
     assert calls[-1] == ["open", "-g", str(app)]
     assert "enlens_claims.gui.launch --launcher --home" in (tmp_path / "open.sh").read_text(encoding="utf-8")
+    assert (tmp_path / "notes.sh").read_text(encoding="utf-8") == notify.NOTES_SH
     calls.clear()
     notify.send_note("Finished", "Again", platform="darwin", run=run, folder=tmp_path)
     assert [Path(c[0]).name for c in calls] == ["open"]           # made once: only opened now
+
+
+def test_mac_a_note_the_notifier_was_not_opened_for_is_never_left_behind(tmp_path, monkeypatch):
+    calls = []
+    fake = _fake_mac_tools(monkeypatch, calls)
+
+    def run(cmd, **kw):
+        if cmd[0] == "open":
+            raise subprocess.TimeoutExpired(cmd, 30)
+        return fake(cmd, **kw)
+    r = notify.send_note("Finished", "x", platform="darwin", run=run, folder=tmp_path)
+    assert r["how"] == "osascript" and "open:" in r["problem"]
+    assert not list((tmp_path / "pending").iterdir())
+
+
+def test_mac_the_notifier_drops_old_notes_and_looks_again_before_it_quits():
+    assert "-mmin +1 -delete" in notify.NOTES_SH and "on reopen" in notify.MAC_SCRIPT
+    assert "property " not in notify.MAC_SCRIPT   # nothing written back into the signed app
+    assert "delay 1" in notify.MAC_SCRIPT and "open.sh" not in notify.MAC_SCRIPT   # what a click does: notes.sh
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="a POSIX shell script")
+def test_mac_notes_sh_shows_waiting_notes_once_and_only_a_click_opens_the_app(tmp_path):
+    import os
+
+    pending = tmp_path / "pending"
+    pending.mkdir()
+    (tmp_path / "notes.sh").write_text(notify.NOTES_SH, encoding="utf-8")
+    opened = tmp_path / "opened"
+    (tmp_path / "open.sh").write_text(f"#!/bin/sh\necho yes >> '{opened}'\n", encoding="utf-8")
+    sh = lambda *a: subprocess.run(["/bin/sh", str(tmp_path / "notes.sh"), *a], capture_output=True,
+                                   text=True).stdout
+
+    def wait_opened(n):
+        t0 = time.time()
+        while time.time() - t0 < 5 and (opened.read_text().count("yes") if opened.exists() else 0) < n:
+            time.sleep(0.05)
+        return opened.read_text().count("yes") if opened.exists() else 0
+
+    # ENLENS leaves two notes, each with its mark, and opens the notifier twice
+    (pending / "1-1.note").write_text("Finished\nChecking (took 2 min)\n", encoding="utf-8")
+    (pending / "1-1.wake").touch()
+    (pending / "2-1.note").write_text("Stopped with a problem\nAdding sources: no space left\n", encoding="utf-8")
+    (pending / "2-1.wake").touch()
+    old = pending / "0-1.note"
+    old.write_text("Finished\nYesterday's work\n", encoding="utf-8")
+    os.utime(old, (time.time() - 600, time.time() - 600))
+    assert sh("event").splitlines() == ["Finished", "Checking (took 2 min)", "Stopped with a problem",
+                                        "Adding sources: no space left"]
+    assert sh("event") == ""                      # the second opening: its mark, nothing left, the app NOT opened
+    time.sleep(0.3)
+    assert not opened.exists() and not list(pending.iterdir())
+    assert sh("event") == "" and wait_opened(1) == 1   # opened with no mark: a click on a notification
 
 
 def test_mac_without_its_own_notifier_the_plain_notification_still_comes(tmp_path, monkeypatch):
@@ -229,7 +302,9 @@ def test_windows_the_text_goes_in_the_environment_never_in_the_script(monkeypatc
         calls.append((cmd, env))
         return _done(0, "toast\n")
     monkeypatch.setattr(notify, "_win_icon", lambda: "")
-    r = notify.send_note("Finished", "Kovács; $(rm -rf /) `x`", url="http://127.0.0.1:1/", platform="win32", run=run)
+    monkeypatch.setattr(notify, "win_open_scheme", lambda name: "enlens-open:")
+    r = notify.send_note("Finished", "Kovács; $(rm -rf /) `x`", url="http://127.0.0.1:1/#token=t", platform="win32",
+                         run=run)
     assert r == {"sent": True, "how": "toast", "problem": ""}
     cmd, env = calls[0]
     assert cmd[:2] == ["powershell", "-NoProfile"] and "-EncodedCommand" in cmd
@@ -237,9 +312,41 @@ def test_windows_the_text_goes_in_the_environment_never_in_the_script(monkeypatc
     assert script == notify.WIN_SCRIPT and "Kovács" not in script
     assert env["ENLENS_NOTE_TEXT"] == "Kovács; $(rm -rf /) `x`" and env["ENLENS_NOTE_NAME"] == "ENLENS"
     assert env["ENLENS_NOTE_ID"] == "ENLENS.Notifications.enlens" and env["ENLENS_NOTE_DRY"] == ""
+    # a click opens the app through its icon command, so an old toast still works and none carries the token
+    assert 'launch="enlens-open:"' in env["ENLENS_NOTE_XML"] and "token" not in env["ENLENS_NOTE_XML"]
 
 
-def test_windows_a_failed_script_says_why():
+def test_windows_the_click_link_kind_runs_the_icon_command_for_this_account(monkeypatch):
+    keys = {}
+
+    class Key:
+        def __init__(self, path):
+            self.path = path
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+    fake = SimpleNamespace(HKEY_CURRENT_USER="HKCU", REG_SZ=1, CreateKey=lambda root, path: Key(f"{root}\\{path}"),
+                           SetValueEx=lambda k, name, _r, _t, value: keys.__setitem__((k.path, name), value))
+    monkeypatch.setitem(sys.modules, "winreg", fake)
+    assert notify.win_open_scheme("ENLENS") == "enlens-open:"
+    assert keys[("HKCU\\Software\\Classes\\enlens-open", "URL Protocol")] == ""
+    command = keys[("HKCU\\Software\\Classes\\enlens-open\\shell\\open\\command", "")]
+    assert "enlens_claims.gui.launch --launcher --home" in command
+
+
+def test_windows_notifications_switched_off_for_the_app_are_respected(monkeypatch):
+    monkeypatch.setattr(notify, "win_open_scheme", lambda name: "")
+    monkeypatch.setattr(notify, "_win_icon", lambda: "")
+    r = notify.send_note("Finished", "x", platform="win32", run=lambda *a, **k: _done(0, "off DisabledForApplication\n"))
+    assert r["sent"] is False and "switched off in Windows (DisabledForApplication)" in r["problem"]
+
+
+def test_windows_a_failed_script_says_why(monkeypatch):
+    monkeypatch.setattr(notify, "win_open_scheme", lambda name: "")
+    monkeypatch.setattr(notify, "_win_icon", lambda: "")
     r = notify.send_note("Finished", "x", platform="win32", run=lambda *a, **k: _done(1, "", "Access denied"))
     assert r["sent"] is False and "Access denied" in r["problem"]
 
@@ -250,7 +357,7 @@ def test_windows_the_real_script_builds_its_toast_without_showing_it():
                          dry=True)
     r = subprocess.run(notify.win_command(), env=env, capture_output=True, text=True, errors="replace", timeout=120)
     assert r.returncode == 0, r.stderr
-    assert r.stdout.strip().splitlines()[-1] in ("toast-ready", "balloon-ready"), r.stdout + r.stderr
+    assert r.stdout.strip().splitlines()[-1].split()[0] in ("toast-ready", "balloon-ready"), r.stdout + r.stderr
 
 
 # ---------------------------------------------------------------------------------------------
@@ -263,11 +370,11 @@ def test_linux_notify_send_first_then_gdbus(monkeypatch):
     def run(cmd, **kw):
         calls.append(cmd)
         return _done(1, err="no service") if cmd[0] == "notify-send" else _done()
-    r = notify.send_note("Finished", "Checking", platform="linux", run=run)
+    r = notify.send_note("Finished", "- it's a hypothesis from a list", platform="linux", run=run)
     assert r == {"sent": True, "how": "gdbus", "problem": ""}
-    assert calls[0][0] == "notify-send" and "--app-name=ENLENS" in calls[0] and calls[0][-2:] == ["ENLENS: Finished",
-                                                                                                    "Checking"]
-    assert calls[1][:3] == ["gdbus", "call", "--session"]
+    assert calls[0][0] == "notify-send" and "--app-name=ENLENS" in calls[0]
+    assert calls[0][-3:] == ["--", "ENLENS: Finished", "- it's a hypothesis from a list"]   # never read as an option
+    assert calls[1][:3] == ["gdbus", "call", "--session"] and "'- it\\'s a hypothesis from a list'" in calls[1]
 
 
 def test_linux_without_either_program_it_says_what_to_install(monkeypatch):
