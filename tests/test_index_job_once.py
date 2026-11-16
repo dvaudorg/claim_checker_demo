@@ -93,7 +93,8 @@ def test_cloud_work_has_its_own_shape_in_the_sidebar():
     css = (STATIC / "components.css").read_text(encoding="utf-8")
     assert 'j.where == null && App.privacy().where === "cloud"' in js   # the AI of Settings, when Claude
     assert 'w = { kind: "running", where: "cloud", main: "Claude Code is working"' in js and 'cloudHalf: "run"' in js
-    assert 'replace(box, bar, w.local ? tile("local") : null, main, act, w.cloudHalf ? tile("cloud") : null);' in js
+    # the engine with no work keeps its seat, a dashed tile, at its end (BUILD: every single-engine panel, the row too)
+    assert 'replace(box, bar, w.local ? tile("local") : ai ? seat("local") : null, main, act, w.cloudHalf ? tile("cloud") : ai ? seat("cloud") : null);' in js
     assert ".work-box.ab-row {" in css and ".ab-rowbar {" in css and ".work-rail" not in css
     assert "--accent" not in css[css.index(".work-box.ab-row {"):css.index(".sidebar-app {")]
 

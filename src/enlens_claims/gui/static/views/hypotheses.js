@@ -6,7 +6,7 @@
 // after the other. The progress of the check the page follows is under the box, then every answer (history.js), with
 // the checks still running or waiting their turn at the top. The evidence map is the place's other view (map.js).
 import { featureEyebrow, withAI, viewTabs } from "../features.js";
-import { App, api, h, icon, readsLine, replace, clear, append, toast, showError, fmt, pageHead, navigate, watchJob, P, debounce, session, emptyState, statusBadge, download, downloadLinks, button, iconButton, link, notice, tag, card, fold, fileButton, select, textarea, input as fieldInput, choice, latest, norm, readTextFile, jobFailed, aiButton } from "../lib.js";
+import { App, api, h, icon, readsLine, replace, clear, append, toast, showError, fmt, pageHead, navigate, watchJob, P, debounce, session, emptyState, statusBadge, download, downloadLinks, button, iconButton, link, notice, tag, card, fold, fileButton, select, textarea, input as fieldInput, choice, latest, norm, readTextFile, jobFailed, aiButton, plural } from "../lib.js";
 import { checkOptions, pickCode } from "./options.js";
 import { ProgressPanel } from "./progress.js";
 import { answersList } from "./history.js";
@@ -486,7 +486,7 @@ export async function renderHypotheses(view, params, query) {
   function followCheck(jobId, text, how) {
     stopFollowing();
     following = { id: jobId, kind: "check", text };
-    const panel = new ProgressPanel({ title: "Checking your hypothesis" });
+    const panel = new ProgressPanel({ title: "Checking your hypothesis", noun: "excerpt" });
     showProgress("Checking", text + (how ? ` (${how})` : ""), panel);
     session("activeCheck", jobId); session("activeBatch", null);
     const w = watchJob(jobId, (job) => panel.update(job));
@@ -499,7 +499,12 @@ export async function renderHypotheses(view, params, query) {
         forgetDraft(text);
         navigate(`#/h/${encodeURIComponent(job.result.hyp_id)}`);
       } else if (job.state === "cancelled") {
-        toast("The check was stopped. Nothing was saved.", "info");
+        // 0.19.13: a check whose Claude Code part was done is kept: only its local excerpts wait
+        const kept = job.result && job.result.kept && job.result.kept.length;
+        const n = kept ? job.result.waiting_local || 0 : 0;
+        toast(kept ? `The check was stopped. What Claude Code read is kept, in the answers below; ${n ? `its ${plural(n, "excerpt")} from documents marked Only a local AI ${n === 1 ? "waits" : "wait"}` : "what waits for your local model waits"} on its result.`
+          : "The check was stopped. Nothing was saved.", "info");
+        if (kept && answers) answers.refresh();
       } else if (job.state === "error") {
         jobFailed(job);
       }
@@ -509,7 +514,7 @@ export async function renderHypotheses(view, params, query) {
   function followBatch(jobId, text) {
     stopFollowing();
     following = { id: jobId, kind: "batch", text };
-    const panel = new ProgressPanel({ title: "Checking the hypotheses" });
+    const panel = new ProgressPanel({ title: "Checking the hypotheses", noun: "excerpt" });
     showProgress("Checking", "you can leave this page; the checks continue", panel);
     session("activeBatch", jobId); session("activeCheck", null);
     let index = null;
@@ -652,7 +657,7 @@ export async function renderHypotheses(view, params, query) {
     if (id !== query.job) continue;
     if (job.kind === "check" && job.state === "done" && job.result && job.result.hyp_id) { navigate(`#/h/${encodeURIComponent(job.result.hyp_id)}`); break; }
     // a check that was stopped or went wrong, or a list that has ended: how it ended, as it was shown while it ran
-    const panel = new ProgressPanel({ title: job.kind === "batch" ? "Checking the hypotheses" : "Checking your hypothesis" });
+    const panel = new ProgressPanel({ title: job.kind === "batch" ? "Checking the hypotheses" : "Checking your hypothesis", noun: "excerpt" });
     replace(progressBox, h("div", { class: "section-title" }, h("h2", {}, job.state === "done" ? "Finished" : job.state === "cancelled" ? "Stopped" : "Did not work"), job.kind === "check" ? h("span", { class: "muted serif" }, job.title) : null), panel.el);
     progressBox.hidden = false;
     panel.update(job);

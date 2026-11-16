@@ -323,11 +323,11 @@ async function drawStatus() {
   const cloudStalled = !runner && (hold.length || (q && waiting && !answering && s.backend === "claude_code"));
   if (localWait && cloudStalled) {   // both wait: two starts do not fit the row; it opens the job's page, where both are
     const v = jobRow(localWait), n = Math.max(waiting, hold.length);
-    w = { kind: "stalled", icon: "pause", main: "Not running", sub: `${fmt.num(localWait.local.waiting)} for this computer · ${fmt.num(n)} for Claude`, href: v.href || "#/settings/queue",
+    w = { kind: "stalled", icon: "pause", main: "Not running", sub: `${fmt.num(localWait.local.waiting)} here · ${fmt.num(n)} to Claude`, href: v.href || "#/settings/queue",
       tip: "Two parts wait for you: one for the model on this computer, one for Claude Code. Open the work to start them.", act: "open-job", local: "need", cloudHalf: "need", job: localWait.id };
   } else if (localWait && !cloudStalled && !going.some((j) => j !== localWait && !j.local)) {
     const v = jobRow(localWait), L = localWait.local;
-    w = { kind: "stalled", icon: "pause", main: "Not running", sub: `${plural(L.waiting, L.noun || "passage")} for ${L.model || "your local model"}`, href: v.href,
+    w = { kind: "stalled", icon: "pause", main: "Not running", sub: `${plural(L.waiting, L.noun || "passage")} ${L.waiting === 1 ? "waits" : "wait"}`, href: v.href,
       tip: `Nothing reads this yet: it waits for you to start ${L.model || "your local model"}.`, act: L.memory && L.memory.short ? "open-job" : "start-local", local: "need", job: localWait.id };
   } else if (cloudStalled) {
     const n = Math.max(waiting, hold.length);
@@ -345,7 +345,7 @@ async function drawStatus() {
     if (localRuns) w.local = "run";
     else if (j.local && (j.local.waiting || 0) > 0) w.local = j.local.gate === "wait" ? "need" : "run";
     if (j.queue || j.where === "cloud" || (j.where == null && App.privacy().where === "cloud")) w.cloudHalf = runner || answering ? "run" : waiting ? "need" : "wait";
-    if (w.cloudHalf === "need" && w.local === "run") w.sub = `${j.local_model || "Your local model"} reads · ${fmt.num(waiting)} wait for Claude`;
+    if (w.cloudHalf === "need" && w.local === "run") w.sub = `Reading here · ${fmt.num(waiting)} for Claude`;
   } else if (runner) {
     w = { kind: "running", where: "cloud", main: "Claude Code is working", sub: `${(waiting + answering).toLocaleString()} to go`, href: "#/settings/queue", tip: "Claude Code answers the work waiting for it, on your Claude plan.", cloudHalf: "run" };
   } else if (q && waiting) {
@@ -406,7 +406,11 @@ async function drawStatus() {
         } }, "Cancel");
       }   // 0.17.0 (design guide): no "Open" button: the box's words are the link to where the work shows
       box.className = `work-box work-${w.kind}${ai ? ` ab-row ab-row-${w.local ? "local" : "cloud"}` : ""}`;
-      replace(box, bar, w.local ? tile("local") : null, main, act, w.cloudHalf ? tile("cloud") : null);
+      // the engine with no work in this job keeps its seat: a dashed tile (said in words to a screen reader)
+      const seat = (where) => h("span", { class: `ab-rowtile ab-rowseat ar-${where}`, title: where === "cloud" ? "Nothing in this work goes to Claude" : "No model on this computer works in this" },
+        h("span", { class: "ar-tile", "aria-hidden": "true" }, icon(where === "cloud" ? "cloud" : "house", { size: 13 })),
+        h("span", { class: "visually-hidden" }, where === "cloud" ? "Nothing in this work goes to Claude." : "No model on this computer works in this."));
+      replace(box, bar, w.local ? tile("local") : ai ? seat("local") : null, main, act, w.cloudHalf ? tile("cloud") : ai ? seat("cloud") : null);
     }
   }
   let again = active.length ? 2000 : q && (waiting || answering || runner) ? 5000 : s.backend === "claude_code" ? 15000 : 0;

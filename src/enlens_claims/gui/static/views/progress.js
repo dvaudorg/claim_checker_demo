@@ -11,6 +11,8 @@ const STEP_ICON = { pending: "circle", running: "loader", done: "check", waiting
 // 0.19.4: the backends of Settings that are a model on this computer
 const LOCAL_MAIN = new Set(["ollama", "openai", "auto"]);
 const plainPhase = (phase) => ({ waiting: "The AI is getting ready and reading", thinking: "The AI is thinking it over", writing: "The AI is writing down its judgement", done: "The AI has finished" }[phase] || "The AI is working");
+// what Claude's side draws from the queue's words: not when they were said (a poll's own clock)
+const queueKey = (q) => JSON.stringify(q ? Object.fromEntries(Object.entries(q).filter(([k]) => !["at", "seconds"].includes(k))) : null);
 const MIXED_FOOT = "Two parts, two starts: each begins when you press its own Start, in either order, and they run side by side. Nothing is sent to Anthropic from the documents marked Only a local AI.";
 
 // 0.19.6: the line under a short job while a model reads, in words: what it has written so far and how fast, and how
@@ -120,23 +122,39 @@ export class AiRun {
     else kind = "running";
     this.setHead(kind);
     if (this.size === "full" && this.expect) {
-      const both = this.sideState.local === "wait" && this.sideState.cloud === "wait";
-      const s = App.settings();
-      this.expect.textContent = !running ? "" : both ? MIXED_FOOT
-        : s.backend === "claude_code" && this.engines.has("cloud") ? "Claude Code reads it once you press Start Claude Code (or type the command in Claude Code). You can move around the app, or close it: the work waits in the queue, and its answer appears where you started it."
-        : this.engines.has("local") ? "A model on this computer can take a few minutes. You can move around the app meanwhile; the work keeps running."
-        : "You can move around the app meanwhile; the work keeps running.";
+      this.expect.textContent = running ? this.foot() : "";
       this.expect.hidden = !this.expect.textContent;
     }
-    // the steps that wait for a Start show a clock, not the turning loader (nothing runs until it is pressed)
+    // the steps that wait for a Start show a clock, not the turning loader (nothing runs until it is pressed); once
+    // the job has ended, a step it was on shows that it stopped there
     if (this.size === "full") {
       for (const li of this.rows.values()) {
-        const w = li.dataset.state === "running" && (kind === "waiting" || kind === "attention");
-        if (li.classList.contains("step-waiting") === w) continue;
-        li.classList.toggle("step-waiting", w);
-        replace(li.querySelector(".st-icon"), icon(w ? "clock" : STEP_ICON[li.dataset.state] || "circle", { size: 16 }));
+        const on = li.dataset.state === "running";
+        const look = !on ? "" : !running ? "stopped" : kind === "waiting" || kind === "attention" ? "waiting" : "";
+        if ((li.dataset.look || "") === look) continue;
+        li.dataset.look = look;
+        li.classList.toggle("step-waiting", look === "waiting");
+        replace(li.querySelector(".st-icon"), icon(look === "waiting" ? "clock" : look === "stopped" ? "minus" : STEP_ICON[li.dataset.state] || "circle", { size: 16 }));
       }
     }
+  }
+
+  // The foot: one sentence on what happens next, chosen by the sides' states (who waits for a Start, who works)
+  foot() {
+    const L = this.sideState.local, C = this.sideState.cloud;
+    const has = (w) => this.engines.has(w);
+    const waits = (k) => k === "wait" || k === "need" || k === "paused";
+    if (has("local") && has("cloud") && waits(L) && waits(C)) return MIXED_FOOT;
+    if (has("cloud") && waits(C) && App.settings().backend === "claude_code") {
+      return L === "run" ? "Your local model reads its part meanwhile. Claude Code reads the rest once you press Start Claude Code (or type the command in Claude Code); the work waits in the queue meanwhile, and you can move around the app."
+        : "Claude Code reads it once you press Start Claude Code (or type the command in Claude Code). You can move around the app, or close it: the work waits in the queue, and its answer appears where you started it.";
+    }
+    if (has("local") && waits(L)) {
+      return C === "run" ? "Claude reads its part meanwhile. The work ends only once your local model has read its part too: press its Start, or stop the work."
+        : "The work goes on once your local model has read what waits for it: press its Start, or stop the work. You can move around the app meanwhile.";
+    }
+    if (L === "run") return "A model on this computer can take a few minutes. You can move around the app meanwhile; the work keeps running.";
+    return "You can move around the app meanwhile; the work keeps running.";
   }
 
   // Draw the job (state + progress).
@@ -299,7 +317,13 @@ export class AiRun {
     if (this.engines.has("local")) {
       const model = (L && L.model) || (m && m.who === "local" && (m.model || m.name)) || job.local_model
         || (mainLocal ? String(App.privacy().detail || "").split(" · ").pop() : s.restricted_model) || "";
-      const noun = (L && L.noun) || this.o.noun || "passage";
+      // what it reads: the server's word, unless it is only the generic "task" and the page knows better
+      const noun = (L && L.noun && L.noun !== "task" ? L.noun : null) || this.o.noun || (L && L.noun) || (job.kind === "read-local" ? "excerpt" : "passage");
+      // how many it has to read: the most that waited at once (the server counts what is left, the item in hand
+      // too); none when the job never said
+      if (L && L.waiting) this.localTotal = Math.max(this.localTotal, L.waiting);
+      const counts = (waiting) => (this.localTotal ? { done: Math.max(0, this.localTotal - waiting), total: this.localTotal } : {});
+      const cloudBusy = this.engines.has("cloud") && !["done", "stopped", "later"].includes(this.sideState.cloud || "");
       // Stop <model> (job.local's gate open): back to waiting after the item in hand; the job's own Stop ends it all
       const stopLocal = L && L.gate !== "wait" ? async () => { const r = await api("POST", `/api/jobs/${P(job.id)}/local/stop`, {}); if (r && r.job) this.update(r.job); } : null;
       let o;
@@ -307,27 +331,28 @@ export class AiRun {
         o = job.state === "done" ? (this.active.local ? { done: { text: `${model || "Your local model"} has read its part` } } : { plain: { key: "done", what: "Nothing was left for it to read" } })
           : { plain: { key: "stopped", what: "Stopped" } };
       } else if (localNow) {
-        const waiting = L ? L.waiting || 0 : 0;
-        this.localTotal = Math.max(this.localTotal, waiting + 1);
-        o = { running: { phase: m.phase, seconds: m.seconds, ...(L ? { done: this.localTotal - waiting - 1, total: this.localTotal } : {}) }, onStop: stopLocal };
+        // Stop <model> pressed: it reads on to the end of what it has in hand, and says so where its Stop was
+        const stopping = L && L.gate === "wait" ? `Stops after the ${["excerpt", "passage"].includes(noun) ? `${noun}s` : noun} in hand` : null;
+        o = { running: { phase: m.phase, seconds: m.seconds, ...(L ? counts(L.waiting || 0) : {}) }, onStop: stopLocal, stopping };
       } else if (m && m.phase === "refused" && m.who === "local") {
         o = { memory: m.memory || null, refused: m.memory ? true : (m.error || true), count: L ? L.waiting : 0,
           note: L ? null : "When this run has finished, you can start it from here.", sub: this.engines.has("cloud") ? "Claude Code reads the rest meanwhile." : null };
       } else if (L && L.problem) {
         o = { problem: L.problem };
       } else if (L && L.gate === "wait" && (L.waiting || 0) > 0) {
-        this.localTotal = Math.max(this.localTotal, L.waiting);
         o = { count: L.waiting, memory: L.memory || null, since: this.localSince || (this.localSince = Date.now()),
-          // the job goes on only once these are read (or Stop): said, so Claude's side does not look stalled
-          sub: this.sideState.cloud === "run" ? null : `The work goes on once ${L.waiting === 1 ? "it is" : "they are"} read: press Start, or stop the work.` };
+          // all that is left of the job: a model that cannot start (memory short) needs you
+          blocking: !cloudBusy,
+          // the job goes on only once these are read (or Stop): said once Claude's side is done or absent
+          sub: cloudBusy ? null : `The work goes on once ${L.waiting === 1 ? "it is" : "they are"} read: press Start, or stop the work.` };
       } else if (L && (L.waiting || 0) > 0) {   // its Start was pressed: the model is on its way
-        o = { running: { phase: "waiting" }, count: L.waiting, onStop: stopLocal };
+        o = { running: { phase: "waiting", ...counts(L.waiting) }, count: L.waiting, onStop: stopLocal };
       } else {
         o = this.active.local ? { done: { text: `${model || "Your local model"} has read its part` } }
           : { plain: { key: "later", what: mainLocal ? "Its part comes with the steps above" : "Nothing waits for it yet" } };
       }
       o = { model, noun, compact, ...o };
-      const key = JSON.stringify(o.running ? ["run", model, !!o.onStop] : o);
+      const key = JSON.stringify(o.running ? ["run", model, !!o.onStop, o.stopping || null] : o);
       let side = this.sides.local;
       if (o.count && !o.running && !o.problem && !o.plain && !o.done) o.onStart = async (force) => { const r = await api("POST", `/api/jobs/${P(job.id)}/local/start`, { force: !!force }); if (r && r.job) this.update(r.job); if (this.o.onLocalStart) this.o.onLocalStart(); };
       if (!side) {
@@ -357,18 +382,19 @@ export class AiRun {
       // a Claude Code job keeps Claude's live side once it was there: the project's queue says whether its part still
       // waits, works or is answered (the local model's report may be the newer one meanwhile)
       if (wq) this.lastQ = wq;
-      // its own words only while they are the newest; else the project's queue counts
-      const jqNow = wq || (this.lastQ ? { command: this.lastQ.command, kind: this.lastQ.kind, privacy: this.lastQ.privacy } : null);
+      // the last words it had, whole, while the local model's report is the newer one: flipping between two would
+      // draw Claude's side again (and its Stop under the pointer) every poll
+      const jqNow = wq || this.lastQ || null;
       if (App.project && (wq || (running && job.queue && this.lastQ))) {
         const key = "live";
         if (this.sideKey.cloud !== key || !side) {
           this.sideKey.cloud = key;
           const fresh = aiSide({ where: "cloud", live: true, q: jqNow, compact, pct, onState: onState("cloud") });
-          fresh.dataset.qk = JSON.stringify(jqNow);
+          fresh.dataset.qk = queueKey(jqNow);
           placeSide(this.block, "cloud", fresh);
           side = this.sides.cloud = fresh;
         } else {
-          const qk = JSON.stringify(jqNow);
+          const qk = queueKey(jqNow);
           if (side.dataset.qk !== qk) { side.dataset.qk = qk; side.arSetQueue(jqNow); }
           sidePct(side, pct);
         }

@@ -17,6 +17,9 @@ export function queueSection() {
   // 0.19.13: the AI run panel of the queue, kept across draws so its buttons stay put: Claude's side (Start Claude Code)
   // and, when the local model has a share or may take over at the plan's limit, this computer's side with its own Start
   let block = null, cloud = null, local = null, localKey = "", localJob = null, localStatus = null, hereRun = null;
+  // a job of this project whose local part waits for its own Start (a check's excerpts, themes to name…): its side
+  // shows here as waiting, with that Start, not as an empty seat
+  let gated = null;
   const seen = {};
   api("GET", "/api/local-status").then((r) => { localStatus = r && !r.same_as_main ? r : null; draw(); }).catch(() => {});
   const runLocal = async (which) => {
@@ -32,6 +35,15 @@ export function queueSection() {
     if (localJob && !TERMINAL.has(localJob.state)) {
       const m = (localJob.progress || {}).model || {};
       return { ...base, memory: null, running: { phase: m.phase || "waiting", seconds: m.seconds }, onStop: () => cancelJob(localJob.id) };
+    }
+    if (gated && !(q && (q.for_local || (q.at_limit && q.at_limit.offer_local)))) {
+      const L = gated.local, m = (gated.progress || {}).model || {};
+      const model = L.model || base.model;
+      if (L.gate !== "wait") return { ...base, model, memory: null, noun: L.noun || "task", running: { phase: m.who === "local" && m.phase !== "ready" ? m.phase || "waiting" : "waiting", seconds: m.seconds }, count: L.waiting,
+        onStop: async () => { await api("POST", `/api/jobs/${P(gated.id)}/local/stop`, {}); draw(); } };
+      return { ...base, model, memory: L.memory || base.memory, problem: L.problem || base.problem, noun: L.noun || "task", count: L.waiting,
+        sub: `For “${gated.title}”.`,
+        onStart: async (force) => { await api("POST", `/api/jobs/${P(gated.id)}/local/start`, { force: !!force }); draw(); } };
     }
     const limit = q && q.at_limit && q.at_limit.offer_local;
     return { ...base, count: limit ? q.waiting : q.for_local, head: limit ? `Claude Code stopped at your plan’s limit: ${base.model || "your local model"} can answer what waits` : null,
@@ -57,6 +69,9 @@ export function queueSection() {
     if (!App.project) { replace(body, h("p", { class: "muted small" }, "Open a project first.")); return; }
     let q;
     try { q = await api("GET", `/api/projects/${P(App.project)}/queue`); } catch (e) { replace(body, h("p", { class: "muted small" }, e.message)); return; }
+    try {
+      gated = ((await api("GET", "/api/jobs")).jobs || []).find((j) => j.project === App.project && !TERMINAL.has(j.state) && j.local && (j.local.waiting || 0) > 0 && !j.local.problem) || null;
+    } catch (_) { gated = null; }
     const s = App.settings();
     const act = async (kind, action) => {
       try { await api("POST", `/api/projects/${P(App.project)}/queue/order`, { kind, action }); draw(); } catch (e) { showError(e); }
@@ -93,7 +108,7 @@ export function queueSection() {
     // plan's limit, this computer's side with its own Start: two starts, nothing starts by itself
     lastQ = q;
     const wantCloud = kinds.length || s.backend === "claude_code";
-    const wantLocal = s.backend === "claude_code" && (q.for_local || (q.at_limit && q.at_limit.offer_local) || (localJob && !TERMINAL.has(localJob.state)));
+    const wantLocal = !!gated || (s.backend === "claude_code" && (q.for_local || (q.at_limit && q.at_limit.offer_local) || (localJob && !TERMINAL.has(localJob.state))));
     if (wantCloud || wantLocal) {
       if (!block) block = aiSides(null, null, { compact: true });
       if (wantCloud && !cloud) { cloud = aiSide({ where: "cloud", live: true, project: App.project, command: q.command, always: true, privacy: false, compact: true }); placeSide(block, "cloud", cloud); }
@@ -122,7 +137,7 @@ export function queueSection() {
     }
     replace(body, ...parts);
     if (local && localJob) drawLocal(q);
-    if (q.waiting || q.being_answered || (q.runner && q.runner.running)) timer = setTimeout(draw, 5000);
+    if (q.waiting || q.being_answered || (q.runner && q.runner.running) || gated) timer = setTimeout(draw, 5000);
   }
   draw();
   return section;

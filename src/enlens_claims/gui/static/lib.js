@@ -568,6 +568,7 @@ export function dialog({ title, body, actions, danger, onOpen, wide, lock, onDis
       button({
         kind: a.primary ? (danger ? "confirm" : "main") : "quiet",
         id: a.id,
+        icon: a.icon,
         disabled: a.disabled,
         onClick: async () => {
           if (a.onClick) { const r = await a.onClick(dlg); if (r === false) return; }
@@ -588,10 +589,10 @@ export function dialog({ title, body, actions, danger, onOpen, wide, lock, onDis
   });
 }
 
-export function confirmDialog({ title, message, confirmText = "Confirm", typeToConfirm, danger = true }) {
+export function confirmDialog({ title, message, confirmText = "Confirm", typeToConfirm, danger = true, confirmIcon }) {
   let input = null;
   const body = h("div", {}, typeof message === "string" ? h("p", {}, message) : message);
-  const actions = [{ text: "Cancel", value: false }, { text: confirmText, value: true, primary: true, id: "dlg-confirm", disabled: !!typeToConfirm }];
+  const actions = [{ text: "Cancel", value: false }, { text: confirmText, value: true, primary: true, id: "dlg-confirm", disabled: !!typeToConfirm, icon: confirmIcon }];
   if (typeToConfirm) {
     input = h("input", withClass(UI.input, { type: "text", autocomplete: "off", "aria-label": `Type ${typeToConfirm} to confirm` }));
     append(body, [h("label", { class: "field" }, h("span", { class: "field-label" }, "Type ", h("code", {}, typeToConfirm), " to confirm"), input)]);
@@ -2337,9 +2338,9 @@ const LOCAL_WAIT_SINCE = new Map();   // when each job's local part began to wai
 function arMemory(mem, short) {
   const pct = mem.need ? Math.round(100 * Math.min(1, mem.free / mem.need)) : 100;
   const bar = h("span", { class: "ar-mem-bar", "aria-hidden": "true" }, h("span", { style: { width: `${pct}%` } }));
-  if (!short) return h("p", { class: "ar-mem" }, bar, h("span", {}, `Needs about ${gb(mem.need)} of memory · ${gb(mem.free)} free now`));
+  if (!short) return h("p", { class: "ar-mem" }, bar, h("span", { class: "ar-mem-words" }, `Needs about ${gb(mem.need)} of memory · ${gb(mem.free)} free now`));
   return h("p", { class: "ar-mem ar-mem-short" }, icon("alert-triangle", { size: 14 }), bar,
-    h("span", {}, `Needs about ${gb(mem.need)} of memory · ${gb(mem.free)} free now · `, h("strong", {}, `${gb(Math.max(0, mem.need - mem.free))} short`)),
+    h("span", { class: "ar-mem-words" }, `Needs about ${gb(mem.need)} of memory · ${gb(mem.free)} free now · `, h("strong", {}, `${gb(Math.max(0, mem.need - mem.free))} short`)),
     h("span", { class: "ar-mem-help" }, "Close other programs, or choose a smaller model in Settings › AI."));
 }
 
@@ -2442,7 +2443,9 @@ function localSide(o, el) {
       setBusy(stop, true);
       try { await o.onStop(); } catch (e) { showError(e); setBusy(stop, false); }
     } }) : null;
-    lines.push(h("div", { class: "ab-run-row" }, arWhat(`${o.model || "Your local model"} ${LOCAL_PHASE[o.running.phase] || "is reading"}`), stop));
+    // Stop <model> was pressed: it puts down nothing it has in hand, so it says when it stops
+    const stopping = !stop && o.stopping ? h("span", { class: "muted small ab-stopping", role: "note" }, o.stopping) : null;
+    lines.push(h("div", { class: "ab-run-row" }, arWhat(`${o.model || "Your local model"} ${LOCAL_PHASE[o.running.phase] || "is reading"}`), stop || stopping));
     const r = o.running;
     lines.push(h("p", { class: "ab-count" }, r.total ? `${fmt.num(r.done || 0)} of ${plural(r.total, noun)} done` : (o.count ? `${plural(o.count, noun)} ${o.count === 1 ? "waits" : "wait"} for it` : ""),
       r.seconds ? `${r.total || o.count ? " · " : ""}${fmt.secs(r.seconds)}` : ""));
@@ -2473,25 +2476,34 @@ function localSide(o, el) {
       setBusy(b, true);
       try { await o.onStart(force); } catch (e) { showError(e); setBusy(b, false); }
     };
-    const anyway = short && !yourself ? button({ kind: o.anywayText ? "standard" : "quiet", sm: true, onClick: async () => {
-      const ok = o.confirm === false || await confirmDialog({ title: `Start ${name} anyway?`, danger: false, confirmText: "Start it anyway",
-        message: h("p", {}, "The computer may become very slow, or stop answering for a while, until the model has finished. What you have open is kept.") });
+    const anyway = short && !yourself ? button({ kind: o.anywayText ? "standard" : "quiet", sm: true, icon: "play", onClick: async () => {
+      const ok = o.confirm === false || await confirmDialog({ title: `Start ${name} anyway?`, danger: false, confirmText: "Start it anyway", confirmIcon: "play",
+        message: h("div", {}, h("p", {}, "The computer may become very slow, or stop answering for a while, until the model has finished. What you have open is kept."),
+          aiWhere(`The ${nouns} it reads never leave this computer.`, "local")) });
       if (ok) go(anyway, true);
     } }, o.anywayText || "Start it anyway") : null;
     if (o.anywayText) {
       if (anyway) lines.push(h("div", { class: "ar-row" }, withAI(anyway)));
     } else {
-      const hint = yourself ? `Judge ${them} yourself and the model is not needed. Starting it now asks first: the computer may become very slow.`
+      // beside Judge it myself there is no Start it anyway: with too little memory free, Start itself asks first
+      const asks = !!yourself && short && o.confirm !== false;
+      const hint = yourself ? `Judge ${them} yourself and the model is not needed.${asks ? " Starting it now asks first: the computer may become very slow." : ""}`
         : anyway ? "Start it once memory is free; it is checked again then. Start it anyway asks first: the computer may become very slow." : null;
       const row = aiStart({ where: "local", model: o.model, kind: yourself ? "standard" : "main", compact: o.compact, before: yourself,
         also: [anyway], hint: hint || undefined, nudge: !yourself && !anyway && !short ? (o.since || true) : false,
-        onClick: () => go(row.start, false) });
+        onClick: async () => {
+          if (!(yourself && short)) return go(row.start, false);
+          const ok = o.confirm === false || await confirmDialog({ title: `Start ${name} anyway?`, danger: false, confirmText: "Start it anyway", confirmIcon: "play",
+            message: h("div", {}, h("p", {}, "The computer may become very slow, or stop answering for a while, until the model has finished. What you have open is kept."),
+              aiWhere(`The ${nouns} it reads never leave this computer.`, "local")) });
+          if (ok) go(row.start, true);
+        } });
       lines.push(row);
     }
   } else if (yourself) lines.push(h("div", { class: "ar-row" }, yourself));
   else if (o.note) lines.push(h("p", { class: "muted" }, o.note));
   if (yourself && o.yourselfNote) lines.push(h("p", { class: "muted" }, o.yourselfNote));
-  if (o.status) lines.push(h("p", { role: "status" }, o.status));
+  if (o.status) lines.push(h("p", {}, o.status));
   lines.push(localTail(o, nouns));
   fillSide(el, key, lines);
   return el;
@@ -2576,7 +2588,9 @@ function cloudSide(o) {
     const being = jq.being_answered ?? q.being_answered;
     const state = q.route !== "claude_code" ? "other" : r.running ? "run" : paused ? "paused" : q.can_start ? ((waiting || being || o.always) ? "wait" : "idle")
       : q.claude && !q.claude.found ? "missing" : "wait";
-    const key = JSON.stringify([state, jq.text, jq.estimate, paused && (jq.paused_text || q.paused_text), cmd, q.thought && q.thought.chosen, q.speed && q.speed.chosen,
+    // the words of the job are drawn only while it waits: at work, a new count of the job's never redraws its Stop
+    const says = state === "wait" || state === "other" || state === "missing";
+    const key = JSON.stringify([state, says && jq.text, says && jq.estimate, paused && (jq.paused_text || q.paused_text), cmd, q.thought && q.thought.chosen, q.speed && q.speed.chosen,
       (q.speed && q.speed.helpers || []).length, q.claude && q.claude.signed_in, r.exit_code, r.stopped, r.parallel, !!r.helpers]);
     if (key === drawn) {   // nothing to redraw: only the counts in place
       const c = el.querySelector(":scope > .ab-count");
@@ -2590,8 +2604,9 @@ function cloudSide(o) {
     let side = "wait";
     const signIn = q.claude && q.claude.signed_in === false ? h("p", {}, icon("info", { size: 12 }), " Sign in to Claude Code once: open a terminal, type ", h("code", {}, "claude"), " and sign in with your Claude plan.") : null;
     const est = jq.estimate || "";
+    const aiLine = () => (o.privacy === false ? null : queueAiLine(jq.privacy || q.privacy, project, jq.kind || o.kind));
     if (state === "other") {
-      lines.push(arWhat(jq.text || "Waiting for Claude Code"), h("p", { class: "muted" }, "In Claude Code (opened in any folder), type:"), copyLine(cmd));
+      lines.push(arWhat(jq.text || "Waiting for Claude Code"), h("p", { class: "muted" }, "In Claude Code (opened in any folder), type:"), copyLine(cmd), aiLine());
     } else if (state === "run") {
       side = "run";
       const stop = stopButton({ text: "Stop Claude Code", onClick: async () => {
@@ -2599,8 +2614,9 @@ function cloudSide(o) {
         try { await api("POST", `/api/projects/${P(project)}/queue/claude-code/stop`, {}); toast("Claude Code stopped. What it had not answered waits again.", "ok"); QUEUE_CACHE.delete(project); draw(false); }
         catch (e) { showError(e); setBusy(stop, false); }
       } });  // 0.11.3: not just "Stop": the job beside it has its own
+      // compact: what is sent and typing it by hand stay in their fold while it works
       lines.push(h("div", { class: "ab-run-row" }, arWhat("Claude Code is working on it", `started ${ago(r.seconds || 0)} from ${appName()}`), stop),
-        h("p", { class: "ab-count" }, runCount(q, r)), o.compact || o.privacy === false ? null : queueAiLine(jq.privacy || q.privacy, project, jq.kind || o.kind));
+        h("p", { class: "ab-count" }, runCount(q, r)), o.compact ? optionsFold(q, cmd, true, "") : aiLine());
     } else if (state === "paused") {
       side = "paused";
       lines.push(arWhat("Paused at your plan’s limit"), jq.paused_text || q.paused_text ? h("p", {}, jq.paused_text || q.paused_text) : null);
@@ -2609,7 +2625,7 @@ function cloudSide(o) {
     } else if (state === "missing") {
       side = "need";
       lines.push(arWhat(jq.text || "Waiting for Claude Code"),
-        h("p", {}, "Claude Code was not found on this computer. ", h("a", { href: "#/settings/model" }, "Set it up"), " to start it from here, or type this in Claude Code:"), copyLine(cmd));
+        h("p", {}, "Claude Code was not found on this computer. ", h("a", { href: "#/settings/model" }, "Set it up"), " to start it from here, or type this in Claude Code:"), copyLine(cmd), aiLine());
     } else if (state === "idle") {
       side = "done";
       lines.push(arWhat(el.dataset.ran ? "Claude Code has answered what waited for it" : "Nothing waits for Claude Code"), o.compact || o.privacy === false ? null : queueAiLine(jq.privacy || q.privacy, project, jq.kind || o.kind));

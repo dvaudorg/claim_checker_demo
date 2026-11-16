@@ -1215,6 +1215,7 @@ A few rules have exceptions, each argued for once. They are listed here and in t
 | `.cal-bar.cal-empty` | No excerpts in this band yet |
 | `.m-nonsci .map-sym` | Not in force: what a non-scientific document says on the evidence map, read and not counted |
 | `.ab-seat > .ar-tile` | Not there: the AI run panel's empty seat, the engine this job gives no work |
+| `.ab-rowseat > .ar-tile` | Not there: the sidebar row's empty seat, the engine this work gives no work |
 
 **Two main buttons in one panel** ([4.1](#41-buttons), "at most one in each"): a job with work for both engines shows
 *Start qwen3.5:9b* in this computer's side and *Start Claude Code* in Claude's, both main. Each side of the [AI run

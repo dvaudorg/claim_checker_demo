@@ -796,6 +796,7 @@ h2 .defined-wrap { font-size: var(--fs-small); font-weight: var(--fw-regular); }
 .ar-mem-short .ar-mem-bar > span { background: var(--attention); }
 .ar-mem-short strong { font-weight: var(--fw-strong); }
 .ar-mem-help { flex: 1 1 100%; color: var(--text-2); }
+.ar-mem-words { flex: 1 1 0; min-width: 0; }   /* the words stay beside the triangle and the bar, and wrap there */
 /* the empty seat: the place of the engine this job gives no work (a dashed tile: not there) */
 .ab-seat { display: flex; justify-content: center; padding-top: 10px; background: var(--surface); }
 .ab-seat.ar-cloud { border-left: 1px solid var(--border); }
@@ -827,6 +828,10 @@ h2 .defined-wrap { font-size: var(--fs-small); font-weight: var(--fw-regular); }
 .ab-rowbar > .ab-half { height: 3px; }
 .ab-rowtile { display: inline-flex; flex: none; }
 .ab-rowtile > .ar-tile { width: 22px; height: 22px; border-radius: var(--radius-sm); }
+.ab-rowseat > .ar-tile { border: 1px dashed var(--border-strong); background: none; color: var(--faint); }
+/* the row's state words are never cut: they take a second line instead (a job's own title may still be cut) */
+.work-box.ab-row .work-sub-text, .work-box.ab-row.work-stalled .work-text { overflow: visible; white-space: normal; overflow-wrap: break-word; }
+.work-box.ab-row .work-sub { align-items: flex-start; }
 @media (prefers-reduced-motion: reduce) {
   .ar-full > .progress-head::before, .ar-lead::before, .ab-half.ab-indet > i { animation: none; }
   .ar-waiting > .progress-head::before { opacity: .55; }

@@ -1106,6 +1106,7 @@ DASHED = {
     ".cal-bar.cal-empty": "no excerpts in this band yet",
     ".m-nonsci .map-sym": "not in force: what a non-scientific document says on the evidence map, read and not counted",
     ".ab-seat > .ar-tile": "not there: the AI run panel's empty seat, the engine this job gives no work",
+    ".ab-rowseat > .ar-tile": "not there: the sidebar row's empty seat, the engine this work gives no work",
 }
 
 
