@@ -261,9 +261,9 @@ editing its files is in [EXTENDING.md](EXTENDING.md).
   update the sidebar has *What's new* until it is opened, and Settings has it always.
 - The README's *New in* is written by `prepare` (between its two `<!-- new-in -->` markers); update the manual and
   the other sections of the README as the last two sections say.
-- **Release candidates (0.15).** The roadmap ([`docs/ROADMAP.md`](ROADMAP.md): what each release builds, and what
-  waits) gives every minor release a release candidate, in use for at least a
-  week: a `## 0.15.0rc1` changelog entry, tagged `v0.15.0rc1` (the package's version is made from the tag).
+- **Release candidates (0.15).** Every minor release has a release candidate first, in use for at least a week,
+  unless the owner asks for a stable release straight away: a `## 0.15.0rc1` changelog entry, tagged `v0.15.0rc1`
+  (the package's version is made from the tag).
   The workflow drafts it as a GitHub pre-release, which the install line and the app's *Update* never take (GitHub's
   *latest* is the latest full release); its notes give install lines with its own files. A copy of a candidate is
   offered the release when it comes (`update.version_tuple` puts `0.15.0rc1` after every earlier release and before
