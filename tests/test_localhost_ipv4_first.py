@@ -11,13 +11,14 @@ from __future__ import annotations
 import json
 import threading
 import urllib.request
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.error import URLError
 
 import pytest
 
 from enlens_claims import embed, llm
+from enlens_claims.gui.server import QuickServer
 
 STATIC = Path(llm.__file__).parent / "gui" / "static"
 
@@ -103,7 +104,7 @@ def ollama_on_ipv4():
         def log_message(self, *a):
             pass
 
-    srv = HTTPServer(("127.0.0.1", 0), H)
+    srv = QuickServer(("127.0.0.1", 0), H)
     t = threading.Thread(target=srv.serve_forever, daemon=True)
     t.start()
     yield srv.server_address[1]
