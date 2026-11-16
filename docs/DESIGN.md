@@ -504,7 +504,8 @@ stands in its place, so none of its rows is an alert unless its `live` says so.
 link": the Claude Code panel (`queueNotice()`: the inbox, grey, *Start Claude Code*, Thought, the helpers, the command
 to type, the cloud line) and its twin, the local panel (`localPanel()`: the local notice, *On this computer* with the
 house over its head, what waits, the model's memory against what this computer has free, *Start <model>* and a quiet
-*Start it anyway*, the model's row, the house line). The same rows in the same order, so the two read as one family;
+*Start it anyway*, the model's row, the house line; 0.19.8: where the person may judge what waits, as on a result,
+*Judge it myself* takes the place of *Start it anyway*, and is the main button when memory is short). The same rows in the same order, so the two read as one family;
 the ground, the eyebrow and the house tell them apart. When the local model cannot start and its work is all that is
 left, the local panel is an attention notice (it needs you) and keeps its eyebrow; when Claude goes on with the rest,
 only its memory line is amber (`workState("attention")`). Both may stand in one card, the local one first: it reads
