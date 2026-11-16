@@ -4,7 +4,8 @@
   team, and the owner can mark both as you. With a storage space, *Team* › *People and settings* now has a card
   *Your other account*: press *Send my private work…* on one computer and then on the other, and your private checks,
   sets of themes, codebooks, notes, research log entries and links between terms go between the two from the next
-  rounds, while staying private. Either computer can then share or take back what the other made. Each computer can
+  rounds, while staying private. Either computer can then share or take back what the other made (the computer that
+  made it carries it out at its next round, so colleagues see it shared by its maker). Each computer can
   stop it at any time (*Stop…*); what already arrived stays. On a plain shared folder it is not offered. Does not
   change results.
 
@@ -17,7 +18,9 @@
   other account's own key opens: colleagues cannot read it, and the storage company sees only that a file was written
   and its size. What arrives stays private there and is never sent to colleagues, in the shared folder, the storage
   space or a zip. It stops by itself when either account leaves or is removed, or the owner no longer marks both as
-  you.
+  you. A private item of someone else's in your copy is shared only by a mark in its owner's own file, so no member can
+  publish it by writing a mark in theirs. If the team's list of members gives your account other keys than your
+  computer's own, nothing goes, and the card says so.
 
 ### For developers
 

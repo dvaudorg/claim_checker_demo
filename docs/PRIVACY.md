@@ -240,15 +240,23 @@ space](manual/privacy.md#through-a-storage-space-of-your-teams-own-0180rc2)):
   stays. How each risk is met:
   - the owner's mark alone sends nothing: an owner cannot point a member's private work at an account of the owner's
     choosing. Before turning it on, the Team page shows the other account's name, when it joined and a *check code*
-    made of both accounts' public keys, the same on both computers only when each sees the other's real keys;
-  - a roster that later gives the other account other keys (which only the keeper could sign) stops the sending: the
-    statement pinned the keys it had;
+    made of both accounts' public keys, each computer using its own real keys for its half, so the codes match only
+    when each sees the other's real keys;
+  - a roster in which the keeper (who signs it) gave an account keys of its own: that account's computer sees that its
+    entry is not its own keys, refuses to pair, sends and takes in nothing and says so; the check codes differ. A
+    roster that later gives the other account other keys stops the sending: the statement pinned the keys it had;
+  - a forged *Share* mark for a private item, written by any member into their own file: a private item of someone
+    else's changes its state only by a mark in its owner's own file, and only the item's maker writes its mark (a
+    *Share* or *Unshare* on the other computer is asked of the maker's copy, which carries it out), so no member can
+    publish someone's private work, and older copies read every mark as the owner's;
   - a statement or a file written into someone else's part is set aside: every file of a part must be signed by that
     part's member, as the roster says, for that very place;
   - an old statement put back after it was withdrawn is ignored (each copy keeps the latest of each account, by its
     number); sending follows the sender's own switch and taking in the receiver's own;
   - a removed member gets nothing sealed to their key again, and the sender deletes its private files; an account
-    that joins again is a new account, which no statement names until the person turns it on for it.
+    that joins again is a new account, which no statement names until the person turns it on for it;
+  - a copy of the project folder, or the project after a move to another space, does not treat the two accounts as
+    one until a round there verifies them again.
 
 **Settings across copies.** Anyone may make a document stricter, and it holds in every copy as soon as it reaches
 it. A looser setting

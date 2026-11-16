@@ -380,7 +380,8 @@ def move(cx: sqlite3.Connection, doc_id: str, new_text: str, page_spans: list | 
     return {"moved": moved, "lost": lost}
 
 
-def merge(cx: sqlite3.Connection, rows: list[dict], fix, sender: str | None = None, report: dict | None = None) -> int:
+def merge(cx: sqlite3.Connection, rows: list[dict], fix, sender: str | None = None, report: dict | None = None,
+          first_hand: bool = False) -> int:
     """A colleague's notes (sync.py): those not here come in (unless removed here, or their document did not come in);
     one of theirs they changed since is brought up to date. Yours are never changed.
 
@@ -398,7 +399,7 @@ def merge(cx: sqlite3.Connection, rows: list[dict], fix, sender: str | None = No
         via_here = relayed(cx, "note")
     from .sharing import _partner
 
-    pair = bool(sender) and _partner(cx, me) == sender
+    pair = first_hand and bool(sender) and _partner(cx, me) == sender  # (your other account's own file)
     n = 0
     for r in rows:
         if not isinstance(r.get("note_id"), str) or not _ID.fullmatch(r["note_id"]) or r["note_id"] in gone:

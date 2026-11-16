@@ -11,7 +11,7 @@ const S = (project) => `/api/projects/${P(project)}/space/self-sync`;
 const when = (iso) => (iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) : "");
 const HELP = "Your private work is what you have not shared: checks, sets of themes, codebooks, notes, research log entries and links between terms. "
   + "It goes to your other account only, sealed so that only that account can open it, and it stays private there: it is never sent to colleagues. "
-  + "Either account can then share or take back what the other made. The owner’s mark that both accounts are you is not enough: each account turns this on itself.";
+  + "Either account can then share or take back what the other made (the account that made it does so at its next round). The owner’s mark that both accounts are you is not enough: each account turns this on itself.";
 
 function section(key, title, ...children) {
   const id = `team-h-${key}`;
@@ -56,22 +56,24 @@ function selfSyncSection(ctx) {
     return section("self-sync", title,
       h("p", { class: "muted team-text", id: "team-self-needs-space" }, `The owner marks ${names} as you. Sending your private work to your other account needs a storage space: on a shared folder it is not offered.`));
   }
+  // the roster (signed by the owner's copy) gives this account other keys than this computer's: nothing goes
+  const warn = s.warning ? notice({ kind: "attention", id: "team-self-keys" }, s.warning) : null;
   if (s.on) {
     const sub = s.active
       ? [`your private work goes both ways`, s.sent_at ? ` · last sent ${when(s.sent_at)}` : null, s.received_at ? ` · last received ${when(s.received_at)}` : null, s.code ? ` · check code ${s.code}` : null]
       : (s.why || "");
     const row = listRow({ person: personMark([s.on.name]), title: s.on.name, sub, warn: !s.active,
       actions: [button({ kind: "quiet", sm: true, id: "team-self-off", onClick: () => turnOff(ctx, s.on) }, "Stop…")] });
-    return section("self-sync", title, h("div", { class: "team-people" }, listGroup(null, row)), help);
+    return section("self-sync", title, warn, h("div", { class: "team-people" }, listGroup(null, row)), help);
   }
   if (!(s.candidates || []).length) {
     return section("self-sync", title, h("p", { class: "muted team-text" }, "The owner marks another account as you, but it is not in the storage space now."));
   }
   const rows = s.candidates.map((c) => listRow({ person: personMark([c.name]), title: c.name,
     sub: [c.since ? `in the team since ${when(c.since)}` : null, c.code ? `check code ${c.code}` : null].filter(Boolean).join(" · "),
-    actions: [button({ sm: true, id: `team-self-on-${c.part}`, onClick: () => turnOn(ctx, c) }, "Send my private work…")] }));
-  return section("self-sync", title,
-    notice({ kind: "info" }, "The owner marks this account as yours too. Your private work can go to it, and its private work come here, once both accounts turn this on."),
+    actions: s.keys_differ ? [] : [button({ sm: true, id: `team-self-on-${c.part}`, onClick: () => turnOn(ctx, c) }, "Send my private work…")] }));
+  return section("self-sync", title, warn,
+    warn ? null : notice({ kind: "info" }, "The owner marks this account as yours too. Your private work can go to it, and its private work come here, once both accounts turn this on."),
     h("div", { class: "team-people" }, listGroup(null, ...rows)), help);
 }
 

@@ -131,18 +131,34 @@ def test_private_work_goes_only_when_both_accounts_consent(carols, store_dir):
         _round(p)
     with anna:
         assert not _has(anna.ws, hc)
-    # either account can share what the other made: the laptop shares Carol's check, and the team gets it as Carol's
+    # either account can share what the other made: the laptop asks, Carol's copy shares it as its maker, so every
+    # copy (an older one, one that knows nothing of the pair) sees Carol's own mark
     with laptop:
         got = sharing.share(laptop.ws, [{"kind": "check", "key": hc}])
-    assert [x["key"] for x in got["shared"]] == [hc]
-    for p in (laptop, anna, carol):
+        assert sharing.state(laptop.ws._conn(), "check", hc)["state"] == "private"   # not before Carol's copy says so
+    assert not got["shared"] and [x["key"] for x in got["asked"]] == [hc]
+    _round(laptop)
+    _round(anna)
+    with anna:
+        assert not _has(anna.ws, hc)
+    for p in (carol, carol, anna, laptop):   # (Carol's copy shares it at one round, writes it for the team at the next)
         _round(p)
     with anna:
         assert _has(anna.ws, hc)
         s = sharing.state(anna.ws._conn(), "check", hc)
-        assert s["state"] == "shared" and s["owner"] == carol.id
-    with carol:
-        assert sharing.state(carol.ws._conn(), "check", hc)["state"] == "shared"
+        assert s["state"] == "shared" and s["owner"] == carol.id and s["by"] == carol.id
+    for p in (carol, laptop):
+        with p:
+            assert sharing.state(p.ws._conn(), "check", hc)["state"] == "shared"
+    # Unshare from the laptop: it stops going from the laptop at once, and Carol's copy takes it back as its maker
+    with laptop:
+        got = sharing.unshare(laptop.ws, [{"kind": "check", "key": hc}])
+    assert [x["key"] for x in got["asked"]] == [hc]
+    for p in (laptop, carol, carol, anna):
+        _round(p)
+    with anna:
+        s = sharing.state(anna.ws._conn(), "check", hc)
+        assert s["state"] == "withdrawn" and s["by"] == carol.id
     # withdrawn consent stops sending at once: Carol's private files go, and her new work stays with her
     with carol:
         assert selfsync.turn_off(carol.ws)["on"] is None
@@ -235,3 +251,140 @@ def test_an_old_statement_put_back_changes_nothing(carols, store_dir):
     _round(carol)
     with carol:
         assert not _has(carol.ws, hl)
+
+
+def _active_pair(carol: Person, laptop: Person) -> None:
+    _on(carol, laptop)
+    _on(laptop, carol)
+    for p in (carol, laptop, carol, laptop):
+        _round(p)
+    with carol:
+        assert selfsync.status(carol.ws)["active"]
+
+
+def test_a_forged_mark_in_a_third_members_file_publishes_nothing(carols, store_dir):
+    """A mark is data in whichever file carries it. Anna (a member, here also the owner) writes into her own bundle
+    marks that say the laptop shared its private check, and that the laptop shared Carol's own private check, both
+    dated in the future: Carol's copy takes neither, and writes neither for the team."""
+    anna, carol, laptop = carols
+    _active_pair(carol, laptop)
+    hl = _check(laptop, "Hydrogen storage is cheap.")
+    hc = _check(carol, "Electrolysers create local jobs.")
+    for p in (laptop, carol, laptop):
+        _round(p)
+    with carol:
+        assert _has(carol.ws, hl) and sharing.state(carol.ws._conn(), "check", hl)["state"] == "private"
+    with anna:
+        with anna.ws.connect() as cx:
+            for key, owner in ((hl, laptop.id), (hc, carol.id)):
+                cx.execute("INSERT OR REPLACE INTO shares(kind, key, state, owner, by, at, title) VALUES "
+                           "('check', ?, 'shared', ?, ?, '2099-01-01T00:00:00+00:00', 'x')", (key, owner, laptop.id))
+    for p in (anna, carol, anna):
+        _round(p)
+    with carol:
+        for key in (hl, hc):
+            assert sharing.state(carol.ws._conn(), "check", key)["state"] == "private", key
+    with anna:
+        assert not _has(anna.ws, hl) and not _has(anna.ws, hc)
+
+
+def test_a_roster_that_swaps_an_accounts_keys_shows_other_codes_and_sends_nothing(carols, store_dir):
+    """The keeper (who signs the roster) gives the laptop's part keys of its own: the check codes on the two computers
+    differ, the laptop's copy refuses to pair and says why, and nothing is sent."""
+    anna, carol, laptop = carols
+    with anna:
+        desc = space.configured(anna.ws)
+        ctx = space._Ctx(anna.ws, desc)
+        roster = json.loads(json.dumps(ctx.roster))
+        part = next(p for p, m in roster["members"].items() if m["person"] == laptop.id)
+        roster["members"][part].update(seal.Identity.new().public())
+        space._write_roster(ctx, roster, rekey=False)
+        ctx.save()
+    for p in (carol, laptop):
+        _round(p, ok_kinds=("documents", "set_aside"))
+    with carol:
+        code_carol = selfsync.status(carol.ws)["candidates"][0]["code"]
+        selfsync.turn_on(carol.ws, laptop.id)   # (Carol pins the keys the roster shows: the keeper's)
+    with laptop:
+        st = selfsync.status(laptop.ws)
+        assert st["keys_differ"] and st["warning"]
+        assert st["candidates"][0]["code"] != code_carol
+        with pytest.raises(space.SpaceProblem) as e:
+            selfsync.turn_on(laptop.ws, carol.id)
+    assert e.value.kind == "keys_differ"
+    _check(carol, "Electrolysers create local jobs.")
+    for p in (carol, laptop, carol):
+        _round(p, ok_kinds=("documents", "set_aside"))
+    assert not _private_files(carol, store_dir)
+
+
+def test_taking_in_goes_on_after_off_and_on_or_a_lost_record(carols, store_dir):
+    anna, carol, laptop = carols
+    _active_pair(carol, laptop)
+    h1 = _check(carol, "Electrolysers create local jobs.")
+    for p in (carol, laptop, carol):
+        _round(p)
+    with laptop:
+        assert _has(laptop.ws, h1)
+    # off and on again on the laptop between two of Carol's rounds: Carol has deleted file 1 as read
+    with laptop:
+        selfsync.turn_off(laptop.ws)
+    _round(laptop)
+    _on(laptop, carol)
+    _round(laptop)
+    h2 = _check(carol, "Fuel cells need platinum.")
+    for p in (carol, laptop):
+        _round(p)
+    with laptop:
+        assert _has(laptop.ws, h2)
+    # the laptop's record of how far it read is lost: it goes on from the first file there
+    with laptop:
+        f = space.mirror_of(laptop.ws) / ".space-state.json"
+    state = json.loads(f.read_text(encoding="utf-8"))
+    state["self_sync"].pop("read")
+    f.write_text(json.dumps(state), encoding="utf-8")
+    h3 = _check(carol, "Hydrogen storage is cheap.")
+    for p in (carol, laptop):
+        _round(p)
+    with laptop:
+        assert _has(laptop.ws, h3)
+    # lost again, with nothing left to read: Carol's copy sees the laptop's reading went backwards and sends
+    # everything once more, in a new stream
+    for p in (carol, laptop):
+        _round(p)
+    with carol:
+        before = json.loads((space.mirror_of(carol.ws) / ".space-state.json").read_text())["self_sync"]["stream"]
+    state = json.loads(f.read_text(encoding="utf-8"))
+    state["self_sync"].pop("read")
+    f.write_text(json.dumps(state), encoding="utf-8")
+    for p in (laptop, carol, laptop, carol):
+        _round(p)
+    with carol:
+        after = json.loads((space.mirror_of(carol.ws) / ".space-state.json").read_text())["self_sync"]["stream"]
+    assert after != before
+    assert not _private_files(carol, store_dir)   # all read, all deleted: nothing piles up
+
+
+def test_verified_pairs_hold_only_for_this_copy_in_this_space(carols, tmp_path):
+    import shutil
+    import sqlite3
+
+    _anna, carol, laptop = carols
+    _active_pair(carol, laptop)
+    with carol:
+        assert selfsync.partner(carol.ws._conn()) == laptop.id
+        carol.ws.close_all()
+        copy = tmp_path / "copy-of-carols-project"
+        copy.mkdir()
+        for n in ("enlens.sqlite", "config.json"):
+            shutil.copy2(Path(carol.ws.root) / n, copy / n)
+        cx = sqlite3.connect(copy / "enlens.sqlite")
+        try:
+            assert selfsync.partner(cx, carol.id) is None   # a copy of the project folder: no pair
+        finally:
+            cx.close()
+        desc = space.configured(carol.ws)
+        folder._set_config(carol.ws, shared_space={**desc, "id": "0123456789abcdef"})   # another space
+        assert selfsync.partner(carol.ws._conn()) is None
+        folder._set_config(carol.ws, shared_space=desc)
+        assert selfsync.partner(carol.ws._conn()) == laptop.id
