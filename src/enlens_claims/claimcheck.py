@@ -408,6 +408,14 @@ def _run_round(ws: Workspace, parts: dict[str, str], backend, model: str, reader
     return ok
 
 
+def _shared_in_job(backend, model: str):
+    """0.19.13: one Readers for every part of a further round in a job of the app (its local parts wait for one Start
+    and are read after Claude's); None outside the app, where each part has its own, as before."""
+    from .localgate import GATE
+
+    return access.Readers(backend, model) if GATE.get() is not None else None
+
+
 def _local_after(readers) -> None:
     """0.19.13: wait for the local parts a check handed to the job's local gate (read once the person starts the local
     model). Stopped meanwhile, they keep waiting for the local model, and the check keeps what Claude read."""
@@ -1315,7 +1323,7 @@ def read_new_documents(ws: Workspace, hyp_id: str, backend, model: str, k: int =
     docs = [d["doc_id"] for d in new if d["matching"]]
     total, rounds = 0, []
     if docs:
-        readers = access.Readers(backend, model)  # 0.19.13: every part's local part, after Claude's, at one Start
+        readers = _shared_in_job(backend, model)  # 0.19.13: in the app, every part's local part at one Start
         try:
             for c in ws.query("SELECT claim_id FROM user_claims WHERE hyp_id=? ORDER BY part, rowid", (hyp_id,)):
                 r = continue_check(ws, c["claim_id"], backend, model, k=k, embedder=embedder, should_stop=should_stop,
@@ -1325,7 +1333,8 @@ def read_new_documents(ws: Workspace, hyp_id: str, backend, model: str, k: int =
                                "ok": r.get("ok")})
             _local_after(readers)
         finally:
-            _let_go(readers)
+            if readers is not None:
+                _let_go(readers)
     with ws.connect() as cx:
         cx.execute("UPDATE hypotheses SET docs_checked_at=? WHERE hyp_id=?", (now(), hyp_id))
     return {"hyp_id": hyp_id, "documents": len(new), "matching": len(docs), "passages": total, "rounds": rounds}
@@ -1366,27 +1375,28 @@ def read_unread_documents(ws: Workspace, hyp_id: str, backend, model: str, k: in
     hyp_limit = set(json.loads(ws.scalar("SELECT options_json FROM hypotheses WHERE hyp_id=?", (hyp_id,)) or "{}")
                     .get("doc_ids") or [])
     total, rounds = 0, []
-    readers = access.Readers(backend, model)  # 0.19.13: every part's local part, after Claude's, at one Start
-    for c in ws.query("SELECT claim_id, text, terms_json, options_json FROM user_claims WHERE hyp_id=? "
-                      "ORDER BY part, rowid", (hyp_id,)) if docs else []:
-        limit = set(json.loads(c["options_json"] or "{}").get("doc_ids") or []) or hyp_limit
-        # each part reads the documents that hold its own words, within its limit
-        mine = sorted(docs_matching(ws, c["text"], json.loads(c["terms_json"] or "[]"), docs & limit if limit else docs,
-                                    min_words=UNREAD_MIN_WORDS))
-        if not mine:   # never an empty list: that would mean every document
-            continue
-        # one excerpt per document if need be (up to UNREAD_ROUND_MAX), not only the check's usual k: the button
-        # says "Read these"; what is left over stays on the card for the next press
-        r = continue_check(ws, c["claim_id"], backend, model, k=max(k, min(len(mine), UNREAD_ROUND_MAX)),
-                           embedder=embedder, should_stop=should_stop, doc_ids=mine,
-                           progress=lambda s, m, i=None: say(s, m, i or {}), readers=readers)
-        total += len(r["passages"])
-        rounds.append({"claim_id": c["claim_id"], "round": r["round"], "passages": len(r["passages"]),
-                       "ok": r.get("ok")})
+    readers = _shared_in_job(backend, model)  # 0.19.13: in the app, every part's local part at one Start
     try:
+        for c in ws.query("SELECT claim_id, text, terms_json, options_json FROM user_claims WHERE hyp_id=? "
+                          "ORDER BY part, rowid", (hyp_id,)) if docs else []:
+            limit = set(json.loads(c["options_json"] or "{}").get("doc_ids") or []) or hyp_limit
+            # each part reads the documents that hold its own words, within its limit
+            mine = sorted(docs_matching(ws, c["text"], json.loads(c["terms_json"] or "[]"),
+                                        docs & limit if limit else docs, min_words=UNREAD_MIN_WORDS))
+            if not mine:   # never an empty list: that would mean every document
+                continue
+            # one excerpt per document if need be (up to UNREAD_ROUND_MAX), not only the check's usual k: the button
+            # says "Read these"; what is left over stays on the card for the next press
+            r = continue_check(ws, c["claim_id"], backend, model, k=max(k, min(len(mine), UNREAD_ROUND_MAX)),
+                               embedder=embedder, should_stop=should_stop, doc_ids=mine,
+                               progress=lambda s, m, i=None: say(s, m, i or {}), readers=readers)
+            total += len(r["passages"])
+            rounds.append({"claim_id": c["claim_id"], "round": r["round"], "passages": len(r["passages"]),
+                           "ok": r.get("ok")})
         _local_after(readers)
     finally:
-        _let_go(readers)
+        if readers is not None:
+            _let_go(readers)
     after = _unread_split(ws, hyp_id) if rounds else None
     left = after[1] if after else docs
     return {"hyp_id": hyp_id, "documents": len(docs), "documents_read": len(docs - left), "left": len(left & docs),

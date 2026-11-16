@@ -364,3 +364,77 @@ def test_at_limit_local_offers_the_start_and_never_starts_it(mixed, monkeypatch)
     app._s["at_limit"] = "wait"
     ws.set_meta("limit_handled", "")
     assert app._at_limit("Mixed", ws, runner)["offer_local"] is False
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# found in review: Start it anyway through the memory check, a job that ends with an error, the AI mix
+# ---------------------------------------------------------------------------------------------------------------------
+def test_start_it_anyway_reads_a_check_by_queue_on_a_computer_short_of_memory(tmp_path, monkeypatch):
+    monkeypatch.setenv("ENLENS_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("ENLENS_LOCAL_ONLY", raising=False)
+    ws = home_mod.create_project("Mixed")
+    mixed_project(ws, tmp_path / "corpus")
+    local = Watched(need=8 * GB, free=2 * GB)
+    use_local_model(monkeypatch, local)
+    monkeypatch.setattr(llm, "total_memory", lambda: 16 * GB)
+    hid = _queued_check_answered(ws)
+    job = _follow_job(Jobs(), ws, hid)
+    _until(lambda: job.gate.involved)
+    job.gate.open()   # Start: refused by the memory check before anything is sent
+    _until(lambda: job.gate.refusals > 0 and job.gate.state == "wait")
+    assert local.sent == [] and job.view()["local"]["memory"]["short"] is True and job.state == "running"
+    job.gate.open(force=True)   # Start it anyway
+    _until(lambda: _ended(job))
+    assert job.state == "done", job.error
+    assert local.sent and claimcheck.hypothesis_result(ws, hid)["waiting_local"] == 0
+
+
+def test_a_job_that_fails_stops_its_local_part():
+    ran: list[int] = []
+
+    def run(job):
+        GATE.get().later(lambda: ran.append(1), noun="theme", mixed=True)
+        raise ValueError("Claude failed")
+
+    job = Jobs().start("theme-names", "Names", "P", run, uses_model=True)
+    _until(lambda: _ended(job))
+    assert job.state == "error" and job.gate.ended
+    _until(lambda: not job.gate.busy(), timeout=5)
+    job.gate.open()
+    time.sleep(0.3)
+    assert ran == []   # nothing reads for a job that has ended
+
+
+def test_the_ai_mix_waits_for_its_start_and_start_it_anyway(mixed):
+    ws, _ids = mixed
+    from enlens_claims import tasks
+
+    class Small:
+        memory_guard = True
+
+        def check_memory(self, model):
+            if self.memory_guard:
+                raise llm.MemoryShort(model, 8 * GB, 1 * GB)
+
+    be, seen = Small(), []
+    gate = LocalGate()
+
+    def answer():
+        token = GATE.set(gate)
+        try:
+            with tasks._mix_gate(ws, {"kind": "label"}, None, (be, "small")):
+                seen.append(be.memory_guard)
+        finally:
+            GATE.reset(token)
+
+    t = threading.Thread(target=answer)
+    t.start()
+    _until(lambda: gate.involved)
+    time.sleep(0.3)
+    assert seen == [] and gate.public == "wait" and gate.noun == "task"   # the mix's share never starts by itself
+    gate.open()
+    _until(lambda: gate.refusals == 1 and gate.state == "wait")
+    assert seen == [] and gate.view()["memory"]["short"] is True        # refused: waits again, not sent to Claude
+    gate.open(force=True)
+    t.join(5)
+    assert seen == [False] and be.memory_guard is True                   # this answer only

@@ -35,6 +35,7 @@ import hashlib
 import json
 import math
 import random
+import threading
 import time
 import uuid
 from collections import Counter, defaultdict
@@ -1333,12 +1334,14 @@ def name_with_model(ws: Workspace, run_id: str, backend, model: str, progress: C
     local_ids = {t for t in todo if level.get(t) not in readers.main_levels and level.get(t) == "local"}
     gated = bool(local_ids) and readers.defers()
     seen = [0]
+    tally = threading.Lock()   # the counts, kept by the job's thread and the local gate's worker
 
     def one(tid: str) -> None:
         nonlocal done, failed, kept
         if should_stop and should_stop():
             return
-        seen[0] += 1
+        with tally:
+            seen[0] += 1
         if progress:
             progress(min(seen[0], len(todo)), len(todo))
         # the setting worked out again as the text is about to leave (not the one stored when the tasks were made):
@@ -1348,11 +1351,13 @@ def name_with_model(ws: Workspace, run_id: str, backend, model: str, progress: C
                 return
         got = readers.for_task(ws, tid)
         if got is None:
-            kept += 1  # keeps its key terms as its name
+            with tally:
+                kept += 1  # keeps its key terms as its name
             return
         ok, _e = tasks.run_one(ws, tid, got[0], got[1])
-        done += ok
-        failed += not ok
+        with tally:
+            done += ok
+            failed += not ok
 
     for tid in todo:
         if should_stop and should_stop():

@@ -1672,12 +1672,14 @@ def judge_links(ws: Workspace, pairs: list[tuple[str, str]], backend, model: str
     local_ids = {t for t in ids if level.get(t) == "local" and "local" not in readers.main_levels}
     gated = bool(local_ids) and readers.defers()
     seen = [0]
+    tally = threading.Lock()   # the counts, kept by the job's thread and the local gate's worker
 
     def one(tid: str) -> None:
         nonlocal done, failed
         if should_stop and should_stop():
             return
-        seen[0] += 1
+        with tally:
+            seen[0] += 1
         if progress:
             progress(min(seen[0], len(pairs)), len(pairs))
         # the setting worked out again as the text is about to leave (not the one stored when the tasks were
@@ -1690,8 +1692,9 @@ def judge_links(ws: Workspace, pairs: list[tuple[str, str]], backend, model: str
         if got is None:
             return
         ok, _errs = tasks.run_one(ws, tid, got[0], got[1])
-        done += ok
-        failed += not ok
+        with tally:
+            done += ok
+            failed += not ok
 
     try:
         for tid in ids:

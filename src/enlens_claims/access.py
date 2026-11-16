@@ -681,6 +681,17 @@ class _Gated:
     def __setattr__(self, name: str, value) -> None:
         setattr(self._be, name, value)
 
+    def check_memory(self, model: str) -> None:
+        """The memory check before the model starts: none after Start it anyway (the gate's "force")."""
+        g = self._readers.gate
+        if g is not None and g.state == "force":
+            if hasattr(self._be, "memory_guard"):
+                self._be.memory_guard = False
+            return
+        check = getattr(self._be, "check_memory", None)
+        if check is not None:
+            check(model)
+
     def complete(self, *a, **k):
         from .llm import MemoryShort
 

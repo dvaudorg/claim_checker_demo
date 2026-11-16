@@ -463,14 +463,18 @@ def run_labels(ws: Workspace, framework: str, backend, model: str, doc_ids: list
     has_cloud = any(p not in by_local for p in plan["passage_ids"])
     total = len(plan["passage_ids"])
     seen = [0]
+    import threading
     import time
+
+    tally = threading.Lock()   # the counts, kept by the job's thread and the local gate's worker
 
     def one(pid: str) -> None:
         nonlocal skipped, local_off, local_said, done, failed
         if should_stop and should_stop():
             return
         tid = f"label:{framework}:{pid}"
-        seen[0] += 1
+        with tally:
+            seen[0] += 1
         if progress:
             progress(min(seen[0], total), total)
         t0 = time.time()
@@ -478,11 +482,13 @@ def run_labels(ws: Workspace, framework: str, backend, model: str, doc_ids: list
         # what the passages before this one sent (and a passage Claude has read already adds nothing to it)
         with ws.connect() as cx:
             if access.recheck(cx, tid, dflt) is None:
-                skipped += 1
+                with tally:
+                    skipped += 1
                 return
         got = readers.for_task(ws, tid)
         if got is None:
-            skipped += 1
+            with tally:
+                skipped += 1
             return
         local = got[0] is not backend
         if local and local_off:
@@ -496,26 +502,29 @@ def run_labels(ws: Workspace, framework: str, backend, model: str, doc_ids: list
             readers.memory_short = e
             if not gated:  # with the gate, it waits for Start (or Start it anyway) and is read again then
                 local_off = str(e)
-            seen[0] -= 1
+            with tally:
+                seen[0] -= 1
             return
         except BackendError as e:
             if not local or readers.stopped():
                 raise
             readers.local_problem = local_off = str(e)
             return
-        if local:
-            readers.read += 1
         if getattr(backend, "name", "") != "claude_code":  # by queue the connector measures (waiting is not reading)
             runs.timing(ws, "label", runs._routed(backend, "label", model), time.time() - t0)
-        done += ok
-        failed += not ok
         if ok:
             cand = {c["code"] for c in candidates_of(ws, framework, pid)}
             got = {r[0] for r in ws.query("SELECT code FROM labels WHERE framework=? AND passage_id=? AND source='model'",
                                           (framework, pid))}
-            change["confirmed"] += len(cand & got)
-            change["not_confirmed"] += len(cand - got)
-            change["added"] += len(got - cand)
+        with tally:
+            if local:
+                readers.read += 1
+            done += ok
+            failed += not ok
+            if ok:
+                change["confirmed"] += len(cand & got)
+                change["not_confirmed"] += len(cand - got)
+                change["added"] += len(got - cand)
 
     for pid in plan["passage_ids"]:
         if should_stop and should_stop():

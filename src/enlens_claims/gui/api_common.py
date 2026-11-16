@@ -285,7 +285,7 @@ class Jobs:
                         if job.cancel.is_set():
                             raise Cancelled()
                     held["thread"] = threading.get_ident()
-                job.gate.hold = (release, take)
+                job.gate.hold = (release, take, lambda: lock is None or held["thread"] is not None)
                 try:
                     if job.cancel.is_set():
                         raise Cancelled()
@@ -323,6 +323,7 @@ class Jobs:
                 traceback.print_exc()
                 job.state, job.error, job.error_kind = "error", f"Unexpected problem: {e}", "internal"
             finally:
+                job.gate.end()   # 0.19.13: its local part reads nothing more once the job has ended (an error, say)
                 job.finished = time.time()
                 if job.tracker is not None:
                     job.tracker.finish()

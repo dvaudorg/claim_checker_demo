@@ -49,9 +49,10 @@ class LocalGate:
         self.epoch = 0                  # how often the gate was opened (a refusal before the last opening is past)
         self.refusals = 0
         self.should_stop: Callable[[], bool] | None = None   # the job's Stop
-        # (release, take) of the job's turn at the model (Jobs.model_lock): let go while the gate waits, so a job that
-        # waits for the person never holds back the others
-        self.hold: tuple[Callable[[], bool], Callable[[], None]] | None = None
+        # (release, take, held) of the job's turn at the model (Jobs.model_lock): let go while the gate waits, so a job
+        # that waits for the person never holds back the others, and taken back before the local model reads
+        self.hold: tuple[Callable[[], bool], Callable[[], None], Callable[[], bool]] | None = None
+        self.ended = False              # the job has ended: nothing more is read, nothing waits on
         self.report: Callable[[dict], Any] | None = None     # how the local model reports to the job's page
         self._looked = False
         self._items: deque = deque()
@@ -74,6 +75,8 @@ class LocalGate:
             return self.counted + sum(n for _fn, n in self._items)
 
     def stopped(self, extra: Callable[[], bool] | None = None) -> bool:
+        if self.ended:
+            return True
         for f in (extra, self.should_stop):
             try:
                 if f is not None and f():
@@ -172,6 +175,21 @@ class LocalGate:
         if self.hold is not None:
             self.hold[1]()
 
+    def _has_turn(self) -> bool:
+        """Whether the job holds its turn at the model now (always, for a job that does not take turns)."""
+        if self.hold is None:
+            return True
+        try:
+            return bool(self.hold[2]())
+        except Exception:  # noqa: BLE001
+            return True
+
+    def end(self) -> None:
+        """The job has ended (done, failed or stopped): the worker reads nothing more and stops waiting."""
+        with self.cond:
+            self.ended = True
+            self.cond.notify_all()
+
     def wait_open(self, should_stop: Callable[[], bool] | None = None) -> bool:
         """Wait until the local model may read. True: it may; False: the job was stopped meanwhile. A gate still
         ``auto`` opens (``go``): the job's work is all the local model's (no feature said it has Claude's too)."""
@@ -222,11 +240,20 @@ class LocalGate:
             with tasks.queueing(queued):
                 while True:
                     with self.cond:
-                        if not self._items:
+                        if not self._items or self.ended:
+                            self._worker = None   # in the same step: an item handed over now starts a new worker
+                            self.cond.notify_all()
                             return
                         fn, _n = self._items[0]
                     if not self.wait_open(self._stop):
                         return  # the job was stopped: what is left waits for the local model, as before
+                    with self.cond:  # the job's turn at the model first (taken back by `drain` once the gate opens)
+                        while not self._has_turn() and self.is_open:
+                            if self.stopped(self._stop):
+                                return
+                            self.cond.wait(self.POLL)
+                        if not self.is_open:
+                            continue  # Stop on the local side meanwhile: wait for Start again
                     before = self.refusals
                     try:
                         fn()
@@ -244,7 +271,8 @@ class LocalGate:
                         self.cond.notify_all()
         finally:
             with self.cond:
-                self._worker = None
+                if self._worker is threading.current_thread():
+                    self._worker = None
                 self.cond.notify_all()
             if ws is not None:
                 try:
@@ -263,11 +291,21 @@ class LocalGate:
         if should_stop is not None:
             self._stop = should_stop
         try:
-            with self.cond:
-                while self._worker is not None:
-                    if not released and not self.is_open:
-                        released = self._release()
-                    self.cond.wait(self.POLL)
+            while True:
+                with self.cond:
+                    if self._worker is None:
+                        break
+                    is_open = self.is_open
+                if not is_open and not released:
+                    released = self._release()
+                elif is_open and released:
+                    self._take()   # the local model reads now: with the job's turn at the model
+                    released = False
+                    with self.cond:
+                        self.cond.notify_all()
+                with self.cond:
+                    if self._worker is not None:
+                        self.cond.wait(self.POLL)
         finally:
             if released:
                 self._take()
