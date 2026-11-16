@@ -230,7 +230,9 @@ computer's.
 
 In the owner's copy the new person then appears under *People* on *People and settings* (which also offers *Use both
 computers…*). Use *More → Same person as…* there to mark your two computers as one person: they stand together, and a
-judgement of yours counts once.
+judgement of yours counts once. With a storage space, each of your two accounts can then send its private work to the
+other, once both turn it on ([Your other account](storage-space.md#your-other-account-your-private-work-on-both-computers)).
+The owner's mark alone sends nothing.
 
 ## When a Co-owner becomes a Member again
 

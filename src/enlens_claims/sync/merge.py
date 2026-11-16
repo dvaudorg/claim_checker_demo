@@ -638,6 +638,8 @@ class _Merge(CodebookRules, ReadingRules, ShareRules, OwnerRules):
 
         if not sharing.state(cx, kind, key, self.me)["mine"]:
             return True
+        if sharing._partner(cx, self.me) == self.sender["id"]:
+            return True  # this person's other account (both send their private work: selfsync.py): one person's work
         taken = cx.execute("SELECT fp, person FROM sync_from WHERE kind=? AND key=?", (kind, key)).fetchone()
         return bool(taken) and taken[1] == self.sender["id"] and _known(fp_here, {taken[0]})
 
