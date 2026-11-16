@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.19.9 (November 2026): Hear when your work has finished
+
+ENLENS now tells you, in your computer's own notifications, when work you started has finished. A user found that
+closing the browser while a local model works leaves it a good deal more memory, but then had no way to know when it
+was done. ENLENS keeps working with the browser closed, and a click on the notification opens it again.
+
+### New
+
+- **ENLENS tells you when work has finished.** Work you started that took more than 20 seconds (a check, documents
+  being added, your local model answering the queue) sends a notification from your computer when it has finished,
+  or stopped with a problem. So you can close the browser while a local model works, which leaves it more memory:
+  ENLENS keeps working, and a click on the notification opens it again. By default it comes only when no ENLENS tab is
+  the one you are looking at; Settings › Checking › *When work has finished* also offers *Always* and *Never*, and
+  *Send a test notification*. On a Mac it comes from ENLENS itself (a small notifier app ENLENS makes once, in
+  ~/Library/Application Support/ENLENS/Notifier), and the first one asks whether ENLENS may send notifications; on
+  Windows it is a toast under ENLENS's name; on Linux it goes through notify-send. Does not change results.
+
+### For developers
+
+- `gui/notify.py`: the job listener and the senders. `POST /api/notify/test`; the setting `notify` (`away`, `always`,
+  `off`); the page sends `X-Enlens-Seen: 1` while its tab is visible and focused. `ENLENS_NO_NOTIFY=1` switches them off
+  for the process (`tests/conftest.py` and `tools/dev_server.py` set it). On macOS the notifier app holds only a few
+  lines, since macOS asks for permission again whenever it is made anew; `notes.sh` beside it decides what to show,
+  and a `.wake` mark tells ENLENS's own openings from a click. On Windows a click opens `enlens-open:`, registered for
+  this account, which runs the icon's command.
+
+### Tests
+
+- `tests/test_notify.py`: which work tells the person (stopped work never says *Finished*, time waiting for its turn
+  does not count), a tab in front, the test button, the macOS notifier made for real on macOS and its `notes.sh`, the
+  Windows toast script run for real on Windows without showing anything, and the Linux fallbacks.
+- Tried by hand on macOS 27 and on Windows: the notification shows under ENLENS, two close together both show without
+  ENLENS opening by itself, and a click opens ENLENS.
+
+### Not yet done
+
+- On Linux, a click on the notification does not open ENLENS, and it has not been tried on a real Linux desktop.
+
 ## 0.19.8 (November 2026): Judge it yourself instead of starting the local model
 
 When a few excerpts wait for your local model, you no longer have to start it: *Judge it myself* hands them to you,
