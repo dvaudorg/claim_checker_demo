@@ -272,6 +272,8 @@ def test_a_check_by_queue_waits_for_the_local_start(tmp_path, monkeypatch):
     jobs.cancel(job)
     _until(lambda: _ended(job))
     assert ws.scalar("SELECT 1 FROM hypotheses WHERE hyp_id=?", (hid,))
+    assert job.state == "cancelled" and job.view()["result"]["kept"] == [hid]   # the page says what was kept
+    assert job.view()["result"]["waiting_local"] > 0
     assert claimcheck.local_waiting(ws, [hid]) and local.sent == []
     # followed again, then started: the local model reads them, and the check is complete
     again = _follow_job(jobs, ws, hid)
@@ -389,6 +391,9 @@ def test_start_it_anyway_reads_a_check_by_queue_on_a_computer_short_of_memory(tm
     job.gate.open()   # Start: refused by the memory check before anything is sent
     _until(lambda: job.gate.refusals > 0 and job.gate.state == "wait")
     assert local.sent == [] and job.view()["local"]["memory"]["short"] is True and job.state == "running"
+    # a short head (the local side has the numbers and Start it anyway), not the paragraph about Read them now
+    _until(lambda: job.view()["progress"]["message"] == server.LOCAL_SHORT)
+    assert not any("Read them now" in n for n in job.view()["progress"]["notes"])
     job.gate.open(force=True)   # Start it anyway
     _until(lambda: _ended(job))
     assert job.state == "done", job.error

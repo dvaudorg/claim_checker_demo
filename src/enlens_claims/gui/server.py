@@ -88,6 +88,8 @@ from .api_common import (  # noqa: F401 - the names are importable from here as 
 )
 
 STATIC = Path(__file__).with_name("static")
+# 0.19.13: the head of a job whose local model was refused for memory (its side has the numbers and the Starts)
+LOCAL_SHORT = "Your local model was not started: too little memory is free"
 FOLLOW_POLL = 2.0  # seconds between two looks at checks that wait for Claude Code (`follow_queued`; tests shorten it)
 
 
@@ -858,8 +860,10 @@ class App(LibraryMixin, QueueMixin):
         text, status, batch = (_str(q, "q") or "").lower().strip(), _str(q, "status"), _str(q, "batch")
         rows = claimcheck.history(ws, thr)
         counts: dict[str, int] = {}
+        waiting_local = 0   # 0.19.13: the "waiting" answers whose last part waits for the local model, not Claude Code
         for r in rows:
             counts[r["status"]] = counts.get(r["status"], 0) + 1
+            waiting_local += r["status"] == "waiting" and r.get("status_text") == claimcheck.WAITING_LOCAL
         if text or status or batch:
             rows = [r for r in rows if (not text or text in (r["text"] or "").lower())
                     and (not status or r["status"] == status) and (not batch or r["batch_id"] == batch)]
@@ -870,7 +874,7 @@ class App(LibraryMixin, QueueMixin):
         clash = sync.copies_of(ws, "check")  # 0.14: a colleague's version of a check you both changed
         for r in rows:
             r["clash"] = clash.get(r["hyp_id"])
-        return {"hypotheses": rows, "counts": counts, "threshold": thr}
+        return {"hypotheses": rows, "counts": counts, "waiting_local": waiting_local, "threshold": thr}
 
     # -- jobs ------------------------------------------------------------------------------------
     def wire(self, job: Job, be, tracker: Tracker | None = None) -> None:
@@ -1003,6 +1007,9 @@ class App(LibraryMixin, QueueMixin):
             raise
         mixed, to_claude = readers.mix_read - mix_before, readers.to_claude - claude_before
         if readers.memory_short:
+            if gate is not None:   # 0.19.13: the local side says why and carries Start / Start it anyway: a short head
+                tracker.say(LOCAL_SHORT, step="grade")
+                return True
             tracker.step("note", f"{readers.memory_short} {claimcheck._waiting_words(max(n, n_mix))}", {"keep": True})
             return True
         if done and readers.read > before:
@@ -1040,12 +1047,16 @@ class App(LibraryMixin, QueueMixin):
                 for hid in left:
                     if hid not in only_local:  # 0.19.13: Claude's part done, the local part waits (kept, as before)
                         claimcheck.delete_hypothesis(ws, hid, unmade=True)  # a stopped check leaves nothing behind
+                if only_local:   # the page says what was kept (it said "Nothing was saved")
+                    job.result = {"kept": only_local, "waiting_local": sum(
+                        w["passages"] for w in claimcheck.local_waiting(ws, only_local) if not w.get("mix"))}
                 raise Cancelled()
             if readers.memory_short and gate is None and len(only_local) == len(left):
                 return  # 0.13.11: Claude Code is done; the local excerpts wait for "Read them now" on the result
             if gate is not None and not gate.is_open and gate.involved and len(only_local) == len(left):
                 gate.say_ready()  # 0.19.13: Claude Code is done; the local part waits for its Start
-                tracker.say(LOCAL_PHASE["ready"], step="grade")   # the head and the step say so, not "Claude Code"
+                # the head and the step say so, not "Waiting for Claude Code" (short: the side says the rest)
+                tracker.say(LOCAL_SHORT if (gate.memory or {}).get("short") else LOCAL_PHASE["ready"], step="grade")
             else:
                 kind = {"decompose": "decompose", "terms": "expand"}.get(
                     claimcheck.queue_stage(ws, left[0]).get("step"), "check")
