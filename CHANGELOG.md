@@ -2,6 +2,11 @@
 
 ## 0.19.13 (November 2026): The AI run panel: two sides, and the local model's own Start
 
+Wherever AI works for you, you now see the same panel, and you can tell at a glance who is working: this computer on
+the left, Claude on the right. Until now each page showed AI work its own way (a panel here, a line there, a toast or
+a spinning button elsewhere), and a check that also read documents marked *Only a local AI* started your local model
+by itself. Now Claude and the local model each wait for their own Start, so you decide when each one runs.
+
 ### New
 
 - **One panel for every place where AI runs: this computer on the left, Claude on the right.** A check, reading
@@ -63,7 +68,17 @@
 
 - `tests/test_local_gate.py`: the gate waits for its Start, Start it anyway, the local Stop after the item in hand, a
   memory refusal that waits again, labels and a check by queue in real jobs, an all-local job in one click, the
-  endpoints, and the offer at the plan's limit.
+  endpoints, and the offer at the plan's limit; also that local items are counted from the start, a read counts
+  down, the head says what waits, and what a stopped check kept.
+- `tests/test_ai_run_panel_fixes.py`: the real panel, run in Node: no button replaced while both engines run, the
+  local count, the Stop of the local model mid-read, the start-button rule, and *Run the test* enabled again.
+
+### Not yet done
+
+- Tried with stand-ins only, not with a real signed-in Claude Code or a real local model.
+- With both seats waiting, the panel's head still says *Waiting for Claude Code…*.
+- While Claude Code works on other tasks of the project, a local seat short of memory may say *Waits for you* for a
+  while before *Needs you*.
 
 ## 0.19.12 (November 2026): Highlight what matters when you judge by hand
 
