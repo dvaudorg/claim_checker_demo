@@ -6,7 +6,7 @@
 // after the other. The progress of the check the page follows is under the box, then every answer (history.js), with
 // the checks still running or waiting their turn at the top. The evidence map is the place's other view (map.js).
 import { featureEyebrow, withAI, viewTabs } from "../features.js";
-import { App, api, h, icon, readsLine, replace, clear, append, toast, showError, fmt, pageHead, navigate, watchJob, P, debounce, session, emptyState, statusBadge, download, downloadLinks, button, iconButton, link, notice, tag, card, fold, fileButton, select, textarea, input as fieldInput, choice, latest, norm, readTextFile, jobFailed } from "../lib.js";
+import { App, api, h, icon, readsLine, replace, clear, append, toast, showError, fmt, pageHead, navigate, watchJob, P, debounce, session, emptyState, statusBadge, download, downloadLinks, button, iconButton, link, notice, tag, card, fold, fileButton, select, textarea, input as fieldInput, choice, latest, norm, readTextFile, jobFailed, aiButton } from "../lib.js";
 import { checkOptions, pickCode } from "./options.js";
 import { ProgressPanel } from "./progress.js";
 import { answersList } from "./history.js";
@@ -163,7 +163,7 @@ export async function renderHypotheses(view, params, query) {
 
   const options = checkOptions({ docs, search: info.search });
   const runBtn = button({ kind: "main", type: "submit" });
-  const lookBtn = button({ title: "See how the AI would split the hypothesis and which extra words it would search for, and change them, before the check runs" }, icon("eye", { size: 16 }), "Look before checking");
+  const lookBtn = aiButton({ title: "See how the AI would split the hypothesis and which extra words it would search for, and change them, before the check runs" }, "Look before checking");
   // one AI mark for the row (the 0.17 rule): Check always reads with the AI; "Look before checking" is part of the same
   // check and says in its tooltip when it needs the AI
   const lookWrap = lookBtn;
@@ -222,12 +222,12 @@ export async function renderHypotheses(view, params, query) {
       lookBtn.disabled = !ok || looking;
       const many = prepared && prepared.parts.length > 1;
       const before = near.text === ta.value && saysSomething(near.res);   // checked before: the offer is under the box
-      replace(runBtn, icon("flask", { size: 16 }), !prepared ? (before ? "Check anyway" : "Check") : many ? `Check these ${prepared.parts.length} parts` : "Check it like this");
+      replace(runBtn, icon("play", { size: 15 }), !prepared ? (before ? "Check anyway" : "Check") : many ? `Check these ${prepared.parts.length} parts` : "Check it like this");
     } else {
       const fresh = list.text === ta.value;
       counter.textContent = same ? "This list is being checked now (below)." : "";
       runBtn.disabled = busy || same || (fresh && (!list.ready || !!list.error));
-      replace(runBtn, icon("flask", { size: 16 }), list.ready && !list.error ? `Check ${list.ready}` : "Check");
+      replace(runBtn, icon("play", { size: 15 }), list.ready && !list.error ? `Check ${list.ready}` : "Check");
     }
   }
 
@@ -374,9 +374,9 @@ export async function renderHypotheses(view, params, query) {
     const o = options.values();
     if (o.decompose === prepared.decompose && o.expand === prepared.expand) return;
     const changed = o.decompose !== prepared.decompose ? (o.decompose ? "“Check each part separately” is now on" : "“Check each part separately” is now off") : (o.expand ? "“Also search for other words” is now on" : "“Also search for other words” is now off");
-    const again = button({ kind: "main", sm: true, onClick: () => lookBtn.click() }, icon("eye", { size: 13 }), "Look again");
+    const again = aiButton({ sm: true, onClick: () => lookBtn.click() }, "Look again");
     prepared = null;
-    replace(prepBox, notice({ kind: "attention", live: "status" }, h("p", {}, `${changed}, so the parts and words you looked at no longer apply. Look again to see the new ones, or check it as usual with the new options.`), h("div", { class: "hyp-prepared-again" }, again)));
+    replace(prepBox, notice({ kind: "attention", live: "status" }, h("p", {}, `${changed}, so the parts and words you looked at no longer apply. Look again to see the new ones, or check it as usual with the new options.`), h("div", { class: "hyp-prepared-again" }, withAI(again)), readsLine("the hypothesis, to split it and to propose words")));
     prepBox.hidden = false;
     drawButtons();
   });
