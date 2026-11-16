@@ -57,9 +57,11 @@ Windows from 0.15.4 on). Your projects and settings (the `enlens` folder in your
   impact claims tagged with UN SDG targets and compared with an expert Value Chain Assessment.
 
 <!-- new-in:start (written by `python tools/release.py prepare`: change the changelog entry, not this) -->
-## New in 0.19.10: ENLENS sees Ollama on Windows
+## New in 0.19.11: Your private work on both of your accounts, and codebooks for the whole team
 
-- **On Windows, ENLENS sees Ollama when it runs.** After *Install Ollama* the card stayed on "Starting Ollama…", and after a reload on "Ollama is starting…" until its minute ran out, although Ollama was running.
+- **Your private work on both of your computers.** If you use two computers, each is an account of its own in the team, and the owner can mark both as you.
+- **A team's codebooks are shared as they are made.** In a team project, the owner's new setting *Codebooks made in this project are shared with the team* (Team › People and settings, *Codebooks* card; on by default) shares a codebook kept in the…
+- **A default codebook for the whole project.** On the same card the owner can choose the *Default codebook for this project*: a codebook that ships with ENLENS. Can change results.
 <!-- new-in:end -->
 
 How it works, in the manual: [Explore your documents](docs/manual/explore.md) (working documents, the concept map),
