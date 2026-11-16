@@ -2,6 +2,11 @@
 
 ## 0.19.12 (November 2026): Highlight what matters when you judge by hand
 
+When you judge an excerpt yourself, you can now mark the words that matter just by selecting them, as the AI marks
+its quote. A user judging excerpts by hand wanted the same highlight the AI gives; until now the way to it was hidden
+in a tool made for replacing the AI's quote. And if you chose *Judge it myself* rather than start your local model,
+you can now change your mind: *Let the local model read them* hands the excerpts you have not judged back to it.
+
 ### New
 
 - **Highlight the words that matter on an excerpt you judge yourself.** On a card under *Awaiting manual review*,
