@@ -160,6 +160,7 @@ export async function renderConcepts(view, params, query) {
       watchers.push(w);
       w.promise.then((job) => {
         if (job.state === "done") { const res = job.result || {}; toast(`The AI judged ${plural(res.judged || 0, "pair")}${res.failed ? `; ${res.failed} could not be judged` : ""}. Open a concept to see its links.`, "ok"); }
+        else if (job.state === "cancelled") toast("Stopped.", "info", { small: true, ttl: 2500 });
         else if (job.state === "error") jobFailed(job);
         setBusy(btn, false);
         load();

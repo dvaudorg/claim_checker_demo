@@ -174,3 +174,46 @@ def test_ask_buttons_of_the_showcase_and_the_result_page_follow_the_rule():
     assert 'icon: "flask" }, "Check 3"' not in design and 'icon: "eye" }, "Look before checking"' not in design
     assert 'aiButton({ kind: "main" }, "Check 3")' in design
     assert "Let the local model read" not in result and '"Read it again" : "Read them again"' in result
+
+
+STOPPED = r"""
+const L = await import(LIB);
+const { aiRun } = await import(LIB.replace(/lib\.js$/, "views/progress.js"));
+L.App.state = { settings: { backend: "claude_code", restricted_model: "qwen" }, project: "p" };
+L.App.project = "p";
+const job = (state) => ({ id: "j1", kind: "check", state, seconds: 5, progress: { message: "Working" } });
+const out = {};
+for (const size of ["compact", "full"]) {
+  const panel = aiRun({ size, title: "Checking", noun: "excerpt" });
+  document.body.appendChild(panel.el);
+  panel.update(job("running")); await tick();
+  const before = !!panel.el.hidden;
+  panel.update(job("cancelled")); await tick();
+  const stopped = !!panel.el.hidden;
+  const done = aiRun({ size, title: "Checking", noun: "excerpt" });
+  document.body.appendChild(done.el);
+  done.update(job("done")); await tick();
+  out[size] = { before, stopped, doneHidden: !!done.el.hidden };
+}
+console.log(JSON.stringify(out));
+process.exit(0);
+"""
+
+
+@needs_node
+def test_a_stopped_job_keeps_no_panel_at_either_size(tmp_path):
+    """0.19.14: Stop made the panel say Stopped on both sides and stay; now the whole panel goes. Done keeps its own."""
+    out = run(MORE_DOM + STOPPED, tmp_path)
+    for size in ("compact", "full"):
+        assert out[size] == {"before": False, "stopped": True, "doneHidden": False}, out
+
+
+def test_the_split_bar_lies_along_the_top_edge_of_the_two_sides():
+    """0.19.14: the bar's halves were grid items in the first row, inset under the frame's border and following the
+    columns (so an empty seat's narrow column got half of it). They are laid over the top edge, 3 px, each one half of
+    the whole width, as the sidebar's bar is."""
+    css = _js("components.css")
+    assert ".ab-sides > .ab-half { position: absolute; top: 0;" in css and "width: 50%; height: 3px;" in css
+    assert '.ab-sides > .ab-half[data-where="local"] { left: 0; }' in css and '.ab-sides > .ab-half[data-where="cloud"] { right: 0; }' in css
+    assert ".ab-sides { border-top-width: 0; }" in css
+    assert ".ab-compact .ab-half { height: 4px; }" not in css

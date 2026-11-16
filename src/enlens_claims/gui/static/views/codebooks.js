@@ -828,6 +828,7 @@ export async function renderCodebook(view, [name]) {
       if (box) box.appendChild(m.el);
       const job = await watchJob(jobId, (j) => m.update(j)).promise;
       if (job.state === "error") { jobFailed(job, (j) => followDraft(k, j.id, null)); return; }
+      if (job.state === "cancelled") { toast("Stopped.", "info", { small: true, ttl: 2500 }); return; }
       if (job.state !== "done") return;
       const got = job.result || {};
       if (got.stopped) return;
@@ -1010,6 +1011,7 @@ export async function renderCodebook(view, [name]) {
       w.promise.then((job) => {
         relabelRuns.delete(code);
         if (job.state === "done") toast(`The passages of “${code}” are labelled again, with its new wording.`, "ok", { small: true, action: { text: "See them on Profile", href: `#/profile?framework=${encodeURIComponent(name)}` } });
+        else if (job.state === "cancelled") toast("Stopped.", "info", { small: true, ttl: 2500 });
         else if (job.state === "error") jobFailed(job);
         if (body.isConnected) drawNotices();
       }).catch(showError);

@@ -164,6 +164,9 @@ export class AiRun {
     const p = job.progress || {};
     const running = job.state === "queued" || job.state === "running";
     this.el.classList.toggle("progress-done", job.state === "done");
+    // 0.19.14: a job that was stopped keeps no panel (its head, its steps, its two sides and the bar all go); the page
+    // says so once, in its own words or a quiet toast
+    this.el.hidden = job.state === "cancelled";
     if (this.stopBtn) this.stopBtn.hidden = !running;
     const m = p.model;
     let message;
