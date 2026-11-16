@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.19.8 (November 2026): Judge it yourself instead of starting the local model
+
+When a few excerpts wait for your local model, you no longer have to start it: *Judge it myself* hands them to you,
+and they wait under *Awaiting manual review* while no model reads them. A user did not want to load a model that needed
+more memory than was free for a single excerpt, and the panel offered only *Start* and *Start it anyway*. This release
+also keeps the result page where you were as you judge, keeps the local model's thinking line inside its card, and
+drops a *more…* that showed nothing more.
+
+### New
+
+- **Judge it myself, instead of starting the local model.** When excerpts of documents marked Only a local AI wait for
+  your local model, the panel on the result now offers *Judge it myself* first, then *Start <model>*, in place of
+  *Start it anyway* (two Starts side by side read oddly; *Start it anyway* is still offered if Start is refused for
+  memory). The excerpts then wait for you under *Awaiting manual review*, each tagged so and saying you chose it; no
+  model reads them. Every excerpt that waits for your judgement now carries the *Awaiting manual review* tag, with its
+  reason. Can change results only through the judgements you give.
+
+### Fixed
+
+- **The local model's thinking line stays inside its card.** The latest words it streams wrap onto a second line at
+  most, then end in an ellipsis; on one long line they pushed the box out past the card's edge.
+- **No "more…" or "less" on an excerpt the card already shows whole.** It changed nothing but the links under it;
+  such a card's ways into its document (open it at this place, the original file, a highlighted copy) are under
+  *Details* now.
+- **Judging an excerpt no longer takes you up the page.** The result page sorts its excerpts by judgement, and after
+  you judged one the page used to follow the card to its new place, so you had to scroll back down to the ones still
+  to review. Now the screen stays where you were: the card's old place says where it went (with *Show it*), and the
+  next excerpt comes up right under it. *Undo* and *Show it* still take you to the card. Changes no results.
+
+### For developers
+
+- `POST /api/projects/<p>/hypotheses/<hyp_id>/judge-local` (`claimcheck.judge_local_yourself`): the local parts of a
+  check go to the person, their rows marked `prompt_version = "by-choice"`; results carry `by_choice`.
+
+### Tests
+
+- `tests/test_judge_local_yourself.py`: the excerpts go to the person and stay out of every later local read, the
+  judgement counts, excerpts no model may read are not `by_choice`, and the page's buttons, tag, "more…" rule and the
+  two-line thinking line.
+
+### Not yet done
+
+- Once handed to you, the excerpts cannot be given back to the local model from the page.
+
 ## 0.19.7 (November 2026): A team you can find and set up step by step, and a calmer research log
 
 Working together now has a place of its own. *Team* is in the sidebar and opens the Team page from anywhere; without
