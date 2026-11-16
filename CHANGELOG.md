@@ -2,6 +2,12 @@
 
 ## 0.19.11 (November 2026): Your private work on both of your accounts, and codebooks for the whole team
 
+If you work on two computers, each is an account of its own in a team, and until now your private hypotheses,
+themes, codebooks and notes stayed on the computer where you made them. With a storage space, the two accounts can now
+send each other their private work, once each has agreed on its own computer; nobody else can read it. Codebooks made in
+a team project are now shared with the team as they are made, and the owner can set a default codebook for the whole
+project on the Team page.
+
 ### New
 
 - **Your private work on both of your computers.** If you use two computers, each is an account of its own in the
