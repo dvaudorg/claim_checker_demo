@@ -1,5 +1,73 @@
 # Changelog
 
+## 0.19.11 (November 2026): Your private work on both of your accounts, and codebooks for the whole team
+
+If you work on two computers, each is an account of its own in a team, and until now your private hypotheses,
+themes, codebooks and notes stayed on the computer where you made them. With a storage space, the two accounts can now
+send each other their private work, once each has agreed on its own computer; nobody else can read it. Codebooks made in
+a team project are now shared with the team as they are made, and the owner can set a default codebook for the whole
+project on the Team page.
+
+### New
+
+- **Your private work on both of your computers.** If you use two computers, each is an account of its own in the
+  team, and the owner can mark both as you. With a storage space, *Team* › *People and settings* now has a card
+  *Your other account*: press *Send my private work…* on one computer and then on the other, and your private checks,
+  sets of themes, codebooks, notes, research log entries and links between terms go between the two from the next
+  rounds, while staying private. Either computer can then share or take back what the other made (the computer that
+  made it carries it out at its next round, so colleagues see it shared by its maker). Each computer can
+  stop it at any time (*Stop…*); what already arrived stays. On a plain shared folder it is not offered. Does not
+  change results.
+- **A team's codebooks are shared as they are made.** In a team project, the owner's new setting *Codebooks made in this
+  project are shared with the team* (Team › People and settings, *Codebooks* card; on by default) shares a codebook kept
+  in the project as soon as anyone makes it (fresh, from themes or theory, a copy, a CSV or REFI-QDA file), from their
+  own copy; the research log says it was the team's setting. Codebooks made before stay private: their maker sees one
+  quiet line on the Codebooks page, *2 of your codebooks in this project are private:* with *Share them*. Anyone can
+  still unshare one of their own. Turned off, nothing is taken back and new codebooks are private again. Codebooks kept
+  with all projects are not covered.
+- **A default codebook for the whole project.** On the same card the owner can choose the *Default codebook for this
+  project*: a codebook that ships with ENLENS, or one of the project's shared codebooks (the owner's own private one is
+  shared when chosen). It reaches every copy with the next round or file and takes the place of each computer's own
+  setting in this project: the Profile page, a document's Codes panel and the codes new documents get. A page's own
+  codebook picker still lets anyone look with another one. Settings › Exploring says *This project uses the team's
+  default*; your own setting still holds in your other projects, and wherever the team's codebook has not arrived yet.
+  Can change results: new documents get the codes of the team's default codebook, not of your own setting.
+
+### Safer
+
+- Only the owner of the time can set either setting: a copy counts a setting only when its writer owned the project
+  when they wrote it, as with roles. A file that carries a setting in the owner's name, which the owner never wrote, is
+  refused in the owner's copy and answered there, so the other copies follow the owner again.
+
+### Privacy
+
+- **Your private work reaches only your other account, and only with its own consent.** The owner's mark that two
+  accounts are one person sends nothing: each account must turn it on itself, on its own computer, and both must be
+  in the team. Before turning it on, both computers show a check code made of the two accounts' keys: the same code on
+  both means the account is really your other one. The work is locked with a key made for each file, which only your
+  other account's own key opens: colleagues cannot read it, and the storage company sees only that a file was written
+  and its size. What arrives stays private there and is never sent to colleagues, in the shared folder, the storage
+  space or a zip. It stops by itself when either account leaves or is removed, or the owner no longer marks both as
+  you. A private item of someone else's in your copy is shared only by a mark in its owner's own file, so no member can
+  publish it by writing a mark in theirs. If the team's list of members gives your account other keys than your
+  computer's own, nothing goes, and the card says so.
+
+### For developers
+
+- `sync/selfsync.py` (its docstring has the threat model): statements in `parts/<part>/m/pair.json`, private bundles in
+  `parts/<part>/p/<stream>.<number>` sealed to the other account's X25519 key; `PUT`/`DELETE
+  /api/projects/<p>/space/self-sync`, and `"self_sync"` in `GET …/shared-folder`. `sharing.state`, `sharing._may`,
+  `sharing.receive`, `merge._may_replace` and the note and research log rules treat the two accounts as one maker
+  while the pair holds. Older copies leave the new files aside (`formats.py`).
+- `teamcodebooks.py`; the table `team_settings` (one row per setting and writer, merged like `roles` in
+  `sync/owner_merge.py`); `GET`/`PUT /api/projects/<p>/owner/codebooks`; `frameworks.chosen` asks for the project's
+  default first; `/api/state` has `profile_framework_team`, and `GET …/codebooks` a `team` line. A copy of an older
+  ENLENS leaves the new table aside, so the sync format is unchanged.
+
+### Not yet done
+
+- A codebook or a link between terms removed on one computer is not removed on the other.
+
 ## 0.19.10 (November 2026): ENLENS sees Ollama on Windows
 
 ENLENS now notices Ollama on Windows as soon as it runs. A user installed Ollama from the local-model card, and
