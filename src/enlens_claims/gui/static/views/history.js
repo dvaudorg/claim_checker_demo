@@ -1,7 +1,7 @@
 // The answers: every hypothesis checked in the project, newest first, with the checks still running or waiting their
 // turn at the top. 0.17.0: no page of its own any more (it was Results): the Hypotheses page shows it under the box
 // where hypotheses are written. Counts come from the API at the current strictness.
-import { App, api, h, icon, replace, clear, showError, failedLoad, toast, fmt, statusBadge, P, debounce, emptyState, watchJob, latest, norm, TERMINAL, STATUS_SHORT, strictness, auditorName, strongerMark, helpMark, judgementIcon, onJobsChanged, button, link, input, workState , choice, lazyList, searchField, readsLine, notice, card, tag, jobFailed } from "../lib.js";
+import { App, api, h, icon, replace, clear, showError, failedLoad, toast, fmt, statusBadge, P, debounce, emptyState, watchJob, latest, norm, TERMINAL, STATUS_SHORT, strictness, auditorName, strongerMark, helpMark, judgementIcon, onJobsChanged, button, link, input, workState , choice, lazyList, searchField, readsLine, notice, card, tag, jobFailed, aiButton } from "../lib.js";
 import { ProgressPanel } from "./progress.js";
 import { withAI } from "../features.js";
 
@@ -49,12 +49,12 @@ export async function answersList(box, query, opts = {}) {
     const n = rows.length;
     const bits = [];
     if (withNew.length) {
-      const btn = button({ kind: "main", sm: true }, icon("book-open", { size: 13 }), `Read the new documents for ${withNew.length === n ? `all ${n}` : `${withNew.length} of these ${n}`}`);
+      const btn = aiButton({ kind: "main", sm: true }, `Read the new documents for ${withNew.length === n ? `all ${n}` : `${withNew.length} of these ${n}`}`);
       btn.addEventListener("click", () => runJob(btn, "read-new", `/api/projects/${P(project)}/read-new`, batch ? { batch } : (q || status) ? { hyp_ids: withNew.map((x) => x.hyp_id) } : {}, "Reading the new documents"));
       bits.push(h("div", { class: "hist-action" }, withAI(btn), h("span", { class: "muted small" }, `Documents were added since ${withNew.length === 1 ? "this check was" : "these checks were"} run. The AI reads only the new documents; the checks are not run again, so your reviews are kept.`)));
     }
     if (n) {
-      const btn = button({ sm: true, disabled: !secondSet || secondSet === main }, `Get a second opinion for ${shown}${batch || q || status ? ` (${n})` : ""}`);
+      const btn = aiButton({ sm: true, disabled: !secondSet || secondSet === main }, `Get a second opinion for ${shown}${batch || q || status ? ` (${n})` : ""}`);
       btn.addEventListener("click", () => runJob(btn, "second-opinion", `/api/projects/${P(project)}/second-opinion`, batch ? { batch } : { hyp_ids: rows.map((x) => x.hyp_id) }, "A second opinion: another model reads the excerpts"));
       // 0.13.3: one short line beside the button; the whole explanation is in its help mark
       const ready = secondSet && secondSet !== main;
