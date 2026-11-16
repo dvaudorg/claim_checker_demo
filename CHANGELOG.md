@@ -1,5 +1,85 @@
 # Changelog
 
+## 0.19.13 (November 2026): The AI run panel: two sides, and the local model's own Start
+
+Wherever AI works for you, you now see the same panel, and you can tell at a glance who is working: this computer on
+the left, Claude on the right. Until now each page showed AI work its own way (a panel here, a line there, a toast or
+a spinning button elsewhere), and a check that also read documents marked *Only a local AI* started your local model
+by itself. Now Claude and the local model each wait for their own Start, so you decide when each one runs.
+
+### New
+
+- **One panel for every place where AI runs: this computer on the left, Claude on the right.** A check, reading
+  more, a second opinion, naming themes, judging pairs, labelling, following references, reading a theory, drafting a
+  definition and the tests in Settings all show the same AI run panel, in full, in a card or as the sidebar's row.
+  Each engine has its seat: the house on a solid tile at the left, the cloud on a hollow tile at the right, and one
+  split bar along their top shows how far each has got. A seat whose engine has no work in this job stays empty and
+  dashed, so you can see at a glance that nothing in it goes to Claude (or that no model on this computer reads it).
+  Each side says its state once (*Waits for you*, *At work*, *Paused*, *Needs you*, *Done*), and the panel's head
+  breathes slowly while it waits for you and flows once in 15 seconds while something works. Nothing of the Claude
+  Code panel or the local-model panel is lost: Start Claude Code, Thought, the helpers, the command to type and See
+  what is sent are in one fold that names your choices; the memory the model needs against what is free, Start it
+  anyway and Judge it myself are where they were. The running model's figures are one quiet line with a small graph
+  of its last 30 seconds.
+- **Two parts, two starts.** When a job has work for both engines, both sides wait with their own Start: the model
+  on this computer starts only when you press its Start (one press covers the job), and it has its own Stop beside
+  the job's. The sidebar's row shows both engines; when both wait, it offers Open, which takes you to the panel.
+- **The local model starts only when you press its own Start.** In work that Claude also does (a check, labelling
+  passages, naming themes, judging pairs of terms, reading theory documents), the documents marked *Only a local AI*
+  and the AI mix's share used to be read by your local model as soon as the work began. Now starting Claude and
+  starting the local model are two separate clicks: the local part waits beside Claude's, says how much waits and
+  whether this computer has the memory for the model, and nothing loads the model until you press its Start. One
+  Start covers the whole job; the local model then reads beside Claude, and its own Stop lets it finish the item in
+  hand and wait again. Work only the local model does, started by its own button, still needs one click.
+- **At your plan's usage limit, "Carry on with the local model" offers its Start** instead of starting the local model
+  by itself.
+
+### Changes
+
+- **Every button that asks the AI for work follows one rule.** The play icon first, a verb and what it works on, and
+  *Uses the AI* after it: *Check* (no more flask), *Name the themes*, *Judge the proposed pairs*, *Judge this pair*,
+  *Propose other wordings*, *Label 33 passages*, *Read this again…*. Only a panel's own *Start Claude Code* or
+  *Start qwen3.5:9b* names an engine. Labelling a code again, drafting a definition and answering the queue's share
+  for your local model now show their progress and a Stop in the panel, where a toast or a button's spinner was.
+- **Settings › Technical › Test a model** says in one sentence where the test tasks go (it said both that nothing is
+  sent and that the Claude API is billed).
+
+### Fixed
+
+- **A check stopped while only its local excerpts were left is kept**: Claude Code's part is no longer thrown away;
+  the excerpts wait for *Read them now* on the result.
+- **Too little memory no longer ends the local part.** It waits, with the numbers, for *Start it anyway*, in the same
+  job.
+
+### For developers
+
+- `aiRun()` (views/progress.js) with `aiSide()`, `aiSides()`, `aiSeat()`, `aiStart()`, `aiButton()` and `inStep()`
+  (lib.js) draw the panel; `ProgressPanel`, `MiniJob`, `jobCard({ ai: true })`, `queueNotice()`, `localPanel()` and
+  `memoryRefused()` keep their names on top of them. `startClaude()` is gone (Claude's live side replaces it). The
+  classes `.queue-notice`, `.notice-local` (the notice kind `"local"`), `.lp-*`, `.mini-job`, `.model-line`,
+  `.work-rail`, `.work-cloud`, `.start-claude`, `.sc-start`, `.sc-running` and `.sc-nudge` are retired (the nudge is
+  `.ar-nudge`). The panel reads `job.local` (the local part's gate) when the server sends it, and works without it.
+- Each job has a local gate (`localgate.py`): `job.local` in the job's view (`gate` wait/go/force, `waiting`, `noun`,
+  `model`, `memory`, `problem`), `POST /api/jobs/<id>/local/start` (`{"force"}`) and `/local/stop`, and
+  `progress.model = {"who": "local", "phase": "ready"}` while it waits. `GET …/queue`'s `at_limit` gains
+  `offer_local`; `POST …/queue/run` takes `{"local": "limit"}`. The command line and the connector have no gate.
+
+### Tests
+
+- `tests/test_local_gate.py`: the gate waits for its Start, Start it anyway, the local Stop after the item in hand, a
+  memory refusal that waits again, labels and a check by queue in real jobs, an all-local job in one click, the
+  endpoints, and the offer at the plan's limit; also that local items are counted from the start, a read counts
+  down, the head says what waits, and what a stopped check kept.
+- `tests/test_ai_run_panel_fixes.py`: the real panel, run in Node: no button replaced while both engines run, the
+  local count, the Stop of the local model mid-read, the start-button rule, and *Run the test* enabled again.
+
+### Not yet done
+
+- Tried with stand-ins only, not with a real signed-in Claude Code or a real local model.
+- With both seats waiting, the panel's head still says *Waiting for Claude Code…*.
+- While Claude Code works on other tasks of the project, a local seat short of memory may say *Waits for you* for a
+  while before *Needs you*.
+
 ## 0.19.12 (November 2026): Highlight what matters when you judge by hand
 
 When you judge an excerpt yourself, you can now mark the words that matter just by selecting them, as the AI marks

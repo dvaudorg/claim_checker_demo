@@ -57,10 +57,12 @@ Windows from 0.15.4 on). Your projects and settings (the `enlens` folder in your
   impact claims tagged with UN SDG targets and compared with an expert Value Chain Assessment.
 
 <!-- new-in:start (written by `python tools/release.py prepare`: change the changelog entry, not this) -->
-## New in 0.19.12: Highlight what matters when you judge by hand
+## New in 0.19.13: The AI run panel: two sides, and the local model's own Start
 
-- **Highlight the words that matter on an excerpt you judge yourself.** On a card under *Awaiting manual review*, selecting words in the excerpt highlights them at once, as the AI's quote is highlighted: dashed until you choose a judgement.
-- **Changed your mind: let the local model read them after all.** When you chose *Judge it myself* rather than start the local model, *Awaiting manual review* now offers *Let the local model read them*. Can change results.
+- **One panel for every place where AI runs: this computer on the left, Claude on the right.** A check, reading more, a second opinion, naming themes, judging pairs, labelling, following references, reading a theory.
+- **Two parts, two starts.** When a job has work for both engines, both sides wait with their own Start: the model on this computer starts only when you press its Start (one press covers the job).
+- **The local model starts only when you press its own Start.** In work that Claude also does (a check, labelling passages, naming themes, judging pairs of terms, reading theory documents).
+- **At your plan's usage limit, "Carry on with the local model" offers its Start** instead of starting the local model by itself.
 <!-- new-in:end -->
 
 How it works, in the manual: [Explore your documents](docs/manual/explore.md) (working documents, the concept map),
