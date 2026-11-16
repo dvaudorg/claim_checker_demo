@@ -34,22 +34,31 @@ either), and could not open a file there. The receiving copy merges it through t
 every rule of a merge holds (a check both accounts changed is kept twice, as a sync-clash copy), and the items stay
 private there: their marks say "private" and name their maker, so neither a zip for a colleague (`sharing.strip`) nor
 the shared folder's writer (only items marked shared, checked by `folder._leaks`) passes them on. The sender deletes a
-file once the other copy says (its statement's `read`) that it took it in, and every file when it stops sending.
+file once the other copy says (its statement's `read`) that it took it in, and every file when it stops sending. How
+far a copy read is kept when it stops; a copy whose record was lost goes on from the first file there, and a sender
+that sees the other's reading go backwards starts a new stream with everything (`_restart_if_read_again`).
 
-**One owner for two accounts.** In the two copies an item made by either account is "mine" (`partner`): it can be
-shared and taken back (`sharing.state`, `sharing._may`), a note or a research log entry can be edited, and the other
-account's newer version takes the place of this copy's (`merge._may_replace`, `notes.merge`, `researchlog.merge`). A
-colleague's copy takes one account's *Share* or *Unshare* of an item the other account made only when it verified the
-three words itself, from the statements it read in the space (`pairs`, kept in the project's `meta` on this computer
-only and never sent).
+**One owner for two accounts.** In the two copies an item made by either account is "mine" (`partner`): a note or a
+research log entry can be edited, and the other account's newer version, in a file known to be its own (a storage
+space's signed file, a private bundle: `merge._Merge.first_hand`), takes the place of this copy's
+(`merge._may_replace`, `notes.merge`, `researchlog.merge`). *Share* or *Unshare* of an item the other account made is
+*asked* of that account's copy (`ask`, carried in the next private bundle), which carries it out as the item's maker
+(`_carry_out`); *Unshare* also stops sending it from here at once. So only an item's maker ever writes its mark, and
+every copy, an older one too, reads each mark as its owner's. The pairs a copy verified are kept in the project's
+`meta` on this computer only (`pairs`), for this very database and the space its config.json names now.
 
 **Threat model** (what each threat meets):
 - *A malicious owner* links a member's account to an account the owner controls (`same_as` alone): nothing is sent,
   because the member's own statement, made on their own computer, must name that account. The Team page shows its
   name, when it joined, and a check code made of both accounts' public keys, to compare on both computers first.
-- *The keeper*, who signs the roster, puts other keys in it for the other account: each statement pins the other
-  account's part and public keys, so a roster that says otherwise stops the sending until the person turns it on
-  again; the check code then differs on the two computers.
+- *The keeper*, who signs the roster, puts keys of its own in it for an account (and writes that account's statement
+  with them): each copy makes its own half of the check code from its own real keys (never the roster's word for
+  them), so the codes on the two computers differ; and a copy whose own roster entry is not its real keys pairs with
+  nobody, sends and takes in nothing, and says so on the card (`_roster_holds_me`). A roster that changes the other
+  account's keys after it was turned on stops the sending too (each statement pins the keys it named).
+- *A forged mark* (Share) for an item, written by any member into their own file: a private item of someone else's held
+  here changes its state only by a mark in its owner's own file (`sharing.receive`, `sender`), and only an item's maker
+  writes its mark; so no third person's file can publish the other account's private work, nor this account's.
 - *A member, or the storage service, writes into someone else's part* (a forged statement, a forged private file):
   a file of a part counts only when it is signed by that part's member, as the roster says, for that very place
   (`seal.open_sealed`); otherwise it is set aside. A private file must also open with this account's own key.
@@ -64,7 +73,10 @@ only and never sent).
   sealed to their key again and this copy deletes its private files; a new account is another part with other keys,
   which no statement names, until the person turns it on for it (and the owner links it).
 - *Private work passed on by mistake*: what came from the other account keeps its "private" mark naming its maker;
-  each private bundle is checked before it is sealed to hold nothing but items of the two (`_check`).
+  each private bundle is checked before it is sealed to hold nothing but items of the two (`_check`). An item that
+  comes in under a mark this copy did not take is noted as its maker's and private, never as this copy's own.
+- *A copy of the project folder, or a project moved to another space*: the pairs are tied to this database file and
+  to the space it names, so the exceptions above stop there until a round verifies them again.
 """
 from __future__ import annotations
 
@@ -90,7 +102,8 @@ from .seal import SealProblem
 
 FILE = "pair.json"          # the statement, in a member's m/ (space._M_FILES)
 CONFIG = "self_sync"        # this copy's own word, in the space's description (config.json `shared_space`)
-META = "self_sync_pairs"    # the pairs this copy verified (meta, this computer only): {"space", "installation", "pairs"}
+META = "self_sync_pairs"    # the pairs this copy verified (meta, this computer only): {"space", "installation", "db", "pairs"}
+ASKS = "self_sync_asks"     # Share or Unshare of an item the other account made, for its copy to carry out (meta)
 FORMAT = "enlens-private"
 MAGIC = b"ENLENS-PRIVATE-1\n"
 REMOVED_WHY = "Removed on your other computer."
@@ -124,6 +137,9 @@ def pairs(cx: sqlite3.Connection) -> dict[str, str]:
 
     if not isinstance(v, dict) or v.get("installation") != installation_id():   # (a copy of the project moved here)
         return {}
+    where = _here(cx)   # (this very copy, still in that space: a copy of its folder, or a move, holds no pair)
+    if where is None or v.get("db") != where[0] or v.get("space") != where[1]:
+        return {}
     out: dict[str, str] = {}
     for p in v.get("pairs") or []:
         if not (isinstance(p, list) and len(p) == 2 and all(isinstance(x, str) and people.ID_RE.fullmatch(x) for x in p)
@@ -132,6 +148,35 @@ def pairs(cx: sqlite3.Connection) -> dict[str, str]:
         if p[1] in people.group(cx, p[0]):   # the owner's link, as it is now
             out[p[0]], out[p[1]] = p[1], p[0]
     return out
+
+
+_CFG: dict[str, tuple[tuple, str | None]] = {}
+
+
+def _here(cx: sqlite3.Connection) -> tuple[str, str | None] | None:
+    """(this database's file, the id of the storage space its project's config.json names now), or None."""
+    try:
+        f = next((r[2] for r in cx.execute("PRAGMA database_list") if r[1] == "main"), None)
+    except sqlite3.Error:
+        return None
+    if not f:
+        return None
+    db = Path(f).resolve()
+    cfg = db.parent / "config.json"
+    try:
+        st = cfg.stat()
+        stamp = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return str(db), None
+    had = _CFG.get(str(cfg))
+    if had is None or had[0] != stamp:
+        try:
+            sp = (json.loads(cfg.read_text(encoding="utf-8")) or {}).get("shared_space")
+            sid = sp.get("id") if isinstance(sp, dict) and isinstance(sp.get("id"), str) else None
+        except (OSError, ValueError, AttributeError):
+            sid = None
+        had = _CFG[str(cfg)] = (stamp, sid)
+    return str(db), had[1]
 
 
 def partner(cx: sqlite3.Connection, me: str | None = None) -> str | None:
@@ -148,6 +193,57 @@ def forget(ws: Workspace) -> None:
 # ---------------------------------------------------------------------------------------------
 # statements
 # ---------------------------------------------------------------------------------------------
+def ask(cx: sqlite3.Connection, kind: str, key: str, state: str) -> None:
+    """*Share* (`state` "shared") or *Unshare* ("withdrawn") of an item the other account made, kept here (in `cx`'s
+    transaction) until a private bundle carries it to that account's copy, which carries it out as its maker
+    (`_carry_out`). Only the maker's copy ever writes an item's mark, so older copies, and copies that know nothing of
+    the pair, read every mark as its owner's."""
+    row = cx.execute("SELECT value FROM meta WHERE key=?", (ASKS,)).fetchone()
+    try:
+        asks = json.loads(row[0]) if row else {}
+    except (TypeError, ValueError):
+        asks = {}
+    asks = asks if isinstance(asks, dict) else {}
+    asks[f"{kind}/{key}"] = {"kind": kind, "key": key, "state": state, "at": sharing._at()}
+    cx.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)", (ASKS, json.dumps(asks)))
+
+
+def _asks(cx: sqlite3.Connection) -> dict[str, dict]:
+    row = cx.execute("SELECT value FROM meta WHERE key=?", (ASKS,)).fetchone()
+    try:
+        v = json.loads(row[0]) if row else {}
+    except (TypeError, ValueError):
+        v = {}
+    return {k: a for k, a in (v.items() if isinstance(v, dict) else ()) if isinstance(a, dict)
+            and a.get("kind") in sharing.KINDS and isinstance(a.get("key"), str) and a.get("state") in ("shared",
+                                                                                                          "withdrawn")}
+
+
+def _carry_out(ws: Workspace, asks: list[Any]) -> None:
+    """The other account's *Share* or *Unshare* of items this account made, carried out here as this account's own
+    mark (so every copy, an older one too, sees it by the item's owner), when the item is still this account's and
+    nothing later was decided here."""
+    me = people.me()
+    for a in asks:
+        if not isinstance(a, dict) or a.get("kind") not in sharing.KINDS or not isinstance(a.get("key"), str) or \
+                a.get("state") not in ("shared", "withdrawn"):
+            continue
+        cx = ws._conn()
+        if not sharing.exists(cx, ws.root, a["kind"], a["key"]):
+            continue
+        s = sharing.state(cx, a["kind"], a["key"], me)
+        if s["owner"] != me or s["state"] == a["state"] or str(s.get("at") or "") >= str(a.get("at") or ""):
+            continue
+        item = [{"kind": a["kind"], "key": a["key"]}]
+        try:
+            if a["state"] == "shared":
+                sharing.share(ws, item, why="Asked on your other computer.")
+            elif s["state"] == "shared":
+                sharing.unshare(ws, item, why="Asked on your other computer.")
+        except (KeyError, PermissionError, ValueError):
+            continue
+
+
 def _pin(w: Any) -> dict | None:
     return {k: w.get(k) for k in _KEYS} if isinstance(w, dict) else None
 
@@ -212,6 +308,9 @@ def _pairs_verified(ctx, cx: sqlite3.Connection) -> list[list[str]]:
     from .space import _active
 
     stmts, active = _statements(ctx), _active(ctx.roster)
+    _st(ctx)["me"] = ctx.ident.public()   # (for `status`: this copy's own half of the check code)
+    if not _roster_holds_me(ctx.desc, active, ctx.ident.public()):
+        stmts.pop(ctx.desc["part"], None)   # the roster gives this account other keys: it pairs with nobody
     out = set()
     for pa, a in stmts.items():
         pb = (a.get("with") or {}).get("part")
@@ -223,6 +322,13 @@ def _pairs_verified(ctx, cx: sqlite3.Connection) -> list[list[str]]:
     return [list(p) for p in sorted(out)]
 
 
+def _roster_holds_me(desc: dict, active: dict[str, dict], mine: dict | None) -> bool:
+    """Whether the roster (signed by the keeper) gives this copy's part this copy's real public keys. A keeper who put
+    other keys there could read what is sealed to "this account": such a roster pairs this account with nobody."""
+    m = active.get(desc.get("part")) or {}
+    return bool(mine) and m.get("sign") == mine.get("sign") and m.get("box") == mine.get("box")
+
+
 def note_pairs(ctx) -> None:
     """After the space was read, before the folder's round merges anything: the pairs this copy verified, for the
     rules of sharing (`pairs`). Written only when they changed (an idle round writes nothing)."""
@@ -230,7 +336,8 @@ def note_pairs(ctx) -> None:
 
     cx = ctx.ws._conn()
     found = _pairs_verified(ctx, cx)
-    want = {"space": ctx.id, "installation": installation_id(), "pairs": found}
+    want = {"space": ctx.id, "installation": installation_id(), "db": str(Path(ctx.ws.db_path).resolve()),
+            "pairs": found}
     row = cx.execute("SELECT value FROM meta WHERE key=?", (META,)).fetchone()
     try:
         have = json.loads(row[0]) if row else None
@@ -301,6 +408,7 @@ def exchange(ctx) -> dict:
         _stop(ctx)
     else:
         out["received"] = _take_in(ctx, other)
+        _restart_if_read_again(ctx, other)
         out["sent"] = _send(ctx, other)
         _prune(ctx, other)
     _write_statement(ctx)
@@ -312,14 +420,37 @@ def _mine(ctx) -> str:
 
 
 def _stop(ctx) -> None:
+    """Sending stops: every private file this copy wrote goes, and what it sent is forgotten (turned on again, it sends
+    everything once more). How far it read the other's stays (`read`): the other copy has deleted what it read, and
+    reading goes on from there."""
     st = _st(ctx)
-    if not (st.get("stream") or st.get("sent") or st.get("read")):
+    if not (st.get("stream") or st.get("sent") or st.get("files")):
         return
     for name in ctx.store.list(_mine(ctx)):
         ctx.store.delete(name)
-    for k in ("stream", "seq", "sent", "read"):
+    for k in ("stream", "seq", "sent", "files", "read_max"):
         st.pop(k, None)
     st["stopped_at"] = now()
+
+
+def _restart_if_read_again(ctx, other: dict) -> None:
+    """When the other copy's statement says it read less of this copy's stream than it said before (its record was
+    lost, or reset), this copy starts a new stream with everything: nothing it deleted as read is missed."""
+    st = _st(ctx)
+    stream = st.get("stream")
+    if not stream:
+        return
+    theirs = _statements(ctx).get(other["part"]) or {}
+    read = theirs.get("read") if isinstance(theirs.get("read"), dict) else {}
+    upto = int(read.get("last") or 0) if read.get("stream") == stream else 0
+    most = int(st.get("read_max") or 0)
+    if upto >= most:
+        st["read_max"] = upto
+        return
+    for name in st.get("files") or []:
+        ctx.store.delete(name)
+    for k in ("stream", "seq", "sent", "files", "read_max"):
+        st.pop(k, None)
 
 
 def _prune(ctx, other: dict) -> None:
@@ -386,12 +517,13 @@ def _send(ctx, other: dict) -> int:
                 removed.append({"kind": kind, "key": key, "rows": sharing.rows_of(rcx, kind, key)})
             else:
                 sent.pop(k)   # shared since, or no longer one of the two's: not this channel's any more
-        if not go and not removed:
+        asks = _asks(rcx)
+        if not go and not removed and not asks:
             return 0
         if not _STREAM.fullmatch(str(st.get("stream") or "")):
             st["stream"], st["seq"], st["files"] = uuid.uuid4().hex[:12], 0, []
         seq = int(st.get("seq") or 0) + 1
-        data = _bundle(ws, rcx, go, removed, me, st["stream"], seq)
+        data = _bundle(ws, rcx, go, removed, me, st["stream"], seq, list(asks.values()))
     finally:
         rcx.rollback()
         rcx.close()
@@ -403,6 +535,13 @@ def _send(ctx, other: dict) -> int:
         sent[f"{it['kind']}/{it['key']}"] = it["fp"]
     for it in removed:
         sent.pop(f"{it['kind']}/{it['key']}", None)
+    if asks:   # (sent: forgotten here, unless asked again meanwhile)
+        with ws.connect() as cx:
+            left = {k: a for k, a in _asks(cx).items() if asks.get(k) != a}
+            if left:
+                cx.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)", (ASKS, json.dumps(left)))
+            else:
+                cx.execute("DELETE FROM meta WHERE key=?", (ASKS,))
     st["sent_at"], st["sent_n"] = now(), int(st.get("sent_n") or 0) + len(go) + len(removed)
     return len(go) + len(removed)
 
@@ -452,7 +591,7 @@ def _check(bcx: sqlite3.Connection, keys: set[tuple[str, str]]) -> str | None:
 
 
 def _bundle(ws: Workspace, cx: sqlite3.Connection, go: list[dict], removed: list[dict], me: str, stream: str,
-            seq: int) -> bytes:
+            seq: int, asks: list[dict] = ()) -> bytes:
     tmp = Path(tempfile.mkdtemp(prefix="enlens-private-"))
     try:
         db = Workspace.create(tmp / "b", scratch=True).db_path
@@ -484,7 +623,7 @@ def _bundle(ws: Workspace, cx: sqlite3.Connection, go: list[dict], removed: list
                 "project_uid": ws.project_uid(), "from": {"id": me, "name": people.my_name()}, "stream": stream,
                 "seq": seq, "at": now(),
                 "items": [{"kind": it["kind"], "key": it["key"], "state": "private", "fp": it["fp"]} for it in go],
-                "removed": [{"kind": it["kind"], "key": it["key"]} for it in removed],
+                "removed": [{"kind": it["kind"], "key": it["key"]} for it in removed], "asks": list(asks),
                 "documents": _stubs(ws, cx, named)}
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
@@ -558,6 +697,15 @@ def _take_in(ctx, other: dict) -> int:
         m = _NAME.fullmatch(name[len(prefix):]) if name.startswith(prefix) else None
         if m and m.group(1) == stream:
             files[int(m.group(2))] = (name, o.etag)
+    if files and last + 1 not in files and min(files) > last + 1:
+        # the next one is gone: the other copy deleted it as read (this copy's record of how far it read was lost),
+        # or the storage lost it. Go on from the first one there; say so when this copy had read some already
+        if last > 0:
+            ctx.problem("self_sync", f"{min(files) - last - 1} private file(s) of your other account were no longer in "
+                                     "the storage space when this computer looked for them; ENLENS went on with the "
+                                     "next. Turn the option off and on again on either computer to send everything "
+                                     "once more.")
+        last = min(files) - 1
     n = 0
     while last + 1 in files:
         name, etag = files[last + 1]
@@ -631,7 +779,8 @@ def _merge(ctx, data: bytes, other: dict, stream: str, seq: int) -> int:
                     folder._put_stub(scx, s)
                     stubs[s["doc_id"]] = s
         info = {"from": {"id": other["person"], "name": who}, "name": Path(ws.root).name,
-                "version": meta.get("version"), "sync_format": formats.of(meta)[0], "stubs": stubs, "canon_ai": {}}
+                "version": meta.get("version"), "sync_format": formats.of(meta)[0], "stubs": stubs, "canon_ai": {},
+                "first_hand": True}
         _backup(ws)
         report = _Merge(ws, scratch, info).run()
         report["via"] = "self"
@@ -641,6 +790,7 @@ def _merge(ctx, data: bytes, other: dict, stream: str, seq: int) -> int:
         gone = [(it.get("kind"), it.get("key")) for it in meta.get("removed") or [] if isinstance(it, dict)]
         _came_in(ctx, other, [i for i in items if i[0] in sharing.KINDS and isinstance(i[1], str)],
                  [i for i in gone if i[0] in sharing.KINDS and isinstance(i[1], str)])
+        _carry_out(ws, meta.get("asks") or [])
         return len(items) + len(gone)
     finally:
         if scratch is not None:
@@ -748,6 +898,8 @@ def turn_on(ws: Workspace, person: str) -> dict:
         if part is None or desc.get("part") not in active:
             raise SpaceProblem("That account is not in the storage space now (or this copy has not read who is yet). "
                                "Try again after the next round.", "not_member")
+        if not _roster_holds_me(desc, active, _own_keys(desc)):
+            raise SpaceProblem(KEYS_DIFFER, "keys_differ")
         m = active[part]
         name = _name(ws, person, state)
         c = dict(_config(desc))
@@ -779,6 +931,22 @@ def turn_off(ws: Workspace) -> dict:
     return status(ws)
 
 
+KEYS_DIFFER = ("The team's list of members gives this account other keys than this computer's own: someone else (the "
+               "owner's copy signs that list) could read what is sent to it. Nothing is sent or taken in. Tell the "
+               "owner; you may need a new invite.")
+
+
+def _own_keys(desc: dict) -> dict:
+    """This copy's real public keys in the space (from the keychain), {} when they are not on this computer."""
+    from .space import _secret_name, keychain
+
+    raw = keychain.get(_secret_name(desc["id"], "me")) if desc and desc.get("id") else None
+    try:
+        return seal.Identity.load(raw).public() if raw else {}
+    except (ValueError, KeyError, TypeError):
+        return {}
+
+
 def status(ws: Workspace) -> dict | None:
     """What the Team page shows (None: nothing to show, no account is marked as this person): {"needs_space": True,
     "linked": [{"person", "name"}]} on a shared folder; in a storage space {"needs_space": False, "candidates":
@@ -804,13 +972,18 @@ def status(ws: Workspace) -> dict | None:
         return None
     state = _state_of(ws)
     active = space._active(state.get("roster") or {})
-    mine = active.get(desc.get("part")) or {}
     st = state.get("self_sync") or {}
+    # this copy's own half of the check code: its real keys (as its rounds noted them, or from the keychain), never
+    # the roster's word for them, which the keeper signs and could have changed
+    mine = st.get("me") if isinstance(st.get("me"), dict) else _own_keys(desc)
+    keys_differ = desc.get("part") in active and bool(mine) and not _roster_holds_me(desc, active, mine)
     candidates = [{"person": m["person"], "name": _name(ws, m["person"], state), "part": p, "since": m.get("since"),
                    "code": code(mine.get("sign"), m.get("sign"))}
                   for p, m in sorted(active.items(), key=lambda x: str(x[1].get("since") or ""))
                   if m.get("person") in linked and p != desc.get("part")]
     out: dict[str, Any] = {"needs_space": False, "candidates": candidates, "on": None, "theirs": False,
+                           "keys_differ": keys_differ,
+                           "warning": KEYS_DIFFER if keys_differ else None,
                            "active": False, "why": None, "code": None, "sent_at": st.get("sent_at"),
                            "received_at": st.get("received_at"), "sent": st.get("sent_n") or 0,
                            "received": st.get("received_n") or 0}
@@ -824,7 +997,9 @@ def status(ws: Workspace) -> dict | None:
     m = active.get(w.get("part")) or {}
     keys_same = m.get("person") == w.get("person") and m.get("sign") == w.get("sign") and m.get("box") == w.get("box")
     out["code"] = code(mine.get("sign"), w.get("sign"))
-    if w.get("person") not in linked:
+    if keys_differ:
+        out["why"] = KEYS_DIFFER
+    elif w.get("person") not in linked:
         out["why"] = "The owner no longer marks that account as you: nothing is sent."
     elif not keys_same:
         out["why"] = ("That account is no longer in the storage space with the keys it had when you turned this on: "

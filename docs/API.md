@@ -533,11 +533,15 @@ computer has not got the space's keys: a project copied from elsewhere; ask for 
   both accounts' keys), "on": null | {"person", "name", "since", "at"} (this account sends its private work to that
   one), "theirs" (the other account turned it on too, naming this one), "active" (both, the owner's link and the
   roster hold: private work goes both ways), "why" (in words, when it is on and not active), "code", "sent_at",
-  "received_at", "sent", "received" (items)}`. A round's `result` has `"private": {"sent", "received"}`; its problems
+  "received_at", "sent", "received" (items), "keys_differ", "warning" (the roster, signed by the keeper, gives this
+account other keys than this copy's own: nothing is sent or taken in)}`; the check codes use this copy's own keys.
+`POST …/share` with an item the other account made answers it under `"asked"` (that account's copy shares it at its
+next round, as its maker); `POST …/unshare` stops it going from here at once and lists it under `"asked"` too. A round's `result` has `"private": {"sent", "received"}`; its problems
   may have kind `self_sync` (the private exchange failed this round; the shared work went on).
 - `PUT /api/projects/<p>/space/self-sync {"with": person id}` → the folder's state: *Send my private work to my other
   account*, this account's own word (the other account must say it too). 400 in words, kind `no_space` (a shared
-  folder), `not_linked` (the owner has not marked that account as this person), `not_member` (not in the space now).
+  folder), `not_linked` (the owner has not marked that account as this person), `not_member` (not in the space now),
+`keys_differ` (the roster gives this account other keys than its own).
   The research log says so (kind `sync`, never sent).
 - `DELETE /api/projects/<p>/space/self-sync` → the folder's state: stops it; what already arrived stays.
 - `DELETE /api/projects/<p>/space/notices/<id>` → the folder's state: a standing notice is dealt with: `unshare-<part>`

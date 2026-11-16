@@ -300,7 +300,8 @@ def markdown(ws: Workspace, project: str) -> str:
 # ---------------------------------------------------------------------------------------------
 # a colleague's entries (sync.py)
 # ---------------------------------------------------------------------------------------------
-def merge(cx: sqlite3.Connection, rows: list[dict], fix, sender: str | None = None, report: dict | None = None) -> int:
+def merge(cx: sqlite3.Connection, rows: list[dict], fix, sender: str | None = None, report: dict | None = None,
+          first_hand: bool = False) -> int:
     """Bring in a colleague's entries: those not here come in (unless removed here); one of theirs they changed since
     (a later `edited_at`) is brought up to date. Yours are never changed. `fix(row) -> row` rewrites the ids of a
     merge (documents, checks). Returns how many came in or changed.
@@ -318,7 +319,7 @@ def merge(cx: sqlite3.Connection, rows: list[dict], fix, sender: str | None = No
         via_here = relayed(cx, "log")
     from .sharing import _partner
 
-    pair = bool(sender) and _partner(cx, me) == sender
+    pair = first_hand and bool(sender) and _partner(cx, me) == sender  # (your other account's own file)
     n = 0
     for r in rows:
         if not isinstance(r.get("entry_id"), str) or not _ID.fullmatch(r["entry_id"]) or r["entry_id"] in gone:

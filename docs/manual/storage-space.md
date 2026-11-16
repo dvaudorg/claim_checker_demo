@@ -209,7 +209,9 @@ themes, codebooks, notes, research log entries, links between terms) can be too,
 
 Nothing goes before **both** accounts have turned it on, each on its own computer: the owner's mark alone sends
 nothing. What arrives stays private on the other computer too, marked as made by you: it is never sent to colleagues.
-Either computer can then share or take back what the other made, and edit your notes and research log entries from
+Either computer can then share or take back what the other made: *Share* there asks the computer that made it, which
+shares it at its next round (so your colleagues see it shared by you, as its maker); *Unshare* stops it going from
+there at once and asks the other computer to take it back too. You can edit your notes and research log entries from
 either. When both computers changed the same check, both versions are kept (as when a colleague's version clashes
 with yours, [How two copies of a project come together](how-two-copies-come-together.md)). Removing a check, a set of
 themes, a note or an entry removes it on the other computer too, unless it changed there meanwhile; a codebook or a
@@ -217,6 +219,8 @@ link between terms you remove stays on the other computer until you remove it th
 
 **Stop…** on the row stops it, from either computer, at any time; what already arrived stays on both. It stops by
 itself when either account leaves or is removed from the team, or the owner no longer marks both as you; the row then
-says why. On a plain shared folder it is not offered: the card says it needs a storage space.
+says why. On a plain shared folder it is not offered: the card says it needs a storage space. If the card says *The
+team's list of members gives this account other keys than this computer's own*, nothing is sent or taken in: tell the
+owner (the list is signed by the owner's copy); you may need a new invite.
 
 The same rules as with a shared folder decide how your copies come together: [How two copies of a project come together](how-two-copies-come-together.md).
