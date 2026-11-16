@@ -73,6 +73,12 @@ warns (`WriteBudgetWarning`), so a new heavy test is caught the day it is added;
 that wrote the most at the end of a run, `ENLENS_WRITES_JSON=<file>` keeps every test's number, and `--durations=15`
 the slowest.
 
+**A view is tested by running it.** `tests/_views.py` runs a real view of the page in Node, with the real `lib.js` and
+the modules it imports, under a fake DOM and with the server stood in for (each call answered from the test's table; a
+call it did not expect fails the test), and reads back what a person sees: the text, the buttons, the focus, what was
+sent (`tests/test_views_*.py`). Test a view this way, not by looking for strings in its source: such a test proves no
+behaviour and breaks on a refactor.
+
 Tests never touch a real Claude Code, uv or the network: `tests/conftest.py` points `ENLENS_CLAUDE` nowhere, gives
 every test its own `ENLENS_HOME` (and keeps secrets in files there, `ENLENS_KEYCHAIN=file`, never the computer's
 keychain), shows no notification on the screen (`ENLENS_NO_NOTIFY=1`, the dev server too) and reads added documents one at a time (`ENLENS_READ_WORKERS=1`, so a stand-in a test puts in this process
