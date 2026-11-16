@@ -603,7 +603,9 @@ export function confirmDialog({ title, message, confirmText = "Confirm", typeToC
       if (input) {
         const btn = dlg.querySelector("#dlg-confirm");
         input.addEventListener("input", () => { btn.disabled = input.value.trim() !== typeToConfirm; });
-        input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !btn.disabled) btn.click(); });
+        // Enter confirms. preventDefault: without it the same key press, once the dialog has closed and focus is
+        // back on the button that opened it, presses that button too and opens the dialog again
+        input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); if (!btn.disabled) btn.click(); } });
         input.focus();
       }
     },
