@@ -17,6 +17,9 @@ function team(t, status, o = {}) {
   t.answer("GET /api/projects/Study/together", { history: [] });
   t.answer("GET /api/projects/Study/sync-poller", t.fail(404, "no poller"));
   t.answer("GET /api/projects/Study/owner", { owner: null, people: [] });
+  // team codebooks (after 0.19.10): the Codebooks card of People and settings asks for the owner's two settings
+  t.answer("GET /api/projects/Study/owner/codebooks", { team: true, can_set: false,
+    share_codebooks: { on: false, set: false, by: null, at: null }, default: null, choices: [], private_mine: [] });
   t.answer("GET /api/cloud-folders", { folders: [{ name: "OneDrive", path: "/Users/anna/OneDrive" }], picker: false });
   t.answer(`GET ${FOLDER}/find`, { found: o.found || [] });
   t.answer("GET /api/space/links", { b2_signup: "https://example.org/b2" });
