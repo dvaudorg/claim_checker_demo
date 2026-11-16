@@ -388,9 +388,11 @@ try {
     $s = [string]$n.Setting
   }
   if ($dry) { Write-Output ('toast-ready ' + $s); exit 0 }
-  if ($s -ne 'Enabled') { Write-Output ('off ' + $s); exit 0 }
+  # only a clear "switched off" stops it: Windows PowerShell may read the setting as nothing at all (seen on a
+  # Windows PC: blank, with notifications on)
+  if ($s -like 'Disabled*') { Write-Output ('off ' + $s); exit 0 }
   $n.Show($t)
-  Write-Output 'toast'
+  Write-Output ('toast ' + $id + ' ' + $s)
 } catch {
   [Console]::Error.WriteLine('toast: ' + $_)
   Add-Type -AssemblyName System.Windows.Forms
@@ -465,9 +467,13 @@ def _windows(name: str, title: str, text: str, url: str, run: Runner) -> dict:
         r = run(win_command(), env=win_env(name, title, text, target, _win_icon()), capture_output=True, text=True,
                 errors="replace", timeout=60, stdin=subprocess.DEVNULL, **no_window())
     last = ((r.stdout or "").strip().splitlines()[-1:] or [""])[0]
-    if r.returncode == 0 and last in ("toast", "balloon"):
-        return {"sent": True, "how": last, "problem": ""}
-    if r.returncode == 0 and last.startswith("off"):
+    word = (last.split() or [""])[0]
+    if r.returncode == 0 and word in ("toast", "balloon"):
+        out = {"sent": True, "how": word, "problem": ""}
+        if word == "toast":   # which id showed it, and the setting Windows gave (for a problem report)
+            out["detail"] = last[len(word):].strip()
+        return out
+    if r.returncode == 0 and word == "off":
         return {"sent": False, "how": "", "problem": f"Notifications from {name} are switched off in Windows "
                 f"({last[3:].strip() or 'off'}): Windows Settings › System › Notifications."}
     return {"sent": False, "how": "", "problem":

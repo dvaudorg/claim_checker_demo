@@ -305,7 +305,7 @@ def test_windows_the_text_goes_in_the_environment_never_in_the_script(monkeypatc
     monkeypatch.setattr(notify, "win_open_scheme", lambda name: "enlens-open:")
     r = notify.send_note("Finished", "Kovács; $(rm -rf /) `x`", url="http://127.0.0.1:1/#token=t", platform="win32",
                          run=run)
-    assert r == {"sent": True, "how": "toast", "problem": ""}
+    assert r == {"sent": True, "how": "toast", "problem": "", "detail": ""}
     cmd, env = calls[0]
     assert cmd[:2] == ["powershell", "-NoProfile"] and "-EncodedCommand" in cmd
     script = base64.b64decode(cmd[-1]).decode("utf-16-le")
@@ -342,6 +342,19 @@ def test_windows_notifications_switched_off_for_the_app_are_respected(monkeypatc
     monkeypatch.setattr(notify, "_win_icon", lambda: "")
     r = notify.send_note("Finished", "x", platform="win32", run=lambda *a, **k: _done(0, "off DisabledForApplication\n"))
     assert r["sent"] is False and "switched off in Windows (DisabledForApplication)" in r["problem"]
+
+
+def test_windows_only_a_clear_switched_off_stops_the_toast():
+    # seen on a Windows PC: Windows PowerShell read the notifier's setting as nothing, with notifications on
+    assert "if ($s -like 'Disabled*')" in notify.WIN_SCRIPT and "-ne 'Enabled'" not in notify.WIN_SCRIPT
+
+
+def test_windows_the_answer_says_which_id_showed_the_toast(monkeypatch):
+    monkeypatch.setattr(notify, "win_open_scheme", lambda name: "")
+    monkeypatch.setattr(notify, "_win_icon", lambda: "")
+    r = notify.send_note("Finished", "x", platform="win32",
+                         run=lambda *a, **k: _done(0, "toast ENLENS.Notifications.enlens \n"))
+    assert r == {"sent": True, "how": "toast", "problem": "", "detail": "ENLENS.Notifications.enlens"}
 
 
 def test_windows_a_failed_script_says_why(monkeypatch):
