@@ -2,15 +2,20 @@
 
 ## 0.19.8 (November 2026): Judge it yourself instead of starting the local model
 
+When a few excerpts wait for your local model, you no longer have to start it: *Judge it myself* hands them to you,
+and they wait under *Awaiting manual review* while no model reads them. A user did not want to load a model that needed
+more memory than was free for a single excerpt, and the panel offered only *Start* and *Start it anyway*. This release
+also keeps the result page where you were as you judge, keeps the local model's thinking line inside its card, and
+drops a *more…* that showed nothing more.
+
 ### New
 
 - **Judge it myself, instead of starting the local model.** When excerpts of documents marked Only a local AI wait for
   your local model, the panel on the result now offers *Judge it myself* first, then *Start <model>*, in place of
   *Start it anyway* (two Starts side by side read oddly; *Start it anyway* is still offered if Start is refused for
   memory). The excerpts then wait for you under *Awaiting manual review*, each tagged so and saying you chose it; no
-  model reads them. Every excerpt that waits for your judgement
-  now carries the *Awaiting manual review* tag, with its reason. Can change results only through the judgements you
-  give.
+  model reads them. Every excerpt that waits for your judgement now carries the *Awaiting manual review* tag, with its
+  reason. Can change results only through the judgements you give.
 
 ### Fixed
 
