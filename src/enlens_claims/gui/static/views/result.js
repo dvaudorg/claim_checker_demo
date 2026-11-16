@@ -1369,8 +1369,8 @@ export async function renderResult(view, [hypId], query) {
             : chosen ? `You chose to judge ${chosen} of these yourself rather than start the local model; no AI may read the others (their documents are marked No AI, or Only a local AI without a local model). Your judgement counts like any other.`
             : "No AI may read these (their documents are marked No AI, or Only a local AI without a local model). Your judgement counts like any other."),
           // 0.19.12: changed your mind: the local model reads them after all (what you judged meanwhile still counts)
-          chosen ? h("div", { class: "btn-row local-again" }, withAI(button({ sm: true, title: "They wait for your local model again, and it starts reading them on this computer. Judgements you gave meanwhile stay and still count.",
-            onClick: (e) => localAgain(e.currentTarget, chosen) }, chosen === 1 ? "Let the local model read it" : "Let the local model read them"))) : null));
+          chosen ? [h("div", { class: "btn-row local-again" }, withAI(button({ sm: true, title: "They wait for your local model again, and it starts reading them on this computer. Judgements you gave meanwhile stay and still count.",
+            onClick: (e) => localAgain(e.currentTarget, chosen) }, chosen === 1 ? "Let the local model read it" : "Let the local model read them"))), aiWhere(localReads(), "local")] : null));
         card.append(...evList(forYou, part));
       }
       if (rest.length) {
