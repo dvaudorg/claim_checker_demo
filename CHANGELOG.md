@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.19.14 (November 2026): Claude Code is asked for once, and Enter confirms once
+
+Two fixes you notice: once Claude Code has answered its part of a check, the AI run panel and the sidebar stop
+offering Start Claude Code while the local model reads its own part; and pressing Enter to confirm removing a project
+no longer opens the dialog again. Behind them: many new tests (the pages now run in Node), a much shorter roadmap, and
+a bench that measured local models against Claude. No change alters your results.
+
+### Fixed
+
+- **Once Claude Code has answered its part, nothing asks for Claude Code again.** Reading more excerpts of a check
+  that also has excerpts marked Only a local AI: Claude Code answered its part in seconds, then the local model read
+  its own for a few minutes. All that time the AI run panel still said one task waited for Claude Code and offered
+  Start Claude Code. The sidebar could offer it too, until the local model began. Each press started a run that found
+  nothing to do. The cause: the job's last "waiting for Claude Code" report stayed its newest word. The wait in the
+  queue now says when it is over, and the panel lets the project's queue decide whether anything still waits for
+  Claude Code.
+  Tests: `tests/test_answered_queue_not_asked_again.py` (the panel runs in Node).
+- **Enter in a "type the name to confirm" box no longer opens the box again.** Removing a project (or emptying one)
+  with Enter instead of the button did remove it, but the same key press then reopened the dialog, empty, as if it
+  had not worked. The same key press no longer reaches the page behind the dialog, here or in ⌘/Ctrl+Enter of a
+  dialog's text box.
+
+### For developers
+
+- **A bench for local models (`tools/localbench`).** It measures how well a local model reads evidence before ENLENS
+  gives it a role: 45 checks from the green hydrogen pilot, each answered several times through the app's own prompt,
+  scored against Fable's review of the 30 real claims. Qwen 3.5 4B got 57% of statuses right, Opus 52%, Sonnet 35%
+  and K2 Horizon 0.9B 27%; the local models' mistakes are confident ones. The roadmap's new item I6 (local model
+  tiers chosen for you, suggestions only) rests on it. Not part of the app; its data stays out of git.
+- **The roadmap keeps only what is left.** `docs/ROADMAP.md` is cut back from about 1,000 lines to 100: what is still
+  to build (the rest of the concept map, the role in the Documents bulk bar, a validation run on a local model, kept
+  agreement between routes, retractions without a DOI), what is still to try with real accounts and a real team, and
+  what was parked or decided against. Every built item is described in this changelog and the manual; the full
+  earlier roadmap is in the git history.
+- **`docs/MODEL_CHOICE.md` says how good the defaults are.** It no longer waits for runs that were never made: it gives
+  the defaults (with the theory and code-definition kinds, the thought setting and the AI mix), the first validation
+  run's figures, what is not measured yet, and the ways to measure a model on your own documents.
+
+### Tests
+
+- `tests/test_local_gate.py::test_local_start_and_stop_endpoints` no longer fails now and then on a slow runner: it
+  waited only until the first of a job's two local parts was queued, and could read 2 waiting instead of 3.
+- **A fixed test for each of four 0.19.0 sync defects, and views run in Node.** The sync defects have a test that pins their fix, and the 0.19 features are tried across two copies of a project. A small helper (`tests/_views.py`) runs the front end's views and `lib.js` in Node, so the 0.19 pages, the AI run panel and the local model's panel are tested as a person sees them. New tests also cover the 0.19 routes, local-only documents and the theory framework draft; stale skips and assertions that could not fail were removed.
+
 ## 0.19.13 (November 2026): The AI run panel: two sides, and the local model's own Start
 
 Wherever AI works for you, you now see the same panel, and you can tell at a glance who is working: this computer on
