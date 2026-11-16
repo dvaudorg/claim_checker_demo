@@ -2360,7 +2360,8 @@ let LP_SEQ = 0;   // each local panel's own ids
 // you: the attention notice, and Start is the panel's main button), sub (one more line under the head: "Claude labels
 // the other 2 meanwhile."), anywayText (only the Start it anyway button, with these words: the card's own main button
 // starts the rest), status (what came of the last press, said once), note (a line where the buttons would be),
-// onYourself + yourselfText + yourselfNote (0.19.8: "Judge it myself", in place of Start it anyway, and a line under it).
+// onYourself + yourselfText + yourselfNote (0.19.8: "Judge it myself", first and the main button, in place of Start it
+// anyway, and a line under it).
 function localPanelBody(o) {
   const name = o.model || "your local model";
   const noun = o.noun || "passage";
@@ -2386,8 +2387,9 @@ function localPanelBody(o) {
   else if (mem && mem.loaded && !o.running) parts.push(h("p", { class: "lp-mem muted small" }, `${o.model || "Your local model"} is in memory already: it starts at once.`));
   // 0.19.8: onYourself: the person may judge what waits instead of starting the model ("Judge it myself"). It takes
   // the place of Start it anyway beside Start (two Starts side by side read oddly); with too little memory free it is
-  // the main button. Start it anyway is still offered when the start is refused for memory (memoryShort, result.js).
-  const yourself = o.onYourself && !o.running ? button({ kind: short || o.problem ? "main" : "standard", sm: true, icon: "user", onClick: async () => {
+  // the main button, and comes first (Start the model second). Start it anyway is still offered when the start is
+  // refused for memory (memoryShort, result.js).
+  const yourself = o.onYourself && !o.running ? button({ kind: "main", sm: true, icon: "user", onClick: async () => {
     yourself.disabled = true;
     try { await o.onYourself(); } catch (e) { showError(e); yourself.disabled = false; }
   } }, o.yourselfText || "Judge it myself") : null;
@@ -2404,8 +2406,8 @@ function localPanelBody(o) {
     if (o.anywayText) {
       if (anyway) parts.push(h("div", { class: "lp-start" }, withAI(anyway)));
     } else {
-      const start = button({ kind: yourself && short ? "standard" : "main", sm: true, icon: "play", onClick: () => go(start, false) }, `Start ${name}`);
-      parts.push(h("div", { class: "lp-start" }, anyway ? withAI(start, anyway) : withAI(start), yourself,
+      const start = button({ kind: yourself ? "standard" : "main", sm: true, icon: "play", onClick: () => go(start, false) }, `Start ${name}`);
+      parts.push(h("div", { class: "lp-start" }, yourself, anyway ? withAI(start, anyway) : withAI(start),
         anyway || yourself ? null : h("span", { class: "muted small" }, "Runs here, in this app, and stops by itself when nothing waits.")));
     }
   } else if (yourself) parts.push(h("div", { class: "lp-start" }, yourself));

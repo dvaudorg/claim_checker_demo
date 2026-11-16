@@ -1,10 +1,10 @@
 ### New
 
 - **Judge it myself, instead of starting the local model.** When excerpts of documents marked Only a local AI wait for
-  your local model, the panel on the result now offers *Judge it myself* beside *Start <model>*, in place of *Start it
-  anyway* (two Starts side by side read oddly; *Start it anyway* is still offered if Start is refused for memory). The
-  excerpts then wait for you under *Awaiting manual review*, each tagged so and saying you chose it; no model reads
-  them. With too little memory free, *Judge it myself* is the main button. Every excerpt that waits for your judgement
+  your local model, the panel on the result now offers *Judge it myself* first, then *Start <model>*, in place of
+  *Start it anyway* (two Starts side by side read oddly; *Start it anyway* is still offered if Start is refused for
+  memory). The excerpts then wait for you under *Awaiting manual review*, each tagged so and saying you chose it; no
+  model reads them. Every excerpt that waits for your judgement
   now carries the *Awaiting manual review* tag, with its reason. Can change results only through the judgements you
   give.
 
