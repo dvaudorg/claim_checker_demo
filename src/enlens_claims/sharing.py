@@ -692,7 +692,7 @@ ITEM_TASK_KINDS = ("check", "expand", "decompose", "reread", "second", "theme")
 # tables without words of a document in them: a document kept out of the shared folder does not keep these rows out
 _NO_TEXT = {"ai_sent", "people", "bib_items", "bib_links", "research_log", "sync_removed", "runs", "meta",
             "ownership", "proposals", "decisions", "canon",  # 0.18 L2: they name documents, and hold none of their words
-            "roles"}  # roles: who is a Co-owner
+            "roles", "team_settings"}  # roles: who is a Co-owner; the owner's settings about codebooks
 # a task's columns that say what became of it (its payload, the passages handed to the AI, is read only when a document
 # is kept out of the shared folder, to see which documents it names)
 _TASK_COLS = "task_id, kind, status, attempts, model, again, step"
@@ -882,7 +882,8 @@ class ProjectRows:
                ("meta", "key='bibliography'", "*"),
                # 0.18 L2 (ownership.py): who the owner is, proposals, decisions, the documents as accepted
                ("ownership", "1", "*"), ("proposals", "1", "*"), ("decisions", "1", "*"), ("canon", "1", "*"),
-               ("roles", "1", "*")]  # roles (DESIGN-roles §3.1): who is a Co-owner, by the Owner's word
+               ("roles", "1", "*"),  # roles (DESIGN-roles §3.1): who is a Co-owner, by the Owner's word
+               ("team_settings", "1", "*")]  # the owner's settings about codebooks (teamcodebooks.py)
         present = {r[0] for r in self.cx.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         other = sorted(t for t in present if t not in LOCAL_ONLY and t not in OWN_RULES and not t.startswith("sqlite_")
                        and t not in ("meta", "verifications"))

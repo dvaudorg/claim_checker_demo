@@ -27,6 +27,7 @@ import { OWNER_SECTION, ownerMarks, ownerPerson } from "./owner.js";   // 0.18 L
 import { MINE_SECTION, REMOVED_SECTION, ROLES_SECTION, peopleRows, personSub, peopleNote } from "./owner.js";   // roles
 import { SPACE_SECTION, inviteDialog, spaceInvites, removeMember, memberSub, SERVICE_NAME } from "./team-space.js";   // 0.18.0rc2 (L6): a storage space
 import { TEAM_SETUP_SECTIONS } from "./team-setup.js";   // the Team page of a project without a team
+import { CODEBOOKS_SECTION } from "./team-codebooks.js";   // team codebooks: the owner's settings about codebooks
 
 const EVERY = 20000;          // how often the open page reads the folder's state again (it is cheap)
 const SOON = 4000;            // … and while the poller is about to start a round ("due": it looks every 5 s)
@@ -62,6 +63,7 @@ export const TEAM_SETTINGS_SECTIONS = [
   SPACE_SECTION,                                  // a storage space: where it is, invites, move, technical details
   { key: "folder", render: folderSection },       // a shared folder: where it is
   ROLES_SECTION,                                  // the owner (Become the owner, Accept documents … at once)
+  CODEBOOKS_SECTION,                              // codebooks shared at once, the project's default codebook
   { key: "keep-out", render: keepOutSection },
   { key: "often", render: oftenSection },         // how often rounds run, for every project
   { key: "downloads", render: downloadsSection },

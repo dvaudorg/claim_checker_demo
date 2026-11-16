@@ -150,7 +150,10 @@ New in 0.7:
   temperature 0, so the same input gives the same answer where the server honours it (`POST /api/servers/repeatable`
   tests that). Recorded with every answer.
 - `profile_framework` (default `"sdg"`, the 169 targets; `"sdg_goals"` for the 17 goals, or a codebook of the
-  project): the codebook of the Profile page, the Codes panel and the keyword pass run when documents are added.
+  project): the codebook of the Profile page, the Codes panel and the keyword pass run when documents are added. In a
+  project whose owner set a default codebook (`PUT …/owner/codebooks`), that one holds there when the copy has it:
+  `GET /api/state` → `profile_framework` is what the open project uses, and `profile_framework_team` is `{"name",
+  "title"}` of the team's default (null when none is set or the codebook is not in this copy).
 - `themes_k` (default 20; 2–60): how many themes a new set looks for.
 - Adding documents (`POST …/ingest`) now ends with two phases, `glossary` and `codes`: the term index and the keyword
   pass of `profile_framework`. Their results are in the job's `result.glossary` and `result.codes`.
@@ -670,6 +673,18 @@ question or document), 409 (a proposal that no longer waits; nothing to make her
 - `PUT owner/settings {"accept_adds": bool}` → the view. Only the owner (403); not a boolean → 400. Turned on, the
   additions that wait are accepted at once. It is this copy's own and holds for one time as the owner: a new owner,
   and an owner who has the project back, start at the default (on).
+- `GET owner/codebooks` → the team's codebooks (`teamcodebooks.view`): `{"team", "can_set" (this person is the owner),
+  "share_codebooks": {"on", "set" (the owner said so; else the default: on in a team project), "by": person | null,
+  "at"}, "default": {"name", "title", "here" (this copy has it), "by", "at"} | null, "choices": [{"name", "title",
+  "source": "bundled" | "project", "state", "mine"}] (what the owner may pick: the codebooks that ship with ENLENS, the
+  project's shared codebooks, and this person's own private ones), "private_mine": [{"key", "title"}]}`. Everyone in
+  the team may read it.
+- `PUT owner/codebooks {"share"?: bool, "default"?: name | null}` → the same. Only the owner (403); neither key, or a
+  value of the wrong type → 400; an unknown codebook → 404; one that cannot be the team's (a colleague's private one,
+  one kept with all projects) → 409. `share`: *Codebooks made in this project are shared with the team* (nothing made
+  before changes either way). `default`: the project's default codebook (null: none); the owner's own private
+  codebook is shared first. Both are rows of `team_settings`, which travel to every copy and count only when their
+  writer owned the project when they wrote them (`teamcodebooks.py`); each change is in the research log.
 - `POST owner/proposals/<id>/accept {"reason"?}` and `…/decline {"reason"?}` → the view. Only the owner or a Co-owner (403); an
   unknown id → 404; one that no longer waits → 409. Accepted, the change is made in the owner's copy at once (a
   document not here is fetched from the shared folder; a new reading is made by a job, below) and reaches every copy
@@ -1753,7 +1768,11 @@ with a side file for what a spreadsheet cannot hold: a stable id for each code, 
 codes, where each example was found, the groups and their order. The old routes under `…/frameworks` still work.
 
 - `GET /api/projects/<p>/codebooks` → `{"codebooks": [info + {"where": "project" | "home" | "bundled", "labels",
-  "checks", "profile_default"}], "problems": [...]}`. Labels first follow renames and merges.
+  "checks", "profile_default"}], "problems": [...], "team": {"team", "share_codebooks", "private_mine": [{"key",
+  "title"}]} | null}`. Labels first follow renames and merges. `team`: whether the project is a team's, whether the
+  team's setting shares new codebooks, and (only while it does) this person's codebooks of the project still private.
+  While the team's setting is on, a codebook made in the project (`POST …/codebooks`, `copy-here`, `POST
+  …/frameworks` for a new name) is shared at once by its maker's copy, with a research-log entry giving the reason.
 - `GET /api/projects/<p>/codebooks/<name>` → `{"codebook": {"title", "label", "directional", "groups": [{"group",
   "group_name"}], "codes": [{"code", "uid", "description", "group", "include", "exclude", "keywords", "examples":
   [{"quote", "doc_id", "title", "page"}]}], "where", "editable", "shadows_home", "in_home", "used": {"labels",
