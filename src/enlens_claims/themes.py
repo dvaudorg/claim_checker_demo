@@ -1359,11 +1359,16 @@ def name_with_model(ws: Workspace, run_id: str, backend, model: str, progress: C
             done += ok
             failed += not ok
 
+    # every local theme goes to the gate first, so the local side counts them (and its Start works) from the start,
+    # not only once the loop below has waited for Claude's answers before it
+    if gated:
+        for tid in todo:
+            if tid in local_ids:
+                readers.later(lambda tid=tid: one(tid), noun="theme", mixed=len(local_ids) < len(todo), ws=ws)
     for tid in todo:
         if should_stop and should_stop():
             break
         if gated and tid in local_ids:
-            readers.later(lambda tid=tid: one(tid), noun="theme", mixed=len(local_ids) < len(todo), ws=ws)
             continue
         one(tid)
     if gated:

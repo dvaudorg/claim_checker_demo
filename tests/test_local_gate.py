@@ -17,11 +17,11 @@ from helpers_mixed_corpus import Cloud, mixed_project, use_local_model
 from test_app import Api, home  # noqa: F401  (fixtures)
 from test_local_memory import GB, HYP, Watched, _queued_check_answered
 
-from enlens_claims import access, claimcheck, home as home_mod, llm, profile, taskqueue
+from enlens_claims import access, claimcheck, home as home_mod, llm, profile, taskqueue, terms, themes
 from enlens_claims.gui import server
 from enlens_claims.gui.api_common import Jobs
 from enlens_claims.gui.app_queue import QueueMixin
-from enlens_claims.gui.progress import Tracker
+from enlens_claims.gui.progress import LOCAL_PHASE, Tracker
 from enlens_claims.localgate import GATE, LocalGate
 
 
@@ -264,6 +264,10 @@ def test_a_check_by_queue_waits_for_the_local_start(tmp_path, monkeypatch):
     assert local.sent == [] and job.state == "running"
     assert v["local"]["gate"] == "wait" and v["local"]["noun"] == "excerpt" and v["local"]["waiting"] > 0
     assert v["progress"]["model"]["who"] == "local" and v["progress"]["model"]["phase"] == "ready"
+    # the head and the step say the local model waits, not Claude Code (Claude's part is done)
+    assert v["progress"]["message"] == LOCAL_PHASE["ready"]
+    grade = [s for p in v["progress"]["parts"] for s in p["steps"] if s["key"] == "grade" and s["state"] == "running"]
+    assert grade and all(s["detail"] == LOCAL_PHASE["ready"] for s in grade)
     # Stop: Claude Code's part is done, so the check is kept and its local excerpts wait (Read them now)
     jobs.cancel(job)
     _until(lambda: _ended(job))
@@ -276,6 +280,8 @@ def test_a_check_by_queue_waits_for_the_local_start(tmp_path, monkeypatch):
     _until(lambda: _ended(again))
     assert again.state == "done", again.error
     assert local.sent and claimcheck.hypothesis_result(ws, hid)["waiting_local"] == 0
+    # once read, none wait any more (it said 3 waiting after the end before)
+    assert again.view()["local"]["waiting"] == 0 and again.view()["local"]["noun"] == "excerpt"
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -438,3 +444,80 @@ def test_the_ai_mix_waits_for_its_start_and_start_it_anyway(mixed):
     gate.open(force=True)
     t.join(5)
     assert seen == [False] and be.memory_guard is True                   # this answer only
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# found in the panel's review: the local items of a mixed run are counted from the start, and a read counts down
+# ---------------------------------------------------------------------------------------------------------------------
+def test_mixed_theme_naming_hands_its_local_themes_to_the_gate_before_claude_answers(mixed, monkeypatch):
+    """The local side said "no model works in this job" until the loop reached the local themes, after each of
+    Claude's answers before them."""
+    ws, _ids = mixed
+    local = Watched(free=64 * GB)
+    use_local_model(monkeypatch, local)
+    terms.ensure(ws)
+    run_id = themes.run(ws, k=3, mode="words")
+    make = themes.make_name_tasks
+
+    def make_local(ws_, rid, model, *a, **k):   # the last theme only the local model may name
+        out = make(ws_, rid, model, *a, **k)
+        with ws_.connect() as cx:
+            last = cx.execute("SELECT MAX(task_id) FROM tasks WHERE kind='theme' AND task_id LIKE ?",
+                              (f"theme:{rid}:%",)).fetchone()[0]
+            cx.execute("UPDATE tasks SET access='local' WHERE task_id=?", (last,))
+        return out
+
+    monkeypatch.setattr(themes, "make_name_tasks", make_local)
+    held, go = threading.Event(), threading.Event()
+
+    class Slow(Cloud):
+        def complete(self, kind, system, user, model, payload=None):
+            held.set()
+            go.wait(10)   # Claude's first answer takes its time
+            return super().complete(kind, system, user, model, payload)
+
+    job = Jobs().start("theme-names", "Names", "Mixed",
+                       lambda j: themes.name_with_model(ws, run_id, Slow(), "claude-sonnet",
+                                                        should_stop=j.cancel.is_set), uses_model=True)
+    _until(lambda: held.is_set())
+    _until(lambda: job.gate.involved, timeout=5)
+    v = job.view()["local"]
+    assert v["gate"] == "wait" and v["waiting"] == 1 and v["noun"] == "theme"   # before Claude's first answer
+    go.set()
+    job.gate.open()
+    _until(lambda: _ended(job))
+    assert job.state == "done", job.error
+    assert job.view()["local"]["waiting"] == 0
+
+
+def test_reading_the_local_excerpts_counts_down_and_says_excerpts(tmp_path, monkeypatch):
+    """Read them now (the result page's read-local job): its local side counts excerpts, not "tasks", and says none
+    wait once they are read."""
+    monkeypatch.setenv("ENLENS_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("ENLENS_LOCAL_ONLY", raising=False)
+    ws = home_mod.create_project("Mixed")
+    mixed_project(ws, tmp_path / "corpus")
+    local = Watched(free=64 * GB)
+    use_local_model(monkeypatch, local)
+    monkeypatch.setattr(llm, "total_memory", lambda: 16 * GB)
+    hid = _queued_check_answered(ws)
+    n = sum(r["passages"] for r in claimcheck.local_waiting(ws, [hid]))
+    seen: list[int] = []
+
+    def run(job):
+        readers = access.Readers(None, "", should_stop=job.cancel.is_set)
+        real = local.complete
+
+        def complete(*a, **k):
+            seen.append(job.gate.waiting)
+            return real(*a, **k)
+
+        local.complete = complete
+        return {"n": claimcheck.run_local_parts(ws, [hid], readers)}
+
+    job = Jobs().start("read-local", "Reading", "Mixed", run, uses_model=True, local_start="go")
+    _until(lambda: _ended(job))
+    assert job.state == "done", job.error
+    assert n > 0 and seen and seen[0] == n
+    v = job.view()["local"]
+    assert v["noun"] == "excerpt" and v["waiting"] == 0

@@ -158,10 +158,17 @@ class Tracker:
         with self.lock:
             self.model = dict(info)
 
-    def say(self, msg: str) -> None:
-        """0.13.11: what is happening now, in the heading, without a step or a lasting note."""
+    def say(self, msg: str, step: str | None = None) -> None:
+        """0.13.11: what is happening now, in the heading, without a step or a lasting note. 0.19.13: `step` (a key,
+        "grade"): the same words as the detail of that step wherever it is running (the local model waits for its
+        Start, or reads, where the step said Claude Code would)."""
         with self.lock:
             self.message = msg
+            if step:
+                for p in self.parts:
+                    s = p["steps"].get(step)
+                    if s is not None and s["state"] == "running":
+                        s["detail"] = msg
 
     def state(self) -> dict:
         with self.lock:

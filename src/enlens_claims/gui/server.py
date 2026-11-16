@@ -41,7 +41,7 @@ from .. import llm, modeladvice, ollama_setup
 from ..llm import BackendError, detect_local
 from ..store import now as _now
 from ..sources import document_overview
-from .progress import Tracker
+from .progress import LOCAL_PHASE, Tracker
 from .api_checks import ChecksApi
 from .api_documents import DocumentsApi
 from .api_explore import ExploreApi
@@ -992,7 +992,7 @@ class App(LibraryMixin, QueueMixin):
                             if x)
 
         def started(model: str, _n: int) -> None:
-            tracker.say(f"Your local model ({model}) is reading {what} on this computer")
+            tracker.say(f"Your local model ({model}) is reading {what} on this computer", step="grade")
 
         before, mix_before, claude_before = readers.read, readers.mix_read, readers.to_claude
         try:
@@ -1045,6 +1045,7 @@ class App(LibraryMixin, QueueMixin):
                 return  # 0.13.11: Claude Code is done; the local excerpts wait for "Read them now" on the result
             if gate is not None and not gate.is_open and gate.involved and len(only_local) == len(left):
                 gate.say_ready()  # 0.19.13: Claude Code is done; the local part waits for its Start
+                tracker.say(LOCAL_PHASE["ready"], step="grade")   # the head and the step say so, not "Claude Code"
             else:
                 kind = {"decompose": "decompose", "terms": "expand"}.get(
                     claimcheck.queue_stage(ws, left[0]).get("step"), "check")

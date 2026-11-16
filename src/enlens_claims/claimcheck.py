@@ -530,6 +530,18 @@ def run_local_parts(ws: Workspace, hyp_ids: list[str] | None = None, readers=Non
             on_start(got[1], sum(r["passages"] for r in rows))
     n = 0
     gate = getattr(readers, "gate", None)
+    # 0.19.13: the job's local side counts down what is left as it is read (excerpts, or tasks of the AI mix), so a
+    # finished read says none wait any more
+    left = sum(1 if r.get("mix") else r["passages"] for r in rows)
+    if gate is not None and got is not None:
+        gate.involve(waiting=left, noun="task" if all(r.get("mix") for r in rows) else "excerpt")
+
+    def counted(r) -> None:
+        nonlocal left
+        left = max(0, left - (1 if r.get("mix") else r["passages"]))
+        if gate is not None and got is not None:
+            gate.involve(waiting=left)
+
     for r in rows:
         if got is not None and gate is not None and not gate.is_open and gate.state != "auto":
             break  # 0.19.13: the local side's Stop: the rest waits for its Start again
@@ -550,6 +562,7 @@ def run_local_parts(ws: Workspace, hyp_ids: list[str] | None = None, readers=Non
                     readers.memory_short = e
                     return n
             n += 1
+            counted(r)
             continue
         with ws.connect() as cx:
             if r["status"] == "failed":
@@ -574,6 +587,7 @@ def run_local_parts(ws: Workspace, hyp_ids: list[str] | None = None, readers=Non
                 readers.local_problem = str(e)  # said on the progress
                 _to_person(ws, r["task_id"])
         n += 1
+        counted(r)
     return n
 
 

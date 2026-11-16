@@ -1697,11 +1697,16 @@ def judge_links(ws: Workspace, pairs: list[tuple[str, str]], backend, model: str
             failed += not ok
 
     try:
+        # every local pair goes to the gate first, so the local side counts them (and its Start works) from the
+        # start, not only once the loop below has waited for Claude's answers before it
+        if gated:
+            for tid in ids:
+                if tid in local_ids:
+                    readers.later(lambda tid=tid: one(tid), noun="pair", mixed=len(local_ids) < len(ids), ws=ws)
         for tid in ids:
             if should_stop and should_stop():
                 break
             if gated and tid in local_ids:
-                readers.later(lambda tid=tid: one(tid), noun="pair", mixed=len(local_ids) < len(ids), ws=ws)
                 continue
             one(tid)
         if gated:
