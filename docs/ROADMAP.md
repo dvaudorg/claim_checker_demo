@@ -377,6 +377,63 @@ rejected answers or on request; new are the presets and the step from the local 
 - A sample of tasks answered by both routes, with their agreement (kappa, which ENLENS already computes), so you can
   see whether the local model is good enough for each kind of task on your own corpus.
 
+**I6. Local model tiers, chosen for you** · planned (bench of 16 November 2026, below) · Level 2
+- A researcher should never have to pick a model. ENLENS already reads the computer's memory and disk
+  (`modeladvice.py`); it picks the tier itself, downloads its model, and sets the context length, reasoning (off for
+  local checks: on, one check took 114 s instead of 9 s) and seed without asking. Model names show only under
+  *Settings → Technical*.
+- The tiers, replacing today's ladder (qwen3:1.7b, 4b, 8b, 14b):
+
+  | Computer | Model | What it does |
+  | --- | --- | --- |
+  | Small (about 8 GB, or no graphics card) | `ifm/k2-horizon:0.9b` (2 GB) | Explorer only: points at passages, sorts the reading order, marks a possible lean, suggests search words |
+  | 16 GB laptop | `qwen3.5:4b` (4 GB file) | Suggestions only, better ones |
+  | Larger (about 24 GB or more) | `qwen3.5:9b` | Suggestions only until measured; if it proves well calibrated, its surest answers may be trusted |
+  | Documents Claude may read | Claude | Decides, as today |
+
+- **Suggestions only** means a local model never sets a status. Every claim it reads goes to the manual review card
+  (*Judge it myself*, *Awaiting manual review*, since 0.19.8), filled in with the model's passages, highlights and
+  lean; the researcher decides each passage. No local confidence number is shown. Open design point: whether the
+  suggestion shows before or after the researcher's own grade (a pre-filled card invites a quick *Agree*: the bench
+  saw a reviewer agree with 25 of 30 judgements, invented quotes included, when it was shown them).
+- To handle when built: with Ollama's MLX runner, `qwen3.5:4b` grew from 5.2 GB to 12.7 GB of memory over a long run
+  (the advice reckons size plus context, so it needs more margin or a restart between batches); and temperature 0
+  with a fixed seed did not repeat answers word for word (62%), which the results' version note should say.
+
+*The bench (16 November 2026).* 45 checks from the green hydrogen pilot (30 real VCA claims, 15 planted controls: a
+hidden supporting sentence, a claim turned into its opposite, unrelated passages), each answered 7 times by each
+local model through the app's own prompt and Ollama; Opus 5.5 and Sonnet 5.5 answered blind twice each. The first
+gold (two blind Opus passes) proved strict on *partly supports*; the reference became Fable 5.2's review of the 30
+real claims (three rounds; it kept its reading after seeing another reviewer's). Gemini, grading from scratch, is
+kept for comparison only.
+
+| Against the Fable reference (30 claims) | Qwen 3.5 4B | K2 Horizon 0.9B | Opus 5.5 | Sonnet 5.5 |
+| --- | --- | --- | --- | --- |
+| Right status | 57% | 27% | 52% | 35% |
+| Grades it counts (0.6 or more) that are right | 68% | 49% | 100% | 100% |
+| Its stated confidence on those | 79% | 73% | 66% | 69% |
+| Passages that matter, found | 58% | 73% | 29% | 13% |
+| Seconds per check (M4, 16 GB) | 7 | 7 | 4 (cloud) | 2 (cloud) |
+| Memory | 5.2 → 12.7 GB | 2 GB | – | – |
+| Same status in 5 runs | 60% | 56% | – | – |
+
+- Claude is precise but leaves out most partial evidence; Qwen finds more and is overconfident; K2 guesses (it called
+  38 of 45 claims supported, and 60% of its answers quoted words not in the passage).
+- Trusting only a model's surest answers does not help a small model: K2's grades at 0.8 or more were right 67% of
+  the time, and Qwen's at 0.9 or more 73% (8% of passages). Their mistakes are confident ones.
+- Hand-holding K2: small structured questions made it faster, not better (it never answers "neither"). Reading its
+  probability of "yes" to *does the passage say the claim / its opposite* told support from contradiction for 13 of
+  15 passages that matter, with a naturally worded opposite ("It is not true that …" broke it), but not which
+  passages matter (0.58, where 0.5 is chance): a lean to show, not a decision.
+- Where the line falls between *nothing*, *partly* and *supports* moved the ranking more than the choice of model.
+  The rules as written are the reference; widening *supports* would need the prompts and the bench redone.
+
+*Benching another model later* (details in `tools/localbench/README.md`): pull it with Ollama, run
+`python tools/localbench/localbench.py run --model <name>` (one model at a time; `monitor.py` follows heat, memory and
+progress), then `review.py score` scores it against the Fable reference and `viz.py` adds it to the visualiser. A new
+reviewer grades `review.py packet`'s claims from scratch and counts only after passing its hidden controls and quote
+check. A model earns a stronger role than *suggestions only* only by measurement on this bench.
+
 ## J. Version control, releases and documentation
 
 How real products handle these, and what ENLENS takes from them. This is developer work: no AI is involved.
