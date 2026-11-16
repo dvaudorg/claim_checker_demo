@@ -57,9 +57,9 @@ Windows from 0.15.4 on). Your projects and settings (the `enlens` folder in your
   impact claims tagged with UN SDG targets and compared with an expert Value Chain Assessment.
 
 <!-- new-in:start (written by `python tools/release.py prepare`: change the changelog entry, not this) -->
-## New in 0.19.9: Hear when your work has finished
+## New in 0.19.10: ENLENS sees Ollama on Windows
 
-- **ENLENS tells you when work has finished.** Work you started that took more than 20 seconds (a check, documents being added, your local model answering the queue) sends a notification from your computer when it has finished.
+- **On Windows, ENLENS sees Ollama when it runs.** After *Install Ollama* the card stayed on "Starting Ollama…", and after a reload on "Ollama is starting…" until its minute ran out, although Ollama was running.
 <!-- new-in:end -->
 
 How it works, in the manual: [Explore your documents](docs/manual/explore.md) (working documents, the concept map),

@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.19.10 (November 2026): ENLENS sees Ollama on Windows
+
+ENLENS now notices Ollama on Windows as soon as it runs. A user installed Ollama from the local-model card, and
+the card stayed on "Starting Ollama…" while Ollama was running and answering all along. The card now moves on to
+downloading a model, and every request to a local model on Windows is about two seconds quicker.
+
+### Fixed
+
+- **On Windows, ENLENS sees Ollama when it runs.** After *Install Ollama* the card stayed on "Starting Ollama…", and
+  after a reload on "Ollama is starting…" until its minute ran out, although Ollama was running. Windows looks
+  "localhost" up as IPv6 first, Ollama listens on IPv4 only, and Windows takes about two seconds to say nothing
+  listens there: longer than ENLENS's quick look for a running model server. ENLENS now asks 127.0.0.1 first for
+  any model server on this computer, which also takes about two seconds off every request to a local model on
+  Windows. When Ollama answers already, the card no longer leaves the install's "Starting Ollama…" bar in place.
+
+### Tests
+
+- `tests/test_localhost_ipv4_first.py`: localhost goes to 127.0.0.1 first with the request kept whole, a server on
+  IPv6 alone is still reached, a timeout is not tried twice, other addresses are untouched, and the quick look finds
+  a stand-in Ollama listening on 127.0.0.1 only.
+
+### Not yet done
+
+- The cause was confirmed on a real Windows PC (Ollama 0.40.16 answered at 127.0.0.1 while the card said it was
+  starting); the fixed card has not yet been tried there.
+
 ## 0.19.9 (November 2026): Hear when your work has finished
 
 ENLENS now tells you, in your computer's own notifications, when work you started has finished. A user found that
