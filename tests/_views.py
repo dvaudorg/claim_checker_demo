@@ -6,13 +6,16 @@ when its scenario threw, logged an error or made a server call it did not expect
 
   t.answer("PUT /api/x", reply)      the server's answer to a call: an object, (body, path, method) => object, or
                                      t.fail(status, message); a key without a method matches any; a key may end in
-                                     "?*" (any query) or be a RegExp. t.calls lists each call {method, path, body}.
+                                     "?*" (any query) or be a RegExp. t.calls lists each call {method, path, body,
+                                     headers}.
   t.state(state, {project, hash})    App.state (settings, projects…) and the location hash; t.navs: hashes set since
   await t.render(VIEW, "renderX", params, query)   imports static/<VIEW> and renders it into #view's page
   await t.module(PATH)               a module of static/, to call what it exports
   t.text(el?) / t.buttons(el?) / t.find(label) / t.field(label) / t.focused() / t.hidden(el) / t.toasts()
   await t.click(label) / t.type(label, text) / t.press(key) / t.settle(ms)   act, then let promises and timers run
-  t.layout(el => rect) / t.scrolls / t.select(textNode, start, end)   where things are on the screen, scrolling, a selection
+  t.layout(el => rect) / t.scrolls / t.select(textNode, start, end)   where things are on the screen (and their sizes:
+                                     clientWidth, offsetWidth… in the rect), scrolling, a selection
+  await t.resize()                   tells every ResizeObserver its elements changed size
 
 `text()` is what a person sees: folded <details> show only their summary, hidden elements and icons are left out.
 Timers are fake: t.settle(ms) moves the clock on by ms and runs what falls due. Tests skip without Node.
@@ -167,8 +170,16 @@ class Element extends Node {
   get labels() { return this.id ? document.querySelectorAll(`label[for="${this.id}"]`) : []; }
   get innerText() { return seen(this); }
   set innerHTML(v) { if (v !== "") throw new Error("innerHTML is not allowed"); this.textContent = ""; }
-  get offsetHeight() { return 0; } get offsetWidth() { return 0; } get clientHeight() { return 0; } get clientWidth() { return 0; }
-  get scrollHeight() { return 0; } get scrollWidth() { return 0; } get offsetTop() { return 0; } get offsetParent() { return this.parentElement; }
+  // sizes are 0 unless t.layout's answer for the element names them ({clientWidth: 900, offsetWidth: 120…})
+  get offsetHeight() { return sized(this, "offsetHeight"); } get offsetWidth() { return sized(this, "offsetWidth"); }
+  get clientHeight() { return sized(this, "clientHeight"); } get clientWidth() { return sized(this, "clientWidth"); }
+  get scrollHeight() { return sized(this, "scrollHeight"); } get scrollWidth() { return sized(this, "scrollWidth"); }
+  get offsetTop() { return 0; } get offsetParent() { return this.parentElement; }
+  // a table's parts, as the browser offers them
+  get tHead() { return this.tagName === "TABLE" ? this.children.find((c) => c.tagName === "THEAD") || null : undefined; }
+  get tBodies() { return this.tagName === "TABLE" ? this.children.filter((c) => c.tagName === "TBODY") : undefined; }
+  get cells() { return this.children.filter((c) => c.tagName === "TD" || c.tagName === "TH"); }
+  get cellIndex() { return this.parentNode ? this.parentNode.cells.indexOf(this) : -1; }
   getBoundingClientRect() { const r = this._rect || (layout && layout(this)) || { top: 0, left: 0, width: 0, height: 0 }; return { ...r, x: r.left, y: r.top, bottom: r.top + r.height, right: r.left + r.width }; }
   getClientRects() { return [this.getBoundingClientRect()]; }
   focus(o) { if (this.disabled) return; const was = document.activeElement; document.activeElement = this; if (was !== this) this.dispatchEvent(new Event("focus", { bubbles: false })); }
@@ -194,7 +205,10 @@ class Element extends Node {
       this.dispatchEvent(new Event("input", { bubbles: true })); this.dispatchEvent(new Event("change", { bubbles: true }));
     }
     if (go && this.tagName === "LABEL" && this.getAttribute("for")) { const c = document.getElementById(this.getAttribute("for")); if (c && c !== this) c.click(); }
+    // a submit button (a button of no type, or type submit) submits its form, as in a browser
+    if (go && this.tagName === "BUTTON" && (this.getAttribute("type") || "submit") === "submit") { const f = this.closest("form"); if (f) f.requestSubmit(this); }
   }
+  requestSubmit(submitter) { this.dispatchEvent(new Event("submit", { bubbles: true, submitter: submitter || null })); }
   showModal() { this.open = true; dialogsOpened.push(seen(this.querySelector("h2") || this)); }
   show() { this.open = true; }
   close(v) { if (!this.open) return; this.open = false; this.returnValue = v; this.dispatchEvent(new Event("close", { bubbles: false })); }
@@ -207,7 +221,12 @@ class Element extends Node {
 for (const b of BOOL) Object.defineProperty(Element.prototype, b, { get() { return this.hasAttribute(b); }, set(v) { this.toggleAttribute(b, !!v); }, configurable: true });
 Object.defineProperty(Element.prototype, "checked", { get() { return this._checked !== undefined ? this._checked : this.hasAttribute("checked"); }, set(v) { this._checked = !!v; }, configurable: true });
 for (const p of PROPS) Object.defineProperty(Element.prototype, camel(p) === "for" ? "htmlFor" : camel(p), { get() { return this.getAttribute(p) ?? ""; }, set(v) { this.setAttribute(p, v); }, configurable: true });
-Object.defineProperty(Element.prototype, "rows", { get() { return Number(this.getAttribute("rows") || 2); }, set(v) { this.setAttribute("rows", v); }, configurable: true });
+// rows: a textarea's height in lines; a table's (or its head's or body's) rows
+Object.defineProperty(Element.prototype, "rows", { get() {
+  if (this.tagName === "TABLE") return this.querySelectorAll("tr").filter((r) => r.parentNode === this || r.parentNode.parentNode === this);
+  if (/^(THEAD|TBODY|TFOOT)$/.test(this.tagName)) return this.children.filter((c) => c.tagName === "TR");
+  return Number(this.getAttribute("rows") || 2);
+}, set(v) { this.setAttribute("rows", v); }, configurable: true });
 
 // ---- simple selectors: tag, #id, .class, [a], [a=v], :not(…), :nth-child(n), :scope, :checked, :disabled; " ", ">", ","
 function parseSel(sel) {
@@ -279,6 +298,13 @@ class Event {
 }
 class CustomEvent extends Event { constructor(t, o = {}) { super(t, o); this.detail = o.detail; } }
 class Observer { constructor(fn) { this.fn = fn; } observe() {} unobserve() {} disconnect() {} takeRecords() { return []; } }
+// a ResizeObserver answers t.resize(): each one still observing is called with the elements it watches
+const resizers = new Set();
+class Resizer extends Observer {
+  observe(el) { (this.els = this.els || []).push(el); resizers.add(this); }
+  unobserve(el) { this.els = (this.els || []).filter((x) => x !== el); }
+  disconnect() { resizers.delete(this); }
+}
 
 // ---- the clock: timers wait for t.settle(ms)
 const clock = { now: 0, timers: [], seq: 0 };
@@ -287,11 +313,12 @@ const dropTimer = (id) => { clock.timers = clock.timers.filter((x) => x.id !== i
 
 // ---- what the scenario sees and records
 let scrolls = [], dialogsOpened = [], errors = [], selection = null, clipboard = [], layout = null;
+const sized = (el, k) => { const r = el._rect || (layout && layout(el)); return r && r[k] != null ? r[k] : 0; };
 function report(e) { errors.push(String((e && e.stack) || e).split("\n").slice(0, 4).join(" | ")); }
 const g = globalThis;
 Object.assign(g, { Node, Element, HTMLElement: Element, SVGElement: Element, HTMLInputElement: Element, HTMLDialogElement: Element, Text, DocumentFragment: Fragment,
   Event, CustomEvent, KeyboardEvent: Event, MouseEvent: Event, FocusEvent: Event, InputEvent: Event, HashChangeEvent: Event, PopStateEvent: Event,
-  IntersectionObserver: Observer, ResizeObserver: Observer, MutationObserver: Observer,
+  IntersectionObserver: Observer, ResizeObserver: Resizer, MutationObserver: Observer,
   CSS: { escape: (s) => String(s).replace(/[^\w-]/g, (c) => "\\" + c), supports: () => true },
   setTimeout: (fn, ms) => addTimer(fn, ms, false), clearTimeout: dropTimer, setInterval: (fn, ms) => addTimer(fn, ms, true), clearInterval: dropTimer,
   requestAnimationFrame: (fn) => addTimer(() => fn(clock.now), 16, false), cancelAnimationFrame: dropTimer,
@@ -483,7 +510,9 @@ function newTest(name) {
       await settle(o.wait || 0);
     },
     focused: () => describe(document.activeElement),
-    layout(fn) { layout = fn; },   // fn(el) -> {top, left, width, height} or null: where elements are on the screen
+    layout(fn) { layout = fn; },   // fn(el) -> {top, left, width, height, clientWidth…} or null: where elements are on the screen
+    // the window or an element changed size: every ResizeObserver still observing is told, then timers run
+    async resize(o = {}) { for (const r of [...resizers]) { try { r.fn((r.els || []).map((target) => ({ target })), r); } catch (e) { report(e); } } await settle(o.wait || 0); },
     hidden: (el) => !el || hiddenEl(el),
     dialogs: () => document.querySelectorAll("dialog").filter((d) => d.open && d.isConnected),
     dialog() { const d = t.dialogs().pop(); return d || null; },
@@ -501,7 +530,7 @@ function newTest(name) {
     const method = (opts.method || "GET").toUpperCase();
     let body = opts.body;
     if (typeof body === "string") { try { body = JSON.parse(body); } catch (_) { /* text */ } }
-    calls.push({ method, path, body: body === undefined ? null : body });
+    calls.push({ method, path, body: body === undefined ? null : body, headers: { ...(opts.headers || {}) } });
     const bare = path.split("?")[0];
     const hit = table.find(({ key }) => {
       if (key instanceof RegExp) return key.test(`${method} ${path}`);
@@ -528,7 +557,7 @@ async function scenario(name, fn) {
   document.body.replaceChildren(mk("main", { id: "view" }), mk("div", { id: "dialogs" }), mk("div", { id: "toasts" }));
   document.activeElement = document.body;
   sessionStorage.clear(); localStorage.clear();
-  clock.timers = []; navs = []; scrolls = []; dialogsOpened = []; errors = []; selection = null; clipboard = []; layout = null; loc._hash = "";
+  clock.timers = []; resizers.clear(); navs = []; scrolls = []; dialogsOpened = []; errors = []; selection = null; clipboard = []; layout = null; loc._hash = "";
   const t = newTest(name);
   t.state();
   let value = null, threw = null;
