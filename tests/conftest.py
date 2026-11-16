@@ -85,6 +85,8 @@ def _no_real_enlens_home(tmp_path, monkeypatch):
     monkeypatch.setenv("ENLENS_HOME", str(tmp_path / "enlens-home"))
     # 0.18.0rc2: secrets (a storage space's keys) go to files in that folder, never the computer's own keychain
     monkeypatch.setenv("ENLENS_KEYCHAIN", "file")
+    # after 0.19.7: no test shows a notification on the screen (tests/test_notify.py switches it on with stand-ins)
+    monkeypatch.setenv("ENLENS_NO_NOTIFY", "1")
 
 
 @pytest.fixture(autouse=True)
