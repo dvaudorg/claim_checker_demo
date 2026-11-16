@@ -162,9 +162,9 @@ and other technical facts sit under *Technical details* and *Settings → Techni
 The **Write in the log** button at the top right of every page opens the research log in a panel beside the page: write an entry
 that is kept with the page you are on, and see that page's entries (*This page*) or all of them (*All*); its foot link,
 *The whole research log*, opens the page of the same name, a place under *Project*
-([The research log](notes-and-log.md#the-research-log)). **Team**, also under *Project*, is where you work with
-colleagues (0.17.0; [Work together](together.md#through-a-shared-folder)). In a project with a team, its entry in the
-sidebar says the team's state at its end (*synced 15:44*, *3 new*).
+([The research log](notes-and-log.md#the-research-log)). **Team**, the line under the project's name, is where you
+work with colleagues (0.17.0; [Work together](together.md#through-a-shared-folder)). In a project with a team, it says
+the team's state at its end (*synced 15:44*, *3 new*).
 
 A walk through a whole first project, from adding documents to the Excel file, is in [Your first project, start to finish](first-project.md).
 
