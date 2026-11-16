@@ -526,6 +526,20 @@ computer has not got the space's keys: a project copied from elsewhere; ask for 
   project's folder before it is kept; the rounds ask the drive again. 400 in plain words when the drive refuses it.
 - `POST /api/projects/<p>/space/drive-retry` → the folder's state: after a refused app password, the next round asks
   the drive once more (*Try the same one again*).
+- One person's two accounts (16 November 2026, `sync/selfsync.py`): `GET …/shared-folder` has `"self_sync": null |
+  {"needs_space": true, "linked": [{"person", "name"}]}` (a shared folder: the owner marked another account as this
+  person, and the option needs a storage space) `| {"needs_space": false, "candidates": [{"person", "name", "part",
+  "since", "code"}] (accounts the owner marked as this person, members of the space now; "code": the check code of
+  both accounts' keys), "on": null | {"person", "name", "since", "at"} (this account sends its private work to that
+  one), "theirs" (the other account turned it on too, naming this one), "active" (both, the owner's link and the
+  roster hold: private work goes both ways), "why" (in words, when it is on and not active), "code", "sent_at",
+  "received_at", "sent", "received" (items)}`. A round's `result` has `"private": {"sent", "received"}`; its problems
+  may have kind `self_sync` (the private exchange failed this round; the shared work went on).
+- `PUT /api/projects/<p>/space/self-sync {"with": person id}` → the folder's state: *Send my private work to my other
+  account*, this account's own word (the other account must say it too). 400 in words, kind `no_space` (a shared
+  folder), `not_linked` (the owner has not marked that account as this person), `not_member` (not in the space now).
+  The research log says so (kind `sync`, never sent).
+- `DELETE /api/projects/<p>/space/self-sync` → the folder's state: stops it; what already arrived stays.
 - `DELETE /api/projects/<p>/space/notices/<id>` → the folder's state: a standing notice is dealt with: `unshare-<part>`
   (the person stopped sharing the folder in the drive's website; said in the research log) or `restored`. 400 for one
   that is not there.

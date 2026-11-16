@@ -40,6 +40,10 @@ leaves the computer has a row for every item (`materialise`), so a colleague kno
   to colleagues already (`upgrade`, once, when 0.18 first opens the project). A project never sent starts private.
 - An item that reached you inside a colleague's whole project zip (not shared by them) stays theirs and private: you
   see it, you never pass it on.
+- One person with two accounts (two computers), both sending their private work to each other through the storage
+  space (sync/selfsync.py): an item either account made is "mine" in both copies (`_partner`), and a colleague's copy
+  takes one account's mark of an item the other made when it verified the pair itself. Their private items stay
+  private: they reach the other account only, marked as theirs.
 """
 from __future__ import annotations
 
@@ -162,13 +166,29 @@ def rows(cx: sqlite3.Connection) -> dict[tuple[str, str], dict]:
             for r in cx.execute("SELECT kind, key, state, owner, by, at, title FROM shares")}
 
 
+def _partner(cx: sqlite3.Connection, me: str) -> str | None:
+    """This person's other account, while both send their private work to each other (sync/selfsync.py): an item
+    either made is theirs, in both copies."""
+    from .sync.selfsync import partner
+
+    return partner(cx, me)
+
+
+def _pairs(cx: sqlite3.Connection) -> dict[str, str]:
+    from .sync.selfsync import pairs
+
+    return pairs(cx)
+
+
 def state(cx: sqlite3.Connection, kind: str, key: str, me: str | None = None) -> dict:
-    """An item's state here: {"state", "owner", "by", "at", "mine"}. No row: yours, and private."""
+    """An item's state here: {"state", "owner", "by", "at", "mine"}. No row: yours, and private. "mine": made by you,
+    or by your other account (sync/selfsync.py)."""
     m = me or _me()
     r = cx.execute("SELECT state, owner, by, at FROM shares WHERE kind=? AND key=?", (kind, key)).fetchone()
     if r is None:
         return {"state": "private", "owner": m, "by": None, "at": None, "mine": True}
-    return {"state": r[0], "owner": r[1], "by": r[2], "at": r[3], "mine": r[1] == m}
+    return {"state": r[0], "owner": r[1], "by": r[2], "at": r[3],
+            "mine": r[1] == m or (r[1] is not None and r[1] == _partner(cx, m))}
 
 
 def shared_keys(cx: sqlite3.Connection, kind: str) -> set[str]:
@@ -279,7 +299,7 @@ def _set(cx: sqlite3.Connection, kind: str, key: str, st: str, owner: str | None
 def _may(cx: sqlite3.Connection, kind: str, key: str, me: str, title: str) -> dict:
     """The item's state, when `me` may share it or take it back: theirs, or one whose maker nobody knows."""
     s = state(cx, kind, key, me)
-    if s["owner"] not in (None, me):
+    if s["owner"] is not None and not s["mine"]:  # (your other account's counts as yours: sync/selfsync.py)
         who = names_of(cx).get(s["owner"]) or "a colleague"
         raise PermissionError(f"“{title[:80]}” is {who}'s: only they can share it or take it back.")
     return s
@@ -333,7 +353,7 @@ def share(ws, raw_items: Iterable, why: str | None = None) -> dict:
             title = titles[kind].get(key) or key
             if (kind, key) in also:  # what a shared item needs: a colleague's is shared by them, or stays theirs
                 s = state(cx, kind, key, me)
-                if s["owner"] not in (None, me):
+                if s["owner"] is not None and not s["mine"]:
                     (already if s["state"] == "shared" else cannot).append({"kind": kind, "key": key, "title": title})
                     continue
             s = _may(cx, kind, key, me, title)
@@ -395,6 +415,7 @@ def listing(ws, kind: str | None = None, state_: str | None = None) -> dict:
     have = rows(cx)
     out, counts = [], {k: {s: 0 for s in STATES} for k in KINDS}
     keys = {(k, key) for k, ks in titles.items() for key in ks} | set(have)
+    yours = {me, _partner(cx, me) or me}  # your other account's items count as yours (sync/selfsync.py)
     for k, key in sorted(keys):
         r = have.get((k, key))
         st = r["state"] if r else "private"
@@ -404,8 +425,8 @@ def listing(ws, kind: str | None = None, state_: str | None = None) -> dict:
             continue
         here = key in titles[k]
         out.append({"kind": k, "key": key, "title": titles[k].get(key) or (r or {}).get("title") or key, "state": st,
-                    "mine": owner == me, "owner": {"id": owner, "name": who.get(owner, "a colleague")} if owner else None,
-                    "can_change": owner in (None, me) and here, "at": (r or {}).get("at"),
+                    "mine": owner in yours, "owner": {"id": owner, "name": who.get(owner, "a colleague")} if owner else None,
+                    "can_change": (owner is None or owner in yours) and here, "at": (r or {}).get("at"),
                     "by": who.get(r["by"], "a colleague") if r and r.get("by") else None, "here": here,
                     "needs": [{"kind": a, "key": b} for a, b in needs(cx, root, k, key)] if here else []})
     return {"items": out, "counts": counts}
@@ -433,15 +454,21 @@ def receive(cx: sqlite3.Connection, kind: str, key: str, r: dict, me: str, prese
         return None
     here = cx.execute("SELECT state, owner, by, at FROM shares WHERE kind=? AND key=?", (kind, key)).fetchone()
     had = present if had is None else had
+    by = r.get("by")
+    # one person's two accounts, both sending their private work to each other, verified by this copy in the storage
+    # space (sync/selfsync.py): either account's mark of an item the other made counts as its maker's
+    pair = _pairs(cx) if by else {}
     if (here is None and had) or (here is not None and here[1] == me):
-        return None  # yours: only you decide
+        if not (by and pair.get(me) == by):
+            return None  # yours: only you decide (or your other account)
     if not present and here is None and r["state"] != "withdrawn":
         return None  # not here (it did not come in): nothing to note
-    if here is not None and r.get("by") is None:
+    if here is not None and by is None:
         return None  # a guess (a project from before 0.18) never counts over a mark this copy has
-    owner = here[1] if here is not None else r.get("owner")  # a mark never makes anyone the owner of an item here
-    if owner and r.get("by") not in (None, owner):
-        return None  # a mark only its owner can make
+    # a mark never makes anyone the owner of an item here (one of yours without a row is yours)
+    owner = here[1] if here is not None else (me if had else r.get("owner"))
+    if owner and by not in (None, owner) and pair.get(owner) != by:
+        return None  # a mark only its owner can make (or the owner's other account)
     if here is not None and (r.get("at") or "") <= (here[3] or ""):
         return None
     cx.execute("INSERT INTO shares(kind, key, state, owner, by, at, title) VALUES (?,?,?,?,?,?,?) ON CONFLICT(kind, key) "

@@ -1732,6 +1732,8 @@ ROUTES: list[tuple[str, re.Pattern, str]] = [(m, re.compile("^" + p + "$"), h) f
     ("DELETE", rf"/api/projects/{P}/space/members/(m[0-9a-f]{{12}})", "delete_space_member"),
     ("DELETE", rf"/api/projects/{P}/space/notices/(restored|unshare-m[0-9a-f]{{12}})", "delete_space_notice"),
     ("POST", rf"/api/projects/{P}/space/drive-retry", "post_space_drive_retry"),
+    ("PUT", rf"/api/projects/{P}/space/self-sync", "put_space_self_sync"),         # 16 November 2026: one person's
+    ("DELETE", rf"/api/projects/{P}/space/self-sync", "delete_space_self_sync"),   # two accounts (sync/selfsync.py)
     ("POST", rf"/api/projects/{P}/space/move", "post_space_move"),
     ("POST", rf"/api/projects/{P}/space/join", "post_space_join"),
     ("DELETE", rf"/api/projects/{P}/space", "delete_space"),
