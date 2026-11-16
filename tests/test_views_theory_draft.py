@@ -134,7 +134,7 @@ await scenario("problems of a reading", async (t) => {
 await scenario("a reading that failed", async (t) => {
   await open(t, DRAFT({ reading: { state: "failed", problems: ["First problem", "Claude Code did not answer."] } }));
   const n = t.view.querySelector(".td-theory .notice-error");
-  return { notice: t.text(n), retry: t.find("Try again", { within: n }) !== null };
+  return { notice: t.text(n), retry: t.find("Read it again", { within: n }) !== null };
 });
 
 await scenario("read the theory", async (t) => {
@@ -264,7 +264,7 @@ def test_each_problem_of_a_reading_is_a_line_of_its_own(page):
 
 
 @needs_node
-def test_a_reading_that_failed_says_its_last_problem_and_offers_try_again(page):
+def test_a_reading_that_failed_says_its_last_problem_and_offers_read_it_again(page):
     f = page["a reading that failed"]
     assert f["notice"].splitlines()[0] == "Claude Code did not answer."
     assert "First problem" not in f["notice"] and f["retry"] is True

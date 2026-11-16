@@ -80,7 +80,7 @@ await scenario("themes not named, one reason", async (t) => {
   t.answer("GET /api/jobs/jn", { id: "jn", state: "running", progress: {} });
   const n = t.view.querySelector(".th-not-named-notice");
   const out = { notice: t.text(n), local: !!n.querySelector(".icon-house") };
-  await t.click("Try again", { within: n });
+  await t.click("Name them again", { within: n });
   out.posts = t.calls.filter((c) => c.method === "POST").map((c) => c.path);
   return out;
 });
@@ -134,10 +134,10 @@ def test_a_definition_drafted_by_claude_does_not_say_it_was_read_on_this_compute
 
 
 @needs_node
-def test_themes_the_ai_could_not_name_are_counted_with_the_reason_and_try_again(page):
+def test_themes_the_ai_could_not_name_are_counted_with_the_reason_and_name_them_again(page):
     t = page["themes not named, one reason"]
     assert t["notice"].startswith("The AI (qwen3:8b) could not name 2 themes after three tries: the model answered with no name. "
-                                  "They keep their key terms as a name. Try again, or rename them yourself.")
+                                  "They keep their key terms as a name. Name them again, or rename them yourself.")
     assert "Your local model (qwen3:8b) reads their passages on this computer" in t["notice"] and t["local"] is True
     assert t["posts"] == ["/api/projects/Study/themes/r1/name"]
 

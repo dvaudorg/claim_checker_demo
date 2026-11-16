@@ -16,7 +16,8 @@ const MODEL = "qwen3.5:9b";
 // what a person sees of a panel's buttons: their words in order, and which is the main one
 const row = (t, el) => [...el.querySelectorAll("button")].filter((b) => !t.hidden(b))
   .map((b) => [t.text(b), b.classList.contains("btn-primary") ? "main" : "other"]);
-const kind = (el) => (el.querySelector(".notice-warn") ? "attention" : el.querySelector(".notice-local") ? "local" : "other");
+// the local side's state (0.19.12 AI run panel): "need" asks for attention, "wait" waits for the person's press
+const kind = (el) => ({ need: "attention", wait: "waiting" }[el.querySelector(".ab-side").dataset.state] || el.querySelector(".ab-side").dataset.state);
 function put(el) { document.getElementById("view").appendChild(el); return el; }
 
 await scenario("judge it myself, memory short", async (t) => {
@@ -27,9 +28,12 @@ await scenario("judge it myself, memory short", async (t) => {
   const out = { buttons: row(t, p), text: t.text(p), kind: kind(p) };
   await t.click("Judge them myself");
   out.afterYourself = { said: [...said], disabled: t.find("Judge them myself") ? t.find("Judge them myself").disabled : null };
-  await t.click(`Start ${MODEL}`);
-  out.said = said;
+  await t.click(`Start ${MODEL}`);   // with Judge it myself and too little memory, Start asks first
   out.dialogs = t.dialogs().length;
+  out.asked = t.dialog() ? t.text(t.dialog().querySelector("h2")) : null;
+  out.saidBeforeConfirm = [...said];
+  await t.click("Start it anyway", { within: t.dialog() });
+  out.said = said;
   return out;
 });
 
@@ -157,7 +161,7 @@ def test_with_judge_it_myself_it_is_the_first_and_main_button_and_start_comes_se
     assert p["buttons"] == [["Judge them myself", "main"], ["Start qwen3.5:9b", "other"]]
     assert "Start it anyway" not in p["text"]                  # Judge it myself takes its place
     assert "They then wait for your judgement, marked Awaiting manual review" in p["text"]
-    assert "Needs about 8.7 GB of memory; 3.1 GB is free now." in p["text"]
+    assert "Needs about 8.7 GB of memory · 3.1 GB free now · 5.6 GB short" in p["text"]
     assert p["kind"] == "attention"                            # a blocking panel short of memory asks for attention
 
 
@@ -166,15 +170,17 @@ def test_judge_it_myself_hands_the_excerpts_over_and_start_starts_without_force(
     p = page["judge it myself, memory short"]
     assert p["afterYourself"]["said"] == [["yourself"]]
     assert p["afterYourself"]["disabled"] is True              # pressed once: not twice
-    assert p["said"] == [["yourself"], ["start", False]]
-    assert p["dialogs"] == 0                                   # Start asks nothing
+    # too little memory: Start asks first (0.19.12) and starts, forced, only once confirmed
+    assert p["dialogs"] == 1 and p["asked"] == "Start qwen3.5:9b anyway?"
+    assert p["saidBeforeConfirm"] == [["yourself"]]
+    assert p["said"] == [["yourself"], ["start", True]]
 
 
 @needs_node
 def test_judge_it_myself_stays_first_with_memory_enough(page):
     p = page["judge it myself, memory enough"]
     assert p["buttons"] == [["Judge it myself", "main"], ["Start qwen3.5:9b", "other"]]
-    assert "Needs about 4.2 GB of memory; 12.0 GB is free now." in p["text"]
+    assert "Needs about 4.2 GB of memory · 12.0 GB free now" in p["text"]
 
 
 @needs_node
@@ -188,10 +194,10 @@ def test_a_failed_judge_it_myself_says_why_and_can_be_pressed_again(page):
 def test_without_judge_it_myself_start_is_the_main_button_and_says_where_it_runs(page):
     p = page["start only, memory enough"]
     assert p["buttons"] == [["Start qwen3.5:9b", "main"]]
-    assert "33 passages wait for your local model" in p["text"]
-    assert "Runs here, in this app, and stops by itself when nothing waits." in p["text"]
+    assert "33 passages wait for qwen3.5:9b" in p["text"]
+    assert "Nothing runs until you press it." in p["text"]
     assert "Start it anyway" not in p["text"]                  # memory enough: nothing to force
-    assert p["kind"] == "local"
+    assert p["kind"] == "waiting"
     assert p["said"] == [False] and p["startDisabled"] is True
 
 
@@ -233,7 +239,7 @@ def test_a_run_refused_for_memory_shows_the_panel_in_the_pages_place_not_a_toast
     assert p["shown"] is True and p["toasts"] == [] and p["dialogs"] == 0
     assert p["buttons"] == [["Start qwen3.5:9b", "main"], ["Start it anyway", "other"]]
     assert "qwen3.5:9b was not started, so “Naming themes” waits for it" in p["text"]
-    assert "Needs about 8.7 GB of memory; 3.1 GB is free now." in p["text"]
+    assert "Needs about 8.7 GB of memory · 3.1 GB free now" in p["text"]
 
 
 @needs_node

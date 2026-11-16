@@ -142,7 +142,8 @@ await scenario("the job's line", async (t) => {
   document.getElementById("view").appendChild(mj.el);
   const tail = "word ".repeat(80) + "the last words it wrote";
   const job = (model, state = "running") => ({ id: "j1", state, seconds: 40, progress: { elapsed: 40, model } });
-  const read = () => ({ msg: t.text(mj.msg), detail: t.hidden(mj.detail) ? null : t.text(mj.detail), tail: t.hidden(mj.tail) ? null : t.text(mj.tail) });
+  // 0.19.12: the line is the local side of the job's AI run panel: its words, its tail and its figures
+  const read = () => ({ msg: t.text(mj.msg), side: t.text(mj.el.querySelector(".ar-local")) });
   const out = {};
   mj.update(job({ who: "local", model: "qwen3.5:9b", phase: "waiting", prompt_tokens: 3100, seconds: 4 }));
   out.loading = read();
@@ -248,8 +249,8 @@ def test_a_model_that_is_not_on_this_computer_is_not_said_to_be(page):
 @needs_node
 def test_while_it_writes_the_line_counts_its_tokens_and_speed(page):
     d = page["model detail"]
-    assert d["thinking"] == "On this computer · 1,200 tokens of reasoning · 14.3 tokens a second"
-    assert d["writing"] == ("On this computer · 1,200 tokens of reasoning · 340 tokens of its answer · 12.0 tokens a second · "
+    assert d["thinking"] == "On this computer · 1,200 tokens of reasoning · 14.3 a second"
+    assert d["writing"] == ("On this computer · 1,200 tokens of reasoning · 340 of its answer · 12.0 a second · "
                             "its reasoning budget is used up, so it answers from its notes now")
     assert d["writingNoFigures"] == "On this computer"
 
@@ -267,10 +268,10 @@ def test_no_line_while_it_waits_its_turn_has_finished_or_was_refused(page):
 @needs_node
 def test_after_twenty_seconds_without_a_new_token_the_line_says_it_has_gone_quiet(page):
     q = page["gone quiet"]
-    assert q["first"] == "On this computer · 500 tokens of reasoning · 8.0 tokens a second"
+    assert q["first"] == "On this computer · 500 tokens of reasoning · 8.0 a second"
     assert q["at19"] == q["first"]
     assert q["at25"] == q["first"] + " · nothing new for 25 s; it may still be working"
-    assert q["moved"] == "On this computer · 520 tokens of reasoning · 8.0 tokens a second"   # a new token: no longer quiet
+    assert q["moved"] == "On this computer · 520 tokens of reasoning · 8.0 a second"   # a new token: no longer quiet
     assert q["nothingYet"] == "On this computer"
 
 
@@ -288,15 +289,15 @@ def test_time_left_is_reckoned_from_the_items_done_and_left_out_when_it_cannot_b
 @needs_node
 def test_the_jobs_line_names_the_local_model_and_shows_its_numbers_and_latest_words(page):
     j = page["the job's line"]
-    assert j["loading"] == {"msg": "Naming themes: qwen3.5:9b is loading and reading",
-                            "detail": "On this computer · reading a prompt of about 3,100 tokens · 4.0 s so far", "tail": None}
-    assert j["thinking"]["msg"] == "Naming themes: qwen3.5:9b is thinking it over"
-    assert j["thinking"]["detail"] == "On this computer · 800 tokens of reasoning · 9.5 tokens a second"
-    assert j["thinking"]["tail"].endswith("the last words it wrote") and len(j["thinking"]["tail"]) <= 200
-    assert j["quiet"]["detail"].endswith("nothing new for 25 s; it may still be working")
-    assert j["writing"]["msg"] == "Naming themes: qwen3.5:9b is writing its answer"
-    assert j["writing"]["tail"] is None                        # its latest words run along only while it reasons
-    assert j["done"] == {"msg": "Done.", "detail": None, "tail": None}
+    assert j["loading"]["msg"] == "Naming themes…"
+    assert j["loading"]["side"] == ("On this computer At work\nqwen3.5:9b is loading and reading\n4.0 s\n"
+                                    "reading a prompt of about 3,100 tokens · 4.0 s so far")
+    assert "qwen3.5:9b is thinking it over" in j["thinking"]["side"]
+    assert j["thinking"]["side"].endswith("the last words it wrote▍\n800 tokens of reasoning · 9.5 a second")
+    assert "Nothing new for 25 s; it may still be working." in j["quiet"]["side"]
+    assert "qwen3.5:9b is writing its answer" in j["writing"]["side"]
+    assert j["writing"]["side"].endswith("800 tokens of reasoning · 60 of its answer · 9.5 a second")
+    assert j["done"]["msg"] == "Done." and j["done"]["side"] == "On this computer Done\nqwen3.5:9b has read its part"
 
 
 # ---- in front ------------------------------------------------------------------------------------------------
