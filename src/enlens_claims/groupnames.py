@@ -23,7 +23,9 @@ the group as it is now. Under other filters or another size nothing is flagged: 
 view does.
 
 **Local to this computer**, in this release: the two tables are listed in `sync.common.LOCAL_ONLY`, in
-`sharing._LOCAL_TABLES` (a zip for a colleague leaves them out) and in the bundle's forget list. Names are not part of a
+`sharing._LOCAL_TABLES` (a zip for a colleague leaves them out) and in the bundle's forget list; the AI's tasks for them
+(kind `group_name`, with their passages and answers) are in `sharing.LOCAL_TASK_KINDS`, so neither a zip for a
+colleague nor the shared folder carries them, and none comes in from a colleague. Names are not part of a
 team's shared work yet (the manual says so).
 
 **The AI's drafts** (Level 2 or 3, on request only). *Name the groups* sends one request, which only puts tasks in the
@@ -50,12 +52,14 @@ from .store import Workspace, now
 KIND = "group_name"
 MAX_NAME = 60            # characters
 MAX_PASSAGES = 6         # passages per group sent to the AI
+MAX_CANDIDATES = 200     # passages looked at for them, those where most of the group's concepts meet first
 PER_DOC = 2              # at most this many from one document, while others have some
 MAX_CHARS = 6000         # and at most this much text
 MAX_CONCEPTS = 12        # concepts named to the AI
 MIN_QUOTE_WORDS = 3
 SOURCES = ("concepts", "person", "ai_draft", "ai")
 
+_T_OK = "temp.d1_name_docs"   # the documents the reader may read (_passages_of)
 NONE_MAY_READ = "No AI may read these documents, so the groups can only be named by you."
 
 
@@ -166,7 +170,7 @@ def attach(ws: Workspace, out: dict, members: list[list[str]], labels: dict[str,
         records = []
     on_map = set(labels)
     took = match(records, members, on_map)
-    fails = _failures(ws) if any(gi not in took or took[gi]["source"] == "ai_draft" for gi in range(len(members))) else []
+    fails = _failures(ws) if any(gi not in took or took[gi]["source"] != "person" for gi in range(len(members))) else []
     used = set()
     for gi, gr in enumerate(out["groups"]):
         ms = members[gi]
@@ -182,7 +186,7 @@ def attach(ws: Workspace, out: dict, members: list[list[str]], labels: dict[str,
                       quote=_quote_view(ws, rec["quote"]) if rec["source"] in ("ai", "ai_draft") else None,
                       changed=changed(rec, ms, labels, filters, n))
         gr["naming_failed"] = None
-        if gr["name_source"] == "concepts":
+        if gr["name_source"] != "person":         # named by its concepts, or by the AI before ("Name the groups again")
             gs = set(ms)
             for cs, why in fails:
                 if cs and len(cs & gs) * 2 > len(cs):
@@ -208,16 +212,22 @@ def _clean_ids(xs) -> list[str]:
     return [str(x) for x in (xs or []) if isinstance(x, (str, int)) and str(x)][:200]
 
 
-def _forget_failures(cx, concepts: list[str]) -> None:
-    """A group renamed or named by its concepts again: the AI's failed tries for it are no longer the page's news."""
+def _forget_failures(cx, concepts: list[str], statuses: tuple[str, ...] = ("failed",)) -> None:
+    """A group renamed, named by the AI, its name used or kept, or named by its concepts again: the AI's failed tries
+    for it are no longer the page's news. With `statuses` ("failed", "done"), its answered tasks go too: a draft the
+    researcher turned down (*Use its concepts as the name*) is not handed back unasked by the next *Name the groups*,
+    which would find the same task done, or its kept answer."""
     cs = set(concepts)
-    for tid, payload in cx.execute("SELECT task_id, payload_json FROM tasks WHERE kind=? AND status='failed'",
-                                   (KIND,)).fetchall():
+    for tid, payload in cx.execute(f"SELECT task_id, payload_json FROM tasks WHERE kind=? AND status IN "
+                                   f"({','.join('?' * len(statuses))})", (KIND, *statuses)).fetchall():
         try:
             got = set(json.loads(payload or "{}").get("concept_ids") or [])
         except ValueError:
             continue
         if got and len(got & cs) * 2 > len(got):
+            if "done" in statuses:     # and the kept answer (tasks.answer_from_cache) that would bring it back
+                cx.execute("DELETE FROM ai_cache WHERE kind=? AND raw_json IN (SELECT raw_json FROM results WHERE "
+                           "task_id=?)", (KIND, tid))
             cx.execute("DELETE FROM results WHERE task_id=?", (tid,))
             cx.execute("DELETE FROM tasks WHERE task_id=?", (tid,))
 
@@ -230,7 +240,8 @@ def save(ws: Workspace, action: str, body: dict) -> dict:
       is now; an empty name is refused.
     - `use_concepts` {name_id, concepts}: the group is named by its concepts again (the kept name is removed).
     - `accept` {name_id | items: [{name_id, concepts, labels}], concepts, labels, filters, n}: the AI's draft used
-      (`ai`), with the group as it is now; `unaccept` {name_id | items}: back to a draft (Undo).
+      (`ai`), with the group as it is now; the answer adds `before`, each name as it was. `unaccept` {before}: each
+      name put back as it was (Undo), while it is still the used name; {name_id | items}: back to a draft only.
     - `keep` {name_id, concepts, labels, filters, n}: the name now goes with the group as it is (a changed group).
     - `forget` {name_id}: a kept name no group takes, removed; `restore` {record}: put back (Undo).
     Raises KeyError for a name that is not there, ValueError for a request that cannot be done."""
@@ -282,31 +293,50 @@ def save(ws: Workspace, action: str, body: dict) -> dict:
                 get(cx, nid)
                 cx.execute("DELETE FROM concept_group_names WHERE name_id=?", (nid,))
                 cx.execute("DELETE FROM concept_group_quotes WHERE name_id=?", (nid,))
-            _forget_failures(cx, concepts)
+            _forget_failures(cx, concepts, ("failed", "done"))
             return {"record": None}
+        elif action == "unaccept" and isinstance(body.get("before"), list):
+            # Undo of Use this name: each name as it was before (its group, filters and size, and its source)
+            cols = ("name", "source", "model", "concepts_json", "labels_json", "filters_json", "n", "updated_at")
+            done = []
+            for row in body["before"]:
+                if not isinstance(row, dict) or not row.get("name_id") or row.get("source") not in ("ai_draft", "ai"):
+                    raise ValueError("Nothing to put back.")
+                r = get(cx, str(row["name_id"]))
+                if r["source"] == "ai":       # still the used name (not renamed meanwhile)
+                    cx.execute(f"UPDATE concept_group_names SET {', '.join(c + '=?' for c in cols)} WHERE name_id=?",
+                               (*(row.get(c) if c in row else r[c] for c in cols), r["name_id"]))
+                done.append(str(row["name_id"]))
+            if len(done) != 1:
+                return {"record": None}
+            nid = done[0]
         elif action in ("accept", "unaccept"):
             items = body.get("items") if isinstance(body.get("items"), list) else [
                 {"name_id": nid, "concepts": concepts, "labels": labels}]
+            before = []
             for it in items:
                 if not isinstance(it, dict) or not it.get("name_id"):
                     raise ValueError("Say which name.")
                 r = get(cx, str(it["name_id"]))
                 if action == "accept" and r["source"] in ("ai_draft", "ai"):
+                    before.append(dict(r))
                     conc = _clean_ids(it.get("concepts")) or json.loads(r["concepts_json"] or "[]")
                     labs = it.get("labels") if isinstance(it.get("labels"), dict) else {}
                     group_now(cx, r["name_id"], conc, {str(k): _clean(v, 200) for k, v in labs.items()} or
                               json.loads(r["labels_json"] or "{}"), "ai")
+                    _forget_failures(cx, conc)
                 elif action == "unaccept" and r["source"] == "ai":
                     cx.execute("UPDATE concept_group_names SET source='ai_draft', updated_at=? WHERE name_id=?",
                                (at, r["name_id"]))
             if len(items) != 1:
-                return {"record": None}
+                return {"record": None, "before": before} if action == "accept" else {"record": None}
             nid = str(items[0]["name_id"])
         elif action == "keep":
             get(cx, nid)
             if not concepts:
                 raise ValueError("Say which concepts the group holds.")
             group_now(cx, nid, concepts, labels)
+            _forget_failures(cx, concepts)
         elif action == "forget":
             r = get(cx, nid)
             q = cx.execute("SELECT * FROM concept_group_quotes WHERE name_id=?", (nid,)).fetchone()
@@ -333,6 +363,8 @@ def save(ws: Workspace, action: str, body: dict) -> dict:
         else:
             raise ValueError(f"Unknown action {action!r}.")
     recs = [r for r in _rows(ws) if r["name_id"] == nid]
+    if action == "accept":         # what Use this name overwrote, for its Undo (`unaccept` {before})
+        return {"record": recs[0] if recs else None, "before": before}
     return {"record": recs[0] if recs else None}
 
 
@@ -371,12 +403,25 @@ def _passages_of(ws: Workspace, f, nodes: list[str], g, allowed: set[str], lv: d
     first, spread over the documents, only from documents of the `allowed` settings."""
     from .conceptmap import _T_PI, _Scope
 
+    docs = [r[0] for r in ws.query("SELECT doc_id FROM documents") if (lv.get(r[0]) or dflt) in allowed]
+    if not docs:
+        return []
     with _Scope(ws, g, f) as sc:
         if sc.empty() or not sc.total():
             return []
         sc._index(nodes)
-        rows = sc.cx.execute(f"SELECT x.passage_id, COUNT(*) AS k, GROUP_CONCAT(x.i) AS ii FROM {_T_PI} x GROUP BY "
-                             f"x.passage_id HAVING COUNT(*) >= 2 ORDER BY k DESC, x.passage_id LIMIT 200").fetchall()
+        # the documents this reader may read, before the limit: a group whose most-shared passages are all in
+        # documents it may not read still finds the ones it may
+        sc.cx.execute(f"DROP TABLE IF EXISTS {_T_OK}")
+        sc.cx.execute(f"CREATE TABLE {_T_OK}(doc_id TEXT PRIMARY KEY) WITHOUT ROWID")
+        sc.cx.executemany(f"INSERT INTO {_T_OK} VALUES (?)", [(d,) for d in docs])
+        try:
+            rows = sc.cx.execute(
+                f"SELECT x.passage_id, COUNT(*) AS k, GROUP_CONCAT(x.i) AS ii FROM {_T_PI} x JOIN passages p ON "
+                f"p.passage_id=x.passage_id JOIN {_T_OK} o ON o.doc_id=p.doc_id GROUP BY x.passage_id HAVING "
+                f"COUNT(*) >= 2 ORDER BY k DESC, x.passage_id LIMIT ?", (MAX_CANDIDATES,)).fetchall()
+        finally:
+            sc.cx.execute(f"DROP TABLE IF EXISTS {_T_OK}")
     if not rows:
         return []
     ids = [r[0] for r in rows]
@@ -425,7 +470,7 @@ def payloads(ws: Workspace, f, n: int, which: str, allowed: set[str], settings: 
         if gr["name_source"] == "person":
             out["person"] += 1
             continue
-        if which != "again" and gr["name_source"] != "concepts":
+        if which != "again" and gr["name_source"] != "concepts" and not gr.get("naming_failed"):
             continue
         ms = gr["concepts"]
         nodes = [g.node(t) for t in ms]
@@ -437,7 +482,10 @@ def payloads(ws: Workspace, f, n: int, which: str, allowed: set[str], settings: 
                    "labels": {t: lab[t] for t in ms},
                    "docs": sorted({p["doc_id"] for p in ps}), "filters": m["filters"], "n": m["n"],
                    "name_id": gr["name_id"],
-                   "before": gr["name"] if which == "again" and gr["name_source"] in ("ai", "ai_draft") else None,
+                   "before": gr["name"] if gr["name_source"] in ("ai", "ai_draft") else None,
+                   # the whole map's groups (term ids) and this one's place: `apply` finds the name this group has on
+                   # the map, never one another group holds (a name whose concepts span two groups)
+                   "map_groups": [x["concepts"] for x in m["groups"]], "group_index": m["groups"].index(gr),
                    "passages": [{"n": k, "passage_id": p["passage_id"], "page": p["page"], "text": p["text"],
                                  "concepts": [lab[ms[i]] for i in p["nodes"] if i < len(ms)][:8]}
                                 for k, p in enumerate(ps, 1)]}
@@ -520,9 +568,13 @@ def apply(ws: Workspace, task_id: str) -> dict | None:
         for x in recs:
             x["concepts"] = json.loads(x["concepts_json"] or "[]")
         nid = payload.get("name_id") if any(x["name_id"] == payload.get("name_id") for x in recs) else None
-        if nid is None:
-            took = match(recs, [concepts], set(concepts))
-            nid = took[0]["name_id"] if 0 in took else None
+        groups, gi = payload.get("map_groups"), payload.get("group_index")
+        if nid is None and isinstance(groups, list) and isinstance(gi, int) and 0 <= gi < len(groups):
+            # a name given since to this group, as the map stood when the task was made: one another group of that map
+            # takes (it shares a few concepts with this one) is that group's, and stays as it is
+            groups = [[str(c) for c in x] for x in groups if isinstance(x, list)]
+            took = match(recs, groups, {c for x in groups for c in x})
+            nid = took[gi]["name_id"] if gi in took else None
         if nid and next(x for x in recs if x["name_id"] == nid)["source"] == "person":
             return None          # the researcher named it meanwhile: never overwritten
         if nid is None:
@@ -538,6 +590,7 @@ def apply(ws: Workspace, task_id: str) -> dict | None:
                        (name, r[0]["model"], json.dumps(concepts), json.dumps(labels, ensure_ascii=False),
                         json.dumps(payload.get("filters") or {}, sort_keys=True), int(payload.get("n") or 0), at, nid))
         cx.execute("DELETE FROM concept_group_quotes WHERE name_id=?", (nid,))
+        _forget_failures(cx, concepts)        # named now: an earlier failure for it is no longer the page's news
         if hit:
             doc, start = cx.execute("SELECT doc_id, start FROM passages WHERE passage_id=?",
                                     (p["passage_id"],)).fetchone() or (None, None)

@@ -100,8 +100,8 @@ def test_a_name_given_stays_with_its_group_and_waits_while_its_group_is_off_the_
     f = Filters(docs=[solar])
     f.applied = f.describe()
     m4 = conceptmap.concept_map(project, f, 30)
-    if all(x["name_source"] != "person" for x in m4["groups"]):
-        assert [x["name"] for x in m4["names_elsewhere"]] == ["Parking and the pool"]
+    assert m4["groups"] and all(x["name_source"] != "person" for x in m4["groups"])
+    assert [x["name"] for x in m4["names_elsewhere"]] == ["Parking and the pool"]
     # the same again: an empty name is refused, and "Use its concepts as the name" removes it
     with pytest.raises(ValueError):
         groupnames.save(project, "rename", _body(m, g, name="   ", name_id=r["record"]["name_id"]))
@@ -255,6 +255,205 @@ def test_forget_and_restore_a_name(project):
         groupnames.save(project, "forget", {"name_id": "nope"})
     with pytest.raises(ValueError):
         groupnames.save(project, "dance", {})
+
+
+# ---- review findings ----------------------------------------------------------------------------------------------
+def _insert_name(ws, name, source, concepts, labels=None):
+    nid = f"n-{name[:6].lower()}"
+    with ws.connect() as cx:
+        cx.execute("INSERT INTO concept_group_names(name_id, name, source, model, concepts_json, labels_json, "
+                   "filters_json, n, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                   (nid, name, source, "claude-haiku-5-5" if source != "person" else None, json.dumps(concepts),
+                    json.dumps(labels or {}), "{}", 30, "2026-11-17T08:00:00+00:00", "2026-11-17T08:00:00+00:00"))
+    return nid
+
+
+@pytest.mark.parametrize("source", ["ai_draft", "ai", "person"])
+def test_an_ai_draft_never_takes_the_name_another_group_holds(project, source):
+    """A kept name whose concepts span two groups of the map (all of the big group's, and two of a smaller one's):
+    the big group holds it. The smaller group's draft is its own new name; the big group's name is left as it was."""
+    m = _map(project)
+    big, small = sorted(m["groups"], key=lambda g: -len(g["concepts"]))[:2]
+    assert len(big["concepts"]) > 2 and len(small["concepts"]) >= 2
+    nid = _insert_name(project, "Kept for the big one", source, big["concepts"] + small["concepts"][:2])
+    m = _map(project)
+    by = _by_first(m)
+    assert by[big["concepts"][0]]["name_id"] == nid and by[small["concepts"][0]]["name_source"] == "concepts"
+    r = groupnames.name_groups(project, Filters(), 30, "unnamed", FakeModel(), "claude-haiku-5-5")
+    assert r["failed"] == 0
+    row = project.query("SELECT name, source FROM concept_group_names WHERE name_id=?", (nid,))[0]
+    assert (row["name"], row["source"]) == ("Kept for the big one", source)          # never overwritten
+    by = _by_first(_map(project))
+    assert by[big["concepts"][0]]["name_id"] == nid
+    got = by[small["concepts"][0]]
+    assert got["name_source"] == "ai_draft" and got["name_id"] != nid and got["name"].startswith("Talk of ")
+
+
+def test_after_name_the_groups_again_a_group_the_ai_could_not_name_says_why(project):
+    """Asked again, a group named by the AI before keeps that name when the AI cannot name it anew, and the page
+    says why (the toast promises it); Name them again ("unnamed") asks for it again, told the name before."""
+    groupnames.name_groups(project, Filters(), 30, "unnamed", FakeModel(), "claude-haiku-5-5")
+    m = _map(project)
+    assert {g["name_source"] for g in m["groups"]} == {"ai_draft"}
+    r = groupnames.name_groups(project, Filters(), 30, "again", FakeModel(), "claude-haiku-5-5")
+    assert r["failed"] == len(m["groups"])
+    m2 = _map(project)
+    for g in m2["groups"]:
+        assert g["name_source"] == "ai_draft" and g["naming_failed"], g
+        assert g["naming_failed"]["reason"]
+    got = groupnames.payloads(project, Filters(), 30, "unnamed", {"cloud"})
+    assert len(got["tasks"]) == len(m["groups"])
+    assert all(p["before"] == gr["name"] for gr, p in got["tasks"])
+    # a new name for one of them: its failure is no longer the page's news
+    class Other(FakeModel):
+        def complete(self, kind, system, user, model, payload):
+            obj = json.loads(super().complete(kind, system, user, model, payload))
+            return json.dumps({**obj, "name": "Something else entirely"})
+    groupnames.name_groups(project, Filters(), 30, "unnamed", Other(), "claude-haiku-5-5")
+    assert all(g["naming_failed"] is None for g in _map(project)["groups"])
+
+
+def test_a_draft_turned_down_is_not_handed_back_without_asking_the_ai(project):
+    model = FakeModel()
+    groupnames.name_groups(project, Filters(), 30, "unnamed", model, "claude-haiku-5-5")
+    m = _map(project)
+    d = m["groups"][0]
+    assert d["name_source"] == "ai_draft"
+    groupnames.save(project, "use_concepts", {"name_id": d["name_id"], "concepts": d["concepts"]})
+    assert _by_first(_map(project))[d["concepts"][0]]["name_source"] == "concepts"
+    model2 = FakeModel()
+    r = groupnames.name_groups(project, Filters(), 30, "unnamed", model2, "claude-haiku-5-5")
+    assert r["groups"] == 1 and model2.calls == 1                 # the AI is asked, not the old answer reused
+
+
+def test_a_group_finds_the_passages_it_may_read_beyond_the_most_shared_ones(project, monkeypatch):
+    """The passages where most of a group's concepts meet are taken only from documents the reader may read: a
+    group whose most-shared passages are all in a document marked No AI still finds the others."""
+    from enlens_claims.conceptpaths import _Graph
+
+    m = _map(project)
+    g = _Graph(project)
+    lv, dflt = access.levels(project), access.default(project)
+    def docs_of(x):
+        nodes = [g.node(t) for t in x["concepts"]]
+        return {p["doc_id"] for p in groupnames._passages_of(project, Filters(), nodes, g, {"cloud"}, lv, dflt)}
+
+    gr = next(x for x in m["groups"] if len(docs_of(x)) >= 2)
+    nodes = [g.node(t) for t in gr["concepts"]]
+    monkeypatch.setattr(groupnames, "MAX_CANDIDATES", 1)
+    top = groupnames._passages_of(project, Filters(), nodes, g, {"cloud"}, lv, dflt)[0]["doc_id"]
+    access.set_documents(project, [top], "none")
+    lv = access.levels(project)
+    got = groupnames._passages_of(project, Filters(), nodes, g, {"cloud"}, lv, dflt)
+    assert got and all(p["doc_id"] != top for p in got)
+
+
+def test_undo_of_use_this_name_puts_back_what_it_overwrote(project):
+    groupnames.name_groups(project, Filters(), 30, "unnamed", FakeModel(), "claude-haiku-5-5")
+    m = _map(project)
+    d = m["groups"][0]
+    was = dict(project.query("SELECT * FROM concept_group_names WHERE name_id=?", (d["name_id"],))[0])
+    # used under another size and with fewer concepts than it was drafted for
+    r = groupnames.save(project, "accept", {**_body(m, d), "concepts": d["concepts"][:3], "n": 60})
+    assert r["before"] and r["before"][0]["name_id"] == d["name_id"]
+    assert project.scalar("SELECT n FROM concept_group_names WHERE name_id=?", (d["name_id"],)) == 60
+    back = groupnames.save(project, "unaccept", {"name_id": d["name_id"], "before": json.loads(json.dumps(r["before"]))})
+    assert back["record"]["source"] == "ai_draft"
+    now = dict(project.query("SELECT * FROM concept_group_names WHERE name_id=?", (d["name_id"],))[0])
+    assert now == was
+    # all at once, and back
+    items = [{"name_id": x["name_id"], "concepts": x["concepts"][:2]} for x in m["groups"]]
+    r = groupnames.save(project, "accept", {"items": items, "filters": {}, "n": 90})
+    assert len(r["before"]) == len(items)
+    groupnames.save(project, "unaccept", {"items": items, "before": r["before"]})
+    assert {x["n"] for x in project.query("SELECT n FROM concept_group_names")} == {30}
+    assert {g["name_source"] for g in _map(project)["groups"]} == {"ai_draft"}
+
+
+def test_passages_only_a_local_ai_may_read_never_go_into_a_task_for_claude(project, monkeypatch):
+    """The binding rule: a document marked Only a local AI is never in a group_name task Claude reads, with no local
+    model chosen (those passages are left out) and with one (its tasks go to the local model only)."""
+    solar = project.scalar("SELECT doc_id FROM documents WHERE title='Solar report'")
+    access.set_documents(project, [solar], "local")
+    others = " ".join(" ".join(r["text"].split()) for r in project.query("SELECT text FROM passages WHERE doc_id!=?",
+                                                                          (solar,)))
+    # its passages' text that no other document holds (the corpus repeats a few sentences across documents)
+    texts = [t for t in (" ".join(r["text"].split()) for r in project.query("SELECT text FROM passages WHERE doc_id=?",
+                                                                             (solar,))) if t not in others]
+    assert texts
+    pids = {r["passage_id"] for r in project.query("SELECT passage_id FROM passages WHERE doc_id=?", (solar,))}
+
+    def no_local_text(model):
+        for p in model.prompts:
+            flat = " ".join(p.split())
+            assert not any(t in flat for t in texts)
+
+    def cloud_tasks_clean():
+        for r in project.query("SELECT payload_json, access FROM tasks WHERE kind='group_name'"):
+            got = {x["passage_id"] for x in json.loads(r["payload_json"])["passages"]}
+            if got & pids:
+                assert r["access"] == "local", r["access"]
+
+    cloud = FakeModel()
+    groupnames.name_groups(project, Filters(), 30, "unnamed", cloud, "claude-haiku-5-5")
+    assert cloud.calls
+    assert all(not ({x["passage_id"] for x in json.loads(r["payload_json"])["passages"]} & pids)
+               for r in project.query("SELECT payload_json FROM tasks WHERE kind='group_name'"))
+    no_local_text(cloud)
+    # a local model chosen: the passages of that document go only to it
+    class Local(FakeModel):
+        name = "ollama"
+        base_url = "http://127.0.0.1:11434"
+    local = Local()
+    ehome.save_settings({**ehome.load_settings(), "restricted_server": "ollama", "restricted_model": "big"})
+    monkeypatch.setattr(ehome, "make_restricted_backend", lambda settings: (local, "big"))
+    cloud2 = FakeModel()
+    with project.connect() as cx:
+        cx.execute("DELETE FROM results WHERE task_id IN (SELECT task_id FROM tasks WHERE kind='group_name')")
+        cx.execute("DELETE FROM tasks WHERE kind='group_name'")
+        cx.execute("DELETE FROM concept_group_names")
+    groupnames.name_groups(project, Filters(), 30, "unnamed", cloud2, "claude-haiku-5-5")
+    no_local_text(cloud2)
+    cloud_tasks_clean()
+    assert local.calls >= 1 and any(any(t in " ".join(p.split()) for t in texts) for p in local.prompts)
+
+
+def test_with_claude_code_name_the_groups_only_queues_until_start(api, tmp_path, monkeypatch):  # noqa: F811
+    """No AI model starts until its own Start is pressed: with the Claude Code backend, Name the groups puts the
+    tasks in the queue and waits; nothing is answered and Claude Code is not started."""
+    from test_app import _wait_until
+
+    from enlens_claims import claude_setup
+
+    started = []
+    monkeypatch.setattr(claude_setup, "start_run", lambda *a, **k: started.append(1) or {"running": True})
+    st, r = api("PUT", "/api/settings", {"allow_claude_code": True, "backend": "claude_code", "embed_backend": "off"})
+    assert st == 200, r
+    assert api("POST", "/api/projects", {"name": "Q"})[0] == 200
+    ws = Workspace.open(ehome.project_path("Q"))
+    try:
+        ingest.ingest(ws, [write(tmp_path / "docs")["solar"].parent])
+        terms.build(ws)
+        st, m = api("GET", "/api/projects/Q/concept-map?n=30")
+        assert st == 200 and m["can_name"]["offered"] and m["can_name"]["reader"] == "claude", m["can_name"]
+        st, r = api("POST", "/api/projects/Q/concept-map/name-groups?n=30", {"which": "unnamed"})
+        assert st == 200, r
+        n = len(m["groups"])
+        _wait_until(lambda: ws.scalar("SELECT COUNT(*) FROM tasks WHERE kind='group_name' AND queued=1") == n)
+        import time
+
+        time.sleep(0.5)
+        assert ws.scalar("SELECT COUNT(*) FROM tasks WHERE kind='group_name' AND status='pending'") == n
+        assert ws.scalar("SELECT COUNT(*) FROM results") == 0
+        assert ws.scalar("SELECT COUNT(*) FROM concept_group_names") == 0
+        job = next(j for j in api("GET", "/api/jobs")[1]["jobs"] if j["id"] == r["job"]["id"])
+        assert job["state"] in ("running", "queued"), job["state"]
+        assert started == []
+        api("POST", f"/api/jobs/{r['job']['id']}/cancel")
+        api.wait(r["job"]["id"])
+        assert ws.scalar("SELECT COUNT(*) FROM results") == 0 and started == []
+    finally:
+        ws.close_all()
 
 
 def test_the_routes(api, tmp_path):  # noqa: F811

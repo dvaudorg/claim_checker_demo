@@ -263,6 +263,24 @@ await scenario("not named", async (t) => {
   return out;
 });
 
+// review: asked to name the groups again, the AI could not name two groups it had named before: the note says why
+await scenario("not named again", async (t) => {
+  const fail = { reason: "its quotes were not found word for word in the passages", model: "claude-haiku-5-5" };
+  const ai = (g, name) => G({ ...g, name, name_source: "ai_draft", name_id: `n${g.group}`, model: "claude-haiku-5-5", naming_failed: fail });
+  await page(t, { ...MAP, groups: [ai(MAP.groups[0], "Mending"), ai(MAP.groups[1], "Rubbish"), MAP.groups[2]] });
+  return t.text(groupsSec(t).querySelector(".cm-groups-note"));
+});
+
+// review: Undo of Use this name sends back what it overwrote
+await scenario("use this name and undo", async (t) => {
+  const before = [{ name_id: "n2", name: "Tools for bikes", source: "ai_draft", n: 30 }];
+  t.answer(`POST ${BASE}/names`, (body) => (body.action === "accept" ? { record: {}, before } : { record: {} }));
+  await page(t, NAMED);
+  await t.click("Use this name");
+  await t.click("Undo");
+  return t.calls.filter((c) => c.path === `${BASE}/names`).map((c) => c.body);
+});
+
 await scenario("no group", async (t) => {
   await page(t, { ...MAP, groups: [], nodes: MAP.nodes.map((n) => ({ ...n, group: 0 })), edges: [], links: [] });
   return { text: t.text(groupsSec(t)), table: !!groupsSec(t).querySelector("table"), button: !!groupsSec(t).querySelector("button") };
@@ -303,6 +321,24 @@ async function saved(t, map, query = {}) {
 }
 await scenario("download plain", async (t) => saved(t, NAMED));
 await scenario("download filtered", async (t) => saved(t, { ...KINDS, passages: 12, filters: { doc: ["d1"] } }, { doc: "d1", year_from: "2020" }));
+// a stand-in for the browser's computed style that follows the page's rules for a group's name on the map: they come
+// through the classes of the text's group (.cm-gname text, .cm-gname .cm-gdraft), as in views.css
+await scenario("download keeps the look of the group names", async (t) => {
+  const real = globalThis.getComputedStyle;
+  const classes = (el) => { const out = []; for (let x = el; x && x.getAttribute; x = x.parentNode) out.push(...String(x.getAttribute("class") || "").split(/\s+/)); return out; };
+  globalThis.getComputedStyle = (el) => {
+    const cs = classes(el), tag = el.localName || el.tagName || "";
+    const v = {};
+    if (cs.includes("cm-gname") && /^(text|tspan)$/i.test(tag)) Object.assign(v, { "font-weight": "650", fill: "rgb(68, 64, 60)", stroke: "rgb(255, 253, 248)", "paint-order": "stroke", "font-size": "13px" });
+    if (cs.includes("cm-gdraft")) Object.assign(v, { "font-weight": "400", fill: "rgb(120, 113, 108)" });
+    return { getPropertyValue: (k) => v[k] || "", display: "block" };
+  };
+  try {
+    const got = await saved(t, NAMED);
+    const m = /<text[^>]*>Tools for bikes<tspan[^>]*>[^<]*<\/tspan><\/text>/.exec(got.text || "");
+    return { text: m ? m[0] : null };
+  } finally { globalThis.getComputedStyle = real; }
+});
 """
 
 
@@ -563,6 +599,22 @@ def test_groups_the_ai_could_not_name_say_why_with_name_them_again(page):
 
 
 @needs_node
+def test_after_name_the_groups_again_the_note_says_the_groups_keep_the_ais_earlier_names(page):
+    """Review: the toast's "the page says why" holds when the groups the AI could not name had AI names before."""
+    assert page["not named again"].startswith(
+        "The AI (claude-haiku-5-5) could not name 2 groups after three tries: its quotes were not found word for word in "
+        "the passages. They keep the names the AI gave them before. Name them again, or rename them yourself.")
+
+
+@needs_node
+def test_undo_of_use_this_name_sends_back_what_it_overwrote(page):
+    sent = page["use this name and undo"]
+    assert [x["action"] for x in sent] == ["accept", "unaccept"]
+    assert sent[1]["name_id"] == "n2"
+    assert sent[1]["before"] == [{"name_id": "n2", "name": "Tools for bikes", "source": "ai_draft", "n": 30}]
+
+
+@needs_node
 def test_no_group_and_no_ai_may_read(page):
     """Plan 20."""
     g = page["no group"]
@@ -621,3 +673,19 @@ def test_the_picture_stands_alone_and_says_what_it_is(page):
         assert words in f, words
     assert "(AI draft)" not in f
     assert "its end says what kind" in f
+
+
+@needs_node
+def test_the_picture_keeps_the_look_of_the_group_names_on_the_map(page):
+    """Review: every element's computed look is read while the classes are still there (a group's name takes its rules
+    through its group's class), and only then are the classes removed: strong, --text-2, with the paper's halo; the
+    "(AI draft)" mark regular and muted."""
+    t = page["download keeps the look of the group names"]["text"]
+    assert t, "no group name in the picture"
+    head, draft = re.match(r"<text([^>]*)>Tools for bikes<tspan([^>]*)>", t).groups()
+    for k, v in (("font-weight", "650"), ("fill", "rgb(68, 64, 60)"), ("stroke", "rgb(255, 253, 248)"),
+                 ("paint-order", "stroke"), ("font-size", "13px")):
+        assert f'{k}="{v}"' in head, (k, head)
+    # its own regular weight, though SVG's default: it would take the name's strong weight otherwise
+    assert 'fill="rgb(120, 113, 108)"' in draft and 'font-weight="400"' in draft, draft
+    assert "stroke=" not in draft and "font-size=" not in draft      # the same as its text's: inherited, not repeated

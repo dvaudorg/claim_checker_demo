@@ -14,10 +14,12 @@ mentions in `term_mentions` in one sentence), by the words between them:
 
 **English only**, in this release (the manual says so). A pattern inside quotation marks (someone's words being
 quoted, a title) is passed by, and so is a sentence where the two terms are not joined by the connecting words alone
-(anything else between them, beyond an article). Each proposal is a row of `concept_links` with source `pattern`,
-never confirmed until a person accepts it, as links from search by meaning are; its sentences (each with its document
-and page) are kept in `concept_link_sentences`, so the Concepts page shows why it was proposed. Theory documents
-(docrole.py) are not read: the glossary leaves them out, so their terms have no mentions here.
+(anything else between them, beyond an article). A relation of one term upon another (effect, needs, shapes,
+clashes, replaces) is passed by when a question or a negation opens it (*whether*, *if*, *nothing in*, *no*, …) and
+when its verb is inside a longer known term (*training needs assessment*). Each proposal is a row of `concept_links`
+with source `pattern`, never confirmed until a person accepts it, as links from search by meaning are; its sentences
+(each with its document and page) are kept in `concept_link_sentences`, so the Concepts page shows why it was
+proposed. Theory documents (docrole.py) are not read: the glossary leaves them out, so their terms have no mentions here.
 
 Rebuilt with the glossary (terms.build calls `find`), like the abbreviation links: a person's decisions on the pairs
 (`reviews`, item kind `concept_link`) are kept, by the pair.
@@ -57,6 +59,11 @@ _BETWEEN = [
     (re.compile(rf"^\s+instead\s+of\s+{_ART}$", re.I), "replaces"),
 ]
 _LIST = re.compile(r"^\s*(?:,|,?\s+(?:and|or))\s+(?:(?:the|a|an)\s+)?$", re.I)   # between the items of a list
+# a question or a negation just before the first term: "whether X affects Y", "nothing in X conflicts with Y". Only the
+# relations of one term upon another are held back (a negated "such as" or "also called" is still a naming)
+_NEGATED = re.compile(r"\b(?:whether|if|nothing|no|not|never|none|neither|nor|without|unless|cannot|hardly)\b", re.I)
+_CLAUSE_END = re.compile(r"[.;:!?,\u2014\u2013()]")
+_NEGATABLE = {"effect", "needs", "shapes", "clashes", "replaces"}
 _QUOTES = "\"“”«»„"
 LANGUAGES = ("en",)
 
@@ -64,6 +71,12 @@ LANGUAGES = ("en",)
 def _inside_quotes(sentence: str, at: int) -> bool:
     """Whether position `at` of a sentence is inside quotation marks (an odd number of quote marks before it)."""
     return sum(sentence[:at].count(q) for q in _QUOTES) % 2 == 1
+
+
+def _opened_by_doubt(text: str, start: int) -> bool:
+    """Whether the last few words before `start`, in the same clause, hold a question or negation opener."""
+    clause = _CLAUSE_END.split(text[:start])[-1]
+    return bool(_NEGATED.search(" ".join(clause.split()[-4:])))
 
 
 def _pairs(text: str, ms: list[tuple[int, int, str]]) -> list[tuple[str, str, str]]:
@@ -94,6 +107,13 @@ def _pairs(text: str, ms: list[tuple[int, int, str]]) -> list[tuple[str, str, st
                 continue
             for rx, rel in _BETWEEN:
                 if not rx.match(gap) or _inside_quotes(text, e1) or _inside_quotes(text, s2):
+                    continue
+                if rel in _NEGATABLE and _opened_by_doubt(text, s1):
+                    continue
+                # the verb sits inside a longer known term that runs on to the second ("training needs assessment"); a
+                # glossary term that runs on only to the verb ("heat pumps instead") is no such term
+                verb_at = e1 + len(gap) - len(gap.lstrip(" ,"))
+                if rel in _NEGATABLE and any(m[0] <= s1 and m[1] > verb_at and m[1] >= e2 for m in ms):
                     continue
                 if rel == "same" and "(" in gap and ")" not in text[e2:e2 + 3]:
                     continue

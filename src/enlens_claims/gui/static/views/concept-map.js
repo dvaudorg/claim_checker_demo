@@ -436,22 +436,30 @@ export function pictureSvg(m, parts) {
       top, rule(mapY - 6), s("g", { transform: `translate(${pad},${mapY})` }, ...[...map.svg.childNodes]), rule(footY - 18),
       footLines.map((line, i) => txt(pad, footY + i * 16, "--fs-xs", "--muted", null, line)));
     host.appendChild(pic);
-    // every element takes what the page's rules compute for it (a group's name on the map has no class of its own:
-    // its rules come through its group's), written on it; then its class goes
+    // every element takes what the page's rules compute for it, written on it; only then do the classes go, in a
+    // second pass (a group's name on the map has no class of its own: its rules come through its group's, so a class
+    // removed early would take its look with it)
     const all = [];
     const walk = (el) => { for (const c of el.children) { all.push(c); walk(c); } };
     walk(pic);
+    // a tspan inherits from its text what is written on it, so it takes each value that differs from its text's (a
+    // draft mark's regular weight inside a strong name), not only those that differ from SVG's defaults
+    const looks = [];
     for (const el of all) {
-      if (/^(title|desc|g|svg)$/i.test(el.localName || el.tagName)) { el.removeAttribute("class"); continue; }
+      const tag = el.localName || el.tagName;
+      if (/^(title|desc|g|svg)$/i.test(tag)) continue;
       const cs = getComputedStyle(el);
-      const isText = /^(text|tspan)$/i.test(el.localName || el.tagName);
+      const isText = /^(text|tspan)$/i.test(tag);
+      const up = /^tspan$/i.test(tag) && el.parentNode ? getComputedStyle(el.parentNode) : null;
       for (const k of isText ? [...STYLE_PROPS, ...TEXT_PROPS] : STYLE_PROPS) {
         if (el.hasAttribute(k)) continue;
         const v = (cs.getPropertyValue(k) || "").trim();
-        if (v && !v.includes("var(") && SVG_DEFAULTS[k] !== v) el.setAttribute(k, v);
+        if (!v || v.includes("var(")) continue;
+        if (up ? (up.getPropertyValue(k) || "").trim() !== v : SVG_DEFAULTS[k] !== v) looks.push([el, k, v]);
       }
-      el.removeAttribute("class");
     }
+    for (const [el, k, v] of looks) el.setAttribute(k, v);
+    for (const el of all) el.removeAttribute("class");
     return svgText(pic);
   } finally {
     if (before === null) root.removeAttribute("data-theme"); else root.setAttribute("data-theme", before);
@@ -781,12 +789,23 @@ export async function renderConceptMap(view, params, query) {
 
   // the groups the AI could not name (it stays until they are named or renamed); its Name them again stands under the
   // Groups section's AI line (drawGroups)
+  // what the groups the AI could not name are called meanwhile: the name made from their concepts, or (asked to name
+  // them again) the name the AI drafted before
+  function keeps(failed) {
+    const one = failed.length === 1;
+    const byConcepts = failed.every((g) => g.name_source === "concepts");
+    const byAI = failed.every((g) => g.name_source === "ai" || g.name_source === "ai_draft");
+    const what = byConcepts ? (one ? "It keeps the name made from its concepts." : "They keep the names made from their concepts.")
+      : byAI ? (one ? "It keeps the name the AI gave it before." : "They keep the names the AI gave them before.")
+        : (one ? "It keeps the name it had." : "They keep the names they had.");
+    return `${what} ${one ? "Name it again, or rename it yourself." : "Name them again, or rename them yourself."}`;
+  }
   function failedNote(failed, can) {
     const why = failed[0].naming_failed;
     const again = aiButton({ sm: true, onClick: (e) => askNames(e.currentTarget, "unnamed") }, "Name them again");
     if (naming) setBusy(again, true);
     return notice({ kind: "error", live: false, class: "cm-groups-note" },
-      h("p", {}, `The AI${why.model ? ` (${why.model})` : ""} could not name ${plural(failed.length, "group")} after three tries: ${why.reason}. ${failed.length === 1 ? "It keeps the name made from its concepts. Name it again, or rename it yourself." : "They keep the names made from their concepts. Name them again, or rename them yourself."}`),
+      h("p", {}, `The AI${why.model ? ` (${why.model})` : ""} could not name ${plural(failed.length, "group")} after three tries: ${why.reason}. ${keeps(failed)}`),
       can.offered ? h("div", { class: "btn-row" }, withAI(again)) : null);
   }
 
@@ -821,7 +840,7 @@ export async function renderConceptMap(view, params, query) {
         drafts.length > 1 ? button({ sm: true, onClick: async () => {
           const items = drafts.map((g) => ({ name_id: g.name_id, concepts: g.concepts, labels: groupBody(g).labels }));
           await act({ action: "accept", items, filters: m.filters, n: m.n }, `${drafts.length} names used.`,
-            { refocus: "__ask", undo: () => ({ action: "unaccept", items: items.map((x) => ({ name_id: x.name_id })) }) });
+            { refocus: "__ask", undo: (r) => ({ action: "unaccept", items: items.map((x) => ({ name_id: x.name_id })), before: (r && r.before) || undefined }) });
         } }, `Use all ${drafts.length} names`) : null));
     }
     // the table
@@ -842,7 +861,7 @@ export async function renderConceptMap(view, params, query) {
         h("ul", { class: "ct-quotes" }, h("li", {}, h("span", { class: "serif" }, "“", shortTitle(q.quote, 260), "” "),
           q.doc_id ? link({ href: docHref(q), class: "small" }, `${q.title || "a document"}${q.page ? `, p. ${q.page}` : ""}`) : null))) : null;
       const acts = h("div", { class: "btn-row cm-group-acts" },
-        draft ? button({ sm: true, icon: "check", onClick: () => act({ action: "accept", ...groupBody(g) }, "Name used.", { refocus: first, undo: () => ({ action: "unaccept", name_id: g.name_id }) }) }, "Use this name") : null,
+        draft ? button({ sm: true, icon: "check", onClick: () => act({ action: "accept", ...groupBody(g) }, "Name used.", { refocus: first, undo: (r) => ({ action: "unaccept", name_id: g.name_id, before: (r && r.before) || undefined }) }) }, "Use this name") : null,
         ch && !draft ? button({ sm: true, icon: "check", onClick: () => act({ action: "keep", ...groupBody(g) }, "Kept. The name now goes with the group as it is.", { refocus: first }) }, "Keep the name") : null,
         button({ kind: "quiet", sm: true, icon: "type", "data-rename": first, "aria-label": `Rename the group “${groupName(g)}”`, onClick: () => rename(g) }, "Rename"));
       return h("tr", {},
