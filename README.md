@@ -57,10 +57,12 @@ Windows from 0.15.4 on). Your projects and settings (the `enlens` folder in your
   impact claims tagged with UN SDG targets and compared with an expert Value Chain Assessment.
 
 <!-- new-in:start (written by `python tools/release.py prepare`: change the changelog entry, not this) -->
-## New in 0.19.14: Claude Code is asked for once, and Enter confirms once
+## New in 0.19.15: No model starts without your click, and Team back under the project
 
-- **Once Claude Code has answered its part, nothing asks for Claude Code again.** Reading more excerpts of a check that also has excerpts marked Only a local AI: Claude Code answered its part in seconds, then the local model read its own for a few minutes.
-- **Enter in a "type the name to confirm" box no longer opens the box again.** Removing a project (or emptying one) with Enter instead of the button did remove it, but the same key press then reopened the dialog, empty, as if it had not worked.
+- **No AI model starts, or even loads, until you press its Start.** ENLENS no longer starts Ollama when it opens, and the *Settings → AI* card no longer starts it by itself when it is drawn: *Start Ollama* does, and so does the first Start of a local model.
+- **Stop frees the model's memory at once.** A job's *Stop* lets go of the local models it loaded, and *Stop* on the local side lets go of the local model once the item in hand is done.
+- **Team is back under the project's name.** The sidebar's *Team* entry in the *Project* group is gone again: as before 0.19.7, a small line joined under the project switch says *Team* and, in a project with a team.
+- **The AI panel's split bar runs along its top edge, and a stopped job's panel goes.** The thin bar over the two sides (this computer on the left, Claude on the right) was drawn as a pale band inside the frame, and its halves followed the two sides' columns.
 <!-- new-in:end -->
 
 How it works, in the manual: [Explore your documents](docs/manual/explore.md) (working documents, the concept map),
