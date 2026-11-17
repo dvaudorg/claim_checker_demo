@@ -350,11 +350,13 @@ def _decisions(kind: str, payload: dict, out: dict, other: dict | None = None) -
 def _stored(ws: Workspace, task_id: str) -> dict:
     """The answers a task already has, by route: {"local": raw, "claude": raw}. The newest accepted answer of each
     (a task the local model was unsure of has both)."""
-    out: dict = {"local": None, "claude": None}
-    for r in ws.query("SELECT raw_json, route FROM results WHERE task_id=? AND valid=1 ORDER BY attempt", (task_id,)):
+    out: dict = {"local": None, "claude": None, "models": {"local": None, "claude": None}}
+    for r in ws.query("SELECT raw_json, route, model FROM results WHERE task_id=? AND valid=1 ORDER BY attempt",
+                      (task_id,)):
         side = "claude" if r["route"] in _CLAUDE_ROUTES else "local" if r["route"] == _LOCAL_ROUTE else None
         if side:
             out[side] = r["raw_json"]
+            out["models"][side] = r["model"]   # who gave the answer reused: a comparison names the models that answered
     return out
 
 
@@ -443,13 +445,14 @@ def agreement(ws: Workspace, kind: str, n: int, local, claude_backend, seed: int
                                             for t in todo], claude_backend, "agreement between routes",
                                        should_stop=should_stop)
     items, pairs, failed = [], [], 0
+    used: dict = {"local": set(), "claude": set()}   # the models whose answers were compared (reused ones included)
     for i, t in enumerate(sample, 1):
         if should_stop and should_stop():
             break
         if progress:
             progress(i, len(sample))
         tid, payload = t["task_id"], json.loads(t["payload_json"])
-        raws, how = dict(have[tid]), {"local": "stored", "claude": "stored"}
+        raws, how = {"local": have[tid]["local"], "claude": have[tid]["claude"]}, {"local": "stored", "claude": "stored"}
         try:
             system, user = prompts.system_prompt(kind), prompts.user_prompt(kind, payload)
             if raws["local"] is None:
@@ -475,6 +478,8 @@ def agreement(ws: Workspace, kind: str, n: int, local, claude_backend, seed: int
             failed += 1
             items.append({"task_id": tid, "error": str(e)[:200]})
             continue
+        used["local"].add(str((have[tid]["models"]["local"] if how["local"] == "stored" else model_l) or ""))
+        used["claude"].add(str((have[tid]["models"]["claude"] if how["claude"] == "stored" else claude_alias(t)) or ""))
         keys = sorted(set(dl) | set(dc))
         ps = [(dl.get(k, "none"), dc.get(k, "none")) for k in keys]
         pairs += ps
@@ -483,8 +488,9 @@ def agreement(ws: Workspace, kind: str, n: int, local, claude_backend, seed: int
     kap = kappa(pairs)
     agree = round(sum(a == b for a, b in pairs) / len(pairs), 3) if pairs else None
     return {"kind": kind, "n": len(sample), "compared": len(items) - failed, "failed": failed, "kappa": kap,
-            "agree": agree, "decisions": len(pairs), "local_model": str(model_l or ""),
-            "claude_model": str(claude_used or ""),
+            "agree": agree, "decisions": len(pairs),
+            "local_model": ", ".join(sorted(used["local"] - {""})) or str(model_l or ""),
+            "claude_model": ", ".join(sorted(used["claude"] - {""})) or str(claude_used or ""),
             "items": items, "left_out": left_out, "asked": asked,
             "verdict": verdict_sentence(kind, kap, agree, len(pairs)),
             "thresholds": {"good": KAPPA_GOOD, "fair": KAPPA_FAIR}}
@@ -492,7 +498,9 @@ def agreement(ws: Workspace, kind: str, n: int, local, claude_backend, seed: int
 
 def keep_agreement(ws: Workspace, result: dict) -> dict:
     """Keep a finished comparison (what `agreement` returned) in the project: returns its row
-    {run_id, at, kind, n, compared, failed, decisions, kappa, agree, local_model, claude_model, app_version}."""
+    {run_id, at, kind, n, compared, failed, decisions, kappa, agree, local_model, claude_model, asked_local,
+    asked_claude, app_version}. The models are those whose answers were compared: an answer a task already had is
+    reused, so after a change of local model a comparison may name the earlier model (or both)."""
     import uuid
 
     from . import __version__
@@ -502,7 +510,8 @@ def keep_agreement(ws: Workspace, result: dict) -> dict:
            "kind": result["kind"], "n": result["n"], "compared": result["compared"], "failed": result["failed"],
            "decisions": result["decisions"], "kappa": result["kappa"], "agree": result["agree"],
            "local_model": result.get("local_model") or "", "claude_model": result.get("claude_model") or "",
-           "app_version": __version__}
+           "asked_local": (result.get("asked") or {}).get("local", 0),
+           "asked_claude": (result.get("asked") or {}).get("claude", 0), "app_version": __version__}
     cols = list(row)
     with ws.connect() as cx:
         cx.execute(f"INSERT INTO agreement_runs({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
@@ -517,6 +526,7 @@ def kept_agreements(ws: Workspace, limit: int = 20) -> list[dict]:
 
 def previous_agreement(ws: Workspace, kind: str, before_run_id: str) -> dict | None:
     """The last kept comparison of this kind before the one named, or None."""
-    rows = ws.query("SELECT * FROM agreement_runs WHERE kind=? AND rowid < (SELECT rowid FROM agreement_runs "
-                    "WHERE run_id=?) ORDER BY rowid DESC LIMIT 1", (kind, before_run_id))
+    rows = ws.query("SELECT * FROM agreement_runs WHERE kind=? AND compared > 0 AND kappa IS NOT NULL AND rowid < "
+                    "(SELECT rowid FROM agreement_runs WHERE run_id=?) ORDER BY rowid DESC LIMIT 1",
+                    (kind, before_run_id))
     return dict(rows[0]) if rows else None

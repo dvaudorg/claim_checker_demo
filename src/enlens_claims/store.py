@@ -278,7 +278,8 @@ CREATE TABLE IF NOT EXISTS retraction_matches(item_key TEXT PRIMARY KEY, checked
 -- I5 (benchmark.py): each finished comparison of the local model with Claude (kappa on a sample of one kind of
 -- answered task), kept so a later sample can be set beside it. About this computer's local model: not for sync
 CREATE TABLE IF NOT EXISTS agreement_runs(run_id TEXT PRIMARY KEY, at TEXT, kind TEXT, n INT, compared INT, failed INT,
-  decisions INT, kappa REAL, agree REAL, local_model TEXT, claude_model TEXT, app_version TEXT);
+  decisions INT, kappa REAL, agree REAL, local_model TEXT, claude_model TEXT, asked_local INT, asked_claude INT,
+  app_version TEXT);
 -- end of 0.18.1 part B
 -- Team codebooks (teamcodebooks.py): the owner's settings about codebooks (shared at once; the project's default
 -- codebook), one row per setting and writer, merged like `roles` (sync/owner_merge.py); a row counts when its writer

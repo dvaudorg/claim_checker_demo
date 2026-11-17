@@ -459,7 +459,13 @@ function modelSection(s, servers, watchers, info = { servers }) {
     const num = (v) => (v === null || v === undefined ? "–" : v.toFixed(2));
     function keptLine(r) {
       return h("li", {}, `${fmt.dateShort(r.at)} · ${kindName(r.kind)} · ${r.compared} compared · kappa ${num(r.kappa)} · ${r.agree === null || r.agree === undefined ? "–" : `${Math.round(r.agree * 100)}%`} agree · ${r.local_model || "local model"} and ${r.claude_model || "Claude"} `,
-        h("span", { class: "muted small" }, r.app_version ? `ENLENS ${r.app_version}` : ""));
+        h("span", { class: "muted small" }, [reusedNote(r), r.app_version ? `ENLENS ${r.app_version}` : ""].filter(Boolean).join(" · ")));
+    }
+    // answers a task already had are reused: say how many, since they may come from an earlier local model
+    function reusedNote(r) {
+      if (r.asked_local === null || r.asked_local === undefined) return "";
+      const reused = Math.max(0, (r.compared || 0) - r.asked_local);
+      return reused ? `${reused} local ${reused === 1 ? "answer" : "answers"} reused` : "";
     }
     function showKept() {
       if (!kept.length) { clear(keptBox); return; }

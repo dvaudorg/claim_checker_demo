@@ -514,12 +514,10 @@ def collect_person(ws: Workspace, label: str | None = None) -> dict:
     dec = _decisions(ws)
     who = {r["item_id"]: r["person_id"] or "" for r in ws.query(
         "SELECT item_id, person_id FROM reviews WHERE item_kind='label'")}
-    read = set()   # (framework, passage) the AI labelled: its label task was answered by a model
-    for r in ws.query("SELECT task_id FROM tasks WHERE kind='label' AND status='done' AND COALESCE(model, '')<>?",
-                      (PERSON,)):
-        fw, _sep, pid = r["task_id"][len("label:"):].rpartition(":")
-        if fw and pid:
-            read.add((fw, pid))
+    # the passages the AI labelled: their label task (`label:<framework>:<passage>`) was answered by a model. Matched
+    # on the whole task id, never split: a passage id has a colon of its own (`<doc>:0001`)
+    read = {r["task_id"] for r in ws.query(
+        "SELECT task_id FROM tasks WHERE kind='label' AND status='done' AND COALESCE(model, '')<>?", (PERSON,))}
     labels, added = [], []
     for r in ws.query("SELECT label_id, framework, passage_id, code, source, model, prompt_version FROM labels "
                       "WHERE source IN ('model', 'person') ORDER BY label_id"):
@@ -531,7 +529,7 @@ def collect_person(ws: Workspace, label: str | None = None) -> dict:
             labels.append({"kept": d["decision"] != "reject", "changed": d["decision"] == "change",
                            "model": r["model"] or "?", "prompt_version": r["prompt_version"] or "?",
                            "framework": r["framework"]})
-        elif (r["framework"], r["passage_id"]) in read:
+        elif f"label:{r['framework']}:{r['passage_id']}" in read:
             added.append({"framework": r["framework"]})
     return {"format": FORMAT, "kind": "person", "project": (label or ws.root.name).strip()[:120],
             "date": _dt.date.today().isoformat(), "scored_by": version(), "checks": checks,

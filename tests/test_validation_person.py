@@ -84,15 +84,15 @@ def real(tmp_path):
                        "(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                        (vid, "user_claim", "c1", f"p{vid}", "d1", ai, 0.8, "a quote of the document's text", model,
                         "check-v5", uv, note, "anna" if uv else None))
-        for lid, pid, code, source in [("l1", "p1", "SKILLS", "model"), ("l2", "p1", "WASTE", "model"),
-                                       ("l3", "p2", "SKILLS", "model"), ("l4", "p2", "COMMUNITY", "model"),
-                                       ("l5", "p2", "LEARNING", "person"), ("l6", "p9", "WASTE", "person"),
-                                       ("l7", "p3", "WASTE", "keywords")]:
+        for lid, pid, code, source in [("l1", "d1:0001", "SKILLS", "model"), ("l2", "d1:0001", "WASTE", "model"),
+                                       ("l3", "d1:0002", "SKILLS", "model"), ("l4", "d1:0002", "COMMUNITY", "model"),
+                                       ("l5", "d1:0002", "LEARNING", "person"), ("l6", "d1:0009", "WASTE", "person"),
+                                       ("l7", "d1:0003", "WASTE", "keywords")]:
             cx.execute("INSERT INTO labels(label_id, passage_id, doc_id, framework, code, relevance, direction, "
                        "quote, source, model, prompt_version) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                        (lid, pid, "d1", "repair", code, "main", "not_stated", "a quote", source,
                         "haiku" if source == "model" else None, "label-v1" if source == "model" else None))
-        for pid in ("p1", "p2"):  # the AI labelled p1 and p2; p9 it never read
+        for pid in ("d1:0001", "d1:0002"):  # the AI labelled these two (real passage ids hold a colon); 0009 never
             cx.execute("INSERT INTO tasks(task_id, kind, model, status) VALUES (?,?,?,?)",
                        (f"label:repair:{pid}", "label", "haiku", "done"))
     profile.set_label(ws, "l1", "accept")
@@ -112,7 +112,7 @@ def test_only_what_a_person_decided_counts(real):
         ("supports", "partially_supports", "sonnet"), ("supports", "supports", "sonnet")]
     assert rec["checks_person_only"] == 1
     assert sorted((lb["kept"], lb["changed"]) for lb in rec["labels"]) == [(False, False), (True, False), (True, True)]
-    assert rec["labels_added"] == [{"framework": "repair"}]      # LEARNING on p2; WASTE on p9 the AI never read
+    assert rec["labels_added"] == [{"framework": "repair"}]      # LEARNING on d1:0002; WASTE on d1:0009 the AI never read
     assert rec["people"] >= 1
     sc = v.score_person(rec)
     assert sc["checks"]["n"] == 4 and sc["checks"]["accuracy"] == 0.75
@@ -127,7 +127,7 @@ def test_the_file_holds_no_text_and_names_the_project_as_asked(real, tmp_path):
     path = v.write_person(rec, tmp_path / "runs")
     assert path.parent.name == "person" and path.name.endswith("-repair-caf-s.json")
     raw = path.read_text("utf-8")
-    assert "quote" not in raw and "a quote" not in raw and "check the page" not in raw and "p1" not in raw
+    assert "quote" not in raw and "a quote" not in raw and "check the page" not in raw and "d1:0001" not in raw
     assert v.latest_runs(tmp_path / "runs") == []                  # not a run of the gold set
 
 

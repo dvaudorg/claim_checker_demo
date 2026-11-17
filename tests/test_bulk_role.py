@@ -193,6 +193,17 @@ await scenario("the role every ticked document has is off", async (t) => {
   return await roleItems(t);
 });
 
+await scenario("one document ticked", async (t) => {
+  const s = await list(t);
+  t.answer(/^PUT \/api\/projects\/Study\/documents\/d1\/role$/, (b) => { s.roles.d1 = b.role; return { doc_id: "d1", role: b.role, changed: true }; });
+  await tick(t, "Field notes");
+  await roleItems(t);
+  await t.click("Theory", { within: bar(t) });
+  await t.click("Mark as theory", { within: t.dialog().querySelector(".dialog-actions") });
+  return { puts: t.calls.filter((c) => c.method === "PUT").map((c) => c.path), ticked: t.view.querySelectorAll(".doc-tick").filter((c) => c.checked).length,
+    barHidden: t.hidden(bar(t)), errors: [...t.errors] };
+});
+
 await scenario("cancelled", async (t) => {
   await list(t);
   await tick(t, "Field notes"); await tick(t, "My chapter draft");
@@ -240,3 +251,11 @@ def test_cancel_changes_nothing_and_keeps_the_ticks(page):
 
 from test_shared_projects import anna_and_ben  # noqa: E402,F401  (fixture)
 from test_app import api, home  # noqa: E402,F401  (fixtures)
+
+
+@needs_node
+def test_one_ticked_document_takes_the_single_route_and_the_list_goes_on(page):
+    r = page["one document ticked"]
+    assert r["puts"] == ["/api/projects/Study/documents/d1/role"]   # the one-document route, as its own page uses
+    assert r["ticked"] == 0 and r["barHidden"]                 # the list was redrawn: no "true is not iterable"
+    assert not r["errors"]

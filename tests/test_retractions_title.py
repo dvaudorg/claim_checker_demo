@@ -136,6 +136,9 @@ def test_a_notice_title_prefix_and_a_year_off_by_one_and_accents_still_match(ws,
     ("year off by two", candidate(year=2022)),
     ("other first author", candidate(family="Okafor")),
     ("a retraction notice's own title", candidate(title="Retraction: " + TITLE)),
+    ("a retraction note's own record", candidate(title="Retraction Note: " + TITLE)),
+    ("a correction's own record", candidate(title="Correction to: " + TITLE)),
+    ("an erratum's own record", candidate(title="Erratum: " + TITLE)),
     ("no author", {"DOI": MATCH, "title": [TITLE], "issued": {"date-parts": [[2020]]}}),
     ("no year", {"DOI": MATCH, "title": [TITLE], "author": [{"family": "Verhoeven"}]}),
 ])
@@ -233,6 +236,27 @@ def test_a_rejected_match_is_hidden_and_not_proposed_again(ws, crossref):
                      "kind='retraction-match'")[0]
     assert entry["subject_kind"] == "bib_item" and entry["subject_id"] == "w1" and MATCH in entry["text"]
     assert "another work" in entry["text"]
+
+
+def test_a_work_and_its_notice_record_still_match_the_work(ws, crossref):
+    crossref.candidates = [candidate(), candidate(doi=OTHER, title="Retraction Note: " + TITLE)]
+    out = look(ws, crossref)
+    assert out["title_matched"] == 1 and out["title_ambiguous"] == 0
+
+
+def test_a_rejection_survives_an_ambiguous_or_empty_lookup(ws, crossref):
+    look(ws, crossref)
+    retractions.reject_match(ws, "w1")
+    crossref.candidates = [candidate(), candidate(doi=OTHER)]   # two fit, one of them the rejected DOI: OTHER alone
+    crossref.retracted = set()
+    assert look(ws, crossref)["title_matched"] == 1            # another work alone fits: it may be proposed
+    retractions.reject_match(ws, "w1")                         # not that one either
+    for cands in ([candidate(doi="10.1/third"), candidate(doi="10.1/fourth")], []):   # two others; none
+        crossref.candidates = cands
+        look(ws, crossref)
+        assert ws.scalar("SELECT rejected_at FROM retraction_matches WHERE item_key='w1'")   # kept
+    crossref.candidates = [candidate(doi=OTHER)]
+    assert look(ws, crossref)["title_matched"] == 0            # the rejected DOI is not proposed again
 
 
 def test_taking_a_rejection_back(ws, crossref):

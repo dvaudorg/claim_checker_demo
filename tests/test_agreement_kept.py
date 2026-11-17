@@ -23,7 +23,28 @@ def _tasks(ws, pids, names=("C1", "C2")):
 def test_a_run_names_its_two_models(loaded, two_pids):
     _tasks(loaded, two_pids)
     out = _run(loaded)
-    assert out["local_model"] == "small-model" and out["claude_model"] == "sonnet"
+    assert out["local_model"] == "small-model"                 # asked now
+    assert out["claude_model"] == "m"                          # Claude's answers were already there (by model "m")
+
+
+def test_a_reused_local_answer_is_named_by_the_model_that_gave_it(loaded, two_pids):
+    _tasks(loaded, two_pids, ("C1",))
+    with loaded.connect() as cx:                               # C1's local answer came from an earlier local model
+        cx.execute("INSERT INTO results(task_id, attempt, kind, model, raw_json, valid, route) VALUES (?,?,?,?,?,1,?)",
+                   ("check:C1", 3, "check", "old-model", _answer(("supports", "refutes")), "local model server"))
+    _tasks(loaded, two_pids, ("C2",))
+    out = _run(loaded)
+    assert out["local_model"] == "old-model, small-model" and out["asked"]["local"] == 1
+    row = benchmark.keep_agreement(loaded, out)
+    assert row["asked_local"] == 1 and row["local_model"] == "old-model, small-model"
+
+
+def test_a_run_with_nothing_compared_is_never_the_one_beside(loaded, two_pids):
+    _tasks(loaded, two_pids)
+    a = benchmark.keep_agreement(loaded, _run(loaded))
+    empty = benchmark.keep_agreement(loaded, {**_run(loaded), "compared": 0, "kappa": None, "agree": None})
+    c = benchmark.keep_agreement(loaded, _run(loaded))
+    assert benchmark.previous_agreement(loaded, "check", c["run_id"])["run_id"] == a["run_id"] != empty["run_id"]
 
 
 def test_keeping_a_run_stores_its_row(loaded, two_pids):
@@ -32,7 +53,7 @@ def test_keeping_a_run_stores_its_row(loaded, two_pids):
     row = benchmark.keep_agreement(loaded, out)
     assert row["kind"] == "check" and row["n"] == 2 and row["compared"] == 2 and row["failed"] == 0
     assert row["kappa"] == out["kappa"] and row["agree"] == out["agree"] and row["decisions"] == 4
-    assert row["local_model"] == "small-model" and row["claude_model"] == "sonnet"
+    assert row["local_model"] == "small-model" and row["claude_model"] == "m"
     assert row["app_version"] and row["at"] and row["run_id"]
     assert benchmark.kept_agreements(loaded) == [row]
 

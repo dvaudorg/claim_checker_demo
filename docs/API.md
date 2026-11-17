@@ -2085,7 +2085,8 @@ retractions and the publishers' corrections and expressions of concern. Only whe
 nothing sent). DOIs are sent, and for a work of the bibliography without a usable DOI (a published kind of item, with
 a title of three words or more, a first author's family name and a year) its title, first author's family name and
 year, one request per work (at most 300 a lookup), with a plain `User-Agent: ENLENS/<version>` and nothing else. A work
-whose document is marked No AI, or linked to a working document, is not looked up. A match by title is strict (the
+whose document is marked No AI is not looked up; by title, a work linked (even probably) to a No AI or a working
+document is not looked up either. A match by title is strict (the
 same title, a year within one, the same first author, and one candidate only); the matched DOI's notices are found as
 any DOI's. A document with no DOI and no work of the bibliography is never looked up by title. The Crossref address can be set with `ENLENS_CROSSREF_URL` (tests use a stand-in).
 

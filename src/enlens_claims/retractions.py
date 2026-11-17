@@ -23,12 +23,15 @@ A title lookup is strict, because a wrong match would call a paper retracted tha
 its title is (all but) the same, its year is within a year of the work's, its first author's family name is the work's,
 and it is the only candidate that passes (two that pass: no match). The matched DOI's notices are then found as any DOI's.
 The researcher sees the match beside the notice and may say *Not this work* (`reject_match`): that match is never shown
-again, and a later lookup does not propose the same DOI for that work.
+again: a later lookup never proposes that DOI for that work, and keeps the rejection unless another work alone
+fits. A record titled as a notice ("Retraction note: …", "Correction to: …") is never a candidate.
 
 Each answer is kept with its date in the table `retractions` (a DOI looked up and found clean is kept too, so the page
 can say when it was last checked); a work's match by title in `retraction_matches`. Both are public facts about
 published works or the researcher's own decision about a match, so both are shared with a team's folder like the other
-project tables (neither is in `sync.common.LOCAL_ONLY`), and both go in a zip of the whole project."""
+project tables (neither is in `sync.common.LOCAL_ONLY`), and both go in a zip of the whole project. They travel by
+the plain rule for such tables (a row not here yet comes in; a row here is kept): so a colleague's *Not this work* reaches
+a copy that has no match for that work yet, not one that already holds the match, where it must be said again."""
 from __future__ import annotations
 
 import difflib
@@ -169,7 +172,8 @@ def title_works(ws: Workspace) -> dict:
             continue
         cand.append({"key": r["item_key"], "title": title[:300], "family": family, "year": year})
     docs: dict[str, list[str]] = {}
-    for r in ws.query("SELECT item_key, doc_id FROM bib_links WHERE status IN ('auto', 'confirmed')"):
+    # a probable link counts too: when in doubt whether a work is a No-AI or working document, its title is not sent
+    for r in ws.query("SELECT item_key, doc_id FROM bib_links WHERE status IN ('auto', 'confirmed', 'probable')"):
         docs.setdefault(r["item_key"], []).append(r["doc_id"])
     ids = sorted({d for c in cand for d in docs.get(c["key"], [])})
     level = access.levels(ws, ids) if ids else {}
@@ -194,8 +198,13 @@ def title_plan(ws: Workspace) -> dict:
 
 
 # ------------------------------------------------------------------------------------------------ the match by title
-_LABEL = re.compile(r"\s*(retracted article|retracted|withdrawn)\s*:\s*", re.I)  # a retracted work's own title, as
+_LABEL = re.compile(r"^\s*(retracted article|retracted|withdrawn)\s*:\s*", re.I)  # a retracted work's own title, as
 #                                                              publishers write it; "Retraction: …" is a notice, no match
+# a notice's own record, often not filed as an update (so `is-update:false` lets it through), titled after the work it
+# is about: never a candidate, or a retracted work and its "Retraction note" would be two matches, and so none
+_NOTICE = re.compile(r"^\s*(retraction( note| notice)?|notice of retraction|correction( note)?( to)?|erratum|"
+                     r"corrigendum|expression of concern|editorial expression of concern|withdrawal|addendum)\b",
+                     re.I)
 
 
 def _years(it: dict) -> list[int]:
@@ -220,7 +229,10 @@ def _same_title(a: str, b: str) -> bool:
 def accepts(work: dict, it: dict) -> bool:
     """Whether the candidate `it` (a Crossref item) is the work: all of title, year and first author agree."""
     want = _plain(work["title"])
-    titles = [_LABEL.sub("", str(t), count=1) for t in (it.get("title") or []) if isinstance(t, str)]
+    raw = [str(t) for t in (it.get("title") or []) if isinstance(t, str)]
+    if any(_NOTICE.match(t) for t in raw):
+        return False
+    titles = [_LABEL.sub("", t, count=1) for t in raw]
     if not any(_same_title(want, _plain(t)) for t in titles):
         return False
     if not any(abs(y - work["year"]) <= 1 for y in _years(it)):
@@ -270,12 +282,19 @@ def _look_by_title(ws: Workspace, base: str, works: list[dict], stamp: str, slee
         done += 1
         with ws.connect() as cx:
             was = cx.execute("SELECT doi, rejected_at FROM retraction_matches WHERE item_key=?", (w["key"],)).fetchone()
+            if was and was[1]:
+                # the researcher said this work is not the one its title matched: that DOI is never a candidate for it
+                # again, and the rejection stays unless another DOI alone fits (an ambiguous or empty answer must not
+                # wipe it, or the same match would come back on the next lookup)
+                ok = [c for c in ok if c["doi"] != was[0]]
+                if len(ok) != 1:
+                    ambiguous += len(ok) > 1
+                    cx.execute("UPDATE retraction_matches SET checked_at=? WHERE item_key=?", (stamp, w["key"]))
+                    continue
             if len(ok) > 1:  # two works fit: not this one, not that one
                 ambiguous += 1
                 ok = []
-            if ok and was and was[1] and was[0] == ok[0]["doi"]:  # the researcher said no to this DOI: it stays so
-                cx.execute("UPDATE retraction_matches SET checked_at=? WHERE item_key=?", (stamp, w["key"]))
-            elif ok:
+            if ok:
                 m = ok[0]
                 matched += 1
                 cx.execute("INSERT OR REPLACE INTO retraction_matches(item_key, checked_at, doi, title, year, author, "

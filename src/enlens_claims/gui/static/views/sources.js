@@ -394,7 +394,7 @@ export async function renderSources(view) {
     const drawBulkRole = () => {
       const ticked = docs.filter((d) => picked.has(d.doc_id)).map((d) => ({ doc_id: d.doc_id, title: d.title || d.file }));
       bulk.querySelector(".bulk-role").replaceChildren(ticked.length ? menu({ class: "bulk-role-menu", text: "Role", label: `Set the role of the ${plural(ticked.length, "document")} selected`, title: "Mark them as evidence, theory or your working documents",
-        items: bulkRoleItems(project, ticked, roles, (r) => afterRoles(r && r.changed ? r.changed : ticked.map((d) => d.doc_id))) }) : "");
+        items: bulkRoleItems(project, ticked, roles, (r) => afterRoles(Array.isArray(r && r.changed) ? r.changed : ticked.map((d) => d.doc_id))) }) : "");
     };
     const drawBulk = () => {
       bulk.hidden = !picked.size;
