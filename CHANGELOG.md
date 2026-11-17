@@ -2,14 +2,14 @@
 
 ## 0.19.16 (November 2026): The concept map's links and named groups, and roles for many documents
 
+The concept map says more, and keeps what you give it. Links say that a concept *needs*, *shapes* or *clashes with*
+another, each kind with its own line end; groups have names that stay between visits (drawn from their concepts, your
+own, or drafted by the AI when you ask); and the map downloads as a picture. The Documents list sets the role of many
+documents at once, retractions are found for works without a DOI, a comparison of your local model with Claude is kept,
+and the validation report adds a person's judgements on a real project and the first runs of two local models.
+
 ### New
 
-- **Retractions are found for works without a DOI too.** *Check for retractions* now looks a work of your bibliography
-  up by its title, first author's family name and year when it has no DOI (a published kind of work with a title of
-  three words or more). A match is accepted only when the title is (all but) the same, the year is within one, the
-  first author is the same and no other work fits. Its notice shows with *Found by title*, the matched work and its DOI,
-  and a quiet *Not this work* button (with Undo): a rejected match is hidden and not proposed again. The claim card says
-  *found by title* beside such a notice. A lookup changes no result and no judgement.
 - **The concept map's links say more kinds.** Besides *leads to* and *is used instead of*, ENLENS now proposes links
   that say one concept *needs*, *shapes* or *clashes with* another, found in the text without AI ("X requires Y", "X
   depends on Y", "X influences Y", "X determines Y", "X conflicts with Y", "X is at odds with Y"), each marked *found in
@@ -31,6 +31,17 @@
 - **Download the map.** *PNG* (2,400 pixels wide) and *SVG* at the top of the Map tab save the map as a picture for
   slides and papers: title, what was counted, filters, the legend, the map and a foot that says what its marks mean.
   Always light on white; made in the page, nothing is sent anywhere.
+- **Set the role of many documents at once.** In *Documents*, tick the documents and choose *Role* in the bar at the
+  foot of the window: evidence, theory or your working documents. ENLENS asks once, marks them all and offers *Undo*,
+  which gives each document the role it had. The research log keeps one entry for the batch, naming the documents.
+  A *Non-scientific* mark stays as it is; in a shared project a Member's marks are proposals, as one document's are.
+  Theory and working documents are left out of what counts, as before: can change results made from now on.
+- **Retractions are found for works without a DOI too.** *Check for retractions* now looks a work of your bibliography
+  up by its title, first author's family name and year when it has no DOI (a published kind of work with a title of
+  three words or more). A match is accepted only when the title is (all but) the same, the year is within one, the
+  first author is the same and no other work fits. Its notice shows with *Found by title*, the matched work and its DOI,
+  and a quiet *Not this work* button (with Undo): a rejected match is hidden and not proposed again. The claim card says
+  *found by title* beside such a notice. A lookup changes no result and no judgement.
 - **Agreement between routes is kept.** Each comparison of your local model with Claude that runs to its end is now
   saved, with its date, in the project on this computer. Under *Settings → AI → Agreement between routes*, *Earlier
   comparisons* lists them (the kind of task, how many were compared, kappa, the share that agree, the two models and the
@@ -53,11 +64,6 @@
   so each answer ran past ENLENS's length limit and was refused; 89% of its code decisions were right (kappa 0.40).
   Claude Code's run of 13 November: 93% and 99%. So a small local model labels passages fairly well, but should not
   decide a check on its own (roadmap I6). The report is attached to the release.
-- **Set the role of many documents at once.** In *Documents*, tick the documents and choose *Role* in the bar at the
-  foot of the window: evidence, theory or your working documents. ENLENS asks once, marks them all and offers *Undo*,
-  which gives each document the role it had. The research log keeps one entry for the batch, naming the documents.
-  A *Non-scientific* mark stays as it is; in a shared project a Member's marks are proposals, as one document's are.
-  Theory and working documents are left out of what counts, as before: can change results made from now on.
 
 ### Changes that can alter your results
 

@@ -59,11 +59,11 @@ Windows from 0.15.4 on). Your projects and settings (the `enlens` folder in your
 <!-- new-in:start (written by `python tools/release.py prepare`: change the changelog entry, not this) -->
 ## New in 0.19.16: The concept map's links and named groups, and roles for many documents
 
-- **Retractions are found for works without a DOI too.** *Check for retractions* now looks a work of your bibliography up by its title, first author's family name and year when it has no DOI (a published kind of work with a title of three words or more).
 - **The concept map's links say more kinds.** Besides *leads to* and *is used instead of*, ENLENS now proposes links that say one concept *needs*, *shapes* or *clashes with* another.
 - **The end of a link's line on the map says its kind.** A diamond for *is part of*, a filled arrow for *leads to*, an open arrow for *shapes*, a ring for *needs*, a cross for *is used instead of*, a bar across each end for *clashes with*.
 - **Groups have names, and keep them.** Each group of the concept map is named by its two most central concepts until you rename it, in the legend, on the map and in the new *Groups* section under the map.
 - **The AI can draft the groups' names, on request.** *Name the groups* only queues the work: nothing runs until you press *Start Claude Code* (or your local model's start) in its panel.
+- **Download the map.** *PNG* (2,400 pixels wide) and *SVG* at the top of the Map tab save the map as a picture for slides and papers: title, what was counted, filters, the legend.
 <!-- new-in:end -->
 
 How it works, in the manual: [Explore your documents](docs/manual/explore.md) (working documents, the concept map),
