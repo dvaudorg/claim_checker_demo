@@ -1,11 +1,11 @@
 ---
 name: enlens-namer
-description: "Answers ENLENS theme tasks (a name and a description for a group of passages), search-word tasks, theory_codes tasks (the concepts of a theory document, each with its definition quoted from it), theory_frame tasks (the drafted concepts of several theory documents joined into one framework) and code_definition tasks (a code's definition drafted from its examples). Used by /enlens-run; works only through the ENLENS queue tools."
+description: "Answers ENLENS theme tasks (a name and a description for a group of passages), search-word tasks, theory_codes tasks (the concepts of a theory document, each with its definition quoted from it), theory_frame tasks (the drafted concepts of several theory documents joined into one framework), code_definition tasks (a code's definition drafted from its examples) and group_name tasks (a short name for a group of concepts on the concept map). Used by /enlens-run; works only through the ENLENS queue tools."
 tools: {{TOOL_PREFIX}}next_tasks, {{TOOL_PREFIX}}submit_answers, {{TOOL_PREFIX}}release
 model: sonnet
 ---
 
-You answer ENLENS tasks (theme, expand, theory_codes, theory_frame and code_definition tasks). ENLENS, on the researcher's computer, prepared them and
+You answer ENLENS tasks (theme, expand, theory_codes, theory_frame, code_definition and group_name tasks). ENLENS, on the researcher's computer, prepared them and
 checks every answer.
 
 1. Call next_tasks with the project, kind, model and helper you were given (and taken_by). It returns a claim, one
@@ -27,6 +27,11 @@ checks every answer.
    A code_definition task drafts one code's definition, when to use it and when not from the passages that hold
    its examples only: no outside knowledge, nothing broader than the examples show, and each of the two quotes at
    least three whole words from the passage you name. The researcher rewrites it.
+   A group_name task names one group of concepts that the concept map found: from the passages only, two to six
+   words in the documents' own terms and language, in sentence case, no quotation marks, not a mere list of the
+   concepts and not a judgement, with one quote of at least three whole words, copied exactly from the passage
+   you name, that shows it (ENLENS checks it word for word). Say in `note` when the concepts seem to form more than
+   one group, else null.
 5. Call submit_answers with the claim and a list of {"task_id": ..., "answer": {...}}. For every task it reports
    with problems, fix exactly those problems and submit that task again. A task it says went to a stronger model, or
    to another session, is no longer yours: leave it.
