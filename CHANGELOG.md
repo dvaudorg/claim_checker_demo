@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.19.15 (November 2026): No model starts without your click, and Team back under the project
+
+No AI model starts, or even loads into memory, until you press its own Start: ENLENS no longer starts Ollama
+when it opens or when the Settings card is drawn, and Stop frees the model's memory at once instead of 15 minutes
+later. Team is back under the project's name, as a small line with the team's state that opens the Team page. The AI
+run panel's split bar lies along its top edge, and a stopped job's panel goes. No change alters your results.
+
+### Changed
+
+- **No AI model starts, or even loads, until you press its Start.** ENLENS no longer starts Ollama when it opens,
+  and the *Settings → AI* card no longer starts it by itself when it is drawn: *Start Ollama* does, and so does the
+  first Start of a local model, which starts Ollama first when it is not running. Search by meaning still starts
+  Ollama when it needs it. Results do not change.
+- **Stop frees the model's memory at once.** A job's *Stop* lets go of the local models it loaded, and *Stop* on the
+  local side lets go of the local model once the item in hand is done, instead of Ollama keeping them in memory for
+  15 more minutes. Only models Ollama holds are let go of; nothing is loaded to be unloaded. A job that ends by itself
+  keeps its model, so the next one starts quickly.
+- **Team is back under the project's name.** The sidebar's *Team* entry in the *Project* group is gone again: as
+  before 0.19.7, a small line joined under the project switch says *Team* and, in a project with a team, its state
+  (*synced 15:44*, *3 new*, *syncing now…*, *offline*). It works as the entry did: it is always there while a project
+  is open, it opens the Team page (the set-up without a team; *Activity* and *People and settings* with one), and it
+  turns soft teal while you are on that page. Nothing opens in the right-hand panel, which stays the research log's.
+- **The AI panel's split bar runs along its top edge, and a stopped job's panel goes.** The thin bar over the two
+  sides (this computer on the left, Claude on the right) was drawn as a pale band inside the frame, and its halves
+  followed the two sides' columns, so an empty seat threw it off. It now lies along the very top edge, 3 px thick like
+  the bar in the sidebar, its two halves over the two halves of the panel at every size. When you press Stop, the
+  panel disappears (both sides and the bar) instead of staying on screen saying *Stopped*; the page says it once,
+  quietly. This holds also for a job stopped between two items, which keeps what it had done (a job's view now says
+  `stopped`). Does not change results.
+
+### For developers
+
+- `ollama_setup.wake(url)` starts Ollama for model work a person asked for; `OllamaBackend.wake()` and
+  `OllamaEmbedder.embed` call it once, only on the real connection. `llm.USED` is the job's set of local models
+  asked (`note_used`), `llm.let_go(models)` unloads those Ollama holds. `launcher.start_ollama` is gone;
+  `--no-start-ollama` is still accepted and does nothing. Tests never start the real Ollama (`conftest.py`).
+- `lib.js` `teamLine({ id })` takes the place of `teamEntry()`; `views/team-entry.js` is now `views/team-line.js`
+  (`initTeamLine()`). `index.html` keeps the plain line inside `#project-switch`, and `renderProjectSwitch()` keeps it
+  across redraws and hides it while no project is open. The router marks it current like an entry (`setNav`).
+  docs/DESIGN.md 5.1 and the design reference page show it under the project switch.
+
+### Not yet done
+
+- Tried with stand-ins only: that Stop removes the model from Ollama's list (`/api/ps`) was not checked against the
+  real Ollama, and the panel bar's teal, amber and grey states were not looked at in the real app.
+- The sidebar's work box offers a plain *Start* when only the local side waits; it looks like Claude Code's Start.
+  Whether it should name the model (*Start K2*) is left open.
+- "Name the themes", when every theme may only be read by the local model, still starts the local model on that one
+  click, as designed in 0.19.13; search by meaning still loads its embedding model by itself.
+
 ## 0.19.14 (November 2026): Claude Code is asked for once, and Enter confirms once
 
 Two fixes you notice: once Claude Code has answered its part of a check, the AI run panel and the sidebar stop

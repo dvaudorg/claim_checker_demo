@@ -1,3 +1,0 @@
-### Fixed
-
-- **The AI panel's split bar runs along its top edge, and a stopped job's panel goes.** The thin bar over the two sides (this computer on the left, Claude on the right) was drawn as a pale band inside the frame, and its halves followed the two sides' columns, so an empty seat threw it off. It now lies along the very top edge, 3 px thick like the bar in the sidebar, its two halves over the two halves of the panel at every size. When you press Stop, the panel disappears (both sides and the bar) instead of staying on screen saying *Stopped*; the page says it once, quietly. This holds also for a job stopped between two items, which keeps what it had done (a job's view now says `stopped`). Does not change results.
