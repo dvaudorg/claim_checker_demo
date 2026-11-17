@@ -157,7 +157,9 @@ def _restricted_docs(ws: Workspace, embedder=None) -> set[str]:
     provider of its address: OpenAI's for an OpenAI address, `other` for a lab's server; providers.py)."""
     from . import access, providers
 
-    prov = providers.of_url(getattr(embedder, "base_url", "") or "") if embedder is not None else None
+    url = getattr(embedder, "base_url", "") or "" if embedder is not None else ""
+    # (an embedder without an address, a stand-in of a test, keeps the rule of 0.11: only `cloud` documents)
+    prov = providers.of_url(url) if url else None
     return {d for d, lv in access.levels(ws, provider=prov).items() if lv != "cloud"}
 
 

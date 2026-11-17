@@ -251,8 +251,8 @@ def test_mistral_gets_random_seed_and_a_refused_field_is_left_out(openai_server)
     be = CloudBackend("openai", "good-key", base_url=base)
     srv.forbidden = set()
     assert be.complete("expand", "SYS", "Claim: water stress", "fake-model:latest", {})
-    assert "temperature" not in srv.requests[-1][1] and "temperature" in be.dropped
-    assert "temperature" not in llm.provenance(be, "m")["settings"]
+    assert "temperature" not in srv.requests[-1][1] and "temperature" in be.dropped("fake-model:latest")
+    assert "temperature" not in llm.provenance(be, "fake-model:latest")["settings"]
     # Gemini documents no seed: none is sent or recorded
     srv.no_temperature = False
     be = CloudBackend("gemini", "good-key", base_url=base)

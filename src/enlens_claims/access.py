@@ -123,7 +123,10 @@ def labels_provider(cx) -> str | None:
 
 def sync_labels(ws: Workspace, provider) -> int:
     """Give the project's open tasks their settings for `provider` (the main route's), once per change of it: looser
-    or stricter. Returns the number of tasks changed."""
+    or stricter. Returns the number of tasks changed. Only reads, unless the provider changed (it is asked on every
+    request of the app: it never waits for other work on the database)."""
+    if labels_provider(ws._conn()) == provider:
+        return 0
     with ws.connect() as cx:
         if labels_provider(cx) == provider:
             return 0
