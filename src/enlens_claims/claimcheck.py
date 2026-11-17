@@ -1540,6 +1540,9 @@ def second_opinion(ws: Workspace, hyp_ids: list[str], backend, main_model: str, 
             for t in _check_tasks(ws, c["claim_id"]):
                 if _is_person(t):
                     continue  # no model may read these excerpts
+                if t["status"] != "done":
+                    continue  # 0.19.17: not read yet (waits for the local model, Claude Code, or failed): no first
+                    # reading to compare with, and the excerpts are not shown as cards to find the difference on
                 with ws.connect() as cx:  # the setting of its documents now (it may have changed since)
                     lv = access.label_payload(cx, json.loads(t["payload_json"]))
                 if lv not in may:  # 0.11: a local excerpt has a second opinion only from a second local model
@@ -1645,7 +1648,8 @@ def history(ws: Workspace, threshold: float | None = None, limit: int | None = N
             e["_changed"] = changed_by_person(v) and e["_mine"]
             e["_ai_judged"] = v["verdict"] in ("supports", "partially_supports", "refutes")
             ver.setdefault(v["subject_id"], []).append(e)
-            ai_of[(v["subject_id"], v["passage_id"])] = v["verdict"] if v["verdict"] in GRADES else None
+            if v["model"] != PERSON:  # 0.19.17: a second opinion differs only from a model's first reading
+                ai_of[(v["subject_id"], v["passage_id"])] = v["verdict"] if v["verdict"] in GRADES else None
 
     if not limit:
         load(None)
@@ -1709,7 +1713,7 @@ def history(ws: Workspace, threshold: float | None = None, limit: int | None = N
                 for pid, did, *_title in shown:
                     shown_docs.add(did)
                     key = (c["claim_id"], pid)
-                    if key in second and second[key] != ai_of.get(key):
+                    if key in second and key in ai_of and second[key] != ai_of[key]:
                         disagree += 1
             limited = limited or bool(json.loads(c["options_json"] or "{}").get("doc_ids"))
             for v in ver.get(c["claim_id"], []):
