@@ -49,3 +49,307 @@ def test_a_cloud_address_in_the_local_server_field_may_not_read_claude_only_docu
     with pytest.raises(access.AccessError):
         access.require(llm.LocalBackend(base_url=url), row, ws)
     access.require(llm.LocalBackend(base_url="http://localhost:1234/v1"), row, ws)  # control: this computer
+
+
+def test_which_provider_each_backend_is():
+    from enlens_claims.llm import ClaudeCodeBackend, CloudBackend
+
+    assert llm.LocalBackend(base_url="https://api.openai.com/v1").provider == "openai"
+    assert llm.LocalBackend(base_url="https://api.mistral.ai/v1").provider == "mistral"
+    assert llm.LocalBackend(base_url="https://gpu.example.org/v1").provider == "other"
+    assert llm.LocalBackend(base_url="http://localhost:1234/v1").provider is None
+    assert llm.OllamaBackend(base_url="http://192.168.1.20:11434").provider == "other"
+    assert llm.OllamaBackend(base_url="http://127.0.0.1:11434").provider is None
+    assert ClaudeCodeBackend().provider == "anthropic" and llm.BaselineBackend().provider is None
+    assert CloudBackend("mistral", "k").provider == "mistral"
+    # a stand-in without the attribute: by its name or its address
+    assert access.provider_of(type("B", (), {"name": "anthropic"})()) == "anthropic"
+    assert access.provider_of(type("B", (), {"name": "ollama", "base_url": "http://gpu.example.org:1"})()) == "other"
+
+
+# ---------------------------------------------------------------------------------------------
+# R3: a project without the new setting means what it meant
+# ---------------------------------------------------------------------------------------------
+@pytest.mark.parametrize("route", ["claude_code", "anthropic"])
+def test_an_existing_project_behaves_as_before_on_claude(mixed, route):
+    ws, ids, pid = mixed
+    home.update_settings({"allow_cloud": True, "backend": route})
+    assert "ai_providers_default" not in ws.config
+    assert ws.scalar("SELECT COUNT(*) FROM documents WHERE ai_providers IS NOT NULL") == 0
+    assert access.levels(ws) == access.levels(ws, provider=None)   # Anthropic reads what "Claude may read it" said
+    assert access.levels(ws) == {ids["cloud"]: "cloud", ids["local"]: "local", ids["none"]: "none"}
+    view = access.documents_view(ws)
+    assert view[ids["cloud"]]["providers"] == ["anthropic"] and view[ids["cloud"]]["providers_own"] is None
+    assert "sent_by" not in view[ids["cloud"]]
+    with tasks.queueing(True):
+        with ws.connect() as cx:
+            tasks._insert_task(cx, "label:sdg:a", "label", "haiku", _label(pid["cloud"]))
+    from enlens_claims import taskqueue
+
+    got = taskqueue.next_tasks(ws, "label", taken_by="test")
+    assert [t["task_id"] for t in got["tasks"]] == ["label:sdg:a"]
+    assert ws.query("SELECT DISTINCT COALESCE(provider, 'anthropic') AS p FROM ai_sent")[0]["p"] == "anthropic"
+
+
+# ---------------------------------------------------------------------------------------------
+# R4: the work split, the ledger, the queue
+# ---------------------------------------------------------------------------------------------
+@pytest.fixture
+def openai_server():
+    import fake_servers
+
+    srv, url = fake_servers.start("openai")
+    try:
+        yield srv, url + "/v1"
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def _use_openai(ws=None):
+    home.update_settings({"allow_cloud": True, "backend": "cloud_api", "cloud_provider": "openai",
+                          "cloud_model": "fake-model:latest", **({"project": ws.root.name} if ws else {})})
+
+
+@pytest.mark.parametrize("local_model", [True, False])
+def test_a_check_sends_the_openai_route_only_what_allows_openai(mixed, openai_server, monkeypatch, local_model):
+    from helpers_mixed_corpus import LOCAL_MARK, Local, use_local_model
+
+    from enlens_claims import claimcheck
+    from enlens_claims.llm import CloudBackend
+
+    ws, ids, pid = mixed
+    srv, base = openai_server
+    a, b = ids["cloud"], ids["local"]
+    access.set_documents(ws, [b], "cloud")                  # B: "Claude may read it" (Anthropic only), marked text
+    access.set_documents(ws, [a], allow=["anthropic", "openai"])
+    _use_openai()
+    local = Local()
+    use_local_model(monkeypatch, local if local_model else None)
+    be = CloudBackend("openai", "good-key", base_url=base)
+    hid = claimcheck.check_hypothesis(ws, "Green hydrogen production can increase water stress in arid regions.",
+                                      be, "fake-model:latest", k=12, per_doc=4)
+    sent = "\n".join(str(r[1]) for r in srv.requests if r[1]).lower()
+    assert sent and LOCAL_MARK.lower() not in sent          # B never reached OpenAI
+    if local_model:
+        assert LOCAL_MARK.lower() in local.text()           # B was read by the local model
+    else:                                                   # or waits for a person
+        assert ws.scalar("SELECT COUNT(*) FROM verifications WHERE doc_id=? AND model='person'", (b,)) > 0
+    rows = ws.query("SELECT DISTINCT doc_id, provider, route FROM ai_sent")
+    assert rows and {r["doc_id"] for r in rows} == {a}
+    assert {r["provider"] for r in rows} == {"openai"} and {r["route"] for r in rows} == {"OpenAI"}
+    assert access.documents_view(ws)[a]["sent_by"]["openai"] > 0
+    assert hid
+
+
+def test_changing_the_route_or_a_documents_providers_relabels_the_queue(mixed):
+    ws, ids, pid = mixed
+    home.update_settings({"project": ws.root.name})
+    access.set_documents(ws, [ids["local"]], "cloud")
+    access.set_documents(ws, [ids["cloud"]], allow=["anthropic", "openai"])
+    with tasks.queueing(True):
+        with ws.connect() as cx:
+            tasks._insert_task(cx, "label:a", "label", "haiku", _label(pid["cloud"]))   # allows OpenAI
+            tasks._insert_task(cx, "label:b", "label", "haiku", _label(pid["local"]))   # Anthropic only
+    q = lambda: {r["task_id"]: (r["access"], r["queued"]) for r in ws.query("SELECT * FROM tasks")}  # noqa: E731
+    assert q() == {"label:a": ("cloud", 1), "label:b": ("cloud", 1)}
+    _use_openai(ws)            # the main route is OpenAI now: B's task may not go to it
+    assert q()["label:b"] == ("local", 0) and q()["label:a"][0] == "cloud"
+    home.update_settings({"backend": "claude_code"})
+    assert q()["label:b"][0] == "cloud"
+    access.set_documents(ws, [ids["cloud"]], allow=["openai"])   # A no longer allows Anthropic
+    assert q()["label:a"] == ("local", 0)
+    # the Claude Code queue reads as Anthropic whatever the main route: never a task of a document it may not read
+    from enlens_claims import taskqueue
+
+    with ws.connect() as cx:
+        cx.execute("UPDATE tasks SET queued=1, access='cloud'")   # a stale label
+    _use_openai(ws)
+    with ws.connect() as cx:
+        cx.execute("UPDATE tasks SET queued=1, access='cloud'")
+    got = taskqueue.next_tasks(ws, "label", taken_by="test")
+    assert "label:a" not in [t["task_id"] for t in got["tasks"]]
+
+
+def test_the_connector_and_the_file_queue_read_as_anthropic(mixed):
+    ws, ids, pid = mixed
+    access.set_documents(ws, [ids["cloud"]], allow=["openai"])
+    _use_openai()
+    assert access.levels(ws, [ids["cloud"]]) == {ids["cloud"]: "cloud"}            # OpenAI's reading
+    with access.reading_for("anthropic"):
+        assert access.levels(ws, [ids["cloud"]]) == {ids["cloud"]: "local"}        # Claude may not read it
+    assert access.levels(ws, [ids["cloud"]], provider=None) == {ids["cloud"]: "cloud"}  # as the person chose it
+
+
+# ---------------------------------------------------------------------------------------------
+# R5: shared projects allow Anthropic only
+# ---------------------------------------------------------------------------------------------
+def test_a_shared_project_lets_only_anthropic_read(mixed, tmp_path):
+    from enlens_claims.sync.folder import FOLDER
+
+    ws, ids, pid = mixed
+    access.set_documents(ws, [ids["cloud"]], allow=["anthropic", "openai"])   # allowed before it was shared
+    access._write_config(ws, {FOLDER: str(tmp_path / "team")})
+    assert access.is_shared(ws._conn(), ws)
+    _use_openai()
+    assert access.levels(ws, [ids["cloud"]]) == {ids["cloud"]: "local"}
+    assert access.levels(ws, [ids["cloud"]], provider="anthropic") == {ids["cloud"]: "cloud"}
+    with pytest.raises(ValueError, match="colleagues have not agreed"):
+        access.set_providers_default(ws, ["anthropic", "openai"])
+    with pytest.raises(ValueError, match="colleagues have not agreed"):
+        access.set_documents(ws, [ids["cloud"]], allow=["openai"])
+    info = access.project_info(ws)
+    assert info["shared"] and "colleagues have not agreed" in info["providers_note"]
+    row = _insert(ws, "label:sdg:s", _label(pid["cloud"]))
+    from enlens_claims.llm import CloudBackend
+
+    with pytest.raises(access.AccessError, match="OpenAI may not read"):
+        access.require(CloudBackend("openai", "k"), row, ws)
+
+
+# ---------------------------------------------------------------------------------------------
+# R6: the cloud chat backend
+# ---------------------------------------------------------------------------------------------
+def test_the_cloud_backend_sends_the_key_and_only_documented_fields(openai_server):
+    from enlens_claims.llm import CloudBackend
+
+    srv, base = openai_server
+    be = CloudBackend("openai", "good-key", base_url=base)
+    out = be.complete("expand", "SYS", "Claim: water stress", "fake-model:latest", {})
+    assert out
+    path, body, headers = srv.requests[-1]
+    assert path.endswith("/v1/chat/completions") and headers.get("Authorization") == "Bearer good-key"
+    assert body["max_completion_tokens"] and "max_tokens" not in body and body["seed"] == 42
+    assert set(body) <= {"model", "messages", "stream", "temperature", "max_completion_tokens", "seed", "response_format"}
+    assert be.inventory()["models"] == ["fake-model:latest", "fake-second:latest"]
+    assert be.digest("fake-model:latest") == "name:openai/fake-model:latest"
+    assert not [p for p, *_ in srv.requests if "/api/v0" in p]   # no LM Studio calls
+    prov = llm.provenance(be, "fake-model:latest")
+    assert prov["settings"]["provider"] == "openai" and prov["settings"]["route"] == "OpenAI"
+    assert "good-key" not in repr(prov) and "good-key" not in repr(be)
+
+
+def test_mistral_gets_random_seed_and_a_refused_field_is_left_out(openai_server):
+    from enlens_claims.llm import CloudBackend
+
+    srv, base = openai_server
+    srv.forbidden = {"seed", "max_completion_tokens"}       # Mistral refuses fields it does not know
+    be = CloudBackend("mistral", "good-key", base_url=base)
+    assert be.complete("expand", "SYS", "Claim: water stress", "fake-model:latest", {})
+    body = srv.requests[-1][1]
+    assert body["random_seed"] == 42 and "seed" not in body and body["max_tokens"]
+    # a model that takes no temperature of 0 (OpenAI's reasoning models): asked again without it
+    srv.no_temperature = True
+    be = CloudBackend("openai", "good-key", base_url=base)
+    srv.forbidden = set()
+    assert be.complete("expand", "SYS", "Claim: water stress", "fake-model:latest", {})
+    assert "temperature" not in srv.requests[-1][1] and "temperature" in be.dropped
+    assert "temperature" not in llm.provenance(be, "m")["settings"]
+    # Gemini documents no seed: none is sent or recorded
+    srv.no_temperature = False
+    be = CloudBackend("gemini", "good-key", base_url=base)
+    be.complete("expand", "SYS", "Claim", "fake-model:latest", {})
+    assert "seed" not in srv.requests[-1][1] and llm.provenance(be, "m")["seed"] is None
+
+
+def test_azure_sends_its_api_key_header_to_the_resource_address(openai_server):
+    from enlens_claims import providers
+    from enlens_claims.llm import CloudBackend
+
+    srv, base = openai_server
+    assert providers.base_url("azure", "https://my-res.openai.azure.com") == "https://my-res.openai.azure.com/openai/v1"
+    assert providers.base_url("azure", "my-res") == "https://my-res.openai.azure.com/openai/v1"
+    with pytest.raises(ValueError):
+        providers.base_url("azure", "")
+    be = CloudBackend("azure", "good-key", base_url=base)
+    be.complete("expand", "SYS", "Claim", "my-deployment", {})
+    headers = {k.lower(): v for k, v in srv.requests[-1][2].items()}
+    assert headers.get("api-key") == "good-key" and "authorization" not in headers
+    assert be.models() == [] and be.check("my-deployment")["model_available"]   # Azure lists no deployments
+
+
+def test_the_cloud_backend_needs_https_and_says_errors_plainly(openai_server, capsys, caplog):
+    from enlens_claims.llm import BackendError, CloudBackend
+
+    srv, base = openai_server
+    with pytest.raises(BackendError, match="HTTPS"):
+        CloudBackend("openai", "k", base_url="http://api.example.org/v1")
+    with pytest.raises(BackendError, match="No API key"):
+        CloudBackend("openai", "")
+    secret = "sk-proj-SECRETSECRET1234567890"
+    with pytest.raises(BackendError) as e:
+        CloudBackend("openai", secret, base_url=base).complete("expand", "SYS", "Claim", "m", {})
+    assert "OpenAI refused the key" in str(e.value) and secret not in str(e.value)
+    with pytest.raises(BackendError) as e:
+        CloudBackend("openai", secret, base_url=base).models()
+    assert secret not in str(e.value)
+    srv.status = 429
+    with pytest.raises(BackendError, match="OpenAI: the limit of this key is reached"):
+        CloudBackend("openai", "good-key", base_url=base).complete("expand", "SYS", "Claim", "m", {})
+    out = capsys.readouterr()
+    assert secret not in out.out + out.err and secret not in caplog.text
+
+
+def test_the_key_is_kept_in_the_keychain_only(mixed, tmp_path):
+    import zipfile
+
+    from enlens_claims import bundle
+
+    ws, ids, pid = mixed
+    secret = "sk-proj-KEEPMEHERE0987654321"
+    home.set_cloud_key("openai", secret)
+    _use_openai()
+    assert home.cloud_key("openai") == secret and home.cloud_keys()["openai"] is True
+    settings_text = (home.home() / "settings.json").read_text()
+    assert secret not in settings_text and '"cloud_provider": "openai"' in settings_text
+    zpath = tmp_path / "move.zip"
+    bundle.export_all(zpath)
+    with zipfile.ZipFile(zpath) as zf:
+        everything = b"".join(zf.read(n) for n in zf.namelist())
+        manifest = zf.read(bundle.MOVE_MANIFEST).decode()
+    assert secret.encode() not in everything
+    assert "cloud_provider" not in manifest and '"backend": "cloud_api"' not in manifest
+    be, model = home.make_backend(home.load_settings())
+    assert be.provider == "openai" and model == "fake-model:latest" and secret not in repr(be)
+    home.forget_cloud_key("openai")
+    assert home.cloud_keys()["openai"] is False and home.cloud_key("openai") == ""
+
+
+# ---------------------------------------------------------------------------------------------
+# R7, R8: settings and routing
+# ---------------------------------------------------------------------------------------------
+def test_cloud_api_needs_allow_cloud_and_is_refused_on_a_local_only_computer(tmp_path, monkeypatch):
+    monkeypatch.setenv("ENLENS_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("ENLENS_LOCAL_ONLY", raising=False)
+    with pytest.raises(ValueError, match="Allow cloud models first: with OpenAI"):
+        home.update_settings({"backend": "cloud_api", "cloud_provider": "openai"})
+    with pytest.raises(ValueError, match="Choose which cloud provider"):
+        home.update_settings({"backend": "cloud_api", "allow_cloud": True})
+    with pytest.raises(ValueError):
+        home.update_settings({"cloud_provider": "anthropic"})
+    _use_openai()
+    assert not home.main_reads_local(home.load_settings())
+    assert access.route_provider(home.load_settings()) == "openai"
+    monkeypatch.setenv("ENLENS_LOCAL_ONLY", "1")
+    assert home.load_settings()["backend"] == "auto"           # switched off for good
+    with pytest.raises(ValueError, match="switched off"):
+        home.update_settings({"backend": "cloud_api"})
+    with pytest.raises(ValueError, match="switched off"):
+        home.set_cloud_key("openai", "sk-x")
+    with pytest.raises(llm.BackendError, match="switched off"):
+        home._make_backend({**home.load_settings(), "backend": "cloud_api", "cloud_provider": "openai",
+                            "allow_cloud": True, "cloud_model": "m"})
+
+
+def test_the_cloud_model_answers_every_kind_and_the_small_one_labels_and_links():
+    from enlens_claims import routing
+
+    s = {"backend": "cloud_api", "cloud_provider": "mistral", "cloud_model": "mistral-large-latest",
+         "task_models": {"local": {"label": "qwen3:8b"}}}
+    r = routing.from_settings(s)
+    assert r.route == "cloud_api" and r.first("check") == "mistral-large-latest"
+    assert r.first("label") == "mistral-large-latest"          # a local model's name is never sent to the provider
+    r = routing.from_settings({**s, "cloud_small_model": "mistral-small-latest"})
+    assert r.first("label") == "mistral-small-latest" and r.first("link") == "mistral-small-latest"
+    assert r.first("check") == "mistral-large-latest" and r.step_up("label") == "mistral-large-latest"
+    assert "cloud_api" in routing.OFF_COMPUTER and "cloud_api" not in routing.CLAUDE_ROUTES
