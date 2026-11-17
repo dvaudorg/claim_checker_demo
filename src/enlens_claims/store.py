@@ -286,6 +286,14 @@ CREATE TABLE IF NOT EXISTS agreement_runs(run_id TEXT PRIMARY KEY, at TEXT, kind
 -- owned the place it names. `sig`: NULL for now, as in `roles`
 CREATE TABLE IF NOT EXISTS team_settings(key TEXT, by TEXT, owner_seq INT, n INT, value_json TEXT, at TEXT, sig TEXT,
   PRIMARY KEY(key, by));
+-- D1, the rest (groupnames.py): the names of the concept map's groups that are not made from their concepts (the
+-- researcher's, the AI's drafts and the AI's names used), each with its group's concepts (term ids and labels) and the
+-- filters and size it was given under; the quote an AI name rests on, apart, so that it goes with its document. Both
+-- stay on this computer (sync.common.LOCAL_ONLY)
+CREATE TABLE IF NOT EXISTS concept_group_names(name_id TEXT PRIMARY KEY, name TEXT, source TEXT, model TEXT,
+  concepts_json TEXT, labels_json TEXT, filters_json TEXT, n INT, created_at TEXT, updated_at TEXT);
+CREATE TABLE IF NOT EXISTS concept_group_quotes(name_id TEXT PRIMARY KEY, doc_id TEXT, passage_id TEXT, page INT,
+  start INT, end INT, quote TEXT);
 """
 SCHEMA = SCHEMA.replace("{PLACES_TABLE}", PLACES_TABLE)
 
@@ -998,10 +1006,11 @@ class Workspace:
                       "claim_targets", "evidence", "interactions", "verifications", "labels", "terms", "term_mentions",
                       "concepts", "concept_terms", "theme_runs", "themes", "theme_members", "mentions", "bib_links",
                       "blocks", "doc_tables", "block_choices", "concept_link_sentences",
+                      "concept_group_names", "concept_group_quotes",  # D1 rest: the groups' names
                       "ai_cache"):  # 0.18.1: the AI's answers kept so as not to ask again, with their quotes
                 out[t] = cx.execute(f"DELETE FROM {t}").rowcount
             kinds = ("('extract','verify','verify_set','expand','check','decompose','reread','second','label','link',"
-                     "'theme','resolve','theory_codes','theory_frame','code_definition')")
+                     "'theme','resolve','theory_codes','theory_frame','code_definition','group_name')")
             out["results"] = cx.execute(f"DELETE FROM results WHERE kind IN {kinds}").rowcount
             out["tasks"] = cx.execute(f"DELETE FROM tasks WHERE kind IN {kinds}").rowcount
             out["user_claims"] = cx.execute("DELETE FROM user_claims").rowcount
@@ -1044,7 +1053,8 @@ class Workspace:
         out += [("labels", "doc_id=?", (doc_id,)), ("mentions", "doc_id=?", (doc_id,)),
                 ("term_mentions", "passage_id >= ? AND passage_id < ?", passage_range(doc_id))]
         out += [(tbl, "doc_id=?", (doc_id,)) for tbl in ("blocks", "doc_tables", "block_choices",
-                                                          "concept_link_sentences")]  # 0.15; 0.18.1 (D2)
+                                                          "concept_link_sentences",  # 0.15; 0.18.1 (D2)
+                                                          "concept_group_quotes")]  # D1 rest: an AI name's quote
         # 0.15: answers kept as records when the document moved to the new reader name passages that no longer exist
         # ("<doc>:r1-0005", reread.tombstone); they go with the document
         for tbl in ("results", "tasks"):
@@ -1063,6 +1073,10 @@ class Workspace:
         for tbl in ("results", "tasks"):
             out.append((tbl, "kind='code_definition' AND task_id IN (SELECT task_id FROM tasks WHERE "
                         "kind='code_definition' AND instr(payload_json, ?) > 0)", (json.dumps(doc_id),)))
+        # D1 rest (the optional AI part): the name of a group of concepts, drafted from passages of its documents
+        for tbl in ("results", "tasks"):
+            out.append((tbl, "kind='group_name' AND task_id IN (SELECT task_id FROM tasks WHERE "
+                        "kind='group_name' AND instr(payload_json, ?) > 0)", (json.dumps(doc_id),)))
         out += [(tbl, "doc_id=?", (doc_id,)) for tbl in ("passages", "pages", "paragraphs", "headings", "doc_refs",
                                                           "bib_links",  # 0.13: its work goes back to "to find"
                                                           "documents")]

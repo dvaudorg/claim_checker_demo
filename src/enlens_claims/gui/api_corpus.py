@@ -48,6 +48,9 @@ ROUTES: list[tuple[str, str, str]] = [
     ("GET", rf"/api/projects/{P}/concept-map", "get_concept_map"),
     ("GET", rf"/api/projects/{P}/concept-map/options", "get_concept_map_options"),
     ("GET", rf"/api/projects/{P}/concept-map/edge", "get_concept_map_edge"),
+    # D1 rest (groupnames.py): a group's name kept, renamed, used, forgotten; the AI's drafts of the groups' names
+    ("POST", rf"/api/projects/{P}/concept-map/names", "post_concept_map_names"),
+    ("POST", rf"/api/projects/{P}/concept-map/name-groups", "post_concept_map_name_groups"),
     # A7 (reader 5): a figure's picture, drawn from the original PDF when it is shown, never stored
     ("GET", rf"/api/projects/{P}/documents/{P}/figures/{P}\.png", "get_figure_image"),
     # 0.19.0 (K3, nonscientific.py): a hypothesis that counts the non-scientific documents, and the suggestion from
@@ -62,7 +65,9 @@ NOT_A_CHANGE: set[str] = {
     # K2, the framework draft: the draft is a file of this computer's project folder that the shared folder does not
     # carry (only the codebook made from it is shared), and the evidence is a search
     "post_codebook_theory_draft", "put_codebook_theory_draft", "delete_codebook_theory_draft",
-    "post_codebook_theory_draft_evidence"}
+    "post_codebook_theory_draft_evidence",
+    # D1 rest: the names of the concept map's groups stay on this computer (sync.common.LOCAL_ONLY)
+    "post_concept_map_names"}
 
 
 class CorpusApi:
@@ -399,7 +404,7 @@ class CorpusApi:
         ws = self.app.ws(name)
         try:
             return conceptmap.concept_map(ws, _map_filters(q), _int(q, "n", conceptmap.DEFAULT_N, conceptmap.MIN_N,
-                                                                     conceptmap.MAX_N))
+                                                                     conceptmap.MAX_N), settings=self.app.settings())
         except KeyError:
             raise ApiError(404, "That set of themes is gone: make the themes again, or choose another theme.") from None
         except ValueError as e:
@@ -425,6 +430,47 @@ class CorpusApi:
             raise ApiError(404, "No such term in the glossary, or that set of themes is gone: make them again.") from None
         except ValueError as e:
             raise ApiError(400, str(e)) from None
+
+    def post_concept_map_names(self, name, q):
+        """{"action", …}: a change to the name of one of the map's groups (rename, use_concepts, accept, unaccept,
+        keep, forget, restore; groupnames.save) -> {"record"}. The names stay on this computer."""
+        from .. import groupnames
+
+        body = self._body()
+        try:
+            return groupnames.save(self.app.ws(name), str(body.get("action") or ""), body)
+        except KeyError:
+            raise ApiError(404, "That name is gone: draw the map again.") from None
+        except ValueError as e:
+            raise ApiError(400, str(e)) from None
+
+    def post_concept_map_name_groups(self, name, q):
+        """The map's filters as for GET concept-map, and {"which": "unnamed" | "again"} -> {"job"}: the AI drafts a
+        name for the groups asked for (groupnames.name_groups), as a job that waits for its own Start like every AI
+        job: this request only puts the tasks in the queue."""
+        from .. import conceptmap, groupnames
+
+        ws = self.app.ws(name)
+        body = self._body()
+        which = "again" if body.get("which") == "again" else "unnamed"
+        f = _map_filters(q)
+        n = _int(q, "n", conceptmap.DEFAULT_N, conceptmap.MIN_N, conceptmap.MAX_N)
+        settings = self.app.settings()
+        try:
+            m = conceptmap.concept_map(ws, f, n, settings=settings)
+        except KeyError:
+            raise ApiError(404, "That set of themes is gone: make the themes again, or choose another theme.") from None
+        if not m["groups"]:
+            raise ApiError(400, "No two concepts on this map are mentioned together often enough to form a group.")
+        if not m["can_name"]["offered"]:
+            raise ApiError(400, m["can_name"]["why"] or groupnames.NONE_MAY_READ)
+        job = self.app.start_queued_job(
+            "group-names", "The AI names the groups of the concept map", name,
+            lambda job, be, model, prog: groupnames.name_groups(ws, f, n, which, be, model, prog, job.cancel.is_set,
+                                                                settings=settings),
+            withdraw=(groupnames.KIND,))
+        job.scope = "concept-map"
+        return {"job": job.view()}
 
     def get_codebook_theory(self, name, doc_id, q):
         """The candidate concepts of a document, as draft codes with their quoted definitions and the evidence's

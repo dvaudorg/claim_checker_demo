@@ -2037,8 +2037,15 @@ in the project folder (`drafts/codebook-from-theory.json`, not shared through th
   "concepts_in_scope", "nodes": [{"id" (a term id), "label", "passages", "group" (1… or null), "x", "y" (0 to 1, for a
   map 1.6 times as wide as high)}], "edges": [{"a", "b", "together", "pmi"}], "links": [{"a", "b", "relation",
   "source", "types": [{"relation" (seen from a), "source"}]}] (one per pair; "relation" and "source" are its first
-  type), "groups": [{"group", "size", "names"}], "links_off_map" (links with exactly one end on the map)}`. `n` is 10
-  to 150. 400 for a malformed filter or an unknown codebook, 404 for a set of themes that is gone.
+  type), "groups": [{"group", "size", "names", "concepts" (term ids, the most central first), "name", "name_source"
+  ("concepts" | "person" | "ai_draft" | "ai"), "name_id" (null for a name made from its concepts), "model" (an AI
+  name's), "quote" ({"quote", "doc_id", "title", "page", "start", "end"} for an AI name), "changed" (null or {"left",
+  "joined"}: labels), "naming_failed" (null or {"reason", "model"})}], "names_elsewhere" ([{"id", "name",
+  "name_source", "concepts" (the first six labels), "more"}]: kept names no group on this map takes), "can_name"
+  ({"offered", "why", "reader": "claude" | "local" | "main" | null}: whether the AI may be asked to name the groups;
+  nothing asks a model), "links_off_map" (links with exactly one end on the map)}`. `n` is 10 to 150. 400 for a
+  malformed filter or an unknown codebook, 404 for a set of themes that is gone. Relations of links may also be
+  `needs`, `needed_by`, `shapes`, `shaped_by` and `clashes` (D1, the rest).
 - `GET /api/projects/{p}/concept-map/options` → `{"documents": [{"doc_id", "title"}], "themes": {"run_id", "themes":
   [{"theme_id", "name"}]}, "codebooks": [{"name", "title", "codes": [{"code", "description"}]}], "years": [yyyy]}`:
   what the filters can choose from (evidence documents only).
@@ -2047,10 +2054,26 @@ in the project folder (`drafts/codebook-from-theory.json`, not shared through th
   null, "passages": [{"passage_id",
   "doc_id", "title", "page", "location", "text", "start"}]}` (the first 5, by document). 400 without both, 404 for a
   term the glossary does not know.
+- `POST /api/projects/{p}/concept-map/names` `{"action", …}` → `{"record"}` (D1, the rest, `groupnames.py`): a change to
+  a group's name. Actions: `rename` `{"name_id"?, "name", "concepts", "labels", "filters", "n"}` (the researcher's
+  name for the group as it is now; 400 for an empty name), `use_concepts` `{"name_id", "concepts"}` (named by its
+  concepts again), `accept` `{"name_id" | "items": [{"name_id", "concepts", "labels"}], …}` (the AI's draft used),
+  `unaccept` `{"name_id" | "items"}` (Undo), `keep` `{"name_id", "concepts", "labels", "filters", "n"}` (a changed
+  group's name goes with it as it is), `forget` `{"name_id"}` (returns the removed record) and `restore`
+  `{"record"}` (Undo). 404 for a name that is not there. The names stay on this computer: this route starts no round
+  of the shared folder.
+- `POST /api/projects/{p}/concept-map/name-groups[?n=60&…filters]` `{"which": "unnamed" | "again"}` → `{"job"}` (kind
+  `group-names`): the AI drafts a name for the groups still named by their concepts (`again`: every group but those
+  the researcher named), one task of kind `group_name` per group, from a few passages where its concepts are mentioned
+  together, only from documents the reader may read. The request only queues the work; the job waits for its own
+  Start, as every AI job does. Its result: `{"named", "failed", "groups", "skipped" (groups with no passage the AI may
+  read), "stopped", "model", "failures"}`. 400 when the map has no group or no AI may read its documents.
 
 Links found from the text (roadmap D2, `textrelations.py`) need no route of their own: they are rows of the concept
 page's `related.links` with `"source": "pattern"` and their `"sentences"` (`[{"doc_id", "title", "page", "start",
-"end", "quote"}]`); relations gain `effect`, `effect_of`, `replaces` and `replaced_by`.
+"end", "quote"}]`); relations gain `effect`, `effect_of`, `replaces` and `replaced_by`, and with D1 (the rest)
+`needs`, `needed_by`, `shapes`, `shaped_by` and `clashes` (`clashes` is the same from both ends; the others turn into
+their pair when seen from the other concept).
 
 **Reader 5: figures and tables from their rules** (roadmap A6, `reader5.py`).
 

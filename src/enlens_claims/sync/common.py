@@ -28,6 +28,8 @@ LOCAL_ONLY = {"meta", "embeddings", "code_vectors", "terms", "term_mentions", "c
               # a file brought under this copy's own id
               "owner_pins", "removed_docs", "sync_via", "sync_from", "sync_refused",
               "concept_link_sentences",  # 0.18.1 (D2): made again with each copy's glossary, from its own readings
+              # D1 rest (groupnames.py): the names of the concept map's groups stay on this computer, in this release
+              "concept_group_names", "concept_group_quotes",
               # 0.18.1 (H4): answers this copy keeps so as not to ask again; raw AI answers with their quotes, also of
               # documents a colleague's setting may keep from them: never sent (each copy keeps its own)
               "ai_cache",
