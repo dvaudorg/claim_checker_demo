@@ -384,10 +384,12 @@ class OllamaBackend:
         local gate). Once per backend; not with an opener of the caller's own (a test's stand-in)."""
         if self._woken or self.opener is not local_urlopen:
             return
-        self._woken = True
         from .ollama_setup import wake
 
-        wake(self.base_url, should_stop=lambda: bool(self.should_stop and self.should_stop()))
+        with _WAKE_LOCK:   # two requests at once: the second waits for the first's start, not beside it
+            if not self._woken:
+                # only once it answers: a start stopped or timed out is tried again at the next request
+                self._woken = wake(self.base_url, should_stop=lambda: bool(self.should_stop and self.should_stop()))
 
     def digest(self, model: str) -> str | None:
         """The digest Ollama reports for the model (/api/tags): the exact weights, whatever the tag points to."""
@@ -1076,6 +1078,8 @@ OPENAI_PORTS = ("http://localhost:1234/v1", "http://localhost:8080/v1", "http://
                 "http://localhost:8000/v1", "http://localhost:5001/v1")
 _DETECTED: dict = {}
 
+
+_WAKE_LOCK = __import__("threading").Lock()   # 0.19.15: one start of Ollama at a time (OllamaBackend.wake, embed)
 
 # 0.19.15: the local models a job of the app asked, as (server address, model), so that its Stop lets go of their memory
 # at once instead of leaving them in Ollama for its next 15 minutes. The app's job sets a set of its own here (copied into

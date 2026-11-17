@@ -330,9 +330,15 @@ class Jobs:
                 job.gate.end()   # 0.19.13: its local part reads nothing more once the job has ended (an error, say)
                 if job.cancel.is_set() and job.used_models:
                     # 0.19.15: Stop lets go of the local models this job loaded, at once (not after Ollama's 15
-                    # minutes): nothing stays in memory that the person did not ask to keep working
-                    threading.Thread(target=llm.let_go, args=(set(job.used_models),), daemon=True,
-                                     name=f"let-go-{job.id}").start()
+                    # minutes): nothing stays in memory that the person did not ask to keep working. A model another
+                    # job of the app still waits for or reads with is kept (it would only be loaded again)
+                    with self.lock:
+                        busy = set().union(*(j.used_models for j in self.jobs.values()
+                                             if j is not job and j.state in ("queued", "running")))
+                    free = set(job.used_models) - busy
+                    if free:
+                        threading.Thread(target=llm.let_go, args=(free,), daemon=True,
+                                         name=f"let-go-{job.id}").start()
                 job.finished = time.time()
                 if job.tracker is not None:
                     job.tracker.finish()

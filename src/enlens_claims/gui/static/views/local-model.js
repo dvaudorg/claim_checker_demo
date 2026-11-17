@@ -121,8 +121,8 @@ function startedWait(area, btn, text = "Ollama is starting…", ms = 60000) {
     if (!area.isConnected) return;
     if (look) look.hidden = false;
     btn.disabled = false;
-    replace(area, h("p", { class: "muted small" }, btn.hidden ? "Ollama did not answer within a minute. Open the Ollama app yourself, or open this page again and ENLENS tries again."
-      : "Ollama did not answer within a minute. Open the Ollama app yourself, or press Start Ollama again."));
+    btn.hidden = false;   // 0.19.15: drawing the page again no longer starts it: the button is the way to try again
+    replace(area, h("p", { class: "muted small" }, "Ollama did not answer within a minute. Open the Ollama app yourself, or press Start Ollama again."));
   }, Math.max(1000, ms));
 }
 

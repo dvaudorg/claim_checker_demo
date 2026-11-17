@@ -92,8 +92,8 @@ def _no_real_enlens_home(tmp_path, monkeypatch):
 @pytest.fixture(autouse=True)
 def _no_real_ollama_start(monkeypatch):
     """0.19.15: Ollama starts at the first request of a model a person started (`ollama_setup.wake`). No test ever
-    starts the real Ollama of the computer it runs on: `start` refuses, as when Ollama is not installed, unless a test
-    puts a stand-in of its own in its place."""
+    starts the real Ollama of the computer it runs on: `start` refuses, as when Ollama is not installed, and `let_go`
+    unloads nothing, unless a test puts a stand-in of its own in their place."""
     from enlens_claims import ollama_setup
 
     def refuse(sys_name=None):
@@ -101,6 +101,10 @@ def _no_real_ollama_start(monkeypatch):
 
     monkeypatch.setattr(ollama_setup, "start", refuse)
     monkeypatch.setitem(ollama_setup._STARTED, "at", 0.0)
+    # nor lets go of a model the real Ollama holds (a test that stops a job asks its own stand-in, if any)
+    from enlens_claims import llm
+
+    monkeypatch.setattr(llm, "let_go", lambda models: [])
 
 
 @pytest.fixture(autouse=True)

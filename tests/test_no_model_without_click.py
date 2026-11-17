@@ -12,6 +12,8 @@ import threading
 import time
 from pathlib import Path
 
+import pytest
+
 from enlens_claims import llm, ollama_setup
 from enlens_claims.access import Readers, _Gated
 from enlens_claims.gui import launcher
@@ -19,6 +21,7 @@ from enlens_claims.gui.api_common import Jobs
 from enlens_claims.localgate import GO, LocalGate
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "enlens_claims"
+REAL_LET_GO = llm.let_go   # conftest puts a stand-in in its place for every test
 
 
 # -- Ollama starts on a click, never when ENLENS opens ---------------------------------------------------------------
@@ -42,6 +45,17 @@ def test_wake_starts_ollama_only_on_this_computer_and_only_when_it_does_not_answ
     assert ollama_setup.wake("http://localhost:11434") is True and started == [1]  # answers now: nothing more
 
 
+def test_wake_starts_nothing_for_another_port(monkeypatch):
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    monkeypatch.setattr(ollama_setup, "answers", lambda url=None: False)
+    monkeypatch.setattr(ollama_setup, "start_once", lambda url=None: pytest.fail("started for another server"))
+    assert ollama_setup.wake("http://127.0.0.1:9") is False          # the dev server's "no Ollama here"
+    assert ollama_setup.wake("http://localhost:1234/v1") is False    # LM Studio's
+    monkeypatch.setenv("OLLAMA_HOST", "127.0.0.1:11500")
+    monkeypatch.setattr(ollama_setup, "start_once", lambda url=None: {"started": False, "running": True})
+    assert ollama_setup.wake("http://127.0.0.1:11500") is True       # where OLLAMA_HOST says it listens
+
+
 def test_wake_is_false_when_ollama_is_not_on_this_computer(monkeypatch):
     monkeypatch.setattr(ollama_setup, "app_path", lambda s=None: None)
     monkeypatch.setattr(ollama_setup, "answers", lambda url=None: False)
@@ -57,6 +71,40 @@ def test_a_backend_wakes_ollama_once_at_its_first_request_and_never_with_a_stand
     assert woken == ["http://localhost:11434"]
     llm.OllamaBackend(base_url="http://localhost:11434", opener=lambda *a, **k: None).wake()
     assert woken == ["http://localhost:11434"]
+
+
+def test_a_start_that_failed_is_tried_again_at_the_next_request(monkeypatch):
+    answers = iter([False, True])
+    woken = []
+    monkeypatch.setattr(ollama_setup, "wake", lambda url=None, wait=30.0, should_stop=None: woken.append(1)
+                        or next(answers))
+    be = llm.OllamaBackend(base_url="http://localhost:11434")
+    be.wake()
+    be.wake()
+    be.wake()
+    assert len(woken) == 2   # the first did not answer; the second did; the third asks nothing
+
+
+def test_a_page_that_only_looks_never_wakes_ollama(monkeypatch, tmp_path):
+    from enlens_claims import home
+    from enlens_claims.gui.server import App
+
+    woken = []
+    monkeypatch.setattr(ollama_setup, "wake", lambda url=None, wait=30.0, should_stop=None: woken.append(url) or False)
+    app = App()
+    home.save_settings({**home.load_settings(), "backend": "auto", "ollama_url": "http://localhost:11434"})
+    try:
+        app.backend(("label",))          # the Profile page's plan: it only looks
+    except Exception:  # noqa: BLE001 - no model server here: only whether it was woken matters
+        pass
+    assert woken == []
+    try:
+        app.backend(wake=True)           # an AI button that starts a job
+    except Exception:  # noqa: BLE001
+        pass
+    assert woken == ["http://localhost:11434"]
+    src = (SRC / "gui" / "app_queue.py").read_text(encoding="utf-8")
+    assert 'self.backend(("label",))' in src   # label_plan (GET .../profile/plan) still asks without waking
 
 
 # -- letting go of a model's memory -----------------------------------------------------------------------------------
@@ -95,7 +143,7 @@ class _FakeOllama:
 def test_let_go_unloads_only_the_models_ollama_holds(monkeypatch):
     fake = _FakeOllama(["qwen3.5:4b"])
     monkeypatch.setattr(llm, "local_urlopen", fake)
-    got = llm.let_go({("http://localhost:11434", "qwen3.5:4b"), ("http://localhost:11434", "gemma4:12b")})
+    got = REAL_LET_GO({("http://localhost:11434", "qwen3.5:4b"), ("http://localhost:11434", "gemma4:12b")})
     assert got == ["qwen3.5:4b"] and fake.unloaded == ["qwen3.5:4b"]   # gemma4 is not loaded to be let go of
 
 
@@ -124,6 +172,35 @@ def test_the_jobs_stop_lets_go_of_the_local_models_it_asked(monkeypatch):
     job.cancel.set()
     assert _wait(lambda: freed)
     assert freed == [{("http://localhost:11434", "ifm/k2-horizon:0.9b")}]
+
+
+def test_a_stop_keeps_a_model_another_job_still_uses(monkeypatch):
+    freed = []
+    monkeypatch.setattr(llm, "let_go", lambda models: freed.append(set(models)) or [])
+    jobs, began = Jobs(), threading.Event()
+    k2, qwen = ("http://localhost:11434", "ifm/k2-horizon:0.9b"), ("http://localhost:11434", "qwen3.5:4b")
+
+    def other(job):
+        llm.note_used(*k2)
+        while not job.cancel.is_set():
+            time.sleep(0.02)
+
+    def mine(job):
+        llm.note_used(*k2)
+        llm.note_used(*qwen)
+        began.set()
+        while not job.cancel.is_set():
+            time.sleep(0.02)
+
+    a = jobs.start("labels", "Other", None, other, uses_model=False)
+    assert _wait(lambda: a.used_models)
+    b = jobs.start("theme-names", "Mine", None, mine, uses_model=False)
+    assert began.wait(5)
+    b.cancel.set()
+    assert _wait(lambda: freed)
+    assert freed == [{qwen}]          # k2 stays: the other job still reads with it
+    a.cancel.set()
+    assert _wait(lambda: len(freed) == 2) and freed[1] == {k2}
 
 
 def test_a_job_that_ends_by_itself_keeps_its_model(monkeypatch):

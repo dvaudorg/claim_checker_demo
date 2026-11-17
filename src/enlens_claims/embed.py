@@ -84,11 +84,14 @@ class OllamaEmbedder:
         if not texts:
             return []
         if not self._woken and self.opener is local_urlopen:
-            # 0.19.15: ENLENS no longer starts Ollama when it opens; search by meaning starts it when it needs it
-            self._woken = True
+            # 0.19.15: ENLENS no longer starts Ollama when it opens; search by meaning starts it when it needs it (once
+            # it answers: a start that failed is tried again at the next request)
+            from .llm import _WAKE_LOCK
             from .ollama_setup import wake
 
-            wake(self.base_url)
+            with _WAKE_LOCK:
+                if not self._woken:
+                    self._woken = wake(self.base_url)
         if self.opener is local_urlopen:
             from .llm import note_used
 

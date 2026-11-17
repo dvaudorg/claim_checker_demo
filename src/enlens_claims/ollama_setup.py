@@ -354,7 +354,14 @@ def wake(url: str | None = None, wait: float = 30.0, should_stop: Callable[[], b
     from urllib.parse import urlparse
 
     url = (url or DEFAULT_URL).rstrip("/")
-    if urlparse(url if "//" in url else "http://" + url).hostname not in ("localhost", "127.0.0.1", "::1"):
+    where = urlparse(url if "//" in url else "http://" + url)
+    if where.hostname not in ("localhost", "127.0.0.1", "::1"):
+        return False
+    # only where Ollama listens: its own port, or the one OLLAMA_HOST names (another server, or a test's stand-in on
+    # some other port, never starts the Ollama app)
+    env = os.environ.get("OLLAMA_HOST") or ""
+    ports = {11434} | ({urlparse(env if "//" in env else "http://" + env).port} if env else set())
+    if (where.port or 80) not in ports:
         return False
     if answers(url):
         return True
