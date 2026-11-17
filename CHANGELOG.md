@@ -2,6 +2,12 @@
 
 ## 0.19.17 (November 2026): Stop starts over, and second opinions you can find
 
+Stopping a reading now starts it over. When you stop *Read it*, *Read these*, *Read more excerpts* or *Search
+with other words* before every model has read, the button comes back and nothing is left waiting for the local model,
+so a document whose AI setting you changed meanwhile is read the way you now allow. And a second opinion is compared
+only with a first reading: it no longer counts differences on excerpts nobody has read, and *Show them* takes you to
+each excerpt where it differs.
+
 ### Fixed
 
 - **A second opinion differs only from a first reading, and Show them finds it.** *Get a second opinion* also read
@@ -22,6 +28,21 @@
   the next click follows each document's setting at that moment. What Claude has already read stays, and so does a
   judgement of your own. The first reading of a check is unchanged: stopped, its local excerpts still wait under the
   local model's Start. Cannot change results.
+
+### Tests
+
+- `tests/test_stop_resets_round.py`: a stopped *Read it* leaves no round behind and brings the card back; read again
+  after the document is switched to *Claude may read it*, Claude reads it; the local Start still reads; Claude's part
+  stays when only the local part waited; *Search with other words* stopped takes its words back.
+- `tests/test_second_opinion_unread.py`: no second opinion of a part not read yet; an earlier second reading of such
+  excerpts is no difference on the result or the Hypotheses list.
+- `tests/test_views_result_and_documents.py`: *Show them* goes to each differing card in turn, judged or not.
+
+### Not yet done
+
+- Stopping a check's first reading still leaves its local excerpts waiting under the local model's Start (that panel
+  is the only way to start them). A first reading whose documents were switched to *Claude may read it* meanwhile is
+  still offered to the local model only.
 
 ## 0.19.16 (November 2026): The concept map's links and named groups, and roles for many documents
 
