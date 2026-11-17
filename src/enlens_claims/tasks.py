@@ -84,9 +84,13 @@ def queue_mode() -> bool:
 
 def mark_queued(cx, task_ids: Iterable[str]) -> int:
     """Hand these tasks to the queue (no change for tasks already in it). 0.11: only tasks whose documents Claude
-    may read (`access` cloud) ever enter it."""
+    may read (`access` cloud) ever enter it; stage 1 of other cloud providers: and Anthropic may read them (the queue
+    is Claude Code's), whatever provider the stored settings are for."""
     n = 0
+    labels = access.labels_provider(cx)
     for tid in task_ids:
+        if labels != access.ANTHROPIC and access.recheck(cx, tid, budget=False, provider=access.ANTHROPIC) != "cloud":
+            continue
         n += cx.execute("UPDATE tasks SET queued=1, queued_at=COALESCE(queued_at, ?) WHERE task_id=? AND "
                         "COALESCE(queued, 0)=0 AND COALESCE(access, 'cloud')='cloud'", (now(), tid)).rowcount
     return n
@@ -96,12 +100,16 @@ def _insert_task(cx, task_id: str, kind: str, model: str, payload: dict) -> bool
     """Create a task (no change when it exists). 0.11: every task is labelled with the most restricted setting of the
     documents its payload names (`tasks.access`, see access.py); only `cloud` tasks are handed to the queue."""
     if cx.execute("SELECT 1 FROM tasks WHERE task_id=?", (task_id,)).fetchone():
-        if queue_mode():  # an existing task asked for again (a stopped run started anew): into the queue
-            cx.execute("UPDATE tasks SET queued=1, queued_at=COALESCE(queued_at, ?) WHERE task_id=? AND status IN "
-                       "('pending', 'retry') AND COALESCE(access, 'cloud')='cloud'", (now(), task_id))
+        if queue_mode() and cx.execute("SELECT 1 FROM tasks WHERE task_id=? AND status IN ('pending', 'retry')",
+                                       (task_id,)).fetchone():
+            mark_queued(cx, [task_id])  # an existing task asked for again (a stopped run started anew): into the queue
         return False
-    level = access.label_payload(cx, payload)
-    q = queue_mode() and level == "cloud"
+    # stage 1 of other cloud providers: the setting for the provider the project's tasks are labelled for; the queue
+    # takes it only when Anthropic may read it
+    labels = access.labels_provider(cx)
+    level = access.label_payload(cx, payload, provider=labels)
+    q = queue_mode() and level == "cloud" and (labels == access.ANTHROPIC or access.label_payload(
+        cx, payload, budget=False, provider=access.ANTHROPIC) == "cloud")
     cx.execute("INSERT INTO tasks(task_id, kind, model, prompt_version, payload_json, status, attempts, created_at, "
                "queued, queued_at, access) VALUES (?,?,?,?,?,?,0,?,?,?,?)",
                (task_id, kind, model, prompts.VERSIONS[kind], json.dumps(payload, ensure_ascii=False), "pending", now(),
@@ -117,7 +125,7 @@ def replace_task(cx, task_id: str, kind: str, model: str, payload: dict) -> bool
         return _insert_task(cx, task_id, kind, model, payload)
     if row[0] == "done":
         return False
-    level = access.label_payload(cx, payload)
+    level = access.label_payload(cx, payload, provider=access.labels_provider(cx))
     cx.execute("UPDATE tasks SET payload_json=?, model=?, access=?, status='pending', attempts=0 WHERE task_id=?",
                (json.dumps(payload, ensure_ascii=False), model, level, task_id))
     if level != "cloud":
@@ -287,7 +295,7 @@ def make_verify_vca(ws: Workspace, model: str | None = None, k: int | None = Non
                 tid = f"{tid}:set:{_h(*ids)}"
             # 0.11: split like a check's round: what Claude may read, what only a local AI may read; passages of
             # documents marked No AI are left out (the SDG pack has no person's judgement of a single passage)
-            lv = access.levels(cx, [p["doc_id"] for p in payload["passages"]])
+            lv = access.levels(cx, [p["doc_id"] for p in payload["passages"]], provider=access.labels_provider(cx))
             total = len(payload["passages"])
             for suffix, keep in (("", "cloud"), (":local", "local")):
                 ps = [p for p in payload["passages"] if lv.get(p["doc_id"]) == keep]
@@ -1666,6 +1674,7 @@ def _provenance(backend, model: str) -> dict:
 def run(ws: Workspace, kind: str, backend, limit: int | None = None, model: str | None = None) -> dict[str, int]:
     _sync_thresholds(ws)
     stats = {"done": 0, "retry": 0, "failed": 0}
+    left: set[str] = set()   # tasks this backend may not read: they wait for a model that may, or the person
     may = access.backend_levels(backend)
     prov = access.provider_of(backend)
     dflt = access.default(ws)
@@ -1675,12 +1684,16 @@ def run(ws: Workspace, kind: str, backend, limit: int | None = None, model: str 
             break
         for t in todo:
             if (t["access"] or "cloud") not in may:
+                left.add(t["task_id"])
                 continue  # 0.11: a task of a restricted document is left for a model that may read it
             # worked out again per task: a document's cap counts what the tasks before this one sent, and a setting
             # changed since the task was labelled leaves it for a model that may read it (instead of the guard
             # stopping the run)
             with ws.connect() as cx:
+                # (for the provider the tasks are labelled for, a stricter setting is written: the task is then the
+                # local model's or the person's, as a task of a document marked Only a local AI is)
                 if access.recheck(cx, t["task_id"], dflt, provider=prov) not in may:
+                    left.add(t["task_id"])
                     continue
             system, user = render(ws, t)
             _send(ws, t, backend)
@@ -1689,6 +1702,8 @@ def run(ws: Workspace, kind: str, backend, limit: int | None = None, model: str 
             ingest_result(ws, t["task_id"], raw, model=used, provenance=_provenance(backend, used), problem=problem)
     for r in ws.query("SELECT status, COUNT(*) FROM tasks WHERE kind=? GROUP BY status", (kind,)):
         stats[r[0]] = r[1]
+    if left:
+        stats["left_for_another_reader"] = len(left)
     return stats
 
 

@@ -510,9 +510,10 @@ def update_settings(changes: dict) -> dict:
 
 def _relabel_after(old: dict, new: dict) -> None:
     """Stage 1 of other cloud providers: another main route may be another provider, which may read other documents.
-    The current project's tasks not answered yet get their setting for it at once (`access.relabel`: a task its route
-    may not read leaves the queue); every other project's are worked out again as each task leaves (`access.recheck`)."""
-    from .access import relabel, route_provider
+    The current project's tasks not answered yet get their setting for it at once (`access.sync_labels`, looser or
+    stricter); every other project's when the app next opens it, and the guard works each task out again as it
+    leaves (`access.recheck`)."""
+    from .access import route_provider, sync_labels
 
     if route_provider(old) == route_provider(new):
         return
@@ -520,9 +521,7 @@ def _relabel_after(old: dict, new: dict) -> None:
     try:
         if not name or name not in list_projects():
             return
-        ws = open_project(name)
-        with ws.connect() as cx:
-            relabel(cx, provider=route_provider(new))
+        sync_labels(open_project(name), route_provider(new))
     except Exception:  # noqa: BLE001 - the guard as each task leaves still holds
         pass
 
@@ -826,11 +825,13 @@ def _make_backend(settings: dict, api_key: str = "", kinds: tuple[str, ...] = ("
                 model = (settings.get("ollama_model") if _installed(settings.get("ollama_model") or "", models)
                          else pick_chat_model(models, srv.get("loaded") or (), srv.get("modified") or {}))
                 if model:
+                    _auto_chose(srv["url"])
                     return _ollama(settings, srv["url"], model, think, kinds), model
             else:
                 model = (settings.get("openai_model") if settings.get("openai_model") in models
                          else pick_chat_model(models, srv.get("loaded") or ()))
                 if model:
+                    _auto_chose(srv["url"])
                     return LocalBackend(base_url=srv["url"], seed=_seed(settings)), model
         if found:
             raise BackendError("A local model server is running but has no chat model. With Ollama, download one "
@@ -839,6 +840,13 @@ def _make_backend(settings: dict, api_key: str = "", kinds: tuple[str, ...] = ("
                            "button, then download a model there; or open LM Studio, or choose the offline demo in "
                            "Settings.")
     return BaselineBackend(), "baseline"
+
+
+def _auto_chose(url: str) -> None:
+    """The automatic route chose this server: its provider is the route's (access.route_provider)."""
+    from .access import auto_chose
+
+    auto_chose(url)
 
 
 def main_reads_local(settings: dict) -> bool:

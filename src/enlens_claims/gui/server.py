@@ -151,9 +151,14 @@ class App(LibraryMixin, QueueMixin):
         if name not in home.list_projects():
             raise ApiError(404, f"No project called {name!r}.")
         try:
-            return home.open_project(name)
+            ws = home.open_project(name)
         except Exception as e:
             raise ApiError(409, f"Could not open project {name!r}: {e}") from e
+        try:  # stage 1 of other cloud providers: the tasks' settings are for the main route's provider (once per change)
+            access.sync_labels(ws, access.route_provider(self.settings()))
+        except Exception:  # noqa: BLE001 - the guard works each task out again as it leaves
+            pass
+        return ws
 
     def backend(self, kinds: tuple[str, ...] = ("check", "expand", "decompose", "reread"), k: int | None = None,
                 wake: bool = False):

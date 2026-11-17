@@ -92,6 +92,8 @@ class RecordingOpener:
 ])
 def test_embeddings_never_post_restricted_passages_to_another_computer(mixed, settings, remote):
     ws, ids = mixed
+    if remote:  # stage 1 of other cloud providers: a server on another computer reads only what allows it ("other")
+        access.set_providers_default(ws, ["anthropic", "other"])
     emb = core.make_embedder({"embed_model": "some-embed", **settings})
     assert embed.remote(emb) is remote
     seen = RecordingOpener()

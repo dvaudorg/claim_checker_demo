@@ -23,12 +23,18 @@ percentage) treats a document as `local` for new tasks once Claude has read that
 
 Cloud providers other than Claude (stage 1, providers.py): a `cloud` document may be read by the cloud providers it
 allows (`documents.ai_providers`, a JSON list; NULL: the project's `ai_providers_default`, absent: Anthropic only, as
-"Claude may read it" always meant). For the provider of the route that would read it, a `cloud` document that does not
-allow that provider counts as `local`, as a reached cap does: everywhere `levels` is asked (the work split, the labels
-of tasks, `recheck` as a task leaves, the guard). Which provider that is: `provider=` where the caller knows its
-reader (the queue for Claude Code: Anthropic; a backend: `provider_of`), else the main route in Settings
-(`active_provider`). A model server on this computer is no provider (None): it reads `cloud` documents as before. In a
-shared project only Anthropic may read (the allowance does not travel with a team yet).
+"Claude may read it" always meant). The rule is applied only where a caller names the provider that reads
+(`provider=`): for it, a `cloud` document that does not allow it counts as `local`, as a reached cap does. Without a
+provider every function gives the setting as the person chose it (what is stored, synced, shared and shown). The
+decision points name theirs: the work split (`Readers.provider`, the backend's own), the guard (`require`, `may_read`),
+the queue for Claude Code, the file queue and the connector (Anthropic), a remote embedder (its address). A model server
+on this computer is no provider (None). In a shared project only Anthropic may read.
+
+The stored setting of a task (`tasks.access`) is the one for the provider the project's tasks are labelled for
+(`labels_provider`, the main route's; meta `ai_labels_for`, absent: Anthropic, as before), so that the queue, the waits
+and the features' split of a job's tasks keep working from the column. A change of main route relabels a project the
+next time the app opens it (`sync_labels`): stricter or looser, nothing stays strict. The queue for Claude Code holds
+only tasks Anthropic may read, whatever the labels are for.
 """
 from __future__ import annotations
 
@@ -59,9 +65,17 @@ SHARED_ONLY_ANTHROPIC = ("Other providers come to shared projects later: your co
 # ---------------------------------------------------------------------------------------------
 # which cloud provider reads (stage 1 of other cloud providers)
 # ---------------------------------------------------------------------------------------------
-_ACTIVE = object()   # "the main route's provider": worked out when it is needed
-# the reader of the code that runs inside `reading_for` (the connector's every request: Claude)
-ROUTE_PROVIDER: contextvars.ContextVar = contextvars.ContextVar("enlens_route_provider", default=_ACTIVE)
+_SCOPE = object()    # the default: the provider `reading_for` set around the code (the add-ons' floors), else none
+_LABELS = object()   # the provider the project's stored task settings are for (`labels_provider`)
+_UNSET = object()
+ROUTE_PROVIDER: contextvars.ContextVar = contextvars.ContextVar("enlens_route_provider", default=None)
+LABELS_KEY = "ai_labels_for"
+_AUTO: dict = {"url": None}   # the server the automatic local route chose last (home._make_backend)
+
+
+def auto_chose(url: str | None) -> None:
+    """The automatic local route chose this server (its provider is the route's, not an address left unused)."""
+    _AUTO["url"] = url
 
 
 def route_provider(settings: dict) -> str | None:
@@ -80,34 +94,53 @@ def route_provider(settings: dict) -> str | None:
         return providers.of_url(settings.get("openai_url") or "")
     if b == "ollama":
         return providers.of_url(settings.get("ollama_url") or "")
-    # auto: the servers on this computer, and the configured addresses too (detect_local): one on another computer
-    # makes the route that provider (a document it may not read is then read as Only a local AI, which the model on
-    # this computer may still read, and a server on another computer never)
-    far = [providers.of_url(u) for u in (settings.get("ollama_url") or "", settings.get("openai_url") or "")
-           if u.strip() and not providers.on_this_computer(u)]
-    return far[0] if far else None
+    # auto: the server it chose (on this computer unless an address set in Settings answered first)
+    return providers.of_url(_AUTO["url"]) if _AUTO["url"] else None
 
 
-def active_provider():
-    """The provider that reads now: the one set for this code (`reading_for`), else the main route's in Settings.
-    When the settings cannot be read, `other` (nothing allows it: no document's text leaves)."""
-    v = ROUTE_PROVIDER.get()
-    if v is not _ACTIVE:
-        return v
+def route_address(settings: dict) -> str | None:
+    """The address of the main route's server when it is on another computer (for the line that says it reads only
+    the documents allowed to it), else None."""
+    b = settings.get("backend", "auto")
+    url = {"openai": settings.get("openai_url"), "ollama": settings.get("ollama_url")}.get(b, _AUTO["url"] if b == "auto"
+                                                                                          else None)
+    return url if url and not providers.on_this_computer(url) else None
+
+
+def labels_provider(cx) -> str | None:
+    """The provider the project's stored task settings are for (Anthropic until `sync_labels` says otherwise)."""
     try:
-        from .home import load_settings
+        row = cx.execute("SELECT value FROM meta WHERE key=?", (LABELS_KEY,)).fetchone()
+    except sqlite3.Error:
+        row = None
+    if row is None:
+        return ANTHROPIC
+    try:
+        return json.loads(row[0]) or None
+    except (ValueError, TypeError):
+        return ANTHROPIC
 
-        return route_provider(load_settings())
-    except Exception:  # noqa: BLE001 - when in doubt, nothing leaves
-        return providers.OTHER
+
+def sync_labels(ws: Workspace, provider) -> int:
+    """Give the project's open tasks their settings for `provider` (the main route's), once per change of it: looser
+    or stricter. Returns the number of tasks changed."""
+    with ws.connect() as cx:
+        if labels_provider(cx) == provider:
+            return 0
+        return relabel(cx, provider=provider)
 
 
-def _resolve(provider):
-    return active_provider() if provider is _ACTIVE else provider
+def _resolve(provider, cx=None):
+    if provider is _SCOPE:
+        return ROUTE_PROVIDER.get()
+    if provider is _LABELS:
+        return labels_provider(cx) if cx is not None else ANTHROPIC
+    return provider
 
 
 class reading_for:
-    """`with access.reading_for(provider):` the code inside works out every setting for this provider."""
+    """`with access.reading_for(provider):` the functions inside that are not told a provider work out the settings for
+    this one (used around the add-ons' floors, which are asked without one)."""
 
     def __init__(self, provider):
         self.provider = provider
@@ -126,8 +159,8 @@ def provider_of(backend) -> str | None:
     without it is known by its name (Claude's routes) or its address."""
     if backend is None:
         return None
-    p = getattr(backend, "provider", _ACTIVE)
-    if p is not _ACTIVE:
+    p = getattr(backend, "provider", _UNSET)
+    if p is not _UNSET:
         return p
     name = getattr(backend, "name", "") or ""
     if name in providers.ROUTE_PROVIDER:
@@ -154,22 +187,25 @@ def providers_default(ws: Workspace) -> list[str]:
         return list(providers.DEFAULT_ALLOWED)
 
 
-_DEFAULT_SEEN: dict = {}
+_WS_FOR_PATH: dict = {}   # a Workspace per project folder, so its own config cache serves the lookups from a connection
 
 
-def _cached_default(ws: Workspace) -> list[str]:
-    """`providers_default`, read again only when the project's config file changed (a task is labelled per insert)."""
+def _ws_of(cx) -> Workspace | None:
+    from pathlib import Path
+
     try:
-        st = ws.config_path.stat()
-        stamp = (str(ws.config_path), st.st_mtime_ns, st.st_size)
-    except OSError:
-        return providers_default(ws)
-    got = _DEFAULT_SEEN.get(stamp)
-    if got is None:
-        if len(_DEFAULT_SEEN) > 64:
-            _DEFAULT_SEEN.clear()
-        got = _DEFAULT_SEEN[stamp] = providers_default(ws)
-    return list(got)
+        path = cx.execute("PRAGMA database_list").fetchone()[2]
+    except (sqlite3.Error, TypeError):
+        path = ""
+    if not path:
+        return None
+    root = str(Path(path).parent)
+    ws = _WS_FOR_PATH.get(root)
+    if ws is None:
+        if len(_WS_FOR_PATH) > 64:
+            _WS_FOR_PATH.clear()
+        ws = _WS_FOR_PATH[root] = Workspace(root)
+    return ws
 
 
 def is_shared(cx, ws: Workspace | None = None) -> bool:
@@ -205,19 +241,13 @@ class _Allow:
 
     def _ws(self) -> Workspace | None:
         if self.ws is None and self.cx is not None:
-            from pathlib import Path
-
-            try:
-                path = self.cx.execute("PRAGMA database_list").fetchone()[2]
-            except sqlite3.Error:
-                path = ""
-            self.ws = Workspace(Path(path).parent) if path else None
+            self.ws = _ws_of(self.cx)
         return self.ws
 
     def default(self) -> list[str]:
         if self._dflt is None:
             ws = self._ws()
-            self._dflt = _cached_default(ws) if ws is not None else list(providers.DEFAULT_ALLOWED)
+            self._dflt = providers_default(ws) if ws is not None else list(providers.DEFAULT_ALLOWED)
         return self._dflt
 
     def shared(self) -> bool:
@@ -291,6 +321,9 @@ def _write_config(ws: Workspace, changes: dict) -> None:
     cfg.update(changes)
     ws.config_path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
     ws._config_cache = None
+    held = _WS_FOR_PATH.get(str(ws.root))
+    if held is not None:
+        held._config_cache = None
 
 
 def set_default(ws: Workspace, value: str) -> str:
@@ -317,8 +350,10 @@ def set_default(ws: Workspace, value: str) -> str:
     return v
 
 
-def shares(cx_or_ws, doc_ids: Iterable[str] | None = None) -> dict[str, dict]:
-    """How much of each document Claude has read: {doc_id: {"sent_chars", "chars", "share" (0..1), "passages"}}."""
+def shares(cx_or_ws, doc_ids: Iterable[str] | None = None, by_provider: bool = False) -> dict[str, dict]:
+    """How much of each document Claude has read: {doc_id: {"sent_chars", "chars", "share" (0..1), "passages"}}. The
+    cap counts what every cloud provider read. `by_provider`: also "by" ({provider: share}; a ledger row without a
+    provider, written before stage 1 or by an older copy of a colleague, was Claude's)."""
     q = cx_or_ws.execute if isinstance(cx_or_ws, sqlite3.Connection) else cx_or_ws._conn().execute
     ids = list(doc_ids) if doc_ids is not None else [r[0] for r in q("SELECT doc_id FROM documents")]
     out: dict[str, dict] = {}
@@ -327,9 +362,29 @@ def shares(cx_or_ws, doc_ids: Iterable[str] | None = None) -> dict[str, dict]:
     marks = ",".join("?" * len(ids))
     total = {r[0]: int(r[1] or 0) for r in q(f"SELECT doc_id, SUM(LENGTH(text)) FROM passages WHERE doc_id IN ({marks}) "
                                               "GROUP BY doc_id", ids)}
-    sent = {r[0]: (int(r[1] or 0), int(r[2] or 0)) for r in q(
-        f"SELECT p.doc_id, SUM(LENGTH(p.text)), COUNT(*) FROM passages p JOIN (SELECT DISTINCT passage_id FROM ai_sent "
-        f"WHERE doc_id IN ({marks})) s ON s.passage_id=p.passage_id GROUP BY p.doc_id", ids)}
+    sent: dict[str, tuple[int, int]] = {}
+    by_prov: dict[str, dict[str, int]] = {}
+    if by_provider:   # one pass over the ledger: each passage once in all, and once per provider that read it
+        try:
+            rows = q(f"SELECT p.doc_id, p.passage_id, s.prov, LENGTH(p.text) FROM passages p JOIN (SELECT DISTINCT "
+                     f"passage_id, COALESCE(provider, 'anthropic') AS prov FROM ai_sent WHERE doc_id IN ({marks})) s "
+                     f"ON s.passage_id=p.passage_id", ids).fetchall()
+        except sqlite3.OperationalError:  # a database without the column
+            rows = [(d, p, ANTHROPIC, n) for d, p, n in q(
+                f"SELECT p.doc_id, p.passage_id, LENGTH(p.text) FROM passages p JOIN (SELECT DISTINCT passage_id FROM "
+                f"ai_sent WHERE doc_id IN ({marks})) s ON s.passage_id=p.passage_id", ids).fetchall()]
+        seen: set[str] = set()
+        for d, pid, prov, n in rows:
+            by_prov.setdefault(d, {})
+            by_prov[d][prov] = by_prov[d].get(prov, 0) + int(n or 0)
+            if pid not in seen:
+                seen.add(pid)
+                c, k = sent.get(d, (0, 0))
+                sent[d] = (c + int(n or 0), k + 1)
+    else:
+        sent = {r[0]: (int(r[1] or 0), int(r[2] or 0)) for r in q(
+            f"SELECT p.doc_id, SUM(LENGTH(p.text)), COUNT(*) FROM passages p JOIN (SELECT DISTINCT passage_id FROM "
+            f"ai_sent WHERE doc_id IN ({marks})) s ON s.passage_id=p.passage_id GROUP BY p.doc_id", ids)}
     # 0.15: a document read again with the new reader (reread.py): the share Claude had read of passages that have
     # no place in the new reading (their ledger rows name no passage now) still counts, on top of what it reads now
     try:
@@ -342,44 +397,20 @@ def shares(cx_or_ws, doc_ids: Iterable[str] | None = None) -> dict[str, dict]:
         sc, n = sent.get(d, (0, 0))
         share = (sc / chars if chars else 0.0) + before.get(d, 0.0)
         out[d] = {"sent_chars": sc, "chars": chars, "passages": n, "share": round(min(1.0, share), 4)}
-    return out
-
-
-def shares_by_provider(cx_or_ws, doc_ids: Iterable[str] | None = None) -> dict[str, dict[str, float]]:
-    """How much of each document each cloud provider has read: {doc_id: {provider: share (0..1)}}. A ledger row
-    without a provider (written before stage 1, or by an older copy of a colleague) was Claude's."""
-    q = cx_or_ws.execute if isinstance(cx_or_ws, sqlite3.Connection) else cx_or_ws._conn().execute
-    ids = list(doc_ids) if doc_ids is not None else None
-    where = f" WHERE p.doc_id IN ({','.join('?' * len(ids))})" if ids else ""
-    if ids is not None and not ids:
-        return {}
-    try:
-        sent = q("SELECT p.doc_id, s.prov, SUM(LENGTH(p.text)) FROM passages p JOIN (SELECT DISTINCT passage_id, "
-                 "COALESCE(provider, 'anthropic') AS prov FROM ai_sent) s ON s.passage_id=p.passage_id"
-                 + where + " GROUP BY p.doc_id, s.prov", ids or []).fetchall()
-    except sqlite3.OperationalError:  # a database without the column
-        return {}
-    if not sent:
-        return {}
-    docs = sorted({r[0] for r in sent})
-    total = {r[0]: int(r[1] or 0) for r in q(f"SELECT doc_id, SUM(LENGTH(text)) FROM passages WHERE doc_id IN "
-                                              f"({','.join('?' * len(docs))}) GROUP BY doc_id", docs)}
-    out: dict[str, dict[str, float]] = {}
-    for d, prov, chars in sent:
-        if total.get(d):
-            out.setdefault(d, {})[prov] = round(min(1.0, int(chars or 0) / total[d]), 4)
+        if by_provider:
+            out[d]["by"] = {p: round(min(1.0, c / chars), 4) for p, c in by_prov.get(d, {}).items()} if chars else {}
     return out
 
 
 def levels(cx_or_ws, doc_ids: Iterable[str] | None = None, budget: bool = True,
-           dflt: str | None = None, provider=_ACTIVE, _allow: "_Allow | None" = None) -> dict[str, str]:
+           dflt: str | None = None, provider=_SCOPE, _allow: "_Allow | None" = None) -> dict[str, str]:
     """The setting that applies to each document now: its own, else the project's default; a `cloud` document whose
     cap is reached counts as `local` (with `budget`). `dflt` is the project's default when the caller has it already
     (a loop over many tasks: finding it means reading the project's config). 0.14.3: a colleague's reading of a file
     you have too (a sync-clash copy of a document) is at least as restricted as your document of that file, so making
-    yours stricter makes the copy stricter too. Stage 1 of other cloud providers: a `cloud` document that does not
-    allow `provider` (by default the main route's: `active_provider`) counts as `local` for it; None (a model on this
-    computer, or the setting as a person chose it, for showing) leaves it `cloud`."""
+    yours stricter makes the copy stricter too. Stage 1 of other cloud providers: with a `provider` (the one that
+    reads), a `cloud` document that does not allow it counts as `local`; without one (None: a model on this computer,
+    or the setting as the person chose it, which is what is stored, synced and shown) it stays `cloud`."""
     if isinstance(cx_or_ws, sqlite3.Connection):
         cx = cx_or_ws
         ws = None
@@ -410,7 +441,7 @@ def levels(cx_or_ws, doc_ids: Iterable[str] | None = None, budget: bool = True,
     out: dict[str, str] = {}
     capped = []
     only_local = _local_only()
-    prov = _resolve(provider)
+    prov = _resolve(provider, cx)
     allow = None if prov is None else (_allow if _allow is not None and _allow.provider == prov
                                        else _Allow(cx, ws, prov))
     for r in rows:
@@ -524,13 +555,16 @@ def _hooks(kind: list) -> list[Callable]:
     return list(kind)
 
 
-def floor(cx, payload: Any, dflt: str | None = None) -> str:
+def floor(cx, payload: Any, dflt: str | None = None, provider=_SCOPE) -> str:
     """The most restricted setting the add-ons' floors give a payload (`cloud`: none restricts it). A floor that
-    fails counts as `none`: when in doubt, the text stays on this computer and no AI reads it."""
+    fails counts as `none`: when in doubt, the text stays on this computer and no AI reads it. The floors are asked
+    for `provider`'s reading (`reading_for` around them: a floor that looks at a document's setting asks for it)."""
+    prov = _resolve(provider, cx)
     out = []
     for fn in _hooks(_FLOORS):
         try:
-            lv = fn(cx, payload, dflt)
+            with reading_for(prov):
+                lv = fn(cx, payload, dflt)
         except Exception:  # noqa: BLE001
             lv = "none"
         if lv is not None:
@@ -549,17 +583,18 @@ def hidden_hypotheses(ws: Workspace) -> set[str]:
     return out
 
 
-def label_payload(cx, payload: Any, dflt: str | None = None, budget: bool = True, provider=_ACTIVE) -> str:
+def label_payload(cx, payload: Any, dflt: str | None = None, budget: bool = True, provider=_SCOPE) -> str:
     """The most restricted setting of the documents a task's payload names (`cloud` for a task without document
     text, such as the search words of a hypothesis). A passage no longer in the project counts as its document.
     0.13.6: and of the add-ons' floors for it. Without `budget`, a document's cap is left out (the setting a person
     chose for it alone). `provider`: whose reading it is (see `levels`)."""
-    fl = floor(cx, payload, dflt)
-    out = _label_docs(cx, payload, dflt, budget, provider)
+    prov = _resolve(provider, cx)
+    fl = floor(cx, payload, dflt, prov)
+    out = _label_docs(cx, payload, dflt, budget, prov)
     return most([fl, out]) if fl != "cloud" else out
 
 
-def _label_docs(cx, payload: Any, dflt: str | None = None, budget: bool = True, provider=_ACTIVE) -> str:
+def _label_docs(cx, payload: Any, dflt: str | None = None, budget: bool = True, provider=_SCOPE) -> str:
     pids, dids = ids_in(payload)
     if not pids and not dids:
         return "cloud"
@@ -578,9 +613,10 @@ class _Known:
     as `_label_docs` asks for it) and each passage's document are looked up once, the passages of many tasks in one
     query (`prefetch`)."""
 
-    def __init__(self, cx, dflt: str, provider=_ACTIVE):
+    def __init__(self, cx, dflt: str, provider=_LABELS):
         self.cx, self.dflt = cx, dflt
-        self.provider = _resolve(provider)
+        self.provider = _resolve(provider, cx)
+        self.queue_allow = _Allow(cx, None, ANTHROPIC)
         self.allow = _Allow(cx, None, self.provider) if self.provider is not None else None
         self.level: dict[str, str] = {}
         self.doc_of: dict[str, str | None] = {}
@@ -592,7 +628,7 @@ class _Known:
             self.doc_of.update({p: got.get(p) for p in new})
 
     def label(self, payload: Any) -> str:
-        fl = floor(self.cx, payload, self.dflt)
+        fl = floor(self.cx, payload, self.dflt, self.provider)
         pids, dids = ids_in(payload)
         if not pids and not dids:
             out = "cloud"
@@ -611,7 +647,7 @@ class _Known:
         return most([fl, out]) if fl != "cloud" else out
 
 
-def relabel(cx, task_ids: Iterable[str] | None = None, provider=_ACTIVE) -> int:
+def relabel(cx, task_ids: Iterable[str] | None = None, provider=_LABELS) -> int:
     """Give the tasks not answered yet the setting of their documents now (after a setting changed). A task that is
     no longer `cloud` is taken out of the queue for Claude Code (a batch already handed out has left). Returns the
     number of tasks whose setting changed.
@@ -620,8 +656,9 @@ def relabel(cx, task_ids: Iterable[str] | None = None, provider=_ACTIVE) -> int:
     look at any document through its own tables, and a task labelled before its document's cap was reached is
     corrected here too. What the tasks share is looked up once per call instead (each document's setting, each
     passage's document): nothing a task's setting depends on changes while this runs. The settings are those for the
-    main route's provider: after the main route or a document's providers change, the queue holds no task its route
-    may not read."""
+    provider the project's tasks are labelled for (`labels_provider`); given another one, the project's tasks are
+    labelled for it from now on (`sync_labels`). A task in the queue for Claude Code that Anthropic may not read leaves
+    it, whatever the labels are for."""
     from .taskqueue import OPEN
 
     sql = f"SELECT task_id, payload_json, access FROM tasks WHERE {OPEN}"
@@ -635,6 +672,9 @@ def relabel(cx, task_ids: Iterable[str] | None = None, provider=_ACTIVE) -> int:
     n = 0
     dflt = _default_from_cx(cx)  # once, not per task (0.11.1: a settings change on a big project took seconds)
     known = _Known(cx, dflt, provider)
+    if provider is not _LABELS and task_ids is None:
+        cx.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)", (LABELS_KEY, json.dumps(known.provider or "")))
+    sql = sql.replace("SELECT task_id, payload_json, access", "SELECT task_id, payload_json, access, queued")
     rows = cx.execute(sql, args).fetchall()
     for i in range(0, len(rows), 500):  # a chunk's passages in one query, then its tasks
         chunk = []
@@ -654,7 +694,13 @@ def _relabel_one(cx, r, known: _Known, payload: Any) -> int:
         lv = known.label(payload) if payload is not None else "none"
     except (ValueError, TypeError):
         lv = "none"
-    if lv != "cloud":
+    queue_lv = lv
+    if lv == "cloud" and known.provider != ANTHROPIC and r["queued"]:   # the queue is Claude Code's: Anthropic's reading
+        try:
+            queue_lv = label_payload(cx, payload, known.dflt, provider=ANTHROPIC)
+        except (ValueError, TypeError):
+            queue_lv = "none"
+    if queue_lv != "cloud":
         cx.execute("UPDATE tasks SET queued=0, queued_at=NULL, claimed_by=NULL, claimed_at=NULL WHERE task_id=? "
                    "AND COALESCE(queued, 0)=1", (r["task_id"],))
     if lv != (r["access"] or "cloud"):
@@ -679,7 +725,7 @@ def _all_sent(cx, payload: Any) -> bool:
     return seen >= pids
 
 
-def recheck(cx, task_id: str, dflt: str | None = None, budget: bool = True, provider=_ACTIVE) -> str | None:
+def recheck(cx, task_id: str, dflt: str | None = None, budget: bool = True, provider=_LABELS) -> str | None:
     """The setting of a task at the moment its text is about to leave, worked out again from its payload instead of
     trusted from `tasks.access` (a path that brings a task back and forgets to relabel it, or a cap reached by the
     tasks sent just before it in the same batch). It is never looser than the stored one: only `relabel`, after a
@@ -687,14 +733,15 @@ def recheck(cx, task_id: str, dflt: str | None = None, budget: bool = True, prov
     Claude Code (as `relabel` does). With `budget`, a document's cap counts too, unless Claude has read all this task
     would show already (a second attempt, or the stronger model's reading, adds nothing to what it has read).
     Returns None when the task is gone. Runs in the caller's transaction, per task sent. `provider`: whose reading
-    it is (the queue for Claude Code: Anthropic); a stricter setting for a provider that is not the main route's is
-    returned and not written (the task keeps the one of the route it is labelled for)."""
+    it is (the queue for Claude Code: Anthropic; a backend: its own); a stricter setting for a provider the project's
+    tasks are not labelled for is returned and not written."""
     row = cx.execute("SELECT access, payload_json FROM tasks WHERE task_id=?", (task_id,)).fetchone()
     if row is None:
         return None
-    prov = _resolve(provider)
+    labels = labels_provider(cx)
+    prov = labels if provider is _LABELS else provider
     stored, lv = _level_now(cx, row, dflt, budget, prov)
-    if lv != stored and (provider is _ACTIVE or prov == active_provider()):
+    if lv != (row[0] if row[0] in LEVELS else "cloud") and prov == labels:
         cx.execute("UPDATE tasks SET access=? WHERE task_id=?", (lv, task_id))
         if lv != "cloud":
             cx.execute("UPDATE tasks SET queued=0, queued_at=NULL WHERE task_id=? AND COALESCE(queued, 0)=1",
@@ -706,12 +753,16 @@ def would_leave(cx, task_id: str, dflt: str | None = None, provider=ANTHROPIC) -
     """Whether the task's text would leave for a cloud model now, as `recheck` would find it, without writing
     anything (the preview of what Claude Code is sent: Anthropic's reading)."""
     row = cx.execute("SELECT access, payload_json FROM tasks WHERE task_id=?", (task_id,)).fetchone()
-    return row is not None and _level_now(cx, row, dflt, True, _resolve(provider))[1] == "cloud"
+    return row is not None and _level_now(cx, row, dflt, True, provider)[1] == "cloud"
 
 
-def _level_now(cx, row, dflt: str | None, budget: bool, provider=_ACTIVE) -> tuple[str, str]:
-    """(the stored setting, the setting worked out again) of a task row (access, payload_json): see `recheck`."""
+def _level_now(cx, row, dflt: str | None, budget: bool, provider=None) -> tuple[str, str]:
+    """(the stored setting, the setting worked out again) of a task row (access, payload_json): see `recheck`. For a
+    provider the project's tasks are not labelled for, the stored setting counts only when it is No AI (its Only a
+    local AI may be the labels' provider's alone)."""
     stored = row[0] if row[0] in LEVELS else "cloud"
+    if stored == "local" and provider != labels_provider(cx):
+        stored = "cloud"
     lv = stored
     if stored != "none":
         try:
@@ -848,8 +899,7 @@ def documents_view(ws: Workspace) -> dict[str, dict]:
     other than Anthropic has read some of it)."""
     lv = levels(ws, provider=None)   # the setting as the person chose it: a provider's allowance is shown apart
     raw = {r[0]: r for r in ws.query("SELECT doc_id, ai_access, ai_note, ai_budget, ai_providers FROM documents")}
-    sh = shares(ws)
-    by = shares_by_provider(ws)
+    sh = shares(ws, by_provider=True)
     dflt_p = providers_default(ws)
     out = {}
     for d, r in raw.items():
@@ -860,8 +910,9 @@ def documents_view(ws: Workspace) -> dict[str, dict]:
                   "budget_reached": eff == "local" and (own or default(ws)) == "cloud" and r[3] is not None,
                   "sent": sh.get(d, {}).get("share", 0.0), "sent_passages": sh.get(d, {}).get("passages", 0),
                   "providers": own_p if own_p is not None else dflt_p, "providers_own": own_p}
-        if any(p != ANTHROPIC for p in by.get(d, {})):
-            out[d]["sent_by"] = by[d]
+        by = sh.get(d, {}).get("by") or {}
+        if any(p != ANTHROPIC for p in by):
+            out[d]["sent_by"] = by
     return out
 
 
@@ -1080,6 +1131,23 @@ class Readers:
     def main_levels(self) -> set[str]:
         return backend_levels(self.backend)
 
+    @property
+    def provider(self) -> str | None:
+        """The cloud provider the main model is (None: on this computer): every split of a job's work asks for it."""
+        return provider_of(self.backend)
+
+    def level_of(self, ws: Workspace, task_id: str) -> str:
+        """A task's setting for the main model's provider: the stored one when the project's tasks are labelled for it,
+        else worked out for it (nothing written), so a task it may not read goes to the local model or the person."""
+        with ws.connect() as cx:
+            row = cx.execute("SELECT access, payload_json FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+            if row is None:
+                return "none"
+            prov = self.provider
+            if prov == labels_provider(cx):
+                return row[0] or "cloud"
+            return _level_now(cx, row, None, False, prov)[1]
+
     def settings(self) -> dict:
         if self._settings is None:
             from .home import load_settings
@@ -1238,8 +1306,7 @@ class Readers:
         return None
 
     def for_task(self, ws: Workspace, task_id: str):
-        lv = ws.scalar("SELECT access FROM tasks WHERE task_id=?", (task_id,)) or "cloud"
-        return self.for_level(lv)
+        return self.for_level(self.level_of(ws, task_id))
 
 
 def local_status(settings: dict) -> dict:
@@ -1270,7 +1337,7 @@ def local_status(settings: dict) -> dict:
     return out
 
 
-def allowed_docs(ws: Workspace, allowed: set[str], provider=_ACTIVE) -> set[str]:
+def allowed_docs(ws: Workspace, allowed: set[str], provider=None) -> set[str]:
     """The documents whose setting is one of `allowed` (for `provider`'s reading, see `levels`)."""
     return {d for d, lv in levels(ws, provider=provider).items() if lv in allowed}
 

@@ -112,7 +112,7 @@ def gather(ws: Workspace, quotes: list, settings: dict | None = None) -> dict:
             left["elsewhere"] += 1
             continue
         hits.append((q, got))
-    lv = access.levels(ws, list({g["doc_id"] for _q, g in hits})) if hits else {}
+    lv = access.levels(ws, list({g["doc_id"] for _q, g in hits}), provider=access.route_provider(s)) if hits else {}
     local_ok = _local_reader(s)
     by_pid: dict[str, dict] = {}
     for q, g in hits:

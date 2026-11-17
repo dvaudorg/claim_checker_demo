@@ -619,7 +619,10 @@ def next_tasks(ws: Workspace, kind: str | None = None, n: int | None = None, mod
                 # counts the tasks of this batch recorded just before; one that is no longer `cloud` leaves the
                 # queue and waits for the local model or the person
                 if access.recheck(cx, t["task_id"], dflt, provider=access.ANTHROPIC) != "cloud":
-                    continue   # (Claude Code is Anthropic: a document that allows other providers only stays here)
+                    # Claude Code is Anthropic: a task of a document that allows other providers only leaves the queue
+                    # (a wait for it ends; the local model or the person reads it), it never sits there for good
+                    cx.execute("UPDATE tasks SET queued=0, queued_at=NULL WHERE task_id=?", (t["task_id"],))
+                    continue
                 _sys, user = render(ws, full)
                 cost = estimate_tokens(user)
                 if picked and budget + cost > cap:
@@ -1234,7 +1237,7 @@ def answer_on_copy(ws: Workspace, items: list[tuple[str, str, dict, str]], backe
         # copy's own ledger starts empty: what Claude Code actually takes from it is written there (next_tasks) and
         # carried into this project's ledger below, so a test stopped before a batch left records nothing (0.11.1)
         with ws.connect() as wcx:
-            items = [it for it in items if access.label_payload(wcx, it[2]) == "cloud"]
+            items = [it for it in items if access.label_payload(wcx, it[2], provider=access.ANTHROPIC) == "cloud"]
         with copy.connect() as cx:
             cx.execute("DELETE FROM ai_sent")
             for tid, kind, payload, model in items:

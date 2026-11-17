@@ -175,10 +175,17 @@ def test_the_connector_and_the_file_queue_read_as_anthropic(mixed):
     ws, ids, pid = mixed
     access.set_documents(ws, [ids["cloud"]], allow=["openai"])
     _use_openai()
-    assert access.levels(ws, [ids["cloud"]]) == {ids["cloud"]: "cloud"}            # OpenAI's reading
-    with access.reading_for("anthropic"):
-        assert access.levels(ws, [ids["cloud"]]) == {ids["cloud"]: "local"}        # Claude may not read it
-    assert access.levels(ws, [ids["cloud"]], provider=None) == {ids["cloud"]: "cloud"}  # as the person chose it
+    assert access.levels(ws, [ids["cloud"]], provider="openai") == {ids["cloud"]: "cloud"}     # OpenAI's reading
+    assert access.levels(ws, [ids["cloud"]], provider="anthropic") == {ids["cloud"]: "local"}  # Claude may not read it
+    assert access.levels(ws, [ids["cloud"]]) == {ids["cloud"]: "cloud"}   # by default: as the person chose it
+    # the connector shows Claude nothing of it
+    from enlens_claims import docrole, mcp_server
+
+    assert mcp_server.CLAUDE == "anthropic" and docrole is not None
+    # the file queue writes nothing of it
+    _insert(ws, "label:sdg:fq", _label(pid["cloud"]))
+    tasks.export(ws, "label")
+    assert ws.scalar("SELECT COUNT(*) FROM ai_sent WHERE task_id='label:sdg:fq'") == 0
 
 
 # ---------------------------------------------------------------------------------------------
@@ -192,8 +199,9 @@ def test_a_shared_project_lets_only_anthropic_read(mixed, tmp_path):
     access._write_config(ws, {FOLDER: str(tmp_path / "team")})
     assert access.is_shared(ws._conn(), ws)
     _use_openai()
-    assert access.levels(ws, [ids["cloud"]]) == {ids["cloud"]: "local"}
+    assert access.levels(ws, [ids["cloud"]], provider="openai") == {ids["cloud"]: "local"}
     assert access.levels(ws, [ids["cloud"]], provider="anthropic") == {ids["cloud"]: "cloud"}
+    assert access.levels(ws, [ids["cloud"]]) == {ids["cloud"]: "cloud"}   # as the person chose it
     with pytest.raises(ValueError, match="colleagues have not agreed"):
         access.set_providers_default(ws, ["anthropic", "openai"])
     with pytest.raises(ValueError, match="colleagues have not agreed"):
