@@ -132,8 +132,8 @@ def _send(ws: Workspace, t, backend) -> None:
     access.require(backend, t, ws)
     if access.is_cloud(backend) and getattr(backend, "name", "") != "claude_code":
         with ws.connect() as cx:
-            access.record_sent(cx, t["task_id"], json.loads(t["payload_json"]),
-                               access.ROUTE_NAMES.get(backend.name, backend.name), t["kind"])
+            access.record_sent(cx, t["task_id"], json.loads(t["payload_json"]), access.route_name(backend), t["kind"],
+                               provider=access.provider_of(backend))
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1571,9 +1571,7 @@ def _answers_again_now(backend) -> bool:
 
 
 def _route_name(backend) -> str:
-    from .routing import ROUTE_NAMES
-
-    return ROUTE_NAMES.get(getattr(backend, "name", ""), getattr(backend, "name", ""))
+    return access.route_name(backend)
 
 
 def run_stepups(ws: Workspace, backend, kinds: Iterable[str] | None = None,
@@ -1607,7 +1605,7 @@ def answer_again(ws: Workspace, task_id: str, backend) -> bool:
     again: the first answer stays, and the request is given up, so it does not wait for a reading no one here may
     give (a person can ask again on a route that may read it)."""
     with ws.connect() as cx:
-        lv = access.recheck(cx, task_id, budget=False)
+        lv = access.recheck(cx, task_id, budget=False, provider=access.provider_of(backend))
         if lv is not None and lv not in access.backend_levels(backend):
             cx.execute("UPDATE tasks SET again=0, step=0, claimed_by=NULL, claimed_at=NULL WHERE task_id=? AND "
                        "status='done' AND again=1", (task_id,))
@@ -1669,6 +1667,7 @@ def run(ws: Workspace, kind: str, backend, limit: int | None = None, model: str 
     _sync_thresholds(ws)
     stats = {"done": 0, "retry": 0, "failed": 0}
     may = access.backend_levels(backend)
+    prov = access.provider_of(backend)
     dflt = access.default(ws)
     for _round in range(MAX_ATTEMPTS):
         todo = pending(ws, kind, limit)
@@ -1681,7 +1680,7 @@ def run(ws: Workspace, kind: str, backend, limit: int | None = None, model: str 
             # changed since the task was labelled leaves it for a model that may read it (instead of the guard
             # stopping the run)
             with ws.connect() as cx:
-                if access.recheck(cx, t["task_id"], dflt) not in may:
+                if access.recheck(cx, t["task_id"], dflt, provider=prov) not in may:
                     continue
             system, user = render(ws, t)
             _send(ws, t, backend)
@@ -1736,9 +1735,10 @@ def export(ws: Workspace, kind: str, batch_size: int = 25, limit: int | None = N
             for tid in chunk:
                 if limit and len(todo) >= limit:
                     break
-                if access.recheck(cx, tid, dflt) != "cloud":
+                # the file queue's tasks are for Claude (a chat, or Claude Code), as "Claude may read it" said
+                if access.recheck(cx, tid, dflt, provider=access.ANTHROPIC) != "cloud":
                     continue
-                access.record_sent(cx, tid, json.loads(payloads[tid]), "file queue", kind)
+                access.record_sent(cx, tid, json.loads(payloads[tid]), "file queue", kind, provider=access.ANTHROPIC)
                 todo.append(tid)
     out_dir = ws.root / "tasks" / kind
     out_dir.mkdir(parents=True, exist_ok=True)

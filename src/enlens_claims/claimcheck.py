@@ -1529,7 +1529,7 @@ def second_opinion(ws: Workspace, hyp_ids: list[str], backend, main_model: str, 
     stop = _stopper(should_stop)
     if not second_model:
         raise ValueError("Choose a model for second opinions in Settings first.")
-    if second_model == main_model and getattr(backend, "name", "") not in ("claude_code", "anthropic"):
+    if second_model == main_model and getattr(backend, "name", "") not in routing.CLAUDE_ROUTES:
         # on Claude the auditor gives the second opinion; it may run on the same model as the checker (Opus)
         raise ValueError("The model for second opinions must be another model than the main one.")
     todo = []
@@ -1544,7 +1544,7 @@ def second_opinion(ws: Workspace, hyp_ids: list[str], backend, main_model: str, 
                     continue  # 0.19.17: not read yet (waits for the local model, Claude Code, or failed): no first
                     # reading to compare with, and the excerpts are not shown as cards to find the difference on
                 with ws.connect() as cx:  # the setting of its documents now (it may have changed since)
-                    lv = access.label_payload(cx, json.loads(t["payload_json"]))
+                    lv = access.label_payload(cx, json.loads(t["payload_json"]), provider=access.provider_of(backend))
                 if lv not in may:  # 0.11: a local excerpt has a second opinion only from a second local model
                     restricted += len(json.loads(t["payload_json"])["passages"])
                     continue

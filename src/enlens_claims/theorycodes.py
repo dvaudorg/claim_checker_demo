@@ -726,9 +726,9 @@ def ai_offer(ws: Workspace, doc_id: str, settings: dict | None = None) -> dict:
     lv = _level(ws, doc_id)
     if lv == "none":
         return {"offered": False, "why": NO_AI, "reader": None, "level": lv}
-    from .routing import OFF_COMPUTER
+    from .routing import CLAUDE_ROUTES
 
-    claude = (s.get("backend") or "auto") in OFF_COMPUTER
+    claude = (s.get("backend") or "auto") in CLAUDE_ROUTES
     # the parts the AI would read the document in (theory-codes-v2: the whole document, a part at a time)
     parts = len(_ai_parts(ws, doc_id, []))
     if lv == "local":

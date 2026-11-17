@@ -1730,7 +1730,8 @@ def propose_wordings(ws: Workspace, term: str, backend, model: str) -> list[dict
 
     ids = concept_of(ws, term)
     # 0.11: only wordings found in documents this model may read are sent
-    ids = sorted(terms_in_docs(ws, ids, access.allowed_docs(ws, access.backend_levels(backend))))
+    ids = sorted(terms_in_docs(ws, ids, access.allowed_docs(ws, access.backend_levels(backend),
+                                                            provider=access.provider_of(backend))))
     if not ids:
         raise ValueError("This concept occurs only in documents this model may not read, so its wordings are not sent.")
     labels = [r[0] for r in ws.query(f"SELECT label FROM terms WHERE term_id IN ({','.join('?' * len(ids))}) "
@@ -1742,7 +1743,7 @@ def propose_wordings(ws: Workspace, term: str, backend, model: str) -> list[dict
         tasks._insert_task(cx, tid, "expand", model, {"concept": term, "claim": f"the concept: {labels[0]}"
                                                        + (f" (also written: {', '.join(labels[1:6])})" if labels[1:] else "")})
         # worked out again as it leaves, as in the runs of several tasks (an add-on's floor may hold it back)
-        if access.recheck(cx, tid) not in access.backend_levels(backend):
+        if access.recheck(cx, tid, provider=access.provider_of(backend)) not in access.backend_levels(backend):
             raise ValueError("This concept's wordings may not be sent to this model.")
     tasks.run_one(ws, tid, backend, model)
     return suggested_wordings(ws, term)

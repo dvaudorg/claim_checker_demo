@@ -20,17 +20,24 @@ The setting is enforced in code where every AI task passes, never by an instruct
 Every passage that leaves for a cloud model is written to `ai_sent` at that moment (`record_sent`), so the Documents
 page can show how much of each document Claude has read. An optional cap per document (`documents.ai_budget`, a
 percentage) treats a document as `local` for new tasks once Claude has read that share of it.
+
+Cloud providers other than Claude (stage 1, providers.py): a `cloud` document may be read by the cloud providers it
+allows (`documents.ai_providers`, a JSON list; NULL: the project's `ai_providers_default`, absent: Anthropic only, as
+"Claude may read it" always meant). For the provider of the route that would read it, a `cloud` document that does not
+allow that provider counts as `local`, as a reached cap does: everywhere `levels` is asked (the work split, the labels
+of tasks, `recheck` as a task leaves, the guard). Which provider that is: `provider=` where the caller knows its
+reader (the queue for Claude Code: Anthropic; a backend: `provider_of`), else the main route in Settings
+(`active_provider`). A model server on this computer is no provider (None): it reads `cloud` documents as before. In a
+shared project only Anthropic may read (the allowance does not travel with a team yet).
 """
 from __future__ import annotations
 
 import contextvars
-import ipaddress
 import json
 import sqlite3
 from typing import Any, Callable, Iterable
-from urllib.parse import urlparse
 
-from . import routing
+from . import providers, routing
 from .store import Workspace, now
 
 LEVELS = ("cloud", "local", "none")
@@ -44,6 +51,167 @@ ROUTE_NAMES = routing.ROUTE_NAMES
 PROMISE = ("Documents you mark as local stay on this computer. ENLENS never sends their text to Claude, in any "
            "feature, and shows you how much of every other document it has sent.")
 _KEEP = object()
+ANTHROPIC = providers.ANTHROPIC
+SHARED_ONLY_ANTHROPIC = ("Other providers come to shared projects later: your colleagues have not agreed to them. "
+                         "Only Anthropic may read this project's documents.")
+
+
+# ---------------------------------------------------------------------------------------------
+# which cloud provider reads (stage 1 of other cloud providers)
+# ---------------------------------------------------------------------------------------------
+_ACTIVE = object()   # "the main route's provider": worked out when it is needed
+# the reader of the code that runs inside `reading_for` (the connector's every request: Claude)
+ROUTE_PROVIDER: contextvars.ContextVar = contextvars.ContextVar("enlens_route_provider", default=_ACTIVE)
+
+
+def route_provider(settings: dict) -> str | None:
+    """The provider of the main route the settings describe: Anthropic for Claude Code and the Claude API, the chosen
+    one for another cloud provider, None for a model server on this computer (or the offline demo), the provider of
+    its address for a server on another computer (`other` when it is none of the table's)."""
+    b = settings.get("backend", "auto")
+    if b in providers.ROUTE_PROVIDER:
+        return providers.ROUTE_PROVIDER[b]
+    if b == providers.CLOUD_ROUTE:
+        p = settings.get("cloud_provider") or ""
+        return p if p in providers.CLOUD_IDS else providers.OTHER
+    if b == "baseline":
+        return None
+    if b == "openai":
+        return providers.of_url(settings.get("openai_url") or "")
+    if b == "ollama":
+        return providers.of_url(settings.get("ollama_url") or "")
+    # auto: the servers on this computer, and the configured addresses too (detect_local): one on another computer
+    # makes the route that provider (a document it may not read is then read as Only a local AI, which the model on
+    # this computer may still read, and a server on another computer never)
+    far = [providers.of_url(u) for u in (settings.get("ollama_url") or "", settings.get("openai_url") or "")
+           if u.strip() and not providers.on_this_computer(u)]
+    return far[0] if far else None
+
+
+def active_provider():
+    """The provider that reads now: the one set for this code (`reading_for`), else the main route's in Settings.
+    When the settings cannot be read, `other` (nothing allows it: no document's text leaves)."""
+    v = ROUTE_PROVIDER.get()
+    if v is not _ACTIVE:
+        return v
+    try:
+        from .home import load_settings
+
+        return route_provider(load_settings())
+    except Exception:  # noqa: BLE001 - when in doubt, nothing leaves
+        return providers.OTHER
+
+
+def _resolve(provider):
+    return active_provider() if provider is _ACTIVE else provider
+
+
+class reading_for:
+    """`with access.reading_for(provider):` the code inside works out every setting for this provider."""
+
+    def __init__(self, provider):
+        self.provider = provider
+
+    def __enter__(self):
+        self._token = ROUTE_PROVIDER.set(self.provider)
+        return self
+
+    def __exit__(self, *exc):
+        ROUTE_PROVIDER.reset(self._token)
+        return False
+
+
+def provider_of(backend) -> str | None:
+    """The provider a backend is (None: it reads on this computer). Backends say it themselves (llm.py); a stand-in
+    without it is known by its name (Claude's routes) or its address."""
+    if backend is None:
+        return None
+    p = getattr(backend, "provider", _ACTIVE)
+    if p is not _ACTIVE:
+        return p
+    name = getattr(backend, "name", "") or ""
+    if name in providers.ROUTE_PROVIDER:
+        return providers.ROUTE_PROVIDER[name]
+    if name == "baseline":
+        return None
+    url = getattr(backend, "base_url", None)
+    if url is not None:
+        return providers.of_url(url)
+    if name in OFF_COMPUTER:
+        return providers.OTHER
+    return None
+
+
+def providers_default(ws: Workspace) -> list[str]:
+    """The cloud providers that may read the project's `cloud` documents without their own choice (Anthropic only
+    until the person allows more)."""
+    v = ws.config.get("ai_providers_default")
+    if v is None:
+        return list(providers.DEFAULT_ALLOWED)
+    try:
+        return providers.clean_list(v)
+    except ValueError:
+        return list(providers.DEFAULT_ALLOWED)
+
+
+def is_shared(cx, ws: Workspace | None = None) -> bool:
+    """Whether the project is worked on with colleagues (teamcodebooks.is_team: an owner's chain, an exchange, a
+    shared folder or a storage space). When that cannot be said: shared (only Anthropic reads)."""
+    try:
+        from .teamcodebooks import is_team
+
+        return bool(is_team(cx, ws))
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def _own_list(raw) -> list[str] | None:
+    """A document's own list of providers (None: the project's). One that cannot be read allows none."""
+    if raw in (None, ""):
+        return None
+    try:
+        got = json.loads(raw) if isinstance(raw, str) else raw
+        return [p for p in got if p in providers.ALLOWABLE] if isinstance(got, list) else []
+    except (ValueError, TypeError):
+        return []
+
+
+class _Allow:
+    """Whether a `cloud` document allows the provider that reads, looked up once per call: the project's default and
+    whether it is shared are read only when needed."""
+
+    def __init__(self, cx, ws: Workspace | None, provider: str):
+        self.cx, self.ws, self.provider = cx, ws, provider
+        self._dflt: list[str] | None = None
+        self._shared: bool | None = None
+
+    def _ws(self) -> Workspace | None:
+        if self.ws is None and self.cx is not None:
+            from pathlib import Path
+
+            try:
+                path = self.cx.execute("PRAGMA database_list").fetchone()[2]
+            except sqlite3.Error:
+                path = ""
+            self.ws = Workspace(Path(path).parent) if path else None
+        return self.ws
+
+    def default(self) -> list[str]:
+        if self._dflt is None:
+            ws = self._ws()
+            self._dflt = providers_default(ws) if ws is not None else list(providers.DEFAULT_ALLOWED)
+        return self._dflt
+
+    def shared(self) -> bool:
+        if self._shared is None:
+            self._shared = is_shared(self.cx, self._ws())
+        return self._shared
+
+    def allows(self, raw) -> bool:
+        own = _own_list(raw)
+        if self.provider not in (own if own is not None else self.default()):
+            return False
+        return self.provider == ANTHROPIC or not self.shared()
 
 
 class AccessError(RuntimeError):
@@ -159,13 +327,41 @@ def shares(cx_or_ws, doc_ids: Iterable[str] | None = None) -> dict[str, dict]:
     return out
 
 
+def shares_by_provider(cx_or_ws, doc_ids: Iterable[str] | None = None) -> dict[str, dict[str, float]]:
+    """How much of each document each cloud provider has read: {doc_id: {provider: share (0..1)}}. A ledger row
+    without a provider (written before stage 1, or by an older copy of a colleague) was Claude's."""
+    q = cx_or_ws.execute if isinstance(cx_or_ws, sqlite3.Connection) else cx_or_ws._conn().execute
+    ids = list(doc_ids) if doc_ids is not None else None
+    where = f" WHERE p.doc_id IN ({','.join('?' * len(ids))})" if ids else ""
+    if ids is not None and not ids:
+        return {}
+    try:
+        sent = q("SELECT p.doc_id, s.prov, SUM(LENGTH(p.text)) FROM passages p JOIN (SELECT DISTINCT passage_id, "
+                 "COALESCE(provider, 'anthropic') AS prov FROM ai_sent) s ON s.passage_id=p.passage_id"
+                 + where + " GROUP BY p.doc_id, s.prov", ids or []).fetchall()
+    except sqlite3.OperationalError:  # a database without the column
+        return {}
+    if not sent:
+        return {}
+    docs = sorted({r[0] for r in sent})
+    total = {r[0]: int(r[1] or 0) for r in q(f"SELECT doc_id, SUM(LENGTH(text)) FROM passages WHERE doc_id IN "
+                                              f"({','.join('?' * len(docs))}) GROUP BY doc_id", docs)}
+    out: dict[str, dict[str, float]] = {}
+    for d, prov, chars in sent:
+        if total.get(d):
+            out.setdefault(d, {})[prov] = round(min(1.0, int(chars or 0) / total[d]), 4)
+    return out
+
+
 def levels(cx_or_ws, doc_ids: Iterable[str] | None = None, budget: bool = True,
-           dflt: str | None = None) -> dict[str, str]:
+           dflt: str | None = None, provider=_ACTIVE, _allow: "_Allow | None" = None) -> dict[str, str]:
     """The setting that applies to each document now: its own, else the project's default; a `cloud` document whose
     cap is reached counts as `local` (with `budget`). `dflt` is the project's default when the caller has it already
     (a loop over many tasks: finding it means reading the project's config). 0.14.3: a colleague's reading of a file
     you have too (a sync-clash copy of a document) is at least as restricted as your document of that file, so making
-    yours stricter makes the copy stricter too."""
+    yours stricter makes the copy stricter too. Stage 1 of other cloud providers: a `cloud` document that does not
+    allow `provider` (by default the main route's: `active_provider`) counts as `local` for it; None (a model on this
+    computer, or the setting as a person chose it, for showing) leaves it `cloud`."""
     if isinstance(cx_or_ws, sqlite3.Connection):
         cx = cx_or_ws
         ws = None
@@ -187,16 +383,24 @@ def levels(cx_or_ws, doc_ids: Iterable[str] | None = None, budget: bool = True,
         except sqlite3.OperationalError:  # a database without the table (not opened by 0.14 yet)
             copies = {}
     wanted = ids if ids is None else ids + [o for o in copies.values() if o not in ids]
-    sql = "SELECT doc_id, ai_access, ai_budget FROM documents"
-    rows = q(sql + (f" WHERE doc_id IN ({','.join('?' * len(wanted))})" if wanted is not None else ""),
-             wanted or []).fetchall()
+    where = f" WHERE doc_id IN ({','.join('?' * len(wanted))})" if wanted is not None else ""
+    try:
+        rows = q("SELECT doc_id, ai_access, ai_budget, ai_providers FROM documents" + where, wanted or []).fetchall()
+    except sqlite3.OperationalError:  # a database without the column (not opened by this version yet)
+        rows = [(*r, None) for r in q("SELECT doc_id, ai_access, ai_budget FROM documents" + where,
+                                       wanted or []).fetchall()]
     out: dict[str, str] = {}
     capped = []
     only_local = _local_only()
+    prov = _resolve(provider)
+    allow = None if prov is None else (_allow if _allow is not None and _allow.provider == prov
+                                       else _Allow(cx, ws, prov))
     for r in rows:
         lv = r[1] if r[1] in LEVELS else dflt
         if lv == "cloud" and only_local:
             lv = "local"
+        if lv == "cloud" and allow is not None and not allow.allows(r[3]):
+            lv = "local"   # this provider may not read it: as Only a local AI, for this route
         out[r[0]] = lv
         if budget and lv == "cloud" and r[2] is not None:
             capped.append((r[0], float(r[2])))
@@ -327,24 +531,24 @@ def hidden_hypotheses(ws: Workspace) -> set[str]:
     return out
 
 
-def label_payload(cx, payload: Any, dflt: str | None = None, budget: bool = True) -> str:
+def label_payload(cx, payload: Any, dflt: str | None = None, budget: bool = True, provider=_ACTIVE) -> str:
     """The most restricted setting of the documents a task's payload names (`cloud` for a task without document
     text, such as the search words of a hypothesis). A passage no longer in the project counts as its document.
     0.13.6: and of the add-ons' floors for it. Without `budget`, a document's cap is left out (the setting a person
-    chose for it alone)."""
+    chose for it alone). `provider`: whose reading it is (see `levels`)."""
     fl = floor(cx, payload, dflt)
-    out = _label_docs(cx, payload, dflt, budget)
+    out = _label_docs(cx, payload, dflt, budget, provider)
     return most([fl, out]) if fl != "cloud" else out
 
 
-def _label_docs(cx, payload: Any, dflt: str | None = None, budget: bool = True) -> str:
+def _label_docs(cx, payload: Any, dflt: str | None = None, budget: bool = True, provider=_ACTIVE) -> str:
     pids, dids = ids_in(payload)
     if not pids and not dids:
         return "cloud"
     by_p = doc_of_passages(cx, pids)
     docs = set(dids) | set(by_p.values())
     missing = pids - set(by_p)
-    lv = levels(cx, docs, budget=budget, dflt=dflt) if docs else {}
+    lv = levels(cx, docs, budget=budget, dflt=dflt, provider=provider) if docs else {}
     out = most(lv.values())
     if missing and not docs:
         return "none"  # passages of a removed document, and nothing else to go by: keep them here
@@ -356,8 +560,10 @@ class _Known:
     as `_label_docs` asks for it) and each passage's document are looked up once, the passages of many tasks in one
     query (`prefetch`)."""
 
-    def __init__(self, cx, dflt: str):
+    def __init__(self, cx, dflt: str, provider=_ACTIVE):
         self.cx, self.dflt = cx, dflt
+        self.provider = _resolve(provider)
+        self.allow = _Allow(cx, None, self.provider) if self.provider is not None else None
         self.level: dict[str, str] = {}
         self.doc_of: dict[str, str | None] = {}
 
@@ -381,12 +587,13 @@ class _Known:
             else:
                 for d in docs:
                     if d not in self.level:
-                        self.level[d] = levels(self.cx, [d], dflt=self.dflt)[d]
+                        self.level[d] = levels(self.cx, [d], dflt=self.dflt, provider=self.provider,
+                                               _allow=self.allow)[d]
                 out = most(self.level[d] for d in docs)
         return most([fl, out]) if fl != "cloud" else out
 
 
-def relabel(cx, task_ids: Iterable[str] | None = None) -> int:
+def relabel(cx, task_ids: Iterable[str] | None = None, provider=_ACTIVE) -> int:
     """Give the tasks not answered yet the setting of their documents now (after a setting changed). A task that is
     no longer `cloud` is taken out of the queue for Claude Code (a batch already handed out has left). Returns the
     number of tasks whose setting changed.
@@ -394,7 +601,9 @@ def relabel(cx, task_ids: Iterable[str] | None = None) -> int:
     Every open task is worked out again, not only those whose text names a changed document: an add-on's floor may
     look at any document through its own tables, and a task labelled before its document's cap was reached is
     corrected here too. What the tasks share is looked up once per call instead (each document's setting, each
-    passage's document): nothing a task's setting depends on changes while this runs."""
+    passage's document): nothing a task's setting depends on changes while this runs. The settings are those for the
+    main route's provider: after the main route or a document's providers change, the queue holds no task its route
+    may not read."""
     from .taskqueue import OPEN
 
     sql = f"SELECT task_id, payload_json, access FROM tasks WHERE {OPEN}"
@@ -407,7 +616,7 @@ def relabel(cx, task_ids: Iterable[str] | None = None) -> int:
         args = ids
     n = 0
     dflt = _default_from_cx(cx)  # once, not per task (0.11.1: a settings change on a big project took seconds)
-    known = _Known(cx, dflt)
+    known = _Known(cx, dflt, provider)
     rows = cx.execute(sql, args).fetchall()
     for i in range(0, len(rows), 500):  # a chunk's passages in one query, then its tasks
         chunk = []
@@ -452,19 +661,22 @@ def _all_sent(cx, payload: Any) -> bool:
     return seen >= pids
 
 
-def recheck(cx, task_id: str, dflt: str | None = None, budget: bool = True) -> str | None:
+def recheck(cx, task_id: str, dflt: str | None = None, budget: bool = True, provider=_ACTIVE) -> str | None:
     """The setting of a task at the moment its text is about to leave, worked out again from its payload instead of
     trusted from `tasks.access` (a path that brings a task back and forgets to relabel it, or a cap reached by the
     tasks sent just before it in the same batch). It is never looser than the stored one: only `relabel`, after a
     person changed a setting, loosens a task. A stricter one is written to the task, which then leaves the queue for
     Claude Code (as `relabel` does). With `budget`, a document's cap counts too, unless Claude has read all this task
     would show already (a second attempt, or the stronger model's reading, adds nothing to what it has read).
-    Returns None when the task is gone. Runs in the caller's transaction, per task sent."""
+    Returns None when the task is gone. Runs in the caller's transaction, per task sent. `provider`: whose reading
+    it is (the queue for Claude Code: Anthropic); a stricter setting for a provider that is not the main route's is
+    returned and not written (the task keeps the one of the route it is labelled for)."""
     row = cx.execute("SELECT access, payload_json FROM tasks WHERE task_id=?", (task_id,)).fetchone()
     if row is None:
         return None
-    stored, lv = _level_now(cx, row, dflt, budget)
-    if lv != stored:
+    prov = _resolve(provider)
+    stored, lv = _level_now(cx, row, dflt, budget, prov)
+    if lv != stored and (provider is _ACTIVE or prov == active_provider()):
         cx.execute("UPDATE tasks SET access=? WHERE task_id=?", (lv, task_id))
         if lv != "cloud":
             cx.execute("UPDATE tasks SET queued=0, queued_at=NULL WHERE task_id=? AND COALESCE(queued, 0)=1",
@@ -472,14 +684,14 @@ def recheck(cx, task_id: str, dflt: str | None = None, budget: bool = True) -> s
     return lv
 
 
-def would_leave(cx, task_id: str, dflt: str | None = None) -> bool:
+def would_leave(cx, task_id: str, dflt: str | None = None, provider=ANTHROPIC) -> bool:
     """Whether the task's text would leave for a cloud model now, as `recheck` would find it, without writing
-    anything (the preview of what Claude Code is sent)."""
+    anything (the preview of what Claude Code is sent: Anthropic's reading)."""
     row = cx.execute("SELECT access, payload_json FROM tasks WHERE task_id=?", (task_id,)).fetchone()
-    return row is not None and _level_now(cx, row, dflt, True)[1] == "cloud"
+    return row is not None and _level_now(cx, row, dflt, True, _resolve(provider))[1] == "cloud"
 
 
-def _level_now(cx, row, dflt: str | None, budget: bool) -> tuple[str, str]:
+def _level_now(cx, row, dflt: str | None, budget: bool, provider=_ACTIVE) -> tuple[str, str]:
     """(the stored setting, the setting worked out again) of a task row (access, payload_json): see `recheck`."""
     stored = row[0] if row[0] in LEVELS else "cloud"
     lv = stored
@@ -489,20 +701,56 @@ def _level_now(cx, row, dflt: str | None, budget: bool) -> tuple[str, str]:
         except (ValueError, TypeError):
             payload, lv = None, "none"
         if payload is not None:
-            lv = most([stored, label_payload(cx, payload, dflt=dflt, budget=False)])
+            lv = most([stored, label_payload(cx, payload, dflt=dflt, budget=False, provider=provider)])
             if budget and lv == "cloud":
-                capped = _label_docs(cx, payload, dflt, budget=True)
+                capped = _label_docs(cx, payload, dflt, budget=True, provider=provider)
                 if capped != "cloud" and not _all_sent(cx, payload):
                     lv = capped
     return stored, lv
 
 
+def _check_allowance(ws: Workspace, plist: list[str]) -> None:
+    """A list of providers other than Anthropic is refused in a shared project (R5: the allowance does not travel with
+    a team yet, so colleagues have not agreed to it)."""
+    if any(p != ANTHROPIC for p in plist) and is_shared(ws._conn(), ws):
+        raise ValueError(SHARED_ONLY_ANTHROPIC)
+
+
+def _providers_words(plist: list[str] | None) -> str:
+    if plist is None:
+        return "the project's choice"
+    return ", ".join(providers.title(p) for p in plist)
+
+
+def set_providers_default(ws: Workspace, value) -> list[str]:
+    """The cloud providers that may read the project's `cloud` documents without their own choice. Takes effect for
+    every task not answered yet; goes into the research log."""
+    plist = providers.clean_list(value)
+    _check_allowance(ws, plist)
+    before = providers_default(ws)
+    _write_config(ws, {"ai_providers_default": plist})
+    with ws.connect() as cx:
+        relabel(cx)
+        if before != plist:
+            from . import researchlog
+
+            researchlog.record(cx, "ai-access", f"Cloud providers that may read documents marked Cloud AI may read it: "
+                                                f"{_providers_words(plist)} (before: {_providers_words(before)}).",
+                               data={"providers_default": plist})
+    return plist
+
+
 def set_documents(ws: Workspace, doc_ids: list[str], setting: Any = _KEEP, note: Any = _KEEP,
-                  budget: Any = _KEEP) -> dict:
-    """Change the AI setting (and/or the note, the cap) of documents. `setting` None returns them to the project's
-    default. Takes effect for every task not answered yet."""
+                  budget: Any = _KEEP, allow: Any = _KEEP) -> dict:
+    """Change the AI setting (and/or the note, the cap, the cloud providers it allows: `allow`, a list, or None for
+    the project's choice) of documents. `setting` None returns them to the project's default. Takes effect for every
+    task not answered yet."""
     if not doc_ids:
         raise ValueError("Choose at least one document.")
+    plist = None
+    if allow is not _KEEP and allow is not None:
+        plist = providers.clean_list(allow)
+        _check_allowance(ws, plist)
     lv = None
     if setting is not _KEEP:
         lv = clean(setting, allow_empty=True)
@@ -559,30 +807,50 @@ def set_documents(ws: Workspace, doc_ids: list[str], setting: Any = _KEEP, note:
                 cx.execute("UPDATE documents SET ai_note=? WHERE doc_id=?", ((str(note or "").strip()[:300] or None), d))
             if budget is not _KEEP:
                 cx.execute("UPDATE documents SET ai_budget=? WHERE doc_id=?", (budget, d))
+            if allow is not _KEEP:
+                cx.execute("UPDATE documents SET ai_providers=? WHERE doc_id=?",
+                           (json.dumps(plist) if plist is not None else None, d))
+        if allow is not _KEEP:
+            from . import researchlog
+
+            one = len(doc_ids) == 1
+            title = cx.execute("SELECT title FROM documents WHERE doc_id=?", (doc_ids[0],)).fetchone()[0] if one else None
+            researchlog.record(cx, "ai-access", (f"Cloud providers that may read {researchlog.quoted(title, 80)}"
+                                                 if one else f"Cloud providers that may read {len(doc_ids)} documents")
+                               + f": {_providers_words(plist)}.", "document" if one else "documents",
+                               doc_ids[0] if one else None, title, data={"documents": list(doc_ids), "providers": plist})
         changed = relabel(cx)
     return {"documents": len(doc_ids), "tasks_changed": changed, "proposed": sorted(held)}
 
 
 def documents_view(ws: Workspace) -> dict[str, dict]:
     """Per document: its setting (`ai_access`: the one that applies; `own`: its own or None), note, cap and the
-    share Claude has read."""
-    lv = levels(ws)
-    raw = {r[0]: r for r in ws.query("SELECT doc_id, ai_access, ai_note, ai_budget FROM documents")}
+    share Claude has read. Stage 1 of other cloud providers: `providers` (the cloud providers that may read it,
+    `providers_own`: its own list or None for the project's) and `sent_by` ({provider: share}, only when a provider
+    other than Anthropic has read some of it)."""
+    lv = levels(ws, provider=None)   # the setting as the person chose it: a provider's allowance is shown apart
+    raw = {r[0]: r for r in ws.query("SELECT doc_id, ai_access, ai_note, ai_budget, ai_providers FROM documents")}
     sh = shares(ws)
+    by = shares_by_provider(ws)
+    dflt_p = providers_default(ws)
     out = {}
     for d, r in raw.items():
         own = r[1] if r[1] in LEVELS else None
         eff = lv.get(d, default(ws))
+        own_p = _own_list(r[4])
         out[d] = {"ai_access": eff, "own": own, "note": r[2] or "", "budget": r[3],
                   "budget_reached": eff == "local" and (own or default(ws)) == "cloud" and r[3] is not None,
-                  "sent": sh.get(d, {}).get("share", 0.0), "sent_passages": sh.get(d, {}).get("passages", 0)}
+                  "sent": sh.get(d, {}).get("share", 0.0), "sent_passages": sh.get(d, {}).get("passages", 0),
+                  "providers": own_p if own_p is not None else dflt_p, "providers_own": own_p}
+        if any(p != ANTHROPIC for p in by.get(d, {})):
+            out[d]["sent_by"] = by[d]
     return out
 
 
 def restricted_titles(ws: Workspace) -> dict[str, str]:
     """Documents marked "No AI" by their place: {doc_id: "Restricted document 3"} (a title can name a person, so the
     connector shows this instead)."""
-    lv = levels(ws, budget=False)
+    lv = levels(ws, budget=False, provider=None)
     out = {}
     n = 0
     for (d,) in ws.query("SELECT doc_id FROM documents ORDER BY added_at, rowid"):
@@ -597,21 +865,7 @@ def restricted_titles(ws: Workspace) -> dict[str, str]:
 # ---------------------------------------------------------------------------------------------
 def on_this_computer(url: str) -> bool:
     """Whether an address is this computer (localhost, 127.x, ::1)."""
-    u = (url or "").strip()
-    if not u:
-        return False
-    if "://" not in u:
-        u = "http://" + u
-    try:
-        host = (urlparse(u).hostname or "").strip("[]").lower()
-    except ValueError:
-        return False
-    if host in ("localhost", "localhost.localdomain") or host.endswith(".localhost"):
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
+    return providers.on_this_computer(url)
 
 
 def backend_levels(backend) -> set[str]:
@@ -634,28 +888,60 @@ def is_cloud(backend) -> bool:
     return (getattr(backend, "name", "") or "") in OFF_COMPUTER
 
 
+def route_name(backend) -> str:
+    """How the ledger and the results name a backend's route: "Claude Code", "Claude API", the provider's name for
+    another cloud provider."""
+    name = getattr(backend, "name", "") or ""
+    if name == providers.CLOUD_ROUTE:
+        return providers.title(provider_of(backend))
+    return ROUTE_NAMES.get(name, name)
+
+
 def require(backend, task, where=None) -> None:
     """Refuse to hand a task to a model its setting does not allow (before anything is sent). With `where` (the
     workspace, or a connection inside the caller's transaction) the setting is worked out again from the task's
     payload (`recheck`), so a stored setting that went stale cannot let text through. The cap is not counted here:
     the task was labelled with it when it was made, and the runs that send several tasks in a row count it per task
-    (`recheck` with the cap); a second attempt at the same task must not be refused half-way."""
+    (`recheck` with the cap); a second attempt at the same task must not be refused half-way.
+
+    Stage 1 of other cloud providers: the setting is worked out for the backend's own provider (`provider_of`), so a
+    `cloud` task whose documents do not all allow that provider is refused (an OpenAI address typed into the local
+    server field reads no document that allows Anthropic only)."""
     try:
         lv = task["access"] or "cloud"
     except (KeyError, IndexError):
         lv = "cloud"
+    prov = provider_of(backend)
     if where is not None:
         if isinstance(where, Workspace):
             with where.connect() as cx:  # committed before the refusal below: the task stays out of the queue
-                now_lv = recheck(cx, task["task_id"], budget=False)
+                now_lv = recheck(cx, task["task_id"], budget=False, provider=prov)
         else:
-            now_lv = recheck(where, task["task_id"], budget=False)
+            now_lv = recheck(where, task["task_id"], budget=False, provider=prov)
         lv = most([lv, now_lv]) if now_lv is not None else lv
     if lv == "none":
         raise AccessError(f"Task {task['task_id']} holds text of a document marked No AI: no model may read it.")
     if lv not in backend_levels(backend):
+        if prov is not None and prov != ANTHROPIC and _as_chosen(where, task) == "cloud":
+            raise AccessError(f"Task {task['task_id']} holds text of a document that {providers.title(prov)} may not "
+                              "read: its AI setting allows other providers only.")
         raise AccessError(f"Task {task['task_id']} holds text of a document marked Only a local AI: "
-                          f"{ROUTE_NAMES.get(getattr(backend, 'name', ''), 'this model')} may not read it.")
+                          f"{route_name(backend) or 'this model'} may not read it.")
+
+
+def _as_chosen(where, task) -> str | None:
+    """The task's setting as the person chose it, without any provider's allowance (to say why a task is refused)."""
+    if where is None:
+        return None
+    try:
+        if isinstance(where, Workspace):
+            with where.connect() as cx:
+                row = cx.execute("SELECT access, payload_json FROM tasks WHERE task_id=?", (task["task_id"],)).fetchone()
+                return label_payload(cx, json.loads(row[1] or "{}"), budget=False, provider=None) if row else None
+        row = where.execute("SELECT access, payload_json FROM tasks WHERE task_id=?", (task["task_id"],)).fetchone()
+        return label_payload(where, json.loads(row[1] or "{}"), budget=False, provider=None) if row else None
+    except Exception:  # noqa: BLE001 - only the wording of the refusal depends on it
+        return None
 
 
 # 0.19.4: "Start it anyway" for a job the local model was refused in for memory: the job runs again with this set
@@ -962,9 +1248,9 @@ def local_status(settings: dict) -> dict:
     return out
 
 
-def allowed_docs(ws: Workspace, allowed: set[str]) -> set[str]:
-    """The documents whose setting is one of `allowed`."""
-    return {d for d, lv in levels(ws).items() if lv in allowed}
+def allowed_docs(ws: Workspace, allowed: set[str], provider=_ACTIVE) -> set[str]:
+    """The documents whose setting is one of `allowed` (for `provider`'s reading, see `levels`)."""
+    return {d for d, lv in levels(ws, provider=provider).items() if lv in allowed}
 
 
 # ---------------------------------------------------------------------------------------------
@@ -991,10 +1277,16 @@ def _with_context(cx, payload: Any, pids: set[str]) -> set[str]:
     return pids | extra
 
 
+_ANTHROPIC_ROUTES = {"Claude Code", "Claude API", "Claude app (connector)", "Claude", "file queue"}
+
+
 def record_sent(cx, task_id: str | None, payload: Any, route: str, feature: str | None = None,
-                context: bool = True) -> int:
+                context: bool = True, provider: str | None = None) -> int:
     """Write one ledger row per passage (and, with `context`, the passage shown before it) of this payload, as it
-    leaves for a cloud model. A Claude chat is shown the excerpts without their context (`context=False`)."""
+    leaves for a cloud model. A Claude chat is shown the excerpts without their context (`context=False`).
+    `provider`: who receives it (stage 1 of other cloud providers; by default Anthropic for Claude's routes)."""
+    if provider is None:
+        provider = ANTHROPIC if route in _ANTHROPIC_ROUTES else providers.OTHER
     pids, _dids = ids_in(payload)
     if not pids:
         return 0
@@ -1007,14 +1299,16 @@ def record_sent(cx, task_id: str | None, payload: Any, route: str, feature: str 
         if is_tombstone(p):     # ("<doc_id>:r1-0005", see reread.py): it is still that document's text that leaves
             docs[p] = p.rsplit(":", 1)[0]
     at = now()
-    rows = [(p, docs[p], route, task_id, at, feature) for p in sorted(pids) if p in docs]
-    cx.executemany("INSERT INTO ai_sent(passage_id, doc_id, route, task_id, sent_at, feature) VALUES (?,?,?,?,?,?)", rows)
+    rows = [(p, docs[p], route, task_id, at, feature, provider) for p in sorted(pids) if p in docs]
+    cx.executemany("INSERT INTO ai_sent(passage_id, doc_id, route, task_id, sent_at, feature, provider) VALUES "
+                   "(?,?,?,?,?,?,?)", rows)
     return len(rows)
 
 
-def record_passages(ws: Workspace, passage_ids: Iterable[str], route: str, feature: str, task_id: str | None = None) -> int:
+def record_passages(ws: Workspace, passage_ids: Iterable[str], route: str, feature: str, task_id: str | None = None,
+                    provider: str | None = None) -> int:
     with ws.connect() as cx:
-        return record_sent(cx, task_id, [{"passage_id": p} for p in passage_ids], route, feature)
+        return record_sent(cx, task_id, [{"passage_id": p} for p in passage_ids], route, feature, provider=provider)
 
 
 FEATURES = {"check": "Check", "reread": "Read again", "second": "Second opinion", "label": "Profile (AI pass)",
@@ -1029,7 +1323,7 @@ FEATURES = {"check": "Check", "reread": "Read again", "second": "Second opinion"
 def ledger(ws: Workspace, doc_id: str | None = None) -> list[dict]:
     """The rows of the ledger, newest first: passage, document, page, route, feature, task, when."""
     sql = ("SELECT s.passage_id, s.doc_id, d.title, p.page, s.route, COALESCE(s.feature, t.kind) AS feature, s.task_id, "
-           "s.sent_at FROM ai_sent s LEFT JOIN documents d ON d.doc_id=s.doc_id LEFT JOIN passages p ON "
+           "s.sent_at, COALESCE(s.provider, 'anthropic') AS provider FROM ai_sent s LEFT JOIN documents d ON d.doc_id=s.doc_id LEFT JOIN passages p ON "
            "p.passage_id=s.passage_id LEFT JOIN tasks t ON t.task_id=s.task_id")
     args: list = []
     if doc_id:
@@ -1038,7 +1332,7 @@ def ledger(ws: Workspace, doc_id: str | None = None) -> list[dict]:
     rows = ws.query(sql + " ORDER BY s.sent_at DESC, s.rowid DESC", args)
     return [{"passage_id": r["passage_id"], "doc_id": r["doc_id"], "title": r["title"] or "", "page": r["page"],
              "route": r["route"] or "", "feature": FEATURES.get(r["feature"] or "", r["feature"] or ""),
-             "task_id": r["task_id"] or "", "sent_at": r["sent_at"] or ""} for r in rows]
+             "task_id": r["task_id"] or "", "sent_at": r["sent_at"] or "", "provider": r["provider"]} for r in rows]
 
 
 def document_ledger(ws: Workspace, doc_id: str) -> dict:
@@ -1111,19 +1405,24 @@ def dismiss_banner(ws: Workspace) -> None:
 
 def project_info(ws: Workspace) -> dict:
     """What the Documents page needs about the project: its default, whether it was chosen, the banner."""
-    lv = levels(ws)
+    lv = levels(ws, provider=None)   # as the person chose them (a provider's allowance is shown apart)
     counts = {k: sum(1 for v in lv.values() if v == k) for k in LEVELS}
+    shared = is_shared(ws._conn(), ws)
     return {"default": default(ws), "chosen": default_chosen(ws), "banner": bool(ws.config.get("ai_access_banner")),
             "ask": not default_chosen(ws) and (bool(ws.config.get("ai_access_ask")) or bool(lv)),
             "counts": counts, "labels": LABEL, "who": WHO, "local_only": _local_only(), "promise": PROMISE,
-            "ledger_since": ws.meta("ai_sent_since") or None}
+            "ledger_since": ws.meta("ai_sent_since") or None,
+            # stage 1 of other cloud providers: who may read the `cloud` documents without their own choice, and
+            # why a shared project allows Anthropic only
+            "providers_default": providers_default(ws), "shared": shared,
+            "providers_note": SHARED_ONLY_ANTHROPIC if shared else None}
 
 
 def may_read(ws: Workspace, payload: Any, backend) -> bool:
     """Whether this backend may read this payload now (for the tools that send an answered task again: the label
-    comparison, the model test)."""
+    comparison, the model test), for the backend's own provider."""
     with ws.connect() as cx:
-        return label_payload(cx, payload) in backend_levels(backend)
+        return label_payload(cx, payload, provider=provider_of(backend)) in backend_levels(backend)
 
 
 def sending(ws: Workspace, payload: Any, backend, feature: str, task_id: str | None = None) -> None:
@@ -1132,4 +1431,4 @@ def sending(ws: Workspace, payload: Any, backend, feature: str, task_id: str | N
         raise AccessError("This text comes from a document this model may not read.")
     if is_cloud(backend):
         with ws.connect() as cx:
-            record_sent(cx, task_id, payload, ROUTE_NAMES.get(backend.name, backend.name), feature)
+            record_sent(cx, task_id, payload, route_name(backend), feature, provider=provider_of(backend))

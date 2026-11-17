@@ -290,7 +290,10 @@ def _friendly(fn):
     @functools.wraps(fn)
     def inner(*a, **kw):
         try:
-            return fn(*a, **kw)
+            # stage 1 of other cloud providers: everything the connector shows or hands out goes to Claude, so every
+            # document's setting is Anthropic's (a document that allows other providers only is not shown)
+            with access.reading_for(access.ANTHROPIC):
+                return fn(*a, **kw)
         except KeyError as e:
             raise ToolError(f"Not found: {e.args[0] if e.args else e}") from e
         except (ValueError, FileNotFoundError, BackendError) as e:

@@ -961,7 +961,7 @@ def read(ws: Workspace, backend, model: str, progress: Callable | None = None,
             if payload:
                 frame_task = make_task(ws, payload, call)
                 with ws.connect() as cx:
-                    now_lv = access.recheck(cx, frame_task)
+                    now_lv = access.recheck(cx, frame_task, provider=access.provider_of(be))
                     if now_lv is not None and now_lv in access.backend_levels(be) \
                             and getattr(be, "name", "") == "claude_code":
                         tasks.mark_queued(cx, [frame_task])
