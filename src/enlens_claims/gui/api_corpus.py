@@ -15,6 +15,8 @@ P = r"([^/]+)"  # one path segment, as in server.py
 ROUTES: list[tuple[str, str, str]] = [
     # K2 part 1: a document's role (theory or evidence; docrole.py)
     ("GET", rf"/api/projects/{P}/document-roles", "get_document_roles"),
+    # roadmap N3: one role for many documents at once (the Documents list's bulk bar)
+    ("PUT", rf"/api/projects/{P}/document-roles", "put_document_roles"),
     ("GET", rf"/api/projects/{P}/documents/{P}/role", "get_document_role"),
     ("PUT", rf"/api/projects/{P}/documents/{P}/role", "put_document_role"),
     # 0.18.6: a document marked Non-scientific (docrole.py): read and judged, never counted in an answer
@@ -73,6 +75,28 @@ class CorpusApi:
         ws = self.app.ws(name)
         return {"roles": {r[0]: r[1] for r in ws.query("SELECT doc_id, role FROM documents WHERE role IS NOT NULL")},
                 "nonscientific": sorted(docrole.nonscientific_docs(ws))}
+
+    def put_document_roles(self, name, q):
+        """Roadmap N3: {"doc_ids": [...], "role": "theory" | "working" | null, "why"?}: one role for many documents,
+        by the rules of one (docrole.set_roles): one research-log entry for the batch. Returns {"role", "changed",
+        "unchanged", "was": {doc id: its role before}, "marked_nonscientific", "roles" and "nonscientific" (the list's
+        marks now, as get_document_roles)}. Under an owner a Member's marks are proposals, as one document's are."""
+        from .. import docrole
+
+        body = self._body()
+        role = body.get("role")
+        if role is not None and role not in docrole.ROLES:
+            raise ApiError(400, "A document's role is \"theory\" or \"working\", or null (evidence).")
+        ids = body.get("doc_ids")
+        if not isinstance(ids, list) or not ids or not all(isinstance(d, str) and d for d in ids):
+            raise ApiError(400, "Choose at least one document.")
+        why = body.get("why")
+        ws = self.app.ws(name)
+        try:
+            out = docrole.set_roles(ws, ids, role, str(why).strip() or None if why else None)
+        except KeyError:
+            raise ApiError(404, "No such document in this project.") from None
+        return {**out, **self.get_document_roles(name, q)}
 
     def get_document_role(self, name, doc_id, q):
         """{"doc_id", "role" (null: evidence), "impact": what was made with it in (docrole.impact), "nonscientific",

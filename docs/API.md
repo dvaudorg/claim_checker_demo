@@ -1866,6 +1866,12 @@ terms.
 - `GET /api/projects/<p>/codebooks/<name>.qdc` → 0.18.7 (G5): the codebook as a REFI-QDA codebook (`urn:QDA-XML:codebook:1.0`) for NVivo, ATLAS.ti and MAXQDA: its groups as parent codes, each code's definition, when to use it and when not, keywords and examples as its description (`qdpx.codebook_xml`). 404 for an unknown codebook.
 - `GET /api/projects/{p}/document-roles` → `{"roles": {doc id: "theory"}, "nonscientific": [doc ids]}` (only the
   documents with a role; 0.18.6: and those marked Non-scientific).
+- Roadmap N3: `PUT /api/projects/{p}/document-roles` `{"doc_ids": [...], "role": "theory" | "working" | null, "why"?}`
+  → `{"role", "changed": [ids], "unchanged": [ids], "was": {id: role before}, "marked_nonscientific": [ids], "roles",
+  "nonscientific"}` (the last two as the GET above): one role for many documents by the rules of one
+  (`docrole.set_roles`), with ONE research-log entry for the batch (`subject_kind` "documents" when more than one
+  changed; `data`: `{"role", "was", "documents"}`). 400 for another role or no documents, 404 (nothing changed) when
+  one is not in the project. The bulk bar's *Undo* sends the documents back by the role each had.
 - `GET /api/projects/{p}/documents/{d}/role` → `{"doc_id", "role": "theory" | "working" | null, "impact":
   {"themes": [{"run_id", "created_at", "passages"}], "labels": [{"framework", "name", "passages"}], "checks":
   [{"hyp_id", "text", "excerpts"}]}}`: what was made with the document in.
