@@ -55,6 +55,9 @@ by `--local-only`.
   lean; the researcher decides each passage. No local confidence number is shown. Open design point: whether the
   suggestion shows before or after the researcher's own grade (a pre-filled card invites a quick *Agree*: the bench
   saw a reviewer agree with 25 of 30 judgements, invented quotes included, when it was shown them).
+- The validation gold set (17 November 2026, `tools/validation/runs/`) agrees: Qwen 3.5 4B got 47% of verdicts right
+  (26 of 30 checks finished), K2 Horizon 0.9B finished none (its whole-sentence quotes for every passage ran past the
+  answer's length limit): a K2 tier needs its own, shorter answer form, or the length limit raised for it.
 - To handle when built: with Ollama's MLX runner, `qwen3.5:4b` grew from 5.2 GB to 12.7 GB of memory over a long run
   (the advice reckons size plus context, so it needs more margin or a restart between batches); and temperature 0
   with a fixed seed did not repeat answers word for word (62%), which the results' version note should say.
