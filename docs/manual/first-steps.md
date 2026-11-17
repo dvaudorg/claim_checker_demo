@@ -35,8 +35,8 @@ this computer needs no terminal:
 
 1. With no model server running, *Install Ollama* gets **Ollama** (free): it says the size of the download first
    (about 1.7 GB on Windows, 230 MB on a Mac), then installs and starts it, with a progress bar. If Ollama is on the
-   computer but not running (after an install, or on a later day), ENLENS starts it by itself and waits until it
-   answers: there is nothing to open and nothing to type. *Start Ollama* stays for when that did not work.
+   computer but not running (on a later day, say), press *Start Ollama*: ENLENS starts nothing AI by itself. The first
+   Start of a local model starts Ollama too, so there is nothing to open and nothing to type.
 2. With Ollama running but no model yet, ENLENS suggests the models that **fit this computer**, from its memory, free
    disk space and graphics card: one recommended, a smaller and quicker one, and a larger and more careful one
    beside it, each with its download size, how quick it will be here and what it is good for. *Download …* gets the
