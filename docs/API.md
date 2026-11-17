@@ -2044,7 +2044,9 @@ in the project folder (`drafts/codebook-from-theory.json`, not shared through th
 
 Links found from the text (roadmap D2, `textrelations.py`) need no route of their own: they are rows of the concept
 page's `related.links` with `"source": "pattern"` and their `"sentences"` (`[{"doc_id", "title", "page", "start",
-"end", "quote"}]`); relations gain `effect`, `effect_of`, `replaces` and `replaced_by`.
+"end", "quote"}]`); relations gain `effect`, `effect_of`, `replaces` and `replaced_by`, and with D1 (the rest)
+`needs`, `needed_by`, `shapes`, `shaped_by` and `clashes` (`clashes` is the same from both ends; the others turn into
+their pair when seen from the other concept).
 
 **Reader 5: figures and tables from their rules** (roadmap A6, `reader5.py`).
 

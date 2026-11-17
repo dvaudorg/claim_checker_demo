@@ -6,7 +6,10 @@ mentions in `term_mentions` in one sentence), by the words between them:
     X such as Y (, Z and W)          X broader than Y (and Z, W)
     Y (, Z) and other X / or other X X broader than Y (and Z)
     X, also called Y / X (also known as Y) / X, i.e. Y          the same
-    X leads to / causes / reduces / increases / results in Y      X has an effect on Y
+    X leads to / causes / reduces / increases / undermines / results in Y      X has an effect on Y
+    X requires / needs / depends on / relies on Y                 X needs Y (seen from Y: needed by)
+    X shapes / influences / affects / determines Y                X shapes Y (seen from Y: shaped by)
+    X conflicts with / clashes with / is at odds with Y           X clashes with Y (the same from both ends)
     X instead of Y                   X replaces Y
 
 **English only**, in this release (the manual says so). A pattern inside quotation marks (someone's words being
@@ -41,8 +44,16 @@ _BETWEEN = [
     (re.compile(rf"^\s*\(\s*(?:also\s+(?:called|known\s+as)|a\.k\.a\.?|i\.\s?e\.,?)\s+{_ART}$", re.I), "same"),
     (re.compile(rf"^\s+{_MODAL}(?:leads?|led|leading)\s+to\s+{_ART}$", re.I), "effect"),
     (re.compile(rf"^\s+{_MODAL}(?:causes?|caused|causing|reduces?|reduced|reducing|increases?|increased|increasing|"
-                rf"raises?|raised|lowers?|lowered|improves?|improved|worsens?|worsened|results?\s+in|resulted\s+in)\s+"
-                rf"{_ART}$", re.I), "effect"),
+                rf"raises?|raised|lowers?|lowered|improves?|improved|worsens?|worsened|undermines?|undermined|undermining|"
+                rf"results?\s+in|resulted\s+in)\s+{_ART}$", re.I), "effect"),
+    # D1 rest: "X needs Y" (a verb after "needs", as in "needs to cut", leaves the gap unmatched: the gap must end at Y)
+    (re.compile(rf"^\s+{_MODAL}(?:require[sd]?|requiring|need(?:s|ed)?|"
+                rf"(?:depends?|depended|depending|relies|relied|rely|relying)\s+(?:up)?on|"
+                rf"(?:is|are|was|were)\s+(?:dependent|reliant)\s+(?:up)?on)\s+{_ART}$", re.I), "needs"),
+    (re.compile(rf"^\s+{_MODAL}(?:shapes?|shaped|shaping|influences?|influenced|influencing|affects?|affected|"
+                rf"affecting|determines?|determined|determining)\s+{_ART}$", re.I), "shapes"),
+    (re.compile(rf"^\s+{_MODAL}(?:conflicts?|conflicted|clash(?:es|ed)?|(?:is|are|was|were)\s+at\s+odds)\s+with\s+"
+                rf"{_ART}$", re.I), "clashes"),
     (re.compile(rf"^\s+instead\s+of\s+{_ART}$", re.I), "replaces"),
 ]
 _LIST = re.compile(r"^\s*(?:,|,?\s+(?:and|or))\s+(?:(?:the|a|an)\s+)?$", re.I)   # between the items of a list
@@ -108,7 +119,8 @@ def _pairs(text: str, ms: list[tuple[int, int, str]]) -> list[tuple[str, str, st
 
 
 _INV = {"broader": "narrower", "narrower": "broader", "effect": "effect_of", "effect_of": "effect",
-        "replaces": "replaced_by", "replaced_by": "replaces"}
+        "replaces": "replaced_by", "replaced_by": "replaces", "needs": "needed_by", "needed_by": "needs",
+        "shapes": "shaped_by", "shaped_by": "shapes"}
 
 
 def find(cx: sqlite3.Connection) -> int:
