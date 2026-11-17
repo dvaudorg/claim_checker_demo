@@ -17,6 +17,7 @@ ROUTES: list[tuple[str, str, str]] = [
     # B5: retractions and corrections, looked up in Crossref when the person asks
     ("GET", rf"/api/projects/{P}/retractions", "get_retractions"),
     ("POST", rf"/api/projects/{P}/retractions/check", "post_retractions_check"),
+    ("POST", rf"/api/projects/{P}/retractions/matches/{P}", "post_retractions_match"),
     # I5: the local model and Claude answer the same sample; Cohen's kappa per kind of task
     ("GET", rf"/api/projects/{P}/agreement/plan", "get_agreement_plan"),
     ("POST", rf"/api/projects/{P}/agreement", "post_agreement"),
@@ -31,7 +32,8 @@ class ChecksExtraApi:
         (counts)}, ...status}."""
         ws = self.app.ws(name)
         p = retractions.plan(ws)
-        return {**retractions.status(ws), "plan": {"ask": len(p["ask"]), "no_ai": len(p["no_ai"])}}
+        return {**retractions.status(ws), "plan": {"ask": len(p["ask"]), "no_ai": len(p["no_ai"])},
+                "title_plan": retractions.title_plan(ws)}
 
     def post_retractions_check(self, name, q):
         """*Check for retractions*: a lookup of the DOIs in Crossref, as a job (one per project at a time). Refused
@@ -40,9 +42,10 @@ class ChecksExtraApi:
         ws = self.app.ws(name)
         if home.local_only():
             raise ApiError(400, "Online lookups are off on this computer (local-only), so nothing was sent.")
-        if not retractions.plan(ws)["ask"]:
-            raise ApiError(400, "There is no DOI to look up: the works of the bibliography and the documents have none, "
-                                "or their documents are marked No AI.")
+        if not retractions.plan(ws)["ask"] and not retractions.title_works(ws)["works"]:
+            raise ApiError(400, "There is nothing to look up: no work or document has a DOI, and no work of the "
+                                "bibliography without one has a title, an author and a year to look it up by (or its "
+                                "documents are marked No AI or are your own drafts).")
 
         def run(job):
             def progress(**kw):
@@ -51,6 +54,19 @@ class ChecksExtraApi:
 
         job = self.app.jobs.start("retractions", "Checking for retractions", name, run, uses_model=False, unique=True)
         return {"job": job.view()}
+
+    def post_retractions_match(self, name, item_key, q):
+        """*Not this work* (`{"reject": true}`, the default) or taking it back (`{"reject": false}`): the match by title
+        of a work without a DOI. Kept with who said it, and in the research log. 404 for a work with no match."""
+        body = self._body()
+        ws = self.app.ws(name)
+        reject = body.get("reject", True)
+        if not isinstance(reject, bool):
+            raise ApiError(400, "reject is true or false.")
+        try:
+            return retractions.reject_match(ws, item_key, reject)
+        except KeyError:
+            raise ApiError(404, "This work has no match by title.") from None
 
 
     # -- I5: agreement between routes -------------------------------------------------------------------------------

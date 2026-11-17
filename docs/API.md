@@ -2082,13 +2082,18 @@ answer, also written into the research log as kind `verdict-moved`, else null).
 
 Looks the DOIs of the bibliography's works and of the documents up in Crossref, which carries Retraction Watch's
 retractions and the publishers' corrections and expressions of concern. Only when asked. Off under local-only (400,
-nothing sent). Only DOIs are sent, with a plain `User-Agent: ENLENS/<version>`. A work whose document is marked
-No AI is not looked up. The Crossref address can be set with `ENLENS_CROSSREF_URL` (tests use a stand-in).
+nothing sent). DOIs are sent, and for a work of the bibliography without a usable DOI (a published kind of item, with
+a title of three words or more, a first author's family name and a year) its title, first author's family name and
+year, one request per work (at most 300 a lookup), with a plain `User-Agent: ENLENS/<version>` and nothing else. A work
+whose document is marked No AI, or linked to a working document, is not looked up. A match by title is strict (the
+same title, a year within one, the same first author, and one candidate only); the matched DOI's notices are found as
+any DOI's. A document with no DOI and no work of the bibliography is never looked up by title. The Crossref address can be set with `ENLENS_CROSSREF_URL` (tests use a stand-in).
 
 | Route | Answer |
 | --- | --- |
-| `GET /api/projects/<name>/retractions` | What the last lookups found: `{"local_only", "checked_at" (the latest lookup or null), "checked", "affected", "by_doi": {doi: {"checked_at", "notices"}}, "by_item": {item_key: [notice]}, "by_doc": {doc_id: [notice]}, "plan": {"ask", "no_ai"}}`. A notice is `{"type": "retraction", "correction", "expression_of_concern", …, "doi": the notice's DOI, "date", "source", "work_doi", "checked_at"}`. Only works with a notice are listed. |
-| `POST /api/projects/<name>/retractions/check` | Starts the lookup as a job (`{"job"}`; `progress` has `done` and `total` DOIs; one at a time per project). Its result: `{"looked_up", "no_ai", "notices", "capped", "checked_at"}`. 400 under local-only or when there is no DOI to ask about. |
+| `GET /api/projects/<name>/retractions` | What the last lookups found: `{"local_only", "checked_at" (the latest lookup or null), "checked", "affected", "by_doi": {doi: {"checked_at", "notices"}}, "by_item": {item_key: [notice]}, "by_doc": {doc_id: [notice]}, "plan": {"ask", "no_ai"}, "title_plan": {"ask", "no_ai", "working", "capped"}, "title_matches": [{"item_key", "doi", "title", "year", "author", "checked_at", "notices"}]}`. A notice is `{"type": "retraction", "correction", "expression_of_concern", …, "doi": the notice's DOI, "date", "source", "work_doi", "checked_at"}`; one found by title also has `"found_by": "title"` and `"match": {"doi", "title", "year", "author"}`. Only works with a notice are listed; a match the researcher rejected is not. |
+| `POST /api/projects/<name>/retractions/check` | Starts the lookup as a job (`{"job"}`; `progress` has `done` and `total` works and DOIs asked; one at a time per project). Its result: `{"looked_up", "no_ai", "notices", "capped", "checked_at", "by_title", "title_matched", "title_ambiguous", "title_capped"}`. 400 under local-only or when there is nothing to ask about. |
+| `POST /api/projects/<name>/retractions/matches/<item_key>` | Body `{"reject": true}` (the default): *Not this work*, the match by title of this work is hidden and not proposed again; `{"reject": false}` takes it back. Kept with who and when (`rejected_by` is the person) and written in the research log (kind `retraction-match`, subject `bib_item`). Answer: `{"item_key", "doi", "title", "rejected", "changed"}`. 404 for a work with no match. |
 
 `GET …/bibliography` gives each work a `notices` list, and `retractions: {checked_at, affected, local_only}` beside `counts`.
 

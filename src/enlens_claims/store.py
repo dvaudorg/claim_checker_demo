@@ -270,6 +270,11 @@ CREATE TABLE IF NOT EXISTS ai_cache(key TEXT PRIMARY KEY, kind TEXT, prompt_vers
 -- B5 (retractions.py): what Crossref said about each DOI asked, and when; notices_json is a list of {type, doi, date,
 -- source}, empty when nothing updates the work
 CREATE TABLE IF NOT EXISTS retractions(doi TEXT PRIMARY KEY, checked_at TEXT, notices_json TEXT);
+-- B5 by title (retractions.py): a work of the bibliography without a DOI, looked up by its title, first author and year:
+-- the work Crossref has for it (doi NULL: looked up, no match); rejected_at/rejected_by: the researcher said it is
+-- another work. The matched DOI's notices are in `retractions` as any DOI's
+CREATE TABLE IF NOT EXISTS retraction_matches(item_key TEXT PRIMARY KEY, checked_at TEXT, doi TEXT, title TEXT,
+  year TEXT, author TEXT, rejected_at TEXT, rejected_by TEXT);
 -- I5 (benchmark.py): each finished comparison of the local model with Claude (kappa on a sample of one kind of
 -- answered task), kept so a later sample can be set beside it. About this computer's local model: not for sync
 CREATE TABLE IF NOT EXISTS agreement_runs(run_id TEXT PRIMARY KEY, at TEXT, kind TEXT, n INT, compared INT, failed INT,

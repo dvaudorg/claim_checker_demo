@@ -470,7 +470,8 @@ def _main(argv: list[str] | None = None) -> int:
     # end of 0.18.1 part A
     # 0.18.1 part B (AI mix, checks, retractions): its subcommands below this line; name each in _PART_B
     p = sub.add_parser("retractions", help="check the DOIs of the bibliography and the documents for retractions and "
-                       "corrections in Crossref (sends DOIs only), or show the last check")
+                       "corrections in Crossref (sends DOIs, and the title, first author's family name and year of works "
+                       "without a DOI), or show the last check, with the works matched by title")
     p.add_argument("ws")
     p.add_argument("--check", action="store_true", help="look the DOIs up now (otherwise show what the last check found)")
     # end of 0.18.1 part B
@@ -1209,7 +1210,7 @@ def _cmd_part_b(a, ws) -> int:
         if a.check:
             try:
                 _print(retractions.lookup(ws, progress=lambda **kw: print(f"{kw.get('done', 0)} of {kw.get('total', 0)} "
-                                                                           "DOIs asked", file=sys.stderr)))
+                                                                           "asked", file=sys.stderr)))
             except retractions.RetractionError as e:
                 print(str(e), file=sys.stderr)
                 return 1
