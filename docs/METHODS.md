@@ -157,7 +157,7 @@ routes (below); and in the acceptance measures against a person's reference shee
 
 ## The glossary and concepts
 
-The glossary is built without a model (`terms.py`; [Concepts](manual/explore.md#concepts)).
+The glossary is built without a model (`terms.py`; [Concepts](manual/concepts.md#concepts)).
 
 - **Candidates** are runs of one to four words that cross no punctuation and neither start nor end with a common word
   of the passage's language or a number. A candidate must occur at least 3 times in at least 2 documents.
