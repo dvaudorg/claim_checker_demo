@@ -757,9 +757,10 @@ A work state is words and an icon, never a pill. The running dot stands still un
 **The AI run panel** (0.19.13): every place where AI runs, at three sizes, one family. **Left is this computer, right
 is Claude**, always: each run shows both seats in the same places, and a seat whose engine has no work in this job is
 an *empty seat*, a dashed tile and nothing else (said to a screen reader: *Nothing in this job goes to Claude* / *No
-model on this computer works in this job*). One **split bar** runs along the top of the two: its left half this
+model on this computer works in this job*). One **split bar** runs along the very top edge of the two (3 px, as in the sidebar; laid over the frame, so its halves are the two halves of the whole width, the empty seat's column included): its left half this
 computer's progress, its right half Claude's (an empty track: waits for you; teal: at work, as far as it has got, or
-sliding when there is no count; amber: needs you; grey: done; no track: not in this job). Told apart redundantly: the
+sliding when there is no count; amber: needs you; grey: done; no track: not in this job). **At Stop** the panel goes: a job that was stopped keeps no panel (head, steps, both sides and the bar, at every size), and the page says so once, in its own words or one quiet toast (*Stopped.*). Done and did-not-work jobs keep theirs.
+Told apart redundantly: the
 side, the tile (the house on solid ink; the cloud on a hollow tile, at the outer edges), the ground (the page's own;
 grey), the half of the bar, the side's name (*On this computer* / *To Claude*): any one of them is enough.
 
