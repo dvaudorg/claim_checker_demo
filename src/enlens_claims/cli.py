@@ -135,17 +135,21 @@ def _main(argv: list[str] | None = None) -> int:
     p.add_argument("--report", metavar="FILE.md", help="write the report to this file instead of printing it")
     p = sub.add_parser("validate", help="0.18.4: the AI's answers against known right answers (the validation "
                                         "report's AI half): prepare a run, score it, report on it")
-    p.add_argument("action", choices=["prepare", "score", "report"])
+    p.add_argument("action", choices=["prepare", "score", "report", "person"],
+                   help="person: a real project's judgements made by a person, as right answers (no AI)")
     p.add_argument("run_file", nargs="?", help="report: the run file (or use --latest)")
     p.add_argument("--project", help="prepare: a new project of this name in the data folder (else --ws); score: the "
-                                     "answered project")
+                                     "answered project; person: the real project (else --ws)")
+    p.add_argument("--label", help="person: the project's name in the file and the report (default: its own name)")
     p.add_argument("--again", metavar="PROJECT", help="score: a second answered project, for repeatability")
     p.add_argument("--gold", help="the gold set's folder (default: tools/validation of this git copy)")
     p.add_argument("--decompose", choices=["compound", "all", "none"], default="compound",
                    help="prepare: split into parts the compound hypotheses (default), all, or none")
     p.add_argument("--route", help="score: the route's name in the run file's name (default: from the answers)")
-    p.add_argument("--runs", help="score: the folder of run files (default: the gold set's runs/)")
-    p.add_argument("--latest", metavar="FOLDER", help="report: the newest run file in this folder")
+    p.add_argument("--runs", help="score, person: the folder of run files (default: the gold set's runs/; a person's "
+                                  "judgements go in its person/)")
+    p.add_argument("--latest", metavar="FOLDER", help="report: the newest run of each route in this folder, side by "
+                                                      "side")
     p.add_argument("--out", metavar="FILE.md", help="report: write the report here instead of printing it")
     p = sub.add_parser("export-project", help="write the whole project (database, uploads, original files) to one zip")
     p.add_argument("zip")
@@ -932,8 +936,8 @@ def _validate(a) -> int:
             out = validation.prepare(ws, a.gold, decompose=a.decompose)
             name = _project_name(ws)
             _print({**out, "project": name, "next": f'In Claude Code: /enlens-run "{name}" (or answer it here with '
-                                                     f'`enlens --ws "{ws.root}" queue run --backend ollama`), then '
-                                                     f'`enlens validate score --project "{name}"`'})
+                                                     f'`enlens --ws "{ws.root}" queue run --backend ollama --model '
+                                                     f'<model>`), then `enlens validate score --project "{name}"`'})
             return 0
         if a.action == "score":
             gold = validation.load_gold(a.gold)
@@ -945,6 +949,19 @@ def _validate(a) -> int:
             s = validation.score(run)["passes"][0]
             _print({"run_file": str(path), "checks_right": s["checks"]["accuracy"], "checks_kappa": s["checks"]["kappa"],
                     "label_decisions_right": s["labels"]["code_accuracy"], "labels_kappa": s["labels"]["kappa"]})
+            return 0
+        if a.action == "person":
+            ws = project(a.project)
+            rec = validation.collect_person(ws, a.label or a.project)
+            runs = Path(a.runs) if a.runs else Path(a.gold or validation.default_folder()) / "runs"
+            path = validation.write_person(rec, runs)
+            sc = validation.score_person(rec)
+            _print({"file": str(path), "project": rec["project"], "excerpts": sc["checks"]["n"],
+                    "excerpts_same_grade": sc["checks"]["accuracy"], "excerpts_kappa": sc["checks"]["kappa"],
+                    "codes_decided": sc["labels"]["n"], "codes_kept": sc["labels"]["kept"],
+                    "codes_added": sc["labels"]["added"],
+                    "note": "The file holds grades, codes and model names, no document text. It names the project "
+                            "as shown: give --label to name it otherwise before you share it."})
             return 0
         if not a.run_file and not a.latest:
             a.latest = str(Path(a.gold or validation.default_folder()) / "runs")
