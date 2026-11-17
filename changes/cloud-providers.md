@@ -1,6 +1,6 @@
 ### New
 
-- **Another cloud provider, with an API key.** *Settings → AI* has a fourth main choice, *Another cloud provider (API
+- **Another cloud provider, with an API key.** *Settings → AI* has a new main choice, *Another cloud provider (API
   key)*: OpenAI, Google Gemini, Mistral, Azure OpenAI or OpenRouter, each through its OpenAI-compatible chat API over
   HTTPS. It needs *Allow cloud models* and is refused on a local-only installation. The key is kept in the system's
   keychain (or a file only you can read), never in settings, a log, an error message, the record of how an answer was
@@ -32,7 +32,9 @@
 
 - `tests/test_providers.py`: the hole above, existing projects unchanged, the work split per provider, relabelling,
   shared projects, the cloud backend's fields, keys and errors against an OpenAI-compatible stand-in in
-  `tests/fake_servers.py`, and settings. Node view tests for the wording switch and the provider tick boxes.
+  `tests/fake_servers.py`, and settings. `tests/test_providers_fixes.py`: a team merge keeps the stored settings, a
+  remote embedder, the working-document floor, no redirect carries the key, labels follow a change of route. Node
+  view tests for the wording switch, the provider tick boxes and the line about a server on another computer.
 
 ### Not yet done
 
