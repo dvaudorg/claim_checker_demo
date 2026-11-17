@@ -77,6 +77,8 @@ class SetupApi:
         from .. import providers
         from ..llm import BackendError, CloudBackend
 
+        if home.local_only():
+            raise ApiError(403, "Cloud models are switched off on this computer by whoever installed ENLENS.")
         pid = self._provider(_str(q, "provider"))
         if not providers.TABLE[pid].lists_models:
             return {"models": [], "lists": False}

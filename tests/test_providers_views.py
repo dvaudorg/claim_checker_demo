@@ -83,6 +83,46 @@ await scenario("one document while only Claude is set up", async (t) => {
   return { checks: d.querySelectorAll(".provider-checks").length, text: t.text(d) };
 });
 
+const FAR = { ...NONE, route: "other", route_address: "https://gpu.example.org/v1", set_up: ["other"], other_set_up: true };
+
+await scenario("a server on another computer: the Documents page's line", async (t) => {
+  t.state({ settings: { backend: "openai" }, providers: FAR });
+  const m = await t.module("views/ai-access.js");
+  t.answer("PUT /api/projects/Study/ai-access", (b) => ({ ai_access: { providers_default: b.providers_default } }));
+  let saved = null;
+  const line = m.remoteServerLine("Study", { providers_default: ["anthropic"] }, (r) => { saved = r; });
+  document.getElementById("view").appendChild(line);
+  const out = { text: t.text(line), dialogs: t.dialogs().length };
+  await t.click("Allow it for this project", { within: line });
+  out.put = t.calls.filter((c) => c.method === "PUT").map((c) => c.body);
+  out.saved = !!saved;
+  out.allowed = t.text(m.remoteServerLine("Study", { providers_default: ["anthropic", "other"] }));
+  out.shared = t.text(m.remoteServerLine("Study", { providers_default: ["anthropic"], shared: true }));
+  t.state({ settings: {}, providers: NONE });
+  out.claude = m.remoteServerLine("Study", {}) === null;
+  return out;
+});
+
+await scenario("allowances that differ show the tick boxes while only Claude is set up", async (t) => {
+  t.state({ settings: {}, providers: NONE });
+  const m = await t.module("views/ai-access.js");
+  t.answer("GET /api/projects/Study/documents/d1/ai-sent", { passages: [], share: 0 });
+  const card = m.providersDefaultCard("Study", { providers_default: ["anthropic", "openai"] }, () => {});
+  const byDoc = m.providersDefaultCard("Study", { providers_default: ["anthropic"] }, () => {}, [{ ...DOC, providers_own: ["mistral"] }]);
+  m.docAccessDialog("Study", { ...DOC, providers: ["anthropic", "mistral"], providers_own: ["anthropic", "mistral"], sent_by: undefined }, "cloud", () => {}, { providers_default: ["anthropic"] });
+  await t.settle(50);
+  const d = t.dialog();
+  return { card: card !== null, byDoc: byDoc !== null, boxes: d.querySelectorAll(".provider-checks input").map((b) => [b.value, !!b.checked]) };
+});
+
+await scenario("Settings: a server on another computer says what it reads", async (t) => {
+  t.answer("GET /api/projects/Study", { ai_access: { providers_default: ["anthropic"] } });
+  await settingsPage(t, { backend: "openai", openai_url: "https://gpu.example.org/v1" }, FAR);
+  await t.settle(100);
+  const line = t.view.querySelector(".remote-server-line");
+  return { text: line ? t.text(line) : "", dialogs: t.dialogs().length };
+});
+
 async function settingsPage(t, settings, providers) {
   t.state({ settings, providers });
   t.answer("GET /api/servers", { servers: [], suggested: [] });
@@ -202,3 +242,24 @@ def test_azure_and_local_only(page):
     assert r["address"] and r["model"] == "my-dep" and r["lists"] == 0
     assert "Azure lists no models: type your deployment's name." in r["text"]
     assert page["Settings on a local-only computer"]["cards"] == ["local", "baseline"]
+
+
+@needs_node
+def test_a_server_on_another_computer_says_so_in_place_with_a_button(page):
+    r = page["a server on another computer: the Documents page's line"]
+    assert "A server on another computer (https://gpu.example.org/v1) reads only documents you allow it to." in r["text"]
+    assert r["dialogs"] == 0                                          # no pop-up
+    assert r["put"] == [{"providers_default": ["anthropic", "other"]}] and r["saved"]
+    assert "This project allows it." in r["allowed"]
+    assert "your colleagues have not agreed to them" in r["shared"]
+    assert r["claude"] is True                                        # on Claude's routes: no line
+    r = page["Settings: a server on another computer says what it reads"]
+    assert "reads only documents you allow it to" in r["text"] and "Allow it for this project" in r["text"]
+    assert r["dialogs"] == 0
+
+
+@needs_node
+def test_differing_allowances_show_the_tick_boxes_without_another_provider(page):
+    r = page["allowances that differ show the tick boxes while only Claude is set up"]
+    assert r["card"] and r["byDoc"]
+    assert r["boxes"] == [["anthropic", True], ["mistral", True]]

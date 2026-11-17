@@ -1072,6 +1072,22 @@ class LocalBackend:
         return out
 
 
+def _no_redirect_opener():
+    """urlopen that follows no redirect: a 3xx answer is an error, so the key is never sent on to another address and
+    HTTPS cannot be left on the way (CloudBackend)."""
+    import urllib.request
+
+    class _Refuse(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None   # urllib then raises HTTPError with the 3xx code
+
+    opener = urllib.request.build_opener(_Refuse)
+
+    def open_(req, *a, **k):
+        return opener.open(req, *a, **k)
+    return open_
+
+
 _KEY_SHAPES = re.compile(r"\b(sk-[A-Za-z0-9_*.\-]{6,}|AIza[A-Za-z0-9_\-]{10,})")
 
 
@@ -1088,14 +1104,16 @@ class CloudBackend(LocalBackend):
       reasoning models) is left out and the task asked again;
     - none of LM Studio's own calls; the models from GET {base}/models where the provider lists them (Azure: the
       deployment's name is typed);
-    - errors in plain words, with the provider's name: the key refused (401, 403), a limit reached (429);
-    - timeouts for a server far away: an answer that sends nothing for 3 minutes, or takes over 10, is given up.
+    - errors in plain words, with the provider's name: the key refused (401, 403, Gemini's 400 API_KEY_INVALID), a
+      limit reached (429), a redirect refused (3xx: the key is never sent on);
+    - timeouts for a server far away: an answer that sends nothing for 5 minutes (a reasoning model may think that
+      long before its first word), or takes over 10, is given up.
     """
 
     name = providers.CLOUD_ROUTE
 
     def __init__(self, provider: str, key: str, base_url: str | None = None, timeout: int = 600, opener=None,
-                 stall_timeout: int = 180, stream: bool = True, seed: int | None = DEFAULT_SEED):
+                 stall_timeout: int = 300, stream: bool = True, seed: int | None = DEFAULT_SEED):
         spec = providers.get(provider)
         if spec is None or provider == providers.ANTHROPIC:
             raise BackendError(f"Unknown cloud provider {provider!r}: choose one in Settings → AI.")
@@ -1107,8 +1125,8 @@ class CloudBackend(LocalBackend):
         if not url.lower().startswith("https://") and not providers.on_this_computer(url):
             raise BackendError(f"{spec.title} is reached only over HTTPS, so the text read is encrypted on its way: "
                                f"{url} is not an https:// address.")
-        super().__init__(base_url=url, api_key="-", timeout=timeout, opener=opener, stall_timeout=stall_timeout,
-                         stream=stream, seed=seed)
+        super().__init__(base_url=url, api_key="-", timeout=timeout, opener=opener or _no_redirect_opener(),
+                         stall_timeout=stall_timeout, stream=stream, seed=seed)
         self.base_url = url            # as the provider gives it (Gemini's ends in /openai, not /v1)
         self.api_key = None            # the key is sent in the request's header only (`_headers`)
         self._provider = provider
@@ -1121,12 +1139,23 @@ class CloudBackend(LocalBackend):
         self._max_field = q.get("max_tokens", "max_tokens")
         self.formats = tuple(q.get("formats") or self.FORMATS)
         self._format = self.formats[0]
-        self.dropped: set[str] = set()   # fields a model refused, left out from then on
+        self._dropped: dict[str, set[str]] = {}   # per model: the fields it refused, left out from then on
+        self._model = ""                          # the model of the request being made
         self.model_note = None
 
     @property
     def provider(self) -> str:
         return self._provider
+
+    def dropped(self, model: str) -> set[str]:
+        """The fields this model refused (temperature 0 on a reasoning model, a seed)."""
+        return self._dropped.get(model, set())
+
+    def seed_sent(self, model: str) -> int | None:
+        """The seed sent with this model's requests (None: none is sent)."""
+        if not self._seed_field or self.seed is None or self._seed_field in self.dropped(model):
+            return None
+        return int(self.seed)
 
     @property
     def title(self) -> str:
@@ -1158,19 +1187,20 @@ class CloudBackend(LocalBackend):
         body = {"model": model, "stream": self.stream,
                 "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
                 self._max_field: cap}
-        if "temperature" not in self.dropped:
+        if "temperature" not in self.dropped(model):
             body["temperature"] = 0
-        if self._seed_field and self.seed is not None and self._seed_field not in self.dropped:
-            body[self._seed_field] = int(self.seed)
+        if self.seed_sent(model) is not None:
+            body[self._seed_field] = self.seed_sent(model)
         return body
 
     def _drop_refused(self, code: int, detail: str, body: dict) -> bool:
         if code not in (400, 422):
             return False
         low = (detail or "").lower()
+        model = body.get("model", "")
         for f in ("temperature", self._seed_field):
-            if f and f in body and f not in self.dropped and f in low:
-                self.dropped.add(f)
+            if f and f in body and f not in self.dropped(model) and f in low:
+                self._dropped.setdefault(model, set()).add(f)
                 return True
         return False
 
@@ -1190,9 +1220,12 @@ class CloudBackend(LocalBackend):
         if isinstance(e, BackendError):
             return BackendError(self._scrub(str(e))) if self._scrub(str(e)) != str(e) else e
         if isinstance(e, HTTPError):
-            detail = ""
+            detail, raw = "", ""
             try:
-                d = json.loads(e.read().decode())
+                raw = e.read().decode()
+                d = json.loads(raw)
+                if isinstance(d, list) and d:   # Gemini: [{"error": {...}}]
+                    d = d[0]
                 detail = d.get("error", "") if isinstance(d, dict) else ""
                 if isinstance(detail, dict):
                     detail = detail.get("message", "")
@@ -1201,7 +1234,10 @@ class CloudBackend(LocalBackend):
             except Exception:
                 pass
             detail = self._scrub(str(detail or ""))[:300]
-            if e.code in (401, 403):
+            if 300 <= e.code < 400:
+                return BackendError(f"{t} answered with a redirect ({e.code}); ENLENS follows none, so the key is "
+                                    "never sent on. Check the address in Settings → AI.")
+            if e.code in (401, 403) or (e.code == 400 and ("API_KEY_INVALID" in raw or "API key not valid" in raw)):
                 return BackendError(f"{t} refused the key ({e.code}). Check it in Settings → AI, or make a new one"
                                     + (f" ({self._spec.key_hint})." if self._spec.key_hint else "."))
             if e.code == 429:
@@ -1634,7 +1670,7 @@ def provenance(backend, model: str) -> dict:
     if name == providers.CLOUD_ROUTE:  # another cloud provider: which one (never its key)
         settings["provider"] = getattr(backend, "provider", None)
         settings["route"] = providers.title(settings["provider"])
-        if "temperature" in (getattr(backend, "dropped", None) or ()):
+        if "temperature" in backend.dropped(model):
             settings.pop("temperature")
     if getattr(backend, "num_ctx", None):
         settings["num_ctx"] = int(backend.num_ctx)
@@ -1642,7 +1678,8 @@ def provenance(backend, model: str) -> dict:
         settings["think"] = ("judging" if getattr(backend, "think_kinds", None) else
                              {True: "on", False: "off", None: "default"}[getattr(backend, "think", None)])
         settings["think_budget"] = int(getattr(backend, "think_budget", 0) or 0)
-    return {"digest": digest, "seed": getattr(backend, "seed", None), "settings": settings}
+    seed = backend.seed_sent(model) if name == providers.CLOUD_ROUTE else getattr(backend, "seed", None)
+    return {"digest": digest, "seed": seed, "settings": settings}
 
 
 def repeatable(backend, model: str) -> dict:
@@ -1667,7 +1704,7 @@ def repeatable(backend, model: str) -> dict:
         b = backend.complete("expand", system_prompt("expand"), user_prompt("expand", payload), model, payload)
         same = a.strip() == b.strip()
         who = f"{providers.title(backend.provider)} ({model})"
-        return {"repeatable": same, "seed": getattr(backend, "seed", None) is not None, "provider": backend.provider,
+        return {"repeatable": same, "seed": backend.seed_sent(model) is not None, "provider": backend.provider,
                 "model": model, "digest": backend.digest(model),
                 "note": (f"{who} gave the same answer twice. Cloud providers do not promise it: check again "
                          "now and then." if same else

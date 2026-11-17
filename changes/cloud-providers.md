@@ -18,8 +18,9 @@
 
 - **A model server on another computer no longer reads *Claude may read it* documents until you allow it.** It counts
   as a cloud provider now (a known one by its address, otherwise *a server on another computer*). If you used one,
-  its documents wait for the local model for restricted documents or for your judgement, until you allow it. A server
-  on this computer is unchanged.
+  its documents wait for the local model for restricted documents or for your judgement, until you allow it. Settings
+  → AI and the Documents page say so in one line, with *Allow it for this project*. A server on this computer is
+  unchanged. An embedding server on another computer embeds only the documents that allow it, in the same way.
 
 ### Fixed
 

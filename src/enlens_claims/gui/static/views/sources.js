@@ -6,7 +6,7 @@ import { tesseractHelp, App, api, h, icon, replace, clear, toast, showError, fai
   iconButton, fileButton, link, notice, card, tag, input, fold, choice, stopButton, store, searchField, menu } from "../lib.js";
 import { simpleProgress, jobCard } from "./progress.js";
 import { forgetOriginals } from "./result.js";
-import { LEVEL, accessChoice, accessAskCard, accessBanner, docAccessDialog, levels as accessLevels, othersSetUp, providersDefaultCard, sentByLine } from "./ai-access.js";
+import { LEVEL, accessChoice, accessAskCard, accessBanner, docAccessDialog, levels as accessLevels, providersDefaultCard, remoteServerLine, sentByLine, sentToWords } from "./ai-access.js";
 import { askWhy } from "./versions.js";
 import { proposalChip, proposedToast, removalNote } from "./owner.js";   // 0.18 L2
 import { docChip } from "./owner-state.js";   // 0.18.5: the owner's word as an icon on a closed line
@@ -343,7 +343,9 @@ export async function renderSources(view) {
     if (pa.ask) docsBox.appendChild(accessAskCard(project, pa, reloadDocs));
     else if (pa.banner && docs.length) { const b = accessBanner(project, () => b.remove()); docsBox.appendChild(b); }
     // other cloud providers (stage 1): which may read the documents without a choice of their own, once one is set up
-    const provCard = docs.length ? providersDefaultCard(project, pa, () => reloadDocs()) : null;
+    const farLine = docs.length ? remoteServerLine(project, pa, () => reloadDocs()) : null;
+    if (farLine) docsBox.appendChild(farLine);
+    const provCard = docs.length ? providersDefaultCard(project, pa, () => reloadDocs(), docs) : null;
     if (provCard) docsBox.appendChild(provCard);
     const countHead = h("h2", {}, `${docs.length} ${docs.length === 1 ? "document" : "documents"} in this project`);
     docsBox.appendChild(h("div", { class: "section-title" }, countHead));
@@ -420,7 +422,7 @@ export async function renderSources(view) {
     // how much of it Claude has read, in words that say what the share counts (DESIGN 4.1: a number is never a button)
     const sentWords = (d) => {
       const pct = Math.round((d.sent || 0) * 1000) / 10;
-      if (!pct) return d.ai_access === "cloud" ? "nothing yet" : "nothing: it is not for Claude";
+      if (!pct) return d.ai_access === "cloud" ? "nothing yet" : `nothing: it is not for ${sentToWords()}`;
       const by = sentByLine(d);   // other cloud providers: how much each one has read
       return `${pct < 1 ? "less than 1" : Math.round(pct)}% of its text${d.budget_reached ? " (its cap is reached)" : ""}${by ? ` (${by})` : ""}`;
     };
@@ -471,7 +473,7 @@ export async function renderSources(view) {
         h("dl", { class: "doc-detail-grid" },
           h("dt", {}, "File"), h("dd", {}, h("span", { class: "doc-file" }, ...String(d.file || "").split(/(?<=[_-])/).flatMap((seg) => [seg, h("wbr")])), h("span", { class: "muted small" }, facts)),   // a file name may break after _ or -, never before its extension
           h("dt", {}, "Who may read it with AI"), h("dd", {}, access, button({ kind: "quiet", sm: true, class: "doc-why", title: d.note ? `Why: ${d.note}` : null, onClick: about }, d.note ? `Why: ${d.note}` : "Add a note on why")),
-          h("dt", {}, othersSetUp() ? "Sent to cloud AI" : "Sent to Claude"), h("dd", {}, h("span", {}, sentWords(d)), d.sent ? button({ kind: "quiet", sm: true, title: "What Claude has read of this document, and who may read it", onClick: about }, "See what it read") : null),
+          h("dt", {}, `Sent to ${sentToWords()}`), h("dd", {}, h("span", {}, sentWords(d)), d.sent ? button({ kind: "quiet", sm: true, title: "What Claude has read of this document, and who may read it", onClick: about }, "See what it read") : null),
           h("dt", {}, "Reading"), h("dd", {}, marks.length ? marks : h("span", { class: "it" }, icon("check", { size: 13 }), "readable"),
             readingNote(d) ? null : link({ href: `${docHref(d)}?tab=reading`, class: "small" }, "How it was read")),
           d.proposal && docChip(d.proposal) ? [h("dt", {}, "The owner"), h("dd", {},

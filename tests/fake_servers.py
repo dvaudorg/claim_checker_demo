@@ -559,6 +559,20 @@ class _OpenAI(BaseHTTPRequestHandler):
     def do_POST(self):
         req = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
         self.server.requests.append((self.path, req, dict(self.headers)))
+        if self.server.redirect:   # a redirect elsewhere: a client that follows it would send the key there
+            self.send_response(307)
+            self.send_header("Location", self.server.redirect)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        if self.server.error_body is not None:   # e.g. Gemini's: a JSON list, 400 API_KEY_INVALID for a bad key
+            body = json.dumps(self.server.error_body).encode()
+            self.send_response(self.server.status or 400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if not self._authorised():
             return
         if self.server.status:
@@ -602,6 +616,8 @@ def start(kind: str = "ollama", port: int = 0, trained_context: int = 32768):
     srv.forbidden = set()    # openai: fields refused with 422 (Mistral refuses fields it does not know)
     srv.no_temperature = False
     srv.status = 0           # openai: answer every chat request with this status (429: a limit reached)
+    srv.redirect = ""        # openai: answer every chat request with a redirect to this address
+    srv.error_body = None    # openai: answer every chat request with this body (and `status`, or 400)
     srv.requests = []
     srv.trained_context = trained_context
     srv.thinking = False

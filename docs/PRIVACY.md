@@ -164,8 +164,9 @@ Points for an assessment:
   it is (`other` for a server that is none of the known providers). A researcher who used such a server before this
   version finds its documents waiting until they allow it.
 - **Search by meaning** sends passages to the embedding server. An embedding server on another computer receives
-  neither passages of documents marked *Only a local AI* or *No AI* nor glossary terms found only in them
-  (`embed.py`, `terms.py`); it does receive the text of searches.
+  neither passages of documents marked *Only a local AI* or *No AI*, nor of documents that do not allow its provider
+  (`other`, or a known one by its address), nor glossary terms found only in them (`embed.py`, `terms.py`); it does
+  receive the text of searches.
 - **Getting a model** downloads Ollama's installer from ollama.com and a model from Ollama's library, only when the
   researcher presses the button. No document is sent.
 

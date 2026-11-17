@@ -14,6 +14,11 @@ const CLOUD_CLAUDE = { title: "Claude may read it", many: "Claude may read them"
 const CLOUD_ANY = { title: "Cloud AI may read it", many: "Cloud AI may read them", short: "Cloud AI",
   sub: "Read by the AI you chose, when its provider is ticked for the document: Claude, another cloud provider, or a local model." };
 const cloudWords = () => (othersSetUp() ? CLOUD_ANY : CLOUD_CLAUDE);
+// where the text read goes, in the words of the page: "Claude", or "cloud AI" once another provider is set up
+export const sentToWords = () => (othersSetUp() ? "cloud AI" : "Claude");
+const isDefault = (list) => !list || (list.length === 1 && list[0] === "anthropic");
+// the provider tick boxes show once another provider is set up, or while any allowance differs from the default
+export const providersInPlay = (info = {}, docs = []) => othersSetUp() || !isDefault(info.providers_default) || docs.some((d) => d.providers_own != null);
 
 export const LEVEL = {
   cloud: { get title() { return cloudWords().title; }, get many() { return cloudWords().many; },
@@ -117,8 +122,8 @@ export function sentByLine(doc) {
 
 // The project's choice of cloud providers, on the Documents page, once another provider is set up: who may read the
 // documents marked Cloud AI may read it that have no choice of their own.
-export function providersDefaultCard(project, info, onSaved) {
-  if (!othersSetUp()) return null;
+export function providersDefaultCard(project, info, onSaved, docs = []) {
+  if (!providersInPlay(info, docs)) return null;
   let picked = info.providers_default || ["anthropic"];
   const st = h("span", { class: "save-state", "aria-live": "polite" });
   const btn = button({ sm: true, disabled: true }, icon("check", { size: 13 }), "Save");
@@ -135,12 +140,32 @@ export function providersDefaultCard(project, info, onSaved) {
       checks, h("div", { class: "row" }, btn, st)));
 }
 
+// A model server on another computer as the main route (stage 1 of other cloud providers): it reads only the documents
+// allowed to it ("other", or the provider of its address). One line, and a button that allows it for the project; no
+// pop-up. `onAllowed(res)` after the project's choice was saved.
+export function remoteServerLine(project, info = {}, onAllowed) {
+  const st = providersState();
+  const route = st.route, address = st.route_address;
+  if (!address || !route || route === "anthropic") return null;
+  const allowed = (info.providers_default || ["anthropic"]).includes(route);
+  const words = `A server on another computer (${address}) reads only documents you allow it to.`;
+  if (!project) return notice({ kind: "info", class: "remote-server-line" }, h("p", {}, words, " Allow it for a project on its Documents page."));
+  if (allowed) return notice({ kind: "info", class: "remote-server-line" }, h("p", {}, words, " This project allows it."));
+  if (info.shared) return notice({ kind: "info", class: "remote-server-line" }, h("p", {}, words, " ", info.providers_note || "Other providers come to shared projects later: your colleagues have not agreed to them."));
+  const btn = button({ sm: true, onClick: async () => {
+    btn.disabled = true;
+    try { const r = await api("PUT", `/api/projects/${P(project)}/ai-access`, { providers_default: [...(info.providers_default || ["anthropic"]), route] }); toast(`${providerTitle(route)} may read this project's documents marked ${CLOUD_ANY.title}.`, "ok"); if (onAllowed) onAllowed(r); }
+    catch (e) { showError(e); btn.disabled = false; }
+  } }, "Allow it for this project");
+  return notice({ kind: "info", class: "remote-server-line" }, h("p", {}, words, " Until you do, its documents are read by your local model or wait for you."), h("div", { class: "row" }, btn));
+}
+
 // What Claude has read of a document, its note and its cap.
 export async function docAccessDialog(project, doc, projectDefault, onSaved, info = {}) {
   let sent = { passages: [], share: doc.sent || 0 };
   try { sent = await api("GET", `/api/projects/${P(project)}/documents/${P(doc.doc_id)}/ai-sent`); } catch (e) { showError(e); }
   let level = doc.ai_access;
-  const showProviders = othersSetUp();
+  const showProviders = providersInPlay(info, [doc]);
   const pick = accessChoice({ value: level, many: false, name: "doc-access", onChange: (v) => { level = v; capBox.hidden = v !== "cloud"; if (provBox) provBox.hidden = v !== "cloud"; } });
   // stage 1 of other cloud providers: which ones may read this document (its own choice, or the project's)
   const projectProviders = info.providers_default || ["anthropic"];
@@ -150,22 +175,22 @@ export async function docAccessDialog(project, doc, projectDefault, onSaved, inf
   const note = input({ maxlength: 300, value: doc.note || "", placeholder: "e.g. publisher licence, contains interview data", id: "acc-note" });
   const cap = input({ sm: true, type: "number", min: 1, max: 100, step: 1, value: doc.budget ?? "", placeholder: "none", id: "acc-cap", class: "aia-cap" });
   const capBox = h("div", { class: "field", hidden: level !== "cloud" },
-    h("label", { class: "field-label", for: "acc-cap" }, "Claude may read at most"),
+    h("label", { class: "field-label", for: "acc-cap" }, `${othersSetUp() ? "Cloud AI" : "Claude"} may read at most`),
     h("div", { class: "row aia-cap-row" }, cap, h("span", {}, "% of this document")),
-    h("div", { class: "field-help" }, "Optional. Once Claude has read that much, the rest is treated as Only a local AI. A check that is running may go over by one round."));
+    h("div", { class: "field-help" }, `Optional. Once ${sentToWords()} has read that much (every cloud provider counts), the rest is treated as Only a local AI. A check that is running may go over by one round.`));
   const byLine = sentByLine(doc);
   const share = Math.round((sent.share || 0) * 1000) / 10;
   const list = sent.passages.length ? h("ul", { class: "sent-list" }, sent.passages.slice(0, 200).map((x) =>
     h("li", {}, h("a", { href: `#/doc/${encodeURIComponent(doc.doc_id)}` }, x.page ? `Page ${x.page}` : `Passage ${x.seq != null ? x.seq + 1 : ""}`),
       h("span", { class: "muted small" }, ` · ${x.features.join(", ")} · ${x.routes.join(", ")} · ${fmt.dateShort(x.last)}${x.times > 1 ? ` · ${x.times} times` : ""}`),
       x.preview ? h("div", { class: "small sent-preview" }, x.preview, "…") : null)))
-    : h("p", { class: "muted small" }, "Claude has read nothing of this document" + (sent.since ? " since ENLENS began keeping this list." : "."));
+    : h("p", { class: "muted small" }, `${othersSetUp() ? "No cloud AI" : "Claude"} has read nothing of this document` + (sent.since ? " since ENLENS began keeping this list." : "."));
   const body = h("div", { class: "stack aia-body" },
     pick, provBox,
     h("div", { class: "field" }, h("label", { class: "field-label", for: "acc-note" }, "Why (optional)"), note,
       h("div", { class: "field-help" }, "A note for your records, exported with the project. It changes nothing.")),
     capBox,
-    h("div", {}, h("h3", { class: "h-small" }, `What Claude has read: ${share}%`), byLine ? h("p", { class: "small sent-by" }, `Read by each cloud provider: ${byLine}`) : null, list,
+    h("div", {}, h("h3", { class: "h-small" }, `What ${sentToWords()} has read: ${share}%`), byLine ? h("p", { class: "small sent-by" }, `Read by each cloud provider: ${byLine}`) : null, list,
       sent.since ? h("p", { class: "muted small" }, `Since 0.11 (${fmt.dateShort(sent.since)}), plus the earlier results ENLENS recorded.`) : null));
   await dialog({ title: doc.title || doc.file, body, wide: true, actions: [{ text: "Cancel", value: null }, { text: "Save", primary: true, onClick: async () => {
     const changes = { doc_ids: [doc.doc_id], note: note.value.trim() };

@@ -293,7 +293,10 @@ class App(LibraryMixin, QueueMixin):
         others = sorted({p for p, have in keys.items() if have}
                         | ({route} if route not in (None, providers.ANTHROPIC) else set()))
         return {"list": providers.summary(), "keys": keys, "route": route, "set_up": others,
-                "other_set_up": bool(others) and not home.local_only()}
+                "other_set_up": bool(others) and not home.local_only(),
+                # a model server on another computer as the main route: its address, for the line that says it reads
+                # only the documents allowed to it
+                "route_address": access.route_address(s) if s.get("backend") in ("auto", "ollama", "openai") else None}
 
     def _team_framework(self, name: str | None) -> dict | None:
         """The project's default codebook, set by its owner, when this copy holds it ({"name", "title"}): it takes the

@@ -2,7 +2,7 @@
 import { saveBlob, App, api, h, icon, tabs, replace, clear, toast, showError, fmt, pageHead, watchJob, P, field, switchControl, rangeControl, confirmDialog, dialog, download, VERSION, TERMINAL, strictness, statusBadge, copyLine, tesseractHelp, helpMark, rememberClaude, claudeAccount, appName, Updates, checkUpdate, speedPicker, saveSpeed, thoughtPicker, saveThought, choice, planTier, button, card, fold, link, notice, downloadButton, input as fieldInput, select as selectField, tag, optionCards, readsLine, stopButton, inset, workState, aiWhere, myLink, WhatsNew, loadWhatsNew, showWhatsNew, whatsNewLink, aiButton, setBusy, aiSide, aiSides } from "../lib.js";
 import { withAI } from "../features.js";
 import { aiRun } from "./progress.js";
-import { restrictedModelCard, termsPanel } from "./ai-access.js";
+import { remoteServerLine, restrictedModelCard, termsPanel } from "./ai-access.js";
 import { localModelHelp } from "./local-model.js";
 import { queueSection } from "./queue.js";
 
@@ -393,6 +393,16 @@ function modelSection(s, servers, watchers, info = { servers }) {
       field("Reasoning (thinking models only)", fields.think, { help: "Reasoning can make judgements more careful but makes each check slower. “Only when judging excerpts” reasons where it can help and not for search words or splitting a hypothesis. Test it before relying on it (Test a model, with reasoning on and off)." }),
       h("div", { class: "field" }, h("label", { class: "field-label" }, "Reasoning budget (tokens)", fields.think_budget), budgetNote));
     if (isLocal(backend)) detail.append(localKind());
+    // a model server on another computer: it reads only the documents allowed to it (one line, no pop-up)
+    if (isLocal(backend) && backend === (s.backend || "auto") && remoteServerLine(null)) {
+      const farBox = h("div", {}, remoteServerLine(null));
+      detail.append(farBox);
+      const project = App.state && App.state.project;
+      if (project) api("GET", `/api/projects/${encodeURIComponent(project)}`).then((r) => {
+        const line = remoteServerLine(project, (r && r.ai_access) || {}, () => replace(farBox, remoteServerLine(project, { providers_default: [...((r.ai_access || {}).providers_default || ["anthropic"]), App.state.providers.route] })));
+        if (line) replace(farBox, line);
+      }).catch(() => { /* the line without the button stays */ });
+    }
     if (backend === "auto") {
       detail.append(serverList(), h("p", { class: "muted small" }, "The first server found is used. If a chat model is named below for Ollama or an OpenAI-compatible server, it is preferred when that server has it."),
         fields.ollamaModel = modelPicker("m-ollama", s.ollama_model, ollamaSrv ? ollamaSrv.chat_models : [], "e.g. qwen3:8b"), thinkRow());

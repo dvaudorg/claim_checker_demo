@@ -166,9 +166,15 @@ def base_url(pid: str, azure_url: str = "") -> str:
         a = (f"https://{a}.openai.azure.com" if "." not in a else "https://" + a)
     if not a.lower().startswith("https://"):
         raise ValueError("The Azure OpenAI address must start with https://.")
-    if "/openai/" not in a + "/":
-        a += "/openai/v1"
-    return a
+    # the resource's address is enough: a deployment's address copied from the portal
+    # (…/openai/deployments/<name>/chat/completions?api-version=…) gives the same base
+    try:
+        host = urlparse(a).netloc
+    except ValueError:
+        host = ""
+    if not host or any(c in host for c in "/?#@"):
+        raise ValueError("Give your Azure OpenAI resource's address, for example https://my-resource.openai.azure.com.")
+    return f"https://{host}/openai/v1"
 
 
 def summary() -> list[dict]:
