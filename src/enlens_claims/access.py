@@ -154,6 +154,24 @@ def providers_default(ws: Workspace) -> list[str]:
         return list(providers.DEFAULT_ALLOWED)
 
 
+_DEFAULT_SEEN: dict = {}
+
+
+def _cached_default(ws: Workspace) -> list[str]:
+    """`providers_default`, read again only when the project's config file changed (a task is labelled per insert)."""
+    try:
+        st = ws.config_path.stat()
+        stamp = (str(ws.config_path), st.st_mtime_ns, st.st_size)
+    except OSError:
+        return providers_default(ws)
+    got = _DEFAULT_SEEN.get(stamp)
+    if got is None:
+        if len(_DEFAULT_SEEN) > 64:
+            _DEFAULT_SEEN.clear()
+        got = _DEFAULT_SEEN[stamp] = providers_default(ws)
+    return list(got)
+
+
 def is_shared(cx, ws: Workspace | None = None) -> bool:
     """Whether the project is worked on with colleagues (teamcodebooks.is_team: an owner's chain, an exchange, a
     shared folder or a storage space). When that cannot be said: shared (only Anthropic reads)."""
@@ -199,7 +217,7 @@ class _Allow:
     def default(self) -> list[str]:
         if self._dflt is None:
             ws = self._ws()
-            self._dflt = providers_default(ws) if ws is not None else list(providers.DEFAULT_ALLOWED)
+            self._dflt = _cached_default(ws) if ws is not None else list(providers.DEFAULT_ALLOWED)
         return self._dflt
 
     def shared(self) -> bool:
