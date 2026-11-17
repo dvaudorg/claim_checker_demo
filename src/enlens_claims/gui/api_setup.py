@@ -25,7 +25,7 @@ class SetupApi:
         s = home.update_settings(body)
         if "update_channel" in body:
             self.app.update_seen = None  # 0.15: another channel, another answer: the next look asks again
-        return {"settings": s, "backend_label": home.backend_label(s)}
+        return {"settings": s, "backend_label": home.backend_label(s), "providers": self.app.providers_state(s)}
 
     def post_key(self, q):
         if home.local_only():  # 0.11.1: the one cloud setting that did not honour it
