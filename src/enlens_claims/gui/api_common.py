@@ -72,7 +72,9 @@ class Job:
                "created_at": self.created, "started_at": self.started, "finished_at": self.finished,
                "seconds": round(end - (self.started or end), 1), "error": self.error, "error_kind": self.error_kind,
                "scope": self.scope, "queue": self.queue, "waiting_for": self.waiting_for(),
-               "background": self.background, "where": job_where(self)}
+               "background": self.background, "where": job_where(self),
+               # 0.19.15: the person pressed Stop (many jobs then end "done" with what they had): its panel goes
+               "stopped": self.cancel.is_set()}
         local = local_reader(self)
         if local is not None:   # 0.19.6: the local model reads for it now, whatever Settings' AI is
             out["local_model"] = local

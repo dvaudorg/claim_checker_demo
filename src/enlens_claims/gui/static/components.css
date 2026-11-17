@@ -729,12 +729,12 @@ h2 .defined-wrap { font-size: var(--fs-small); font-weight: var(--fw-regular); }
 .ab-sides.ab-only-cloud { grid-template-columns: 46px minmax(0, 1fr); }
 .progress-body .ab-sides { margin: 8px 0 10px; }
 /* an empty track: waits for you; teal: at work, as far as it has got (sliding: no count); amber: needs you; grey: done; no track: not in this job */
-.ab-half { position: relative; height: 3px; overflow: hidden; background: var(--border-strong); }
+.ab-half { position: relative; height: 3px; overflow: hidden; background: var(--surface-3); }
 /* in the two sides the bar is laid over their top edge, outside the grid: its halves are the two halves of the whole
    width (the empty seat's column included), 3 px thick as in the sidebar, and a half that is not in this job leaves
    the frame's own line */
 .ab-sides { border-top-width: 0; }
-.ab-sides > .ab-half { position: absolute; top: 0; z-index: 1; width: 50%; height: 3px; box-sizing: border-box; }
+.ab-sides > .ab-half { position: absolute; top: 0; z-index: 1; width: 50%; height: 3px; box-sizing: border-box; background: var(--border-strong); }
 .ab-sides > .ab-half[data-where="local"] { left: 0; }
 .ab-sides > .ab-half[data-where="cloud"] { right: 0; }
 .ab-sides > .ab-half.ab-s-none { border-top: 1px solid var(--border); }
