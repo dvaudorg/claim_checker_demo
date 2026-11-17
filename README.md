@@ -57,12 +57,13 @@ Windows from 0.15.4 on). Your projects and settings (the `enlens` folder in your
   impact claims tagged with UN SDG targets and compared with an expert Value Chain Assessment.
 
 <!-- new-in:start (written by `python tools/release.py prepare`: change the changelog entry, not this) -->
-## New in 0.19.15: No model starts without your click, and Team back under the project
+## New in 0.19.16: The concept map's links and named groups, and roles for many documents
 
-- **No AI model starts, or even loads, until you press its Start.** ENLENS no longer starts Ollama when it opens, and the *Settings → AI* card no longer starts it by itself when it is drawn: *Start Ollama* does, and so does the first Start of a local model.
-- **Stop frees the model's memory at once.** A job's *Stop* lets go of the local models it loaded, and *Stop* on the local side lets go of the local model once the item in hand is done.
-- **Team is back under the project's name.** The sidebar's *Team* entry in the *Project* group is gone again: as before 0.19.7, a small line joined under the project switch says *Team* and, in a project with a team.
-- **The AI panel's split bar runs along its top edge, and a stopped job's panel goes.** The thin bar over the two sides (this computer on the left, Claude on the right) was drawn as a pale band inside the frame, and its halves followed the two sides' columns.
+- **The concept map's links say more kinds.** Besides *leads to* and *is used instead of*, ENLENS now proposes links that say one concept *needs*, *shapes* or *clashes with* another.
+- **The end of a link's line on the map says its kind.** A diamond for *is part of*, a filled arrow for *leads to*, an open arrow for *shapes*, a ring for *needs*, a cross for *is used instead of*, a bar across each end for *clashes with*.
+- **Groups have names, and keep them.** Each group of the concept map is named by its two most central concepts until you rename it, in the legend, on the map and in the new *Groups* section under the map.
+- **The AI can draft the groups' names, on request.** *Name the groups* only queues the work: nothing runs until you press *Start Claude Code* (or your local model's start) in its panel.
+- **Download the map.** *PNG* (2,400 pixels wide) and *SVG* at the top of the Map tab save the map as a picture for slides and papers: title, what was counted, filters, the legend.
 <!-- new-in:end -->
 
 How it works, in the manual: [Explore your documents](docs/manual/explore.md) (working documents, the concept map),
