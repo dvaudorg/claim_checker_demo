@@ -236,6 +236,12 @@ evidence* takes the mark back. In a shared project the mark travels like *Leave 
 holds at once, a Member's is a proposal ([Roles](roles.md)). A theory is also where a codebook can start
 ([Make your own codebook](codebooks.md#make-one)).
 
+**Many documents at once.** In *Documents*, tick the documents, then *Role* in the bar at the foot of the window:
+*Evidence*, *Theory* or *Working document*. A role every ticked document has already is greyed out. ENLENS asks once,
+then marks them all; *Undo* in the message gives each document the role it had. The research log keeps one entry
+naming the documents. A *Non-scientific* mark stays as it is. In a shared project each document's mark travels as
+one would: a Member's are proposals.
+
 ### Working documents
 
 Your own draft or notes can be kept in the project beside the corpus (0.19.0). Mark it as **your working document**:
