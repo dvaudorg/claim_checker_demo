@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.19.17 (November 2026): Stop starts over, and second opinions you can find
+
+### Fixed
+
+- **A second opinion differs only from a first reading, and Show them finds it.** *Get a second opinion* also read
+  excerpts no model had read yet (for instance those of a document still waiting for the local model, once it was
+  switched to *Claude may read it*). With no first reading to compare with, each counted as a difference: the
+  Hypotheses list said "second opinion differs on 7" and the result "judged 7 differently", yet no card on the page
+  showed one, as such excerpts are not drawn as cards. A second opinion is now asked only of excerpts already read,
+  and a second reading already made of an excerpt not read yet is no longer counted. Beside "judged N differently"
+  under *Ask another AI model*, **Show them** now goes to each excerpt where the second opinion differs, one per click,
+  including those you have already judged (which *Next to review* passes over). Cannot change results: a second
+  opinion never changes an answer.
+- **Stop puts a further reading back as it was.** When you stopped *Read it* (documents added since a check), *Read
+  these*, *Read more excerpts* or *Search with other words* while its local model still waited for its Start, the
+  excerpts of documents marked Only a local AI kept waiting on the result, with the local model's Start and *Judge
+  them myself*, and the button that asked for them did not come back. Switching such a document to *Claude may read
+  it* then changed nothing: only the local model could read its excerpts. Stop now takes back whatever no model has
+  read in that reading, and the search words it added: the result shows *Read it* (or the button you used) again, and
+  the next click follows each document's setting at that moment. What Claude has already read stays, and so does a
+  judgement of your own. The first reading of a check is unchanged: stopped, its local excerpts still wait under the
+  local model's Start. Cannot change results.
+
 ## 0.19.16 (November 2026): The concept map's links and named groups, and roles for many documents
 
 The concept map says more, and keeps what you give it. Links say that a concept *needs*, *shapes* or *clashes with*

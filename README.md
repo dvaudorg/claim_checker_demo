@@ -57,13 +57,10 @@ Windows from 0.15.4 on). Your projects and settings (the `enlens` folder in your
   impact claims tagged with UN SDG targets and compared with an expert Value Chain Assessment.
 
 <!-- new-in:start (written by `python tools/release.py prepare`: change the changelog entry, not this) -->
-## New in 0.19.16: The concept map's links and named groups, and roles for many documents
+## New in 0.19.17: Stop starts over, and second opinions you can find
 
-- **The concept map's links say more kinds.** Besides *leads to* and *is used instead of*, ENLENS now proposes links that say one concept *needs*, *shapes* or *clashes with* another.
-- **The end of a link's line on the map says its kind.** A diamond for *is part of*, a filled arrow for *leads to*, an open arrow for *shapes*, a ring for *needs*, a cross for *is used instead of*, a bar across each end for *clashes with*.
-- **Groups have names, and keep them.** Each group of the concept map is named by its two most central concepts until you rename it, in the legend, on the map and in the new *Groups* section under the map.
-- **The AI can draft the groups' names, on request.** *Name the groups* only queues the work: nothing runs until you press *Start Claude Code* (or your local model's start) in its panel.
-- **Download the map.** *PNG* (2,400 pixels wide) and *SVG* at the top of the Map tab save the map as a picture for slides and papers: title, what was counted, filters, the legend.
+- **A second opinion differs only from a first reading, and Show them finds it.** *Get a second opinion* also read excerpts no model had read yet (for instance those of a document still waiting for the local model, once it was switched to *Claude may read it*). Cannot change results.
+- **Stop puts a further reading back as it was.** When you stopped *Read it* (documents added since a check), *Read these*, *Read more excerpts* or *Search with other words* while its local model still waited for its Start. Cannot change results.
 <!-- new-in:end -->
 
 How it works, in the manual: [Explore your documents](docs/manual/explore.md) (working documents, the concept map),
