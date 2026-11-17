@@ -96,7 +96,32 @@ progress), then `review.py score` scores it against the Fable reference and `viz
 reviewer grades `review.py packet`'s claims from scratch and counts only after passing its hidden controls and quote
 check. A model earns a stronger role than *suggestions only* only by measurement on this bench.
 
+**I7. Cloud providers other than Claude** · Level 3 · stage 1 built (17 November 2026), stages 2 and 3 left
+- *The wish:* a researcher whose plan or institution is with another major provider can use it instead of Claude:
+  OpenAI, Google, Mistral (a European provider some universities' data rules prefer), Azure OpenAI (the route many
+  institutions already have an agreement for) and OpenRouter. Claude stays the default and the reference; *as little
+  AI as possible* is unchanged. (First written as I6 on 17 November 2026; I6 is now the local model tiers.)
+- *Built (stage 1):* an API key for each of the five (one OpenAI-compatible backend, the key in the keychain), and
+  consent per provider: a document that *Claude may read* is allowed to Anthropic only until the person ticks more,
+  for the project or the document. A model server on another computer counts as a cloud provider too (before, it could
+  read every *Claude may read it* document). In a shared project only Anthropic reads.
+- *Stage 2:* the Codex CLI (ChatGPT plans) and the Antigravity CLI (`agy`, Google) on the task queue, as Claude Code
+  is: both call MCP servers, so `next_tasks` and `submit_answers` serve them with the same quote check; each CLI gets a
+  set-up of its own (MCP configuration, helpers, instructions). How the sidebar's *Start Claude Code* reads with
+  several CLIs is settled then.
+- *Stage 3:* the provider allowance travels with a shared project (sync, the owner's rules), so a team can use
+  another provider; each researcher still chooses their own route.
+- *Later:* per-provider routing (a small, a middle and a strong model per kind, step up when unsure, *Energy
+  efficient / Balanced / Intelligence*), and defaults only after the validation run (J4.3) and agreement with Claude
+  (I5); until then Settings marks a provider *not yet measured*.
+
 ## Left to try with real accounts and a real team
+
+**I7. Cloud providers with real keys**
+- Built against stand-ins that follow each provider's documents. To try: OpenAI's reasoning models
+  (`max_completion_tokens`, temperature), Mistral's `random_seed` and structured output, Gemini's error shape and
+  model ids, Azure's `/openai/v1` address with the `api-key` header, OpenRouter's structured output, the words of a
+  refused key and a reached limit, and the macOS keychain.
 
 Built and tested against stand-ins that follow each service's documents; not yet tried for real.
 
