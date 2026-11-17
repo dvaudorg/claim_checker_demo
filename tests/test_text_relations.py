@@ -199,3 +199,43 @@ def test_a_person_adds_the_new_links_and_sees_them_from_the_other_end(built):
     assert next(x for x in terms._related(ws, [d], terms.links(ws))["links"] if x["term_id"] == c)["relation"] == "clashes"
     with pytest.raises(ValueError):
         terms.set_link(ws, a, b, "add", "nonsense")
+
+
+# ---- review finding: false links from longer terms, questions and negations ---------------------------------------
+def _pairs_with(sentence: str, terms_: tuple[str, ...]) -> set[tuple[str, str, str]]:
+    ms = [(m.start(), m.end(), t) for t in terms_ for m in re.finditer(r"\b" + re.escape(t) + r"\b", sentence, re.I)]
+    return set(textrelations._pairs(sentence, ms))
+
+
+def test_a_longer_known_term_around_the_verb_is_not_a_link():
+    nt = ("training", "assessment", "training needs assessment")
+    assert _pairs_with("The firm ran a training needs assessment last year.", nt) == set()
+    # a separate pair of terms still links
+    assert _pairs_with("Training needs the assessment.", nt) == {("training", "assessment", "needs")}
+
+
+def test_a_question_or_a_negation_before_the_first_term_is_not_a_link():
+    assert pairs("The study asks whether remote work affects emissions.") == set()
+    assert pairs("We do not know if remote work affects emissions.") == set()
+    assert pairs("Nothing in remote work conflicts with commuting.") == set()
+    assert pairs("Whether or not remote work influences commuting is unclear.") == set()
+    assert pairs("There is no sign that a carbon tax reduces emissions.") == set()
+    assert pairs("Heat pumps never replace anything, nor gas boilers.") == set()
+    assert pairs("A carbon tax without remote work needs commuting.") == set()
+    # the true positives next to them
+    assert pairs("Remote work affects commuting.") == {("remote work", "commuting", "shapes")}
+    assert pairs("The study shows remote work conflicts with commuting.") == {("remote work", "commuting", "clashes")}
+    assert pairs("Remote work needs commuting.") == {("remote work", "commuting", "needs")}
+    assert pairs("The study asked a question, and remote work affects commuting.") == \
+        {("remote work", "commuting", "shapes")}
+    assert pairs("Whether it works is unclear, but a carbon tax reduces emissions.") == \
+        {("carbon tax", "emissions", "effect")}
+    assert pairs("Households chose heat pumps instead of gas boilers.") == {("heat pumps", "gas boilers", "replaces")}
+    assert pairs("Nothing here: households chose heat pumps instead of gas boilers.") == \
+        {("heat pumps", "gas boilers", "replaces")}
+
+
+def test_negation_does_not_touch_broader_narrower_or_same():
+    assert pairs("Not all renewable energy such as solar power is cheap.") == \
+        {("renewable energy", "solar power", "broader")}
+    assert pairs("No remote work, also called telework, was allowed.") == {("remote work", "telework", "same")}
