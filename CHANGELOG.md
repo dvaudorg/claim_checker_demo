@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.19.18 (November 2026): See what is sent while Claude Code works
+
+*See what is sent* now shows what Claude Code is working on. Once Claude Code had taken every task that waited, the
+window said that nothing was about to be sent, as if Claude Code were idle; it now shows the tasks it is answering,
+word for word as they were sent, and says when a Claude Code started from ENLENS is still running with nothing in hand.
+
+### Fixed
+
+- **See what is sent no longer says nothing is sent while Claude Code is working.** Once Claude Code had taken every
+  task that waited, the window said *Nothing waits for Claude Code now, so nothing is about to be sent*, which read as
+  if Claude Code had nothing to do. It now shows the tasks Claude Code is answering, word for word as its helper
+  received them, and says that nothing more waits. While a Claude Code started from ENLENS is still running with no
+  task in hand, the window says so. Does not change results.
+
+### Tests
+
+- `tests/test_queue.py`: the preview shows the tasks Claude Code holds when nothing more waits, and the app's note
+  while Claude Code still runs with no task. `tests/test_lib_see_what_is_sent.py`: the window's wording for tasks
+  being answered.
+
+### Not yet done
+
+- The window does not refresh by itself while it is open: it shows the queue as it was when you opened it.
+- Tried with the stand-ins of the tests only, not yet with a real Claude Code run open beside the window.
+
 ## 0.19.17 (November 2026): Stop starts over, and second opinions you can find
 
 Stopping a reading now starts it over. When you stop *Read it*, *Read these*, *Read more excerpts* or *Search

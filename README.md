@@ -57,10 +57,9 @@ Windows from 0.15.4 on). Your projects and settings (the `enlens` folder in your
   impact claims tagged with UN SDG targets and compared with an expert Value Chain Assessment.
 
 <!-- new-in:start (written by `python tools/release.py prepare`: change the changelog entry, not this) -->
-## New in 0.19.17: Stop starts over, and second opinions you can find
+## New in 0.19.18: See what is sent while Claude Code works
 
-- **A second opinion differs only from a first reading, and Show them finds it.** *Get a second opinion* also read excerpts no model had read yet (for instance those of a document still waiting for the local model, once it was switched to *Claude may read it*). Cannot change results.
-- **Stop puts a further reading back as it was.** When you stopped *Read it* (documents added since a check), *Read these*, *Read more excerpts* or *Search with other words* while its local model still waited for its Start. Cannot change results.
+- **See what is sent no longer says nothing is sent while Claude Code is working.** Once Claude Code had taken every task that waited, the window said *Nothing waits for Claude Code now, so nothing is about to be sent*, which read as if Claude Code had nothing to do.
 <!-- new-in:end -->
 
 How it works, in the manual: [Explore your documents](docs/manual/explore.md) (working documents, the concept map),
