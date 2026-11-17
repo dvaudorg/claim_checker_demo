@@ -996,7 +996,8 @@ html:has(.cb-savebar:not([hidden])) { scroll-padding-bottom: 6rem; }
 .cm-groups-job { margin: var(--space-2) 0 var(--space-3); }
 .cm-groups-job-help { margin: var(--space-2) 0 0; }
 .cm-group-cell { display: flex; flex-direction: column; gap: var(--space-1); min-width: 13em; }
-.cm-group-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.cm-group-title { display: flex; align-items: flex-start; gap: 6px; }
+.cm-group-title .cm-swatch { margin-top: 4px; }
 .cm-group-words { font-size: var(--fs-doc); overflow-wrap: anywhere; }
 .cm-group-facts { display: flex; flex-wrap: wrap; gap: 6px; }
 .cm-group-change { margin: 0; }

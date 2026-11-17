@@ -335,7 +335,11 @@ export function mapFileName(project, filtered, ext, when = new Date()) {
 
 // what each element of the picture keeps from the page's own rules, written on it
 const STYLE_PROPS = ["fill", "stroke", "stroke-width", "stroke-dasharray", "stroke-linecap", "stroke-linejoin", "opacity",
-  "paint-order", "font-family", "font-size", "font-weight", "text-anchor"];
+  "paint-order"];
+const TEXT_PROPS = ["font-family", "font-size", "font-weight", "text-anchor"];   // on text only
+// SVG's own defaults: not written, so the file stays small
+const SVG_DEFAULTS = { "stroke-dasharray": "none", "stroke-linecap": "butt", "stroke-linejoin": "miter", opacity: "1",
+  "paint-order": "normal", "text-anchor": "start", "font-weight": "400" };
 const esc = (v, attr) => String(v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(attr ? /"/g : /$^/, "&quot;");
 // an SVG element as text, with no class (the picture stands alone: no stylesheet)
 export function svgText(el) {
@@ -432,17 +436,19 @@ export function pictureSvg(m, parts) {
       top, rule(mapY - 6), s("g", { transform: `translate(${pad},${mapY})` }, ...[...map.svg.childNodes]), rule(footY - 18),
       footLines.map((line, i) => txt(pad, footY + i * 16, "--fs-xs", "--muted", null, line)));
     host.appendChild(pic);
-    // every element takes what the page's rules compute for it, written on it; then its class goes
+    // every element takes what the page's rules compute for it (a group's name on the map has no class of its own:
+    // its rules come through its group's), written on it; then its class goes
     const all = [];
     const walk = (el) => { for (const c of el.children) { all.push(c); walk(c); } };
     walk(pic);
     for (const el of all) {
-      if (!el.getAttribute("class")) continue;
+      if (/^(title|desc|g|svg)$/i.test(el.localName || el.tagName)) { el.removeAttribute("class"); continue; }
       const cs = getComputedStyle(el);
-      for (const k of STYLE_PROPS) {
+      const isText = /^(text|tspan)$/i.test(el.localName || el.tagName);
+      for (const k of isText ? [...STYLE_PROPS, ...TEXT_PROPS] : STYLE_PROPS) {
         if (el.hasAttribute(k)) continue;
         const v = (cs.getPropertyValue(k) || "").trim();
-        if (v && !v.includes("var(")) el.setAttribute(k, v);
+        if (v && !v.includes("var(") && SVG_DEFAULTS[k] !== v) el.setAttribute(k, v);
       }
       el.removeAttribute("class");
     }
@@ -455,8 +461,9 @@ export function pictureSvg(m, parts) {
 
 // the picture drawn twice as large, as a PNG (2,400 pixels wide), in the page
 async function pngOf(svgTextValue) {
-  const url = URL.createObjectURL(new Blob([svgTextValue], { type: "image/svg+xml" }));
-  try {
+  // a data: address (the page's own rules let pictures come from the app and from data: only)
+  const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgTextValue)}`;
+  {
     const img = new Image();
     await new Promise((ok, bad) => { img.onload = ok; img.onerror = () => bad(new Error("The picture could not be made.")); img.src = url; });
     const w = img.width || EXPORT_W, hh = img.height || EXPORT_W;
@@ -466,7 +473,7 @@ async function pngOf(svgTextValue) {
     ctx.scale(2, 2);
     ctx.drawImage(img, 0, 0, w, hh);
     return await new Promise((ok, bad) => c.toBlob((b) => (b ? ok(b) : bad(new Error("The picture could not be made."))), "image/png"));
-  } finally { URL.revokeObjectURL(url); }
+  }
 }
 
 export async function renderConceptMap(view, params, query) {
@@ -746,10 +753,11 @@ export async function renderConceptMap(view, params, query) {
     const w = watchJob(jobId, (job) => {
       mj.update(job);
       const p = job.progress || {};
-      if (p.total && (job.state === "running" || job.state === "queued") && mj.elapsed) {
+      // the count while the AI works (not while the work waits for a Start or its turn)
+      if (p.total && !mj.waiting && (job.state === "running" || job.state === "queued") && mj.elapsed) {
         const at = Math.min(p.done || 0, p.total);
         if (at !== lastAt) { lastAt = at; atSecs = job.seconds || 0; }
-        const left = mj.waiting ? null : timeLeft(atSecs, Math.max(0, at - 1), p.total, (job.seconds || 0) - atSecs);
+        const left = timeLeft(atSecs, Math.max(0, at - 1), p.total, (job.seconds || 0) - atSecs);
         mj.elapsed.textContent = `group ${at} of ${p.total}${left ? ` · ${left}` : ""} · ${mj.elapsed.textContent}`;
       }
     });
