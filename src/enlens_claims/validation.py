@@ -416,8 +416,10 @@ def score_checks(items: list[dict]) -> dict:
         conf.setdefault(g, Counter())[x] += 1
     out = {"n": len(items), "answered": sum(1 for it in items if it["got"] in STATUSES),
            "accuracy": _share([g == x for g, x in pairs]), "kappa": kappa(pairs),
-           "grounded_accuracy": _share([(g in GROUNDED) == (x in GROUNDED) for g, x in pairs]),
-           "grounded_kappa": kappa([(g in GROUNDED, x in GROUNDED) for g, x in pairs]),
+           # found evidence or not: over the finished checks only (an unfinished one found nothing, and would
+           # count as right wherever the gold says nothing is there)
+           "grounded_accuracy": _share([(g in GROUNDED) == (x in GROUNDED) for g, x in pairs if x in STATUSES]),
+           "grounded_kappa": kappa([(g in GROUNDED, x in GROUNDED) for g, x in pairs if x in STATUSES]),
            "confusion": {g: dict(c) for g, c in conf.items()},
            "per_verdict": {s: _share([x == s for g, x in pairs if g == s]) for s in STATUSES
                            if any(g == s for g, _ in pairs)}}
@@ -691,7 +693,7 @@ def to_markdown(run: dict, gold_fingerprint: str | None = None) -> str:
           f"- **Right verdict:** {_pct(c['accuracy'])} of {c['n']} hypotheses (Cohen's kappa {_k(c['kappa'])} over "
           f"the five verdicts); {c['answered']} of {c['n']} were finished.",
           f"- **Found evidence or not** (supported or partly, against the rest): right for {_pct(c['grounded_accuracy'])} "
-          f"(kappa {_k(c['grounded_kappa'])}).",
+          f"of the {c['answered']} finished (kappa {_k(c['grounded_kappa'])}).",
           *([f"- Single hypotheses: {_pct(c['simple_accuracy'])} of {c['simple_n']}; compound ones (two claims that "
              f"must both hold): {_pct(c['compound_accuracy'])} of {c['compound_n']}."]
             if "simple_n" in c and "compound_n" in c else []),
@@ -771,8 +773,9 @@ def side_by_side(runs: list[dict]) -> list[str]:
         first = score(run)["passes"][0]
         c, lb = first["checks"], first["labels"]
         models = sorted({m for kind in run["models"].values() for m in kind})
+        unfinished = f" ({c['answered']} finished)" if c["answered"] < c["n"] else ""
         L.append(f"| {_route_words(run)} | {run['date']} | {', '.join(models) or 'none'} | {_pct(c['accuracy'])} of "
-                 f"{c['n']} | {_k(c['kappa'])} | {_pct(lb['code_accuracy'])} | {_k(lb['kappa'])} | "
+                 f"{c['n']}{unfinished} | {_k(c['kappa'])} | {_pct(lb['code_accuracy'])} | {_k(lb['kappa'])} | "
                  f"{_pct(lb['same_codes'])} |")
     if len({r["gold"]["fingerprint"] for r in runs}) > 1:
         L += ["", "**Note:** these runs were scored on different versions of the gold set, so they are not exactly "

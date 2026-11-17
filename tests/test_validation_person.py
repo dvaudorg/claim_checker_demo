@@ -51,8 +51,8 @@ def test_the_report_sets_the_newest_run_of_each_route_side_by_side(tmp_path, cap
     md = out.read_text("utf-8")
     assert md.startswith("# Validation report") and "## The routes side by side" in md
     table = md.split("## The routes side by side", 1)[1].split("\n## ", 1)[0]
-    assert "| qwen3-5-4b (on this computer) | 2026-11-17 | qwen3.5:4b | 40% of 5 |" in table
-    assert "| claude-code | 2026-11-13 | haiku, sonnet | 40% of 5 |" in table
+    assert "| qwen3-5-4b (on this computer) | 2026-11-17 | qwen3.5:4b | 40% of 5 (4 finished) |" in table
+    assert "| claude-code | 2026-11-13 | haiku, sonnet | 40% of 5 (4 finished) |" in table
     assert "2026-11-10" not in md
     assert md.count("## Limits") == 1 and md.index("## Limits") > md.index("## claude-code, 2026-11-13")
     assert "### Checks (hypotheses against the documents)" in md
