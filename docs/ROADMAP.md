@@ -1,7 +1,7 @@
 # ENLENS roadmap
 
 What is still to do in ENLENS, and why. Written 6 November 2026; cut back on 16 November 2026, at ENLENS 0.19.13, to
-what is left: every item from A0 to N5 is built and tested, and what each one does is in `CHANGELOG.md` and the
+what is left, and cut again on 17 November 2026, at ENLENS 0.19.16: every item from A0 to N5 is built and tested, and what each one does is in `CHANGELOG.md` and the
 manual. The full roadmap, with the plan and the review notes behind every built item, is in the git history
 (`git show 02c1841:docs/ROADMAP.md`).
 
@@ -29,30 +29,12 @@ by `--local-only`.
 
 ## Left to build
 
-**D1. The concept map: the rest** · Level 0, Level 2 or 3 optional
-- Links that say a concept *needs*, *shapes* or *clashes with* another. ENLENS's links today are those of D2 and the
-  concept card (*is part of*, *leads to*, *is used instead of*, *is related to*); these would come with new link
-  types.
-- Clusters named (optionally by the AI, marked as its draft) and kept between visits; today they are found again each
-  time and have no name.
-- The map exported as a picture (SVG or PNG).
-
-**N3. Working documents: the role in the bulk bar** · Level 0
-- Set the role (evidence, theory or working document) for many documents at once from the Documents list's bulk bar,
-  which today only changes who may read them with AI. Today it is one document at a time, from its panel or its page.
-
-**J4.3. The validation report: the rest** · Level 2
-- A recorded run on a local model, scored by `enlens validate` against the gold set in `tools/validation/`, beside the
-  run on Claude (13 November 2026).
-- Right answers from a real project, labelled by a person, beside the invented gold set.
-
-**I5. Agreement between routes, kept** · Level 0
-- The agreement between the local model and Claude is shown once and not kept between visits: keep it, dated, so a
-  later sample can be compared with it.
-
-**B5. Retractions without a DOI** · Level 0 (online lookup, not AI)
-- Retractions and corrections are found only for works with a DOI. Works without one would need a lookup by title,
-  authors and year, following each document's AI setting and `--local-only` as B5 does.
+**D1. The concept map: group names with a team** · Level 0
+- The map's group names (0.19.16) stay on the computer they were given on. Shared with a team, a name would need a
+  rule for two people naming the same group, and for a group that is not the same on two copies (the groups are found
+  from each copy's own counts).
+- The AI's link tasks (`link`) do not yet propose the three kinds added in 0.19.16 (*needs*, *shapes*, *clashes
+  with*); only the text patterns and a person do.
 
 **I6. Local model tiers, chosen for you** · planned (bench of 16 November 2026, below) · Level 2
 - A researcher should never have to pick a model. ENLENS already reads the computer's memory and disk
@@ -133,6 +115,11 @@ Built and tested against stand-ins that follow each service's documents; not yet
 
 **WebDAV (SURFdrive, SURF Research Drive, Nextcloud)**
 - Whether SURFdrive's `nonshib-webdav` address offers the OCS Share API, where shares land, and the exact refusals.
+
+**J4.3. Right answers from a real project**
+- `enlens validate person` (0.19.16) scores the AI against a person's own grades and code decisions in a real
+  project. It waits for a project where a person has judged enough of the AI's answers; the report then shows it beside
+  the invented gold set.
 
 **A team on real computers**
 - Owner, Co-owner and Member roles, invites, a hand-over and removing a colleague, used by a real team over days.
