@@ -1,5 +1,104 @@
 # Changelog
 
+## 0.19.16 (November 2026): The concept map's links and named groups, and roles for many documents
+
+### New
+
+- **Retractions are found for works without a DOI too.** *Check for retractions* now looks a work of your bibliography
+  up by its title, first author's family name and year when it has no DOI (a published kind of work with a title of
+  three words or more). A match is accepted only when the title is (all but) the same, the year is within one, the
+  first author is the same and no other work fits. Its notice shows with *Found by title*, the matched work and its DOI,
+  and a quiet *Not this work* button (with Undo): a rejected match is hidden and not proposed again. The claim card says
+  *found by title* beside such a notice. A lookup changes no result and no judgement.
+- **The concept map's links say more kinds.** Besides *leads to* and *is used instead of*, ENLENS now proposes links
+  that say one concept *needs*, *shapes* or *clashes with* another, found in the text without AI ("X requires Y", "X
+  depends on Y", "X influences Y", "X determines Y", "X conflicts with Y", "X is at odds with Y"), each marked *found in
+  the text* until you accept it. A concept's card lists them under *What it shapes*, *What shapes it*, *What it needs*,
+  *What needs it* and *What it clashes with*, and *Add a link yourself* offers them too. "X undermines Y" is now read
+  as *leads to*.
+- **The end of a link's line on the map says its kind.** A diamond for *is part of*, a filled arrow for *leads to*, an
+  open arrow for *shapes*, a ring for *needs*, a cross for *is used instead of*, a bar across each end for *clashes
+  with*, and a plain line for *is related to*. The legend shows each kind on the map with its line. *Is part of* and
+  *is used instead of* no longer end in an arrow.
+- **Groups have names, and keep them.** Each group of the concept map is named by its two most central concepts until
+  you rename it, in the legend, on the map and in the new *Groups* section under the map. A name stays with its group
+  between visits and when the groups are found again, as long as the group holds most of the same concepts; a group
+  that changed by a third since it was named is marked *changed since it was named*, with *Keep the name*.
+- **The AI can draft the groups' names, on request.** *Name the groups* only queues the work: nothing runs until you
+  press *Start Claude Code* (or your local model's start) in its panel. The AI reads a few passages of each group, only
+  from documents it may read, and gives a short name with a quote that is checked. Its name shows at once, marked *AI
+  draft*, until you use it (*Use this name*, *Use all 4 names*) or rename it. Names you gave are never touched.
+- **Download the map.** *PNG* (2,400 pixels wide) and *SVG* at the top of the Map tab save the map as a picture for
+  slides and papers: title, what was counted, filters, the legend, the map and a foot that says what its marks mean.
+  Always light on white; made in the page, nothing is sent anywhere.
+- **Agreement between routes is kept.** Each comparison of your local model with Claude that runs to its end is now
+  saved, with its date, in the project on this computer. Under *Settings → AI → Agreement between routes*, *Earlier
+  comparisons* lists them (the kind of task, how many were compared, kappa, the share that agree, the two models and the
+  ENLENS version), and a new result shows kappa beside the last one of the same kind. The list stays on this computer:
+  it does not travel to colleagues. Cannot change results.
+- **The validation report: right answers from a real project, labelled by a person.** `enlens validate person
+  --project <name>` takes what you decided in one of your projects as the right answers: each excerpt an AI judged
+  that you then judged yourself, and each code an AI gave that you accepted, changed or rejected (with the codes you
+  added where the AI had labelled). The AI's answers in that project are scored against them, by model, and `enlens
+  validate report` shows them beside the invented gold set, labelled as a person's judgements on a real project, with
+  how many and the date. Only what you decided counts: an answer you left alone, or a comment without a judgement, is
+  not a right answer. No AI is used, and the file holds no document text. Cannot change results.
+- **A local model's run beside Claude's.** A validation run answered by a model on this computer is now named after
+  that model (not "local model server"), and `enlens validate report --latest` sets the newest run of each route side
+  by side before giving each in full.
+- **Two local models measured on the gold set (17 November 2026).** Each answered the same 30 hypotheses and 110
+  passages twice, through the app's own queue, reasoning off. **Qwen 3.5 4B**: the right verdict for 47% of the
+  hypotheses (26 of 30 finished; kappa 0.35), 93% of code decisions right (kappa 0.65), and the same verdict in both
+  runs for 87%. **K2 Horizon 0.9B** finished none of its checks: on every passage it wrote a whole-sentence quote,
+  so each answer ran past ENLENS's length limit and was refused; 89% of its code decisions were right (kappa 0.40).
+  Claude Code's run of 13 November: 93% and 99%. So a small local model labels passages fairly well, but should not
+  decide a check on its own (roadmap I6). The report is attached to the release.
+- **Set the role of many documents at once.** In *Documents*, tick the documents and choose *Role* in the bar at the
+  foot of the window: evidence, theory or your working documents. ENLENS asks once, marks them all and offers *Undo*,
+  which gives each document the role it had. The research log keeps one entry for the batch, naming the documents.
+  A *Non-scientific* mark stays as it is; in a shared project a Member's marks are proposals, as one document's are.
+  Theory and working documents are left out of what counts, as before: can change results made from now on.
+
+### Changes that can alter your results
+
+- **More links are proposed from the text.** Making the glossary again proposes *needs*, *shapes* and *clashes with*
+  links where the sentences state them, and proposes *leads to* for "undermines". They count only once you accept
+  them.
+
+### Fixed
+
+- **The validation report no longer counts an unfinished check as finding nothing.** *Found evidence or not* is now
+  over the finished checks only, and the routes side by side say how many were finished.
+
+### Privacy
+
+- **What leaves the computer in a retraction lookup grows by one thing.** Besides DOIs, the title, the first author's
+  family name and the year of each bibliography work without a DOI go to Crossref, one request per work, only when you
+  press *Check for retractions* (or run `enlens retractions --check`), and never under local-only. A work whose
+  document is marked *No AI*, or is one of your own drafts (a *working* document), is left out, and so is every document
+  that is not a work of the bibliography: its title may be a file name or a private draft. No name, email address or
+  project name is sent.
+- **Group names stay on this computer.** They are not shared with a team or sent in a copy for a colleague. The
+  passages the AI reads to name a group follow each document's AI setting: a document marked *No AI* is never sent, one
+  marked *Only a local AI* only to the local model.
+
+### For developers
+
+- New task kind `group_name` (prompt `group-name-v1`, Haiku then Sonnet, helper `enlens-namer`), new module
+  `groupnames.py`, tables `concept_group_names` and `concept_group_quotes` (in `sync.common.LOCAL_ONLY`), routes `POST
+  …/concept-map/names` and `POST …/concept-map/name-groups` (job `group-names`); link relations `needs`, `needed_by`,
+  `shapes`, `shaped_by`, `clashes`.
+- `validation.collect_person`, `write_person`, `latest_person`, `score_person`, `person_markdown`, `latest_runs` and
+  `to_markdown_many`; run files carry `"local"`; person files live in `tools/validation/runs/person/`.
+- `docrole.set_roles` and `PUT /api/projects/<p>/document-roles` (`{doc_ids, role, why?}`): one role for many
+  documents, by the rules of one, with one research-log entry (`subject_kind` "documents", `data.was` per document).
+
+### Not yet done
+
+- Group names are not shared with a team in this release: each person's names stay on their own computer.
+- The links found in the text are English only, as before.
+- The downloaded picture is always light; there is no dark version.
+
 ## 0.19.15 (November 2026): No model starts without your click, and Team back under the project
 
 No AI model starts, or even loads into memory, until you press its own Start: ENLENS no longer starts Ollama
