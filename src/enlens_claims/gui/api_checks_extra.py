@@ -69,11 +69,12 @@ class ChecksExtraApi:
     def get_agreement_plan(self, name, q):
         """What *Compare the routes* would do: {"kinds": [{kind, answered, name, noun}] (the kinds with a decision to
         compare and answered tasks), "problem": why it cannot start or null, and with `kind` (and `n`, 10 to 100,
-        default 30) "plan": {kind, n, ask_local, ask_claude, left_out}}. Answers a task already has are reused."""
+        default 30) "plan": {kind, n, ask_local, ask_claude, left_out}}. Answers a task already has are reused. "kept": the
+        comparisons kept in this project so far, newest first (at most 20; see post_agreement)."""
         ws = self.app.ws(name)
         kinds = benchmark.agreement_kinds(ws)
         out = {"kinds": kinds, "problem": self._agreement_ready(), "plan": None,
-               "claude": self.app.settings().get("backend")}
+               "claude": self.app.settings().get("backend"), "kept": benchmark.kept_agreements(ws)}
         kind = _str(q, "kind")
         if kind:
             if kind not in [k["kind"] for k in kinds]:
@@ -85,7 +86,9 @@ class ChecksExtraApi:
         """*Compare the routes*, as a job: `{"kind", "n"}`. The local model and Claude answer a sample of answered
         tasks of that kind (Claude only those whose documents it may read); the job's result is
         `benchmark.agreement`'s: {kind, n, compared, failed, kappa, agree, verdict, left_out, asked, items, ...}.
-        Nothing is stored in the project; Claude Code's share uses the plan."""
+        A comparison that ran to its end (tasks that failed inside it count) is kept in the project
+        (`agreement_runs`, this copy only): the result then has "kept" (its row) and "previous" (the last kept run of
+        the same kind before it, or null). A comparison stopped with Stop is not kept. Claude Code's share uses the plan."""
         body = self._body()
         ws = self.app.ws(name)
         problem = self._agreement_ready()
@@ -104,8 +107,12 @@ class ChecksExtraApi:
                 got = readers.local()
                 if got is None:
                     raise ApiError(400, readers.local_problem or "No local model is chosen in Settings → AI.")
-                return benchmark.agreement(ws, kind, n, got, be, progress=prog, should_stop=job.cancel.is_set,
-                                           claude_model=None if self.app.queue_mode() else model)
+                out = benchmark.agreement(ws, kind, n, got, be, progress=prog, should_stop=job.cancel.is_set,
+                                          claude_model=None if self.app.queue_mode() else model)
+                if job.cancel.is_set():   # stopped with Stop: a part of the sample, not a comparison to keep
+                    return out
+                kept = benchmark.keep_agreement(ws, out)
+                return {**out, "kept": kept, "previous": benchmark.previous_agreement(ws, kind, kept["run_id"])}
             finally:
                 claimcheck._let_go(readers)
 

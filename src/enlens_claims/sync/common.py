@@ -30,7 +30,9 @@ LOCAL_ONLY = {"meta", "embeddings", "code_vectors", "terms", "term_mentions", "c
               "concept_link_sentences",  # 0.18.1 (D2): made again with each copy's glossary, from its own readings
               # 0.18.1 (H4): answers this copy keeps so as not to ask again; raw AI answers with their quotes, also of
               # documents a colleague's setting may keep from them: never sent (each copy keeps its own)
-              "ai_cache"}
+              "ai_cache",
+              # I5: comparisons of this computer's local model with Claude (benchmark.keep_agreement): about this copy only
+              "agreement_runs"}
 # merged by their own rules (merge.py); every other table (the SDG pack's, an add-on's) is merged row by row, keeping yours
 OWN_RULES = {"documents", "pages", "paragraphs", "headings", "passages", "blocks", "doc_tables", "labels", "mentions", "tasks", "results",
              "ai_sent", "hypotheses", "user_claims", "second_opinions", "judgements", "people", "theme_runs", "themes",

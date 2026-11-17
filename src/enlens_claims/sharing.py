@@ -70,7 +70,8 @@ _LOCAL_TABLES = ("embeddings", "code_vectors", "terms", "term_mentions", "concep
                  "removed_docs", "sync_via", "sync_from", "sync_refused",
                  # 0.18.1: the sentences of links found in the text (quotes from this copy's readings) and the AI's
                  # answers kept so as not to ask again (raw answers with quotes, of any document's setting)
-                 "concept_link_sentences", "ai_cache")
+                 "concept_link_sentences", "ai_cache",
+                 "agreement_runs")  # I5: the comparisons of this computer's local model with Claude
 # the keys of `meta` a zip for a colleague keeps (besides `codebook_followed:` of shared codebooks and `read_again:`
 # of documents): what a colleague's merge or import reads
 _META_KEPT = {"project_uid", "project_uids_known", "bibliography", "corpus_version",

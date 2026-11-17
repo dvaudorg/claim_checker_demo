@@ -20,6 +20,12 @@ With Claude Code (0.8.1) the sample waits in the queue of a scratch copy of the 
 kind is answered by `model` when it is one of haiku, sonnet, opus or fable, else by the model the router names for
 that kind. Only the first answer to each task is scored ("usable on the first try"), and the seconds per task are
 those Claude Code took.
+
+Agreement between routes (0.18.1, I5; kept since roadmap I5's second half): the local model and Claude answer the same
+sample of the project's own answered tasks. Each finished comparison is kept, dated, in the table `agreement_runs`
+(kind, n, kappa, share agreeing, both models' names, ENLENS version), so a later sample can be set beside it. Decision:
+it describes THIS computer's local model, so it stays in this copy of the project and never travels with sync, the
+shared folder or a zip for a colleague (`sync.common.LOCAL_ONLY`, `sharing._LOCAL_TABLES`).
 """
 from __future__ import annotations
 
@@ -289,9 +295,12 @@ def verdict(summary: dict) -> list[str]:
 # 0.18.1 (I5): agreement between routes
 # ---------------------------------------------------------------------------------------------
 # A sample of answered tasks of one kind is answered by both the local model and Claude, and their decisions are
-# compared with Cohen's kappa. Nothing is stored (a measurement, like the model test above). The kinds without a
-# categorical decision (theme names, search words, hypothesis splits, resolved terms) are left out: there is no
-# decision to compare, only wording.
+# compared with Cohen's kappa. Each finished comparison (not one stopped with Stop) is kept in the project's
+# `agreement_runs`, so a later sample can be set beside it (keep_agreement). The comparisons describe THIS computer's
+# local model, so they stay in this copy of the project: they are not sent through sync, the shared folder or a zip
+# for a colleague (a zip of the whole project, for moving it, keeps them; the table is in sync.common.LOCAL_ONLY).
+# The passages sent to Claude are noted in the ledger as before. The kinds without a categorical decision (theme
+# names, search words, hypothesis splits, resolved terms) are left out: there is no decision to compare, only wording.
 AGREEMENT_KINDS = ("check", "reread", "second", "label", "link")
 KAPPA_GOOD, KAPPA_FAIR = 0.8, 0.6    # kappa from this: good; from this: fair; below: poor
 _CLAUDE_ROUTES = frozenset({"Claude Code", "Claude API", "Claude app (connector)"})
@@ -425,6 +434,7 @@ def agreement(ws: Workspace, kind: str, n: int, local, claude_backend, seed: int
 
     asked = {"local": 0, "claude": 0}
     queued: dict = {}
+    claude_used = claude_alias(sample[0])
     todo = [t for t in sample if have[t["task_id"]]["claude"] is None]
     if code and todo:
         from .taskqueue import answer_on_copy
@@ -473,6 +483,40 @@ def agreement(ws: Workspace, kind: str, n: int, local, claude_backend, seed: int
     kap = kappa(pairs)
     agree = round(sum(a == b for a, b in pairs) / len(pairs), 3) if pairs else None
     return {"kind": kind, "n": len(sample), "compared": len(items) - failed, "failed": failed, "kappa": kap,
-            "agree": agree, "decisions": len(pairs), "items": items, "left_out": left_out, "asked": asked,
+            "agree": agree, "decisions": len(pairs), "local_model": str(model_l or ""),
+            "claude_model": str(claude_used or ""),
+            "items": items, "left_out": left_out, "asked": asked,
             "verdict": verdict_sentence(kind, kap, agree, len(pairs)),
             "thresholds": {"good": KAPPA_GOOD, "fair": KAPPA_FAIR}}
+
+
+def keep_agreement(ws: Workspace, result: dict) -> dict:
+    """Keep a finished comparison (what `agreement` returned) in the project: returns its row
+    {run_id, at, kind, n, compared, failed, decisions, kappa, agree, local_model, claude_model, app_version}."""
+    import uuid
+
+    from . import __version__
+    from .store import now
+
+    row = {"run_id": uuid.uuid4().hex[:12], "at": now(),
+           "kind": result["kind"], "n": result["n"], "compared": result["compared"], "failed": result["failed"],
+           "decisions": result["decisions"], "kappa": result["kappa"], "agree": result["agree"],
+           "local_model": result.get("local_model") or "", "claude_model": result.get("claude_model") or "",
+           "app_version": __version__}
+    cols = list(row)
+    with ws.connect() as cx:
+        cx.execute(f"INSERT INTO agreement_runs({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
+                   [row[c] for c in cols])
+    return row
+
+
+def kept_agreements(ws: Workspace, limit: int = 20) -> list[dict]:
+    """The comparisons kept in this project, newest first (at most `limit`)."""
+    return [dict(r) for r in ws.query("SELECT * FROM agreement_runs ORDER BY at DESC, rowid DESC LIMIT ?", (limit,))]
+
+
+def previous_agreement(ws: Workspace, kind: str, before_run_id: str) -> dict | None:
+    """The last kept comparison of this kind before the one named, or None."""
+    rows = ws.query("SELECT * FROM agreement_runs WHERE kind=? AND rowid < (SELECT rowid FROM agreement_runs "
+                    "WHERE run_id=?) ORDER BY rowid DESC LIMIT 1", (kind, before_run_id))
+    return dict(rows[0]) if rows else None
