@@ -353,3 +353,70 @@ def test_the_cloud_model_answers_every_kind_and_the_small_one_labels_and_links()
     assert r.first("label") == "mistral-small-latest" and r.first("link") == "mistral-small-latest"
     assert r.first("check") == "mistral-large-latest" and r.step_up("label") == "mistral-large-latest"
     assert "cloud_api" in routing.OFF_COMPUTER and "cloud_api" not in routing.CLAUDE_ROUTES
+
+
+# ---------------------------------------------------------------------------------------------
+# the app's API: keys (yes or no only), models, the allowance per document and per project
+# ---------------------------------------------------------------------------------------------
+@pytest.fixture
+def app_api(mixed):
+    import threading
+
+    import test_app
+
+    from enlens_claims.gui.server import make_server
+
+    home.update_settings({"project": mixed[0].root.name})
+    srv, app = make_server("127.0.0.1", 0)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        yield test_app.Api(f"http://127.0.0.1:{srv.server_address[1]}", app.token), mixed
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_the_app_stores_a_key_and_says_only_whether_one_is_stored(app_api, openai_server, monkeypatch):
+    import dataclasses
+
+    from enlens_claims import providers
+
+    api, (ws, ids, pid) = app_api
+    srv, base = openai_server
+    st, s = api("GET", "/api/state")
+    assert s["providers"]["keys"]["openai"] is False and not s["providers"]["other_set_up"]
+    assert [p["id"] for p in s["providers"]["list"]][0] == "anthropic"
+    secret = "good-key"
+    st, r = api("POST", "/api/settings/provider-key", {"provider": "openai", "key": secret})
+    assert st == 200 and r["providers"]["keys"]["openai"] is True and secret not in str(r)
+    st, s = api("GET", "/api/state")
+    assert s["providers"]["other_set_up"] and s["providers"]["set_up"] == ["openai"] and secret not in str(s)
+    monkeypatch.setitem(providers.TABLE, "openai", dataclasses.replace(providers.TABLE["openai"], base_url=base))
+    st, r = api("GET", "/api/settings/provider-models?provider=openai")
+    assert st == 200 and r["models"] == ["fake-model:latest", "fake-second:latest"]
+    assert api("GET", "/api/settings/provider-models?provider=azure")[1] == {"models": [], "lists": False}
+    st, r = api("PUT", "/api/settings", {"allow_cloud": True, "backend": "cloud_api", "cloud_provider": "openai",
+                                         "cloud_model": "fake-model:latest"})
+    assert st == 200 and r["backend_label"] == "OpenAI (API key) · fake-model:latest"
+    st, r = api("POST", "/api/servers/test")
+    assert st == 200 and r["message"].startswith("Connected to OpenAI") and r["model_available"]
+    st, r = api("DELETE", "/api/settings/provider-key", {"provider": "openai"})
+    assert st == 200 and r["providers"]["keys"]["openai"] is False
+    assert api("POST", "/api/settings/provider-key", {"provider": "anthropic", "key": "x"})[0] == 400
+
+
+def test_the_app_sets_the_providers_a_document_and_the_project_allow(app_api):
+    api, (ws, ids, pid) = app_api
+    st, r = api("PUT", f"/api/projects/{ws.root.name}/documents/ai-access",
+                {"doc_ids": [ids["cloud"]], "providers": ["anthropic", "mistral"]})
+    assert st == 200
+    doc = next(d for d in r["documents"] if d["doc_id"] == ids["cloud"])
+    assert doc["providers"] == ["anthropic", "mistral"] and doc["providers_own"] == ["anthropic", "mistral"]
+    st, r = api("PUT", f"/api/projects/{ws.root.name}/documents/ai-access", {"doc_ids": [ids["cloud"]], "providers": None})
+    assert next(d for d in r["documents"] if d["doc_id"] == ids["cloud"])["providers_own"] is None
+    st, r = api("PUT", f"/api/projects/{ws.root.name}/ai-access", {"providers_default": ["openai"]})
+    assert st == 200 and r["ai_access"]["providers_default"] == ["openai"]
+    st, r = api("PUT", f"/api/projects/{ws.root.name}/ai-access", {"providers_default": []})
+    assert st == 400 and "at least one" in r["error"]
+    log = ws.query("SELECT text FROM research_log WHERE kind='ai-access' ORDER BY at")
+    assert any("OpenAI" in r["text"] for r in log)

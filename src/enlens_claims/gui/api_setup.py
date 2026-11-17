@@ -11,7 +11,7 @@ import threading
 import time
 from pathlib import Path
 
-from .api_common import ApiError, Job, XLSX, _csv, _disposition, _filename, _int, _str
+from .api_common import ApiError, Job, XLSX, _csv, _disposition, _filename, _int, _str  # noqa: F401
 from .. import access, bibliography, claimcheck, home, ollama_setup, taskqueue
 from ..claude_setup import setup_info as claude_setup_info
 
@@ -44,6 +44,49 @@ class SetupApi:
         self.app.session_key = ""
         home.forget_key()
         return {"key": {"session": False, "env": bool(home.env_key()), "stored": False}}
+
+    # -- stage 1 of other cloud providers --------------------------------------------------------------------------
+    def _provider(self, value) -> str:
+        from .. import providers
+
+        p = str(value or "").strip().lower()
+        if p not in providers.CLOUD_IDS:
+            raise ApiError(400, f"Choose a cloud provider: {', '.join(providers.CLOUD_IDS)}.")
+        return p
+
+    def post_provider_key(self, q):
+        """Keep a cloud provider's key in the system's keychain → {"providers": ...} (only whether one is stored)."""
+        if home.local_only():
+            raise ApiError(403, "Cloud models are switched off on this computer by whoever installed ENLENS: an API "
+                                "key cannot be used here.")
+        body = self._body()
+        try:
+            home.set_cloud_key(self._provider(body.get("provider")), str(body.get("key") or ""))
+        except ValueError as e:
+            raise ApiError(400, str(e)) from None
+        return {"providers": self.app.providers_state()}
+
+    def delete_provider_key(self, q):
+        body = self._body()
+        home.forget_cloud_key(self._provider(body.get("provider") or _str(q, "provider")))
+        return {"providers": self.app.providers_state()}
+
+    def get_provider_models(self, q):
+        """The models a provider offers to the stored key → {"models": [...], "lists": bool}. Azure lists none (its
+        deployment's name is typed). Nothing is sent but the key."""
+        from .. import providers
+        from ..llm import BackendError, CloudBackend
+
+        pid = self._provider(_str(q, "provider"))
+        if not providers.TABLE[pid].lists_models:
+            return {"models": [], "lists": False}
+        key = home.cloud_key(pid)
+        if not key:
+            return {"models": [], "lists": True, "problem": f"No key for {providers.title(pid)} is stored yet."}
+        try:
+            return {"models": CloudBackend(pid, key).models(timeout=15), "lists": True}
+        except BackendError as e:
+            return {"models": [], "lists": True, "problem": str(e)}
 
     def post_quit(self, q):
         """Stop the app ("Quit ENLENS"). Running jobs stop with it; a stopped check leaves nothing behind."""
