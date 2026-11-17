@@ -98,14 +98,12 @@ and nothing reaches OpenAI, Google, Mistral, Azure or OpenRouter until you allow
   its excerpts go to the local model for restricted documents, or wait for your judgement. Claude Code and the Claude
   connector always count as Anthropic.
 - **A model server on another computer** (not `localhost`, `127.0.0.1` or `::1`) counts as a cloud provider too: an
-  OpenAI address as OpenAI, any other as *a server on another computer*, which no document allows until you do. Before
-  this change such a server could read every *Claude may read it* document; if you used one, those documents now wait until
-  you allow it.
+  OpenAI address as OpenAI, any other as *a server on another computer*, which no document allows until you do.
 - **In a shared project** only Anthropic may read documents marked *Claude may read it*, whatever your copy allows,
   and the page says why: *Other providers come to shared projects later: your colleagues have not agreed to them.*
   Setting another provider there is refused.
-- **Your key** is kept in the system's keychain, never in a project, a log or a moving file. Each provider's own
-  terms decide what it keeps and whether it trains on what it reads: check them before you allow it.
+- **Your key** is kept in the system's keychain, never in a project, a log or a moving file. Each provider's terms
+  decide what it keeps and whether it trains on it: check them first.
 
 ### What happens in each feature
 
