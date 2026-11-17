@@ -1198,7 +1198,7 @@ def _run_check(ws, cid, backend, model, used, k, per_doc, expand, doc_ids, say, 
     parts = _add_round(ws, cid, f"check:{cid}", _payload(ws, cid, claim, uc["target"], uc["framework"], picked, terms),
                        used, tuple(readers.main_levels), readers.local_configured())
     n = _part_counts(ws, parts)
-    say("grade", _grade_text(n, access.is_cloud(backend)), {"split": n} if len(n) > 1 else {})
+    say("grade", _grade_text(n, access.provider_of(backend) == access.ANTHROPIC), {"split": n} if len(n) > 1 else {})
     ok = _run_round(ws, parts, backend, model, readers, say)
     graded = ws.scalar("SELECT COUNT(*) FROM verifications WHERE subject_kind='user_claim' AND subject_id=? "
                        "AND verdict != 'not_enough_info'", (cid,)) or 0
@@ -1258,7 +1258,7 @@ def continue_check(ws: Workspace, cid: str, backend, model: str, k: int = 8, ter
         return r
     say("rank_done", f"Found {len(r['passages'])} more excerpts", {"passages": len(r["passages"])})
     parts = r.pop("parts", {})
-    say("grade", _grade_text(_part_counts(ws, parts), access.is_cloud(backend)), {})
+    say("grade", _grade_text(_part_counts(ws, parts), access.provider_of(backend) == access.ANTHROPIC), {})
     try:
         ok = _run_round(ws, parts, backend, model, readers, say)
     except BaseException:

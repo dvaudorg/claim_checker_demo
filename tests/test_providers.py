@@ -420,3 +420,17 @@ def test_the_app_sets_the_providers_a_document_and_the_project_allow(app_api):
     assert st == 400 and "at least one" in r["error"]
     log = ws.query("SELECT text FROM research_log WHERE kind='ai-access' ORDER BY at")
     assert any("OpenAI" in r["text"] for r in log)
+
+
+def test_a_server_on_another_computer_once_allowed_is_in_the_ledger(mixed):
+    from helpers_mixed_corpus import Recorder
+
+    ws, ids, pid = mixed
+    access.set_providers_default(ws, ["anthropic", "other"])
+    far = Recorder()
+    far.name, far.base_url = "ollama", "http://gpu.example.org:11434"
+    row = _insert(ws, "label:sdg:far", _label(pid["cloud"]))
+    tasks.run_one(ws, row["task_id"], far, "m")
+    assert far.sent
+    rows = ws.query("SELECT DISTINCT provider, route FROM ai_sent WHERE task_id='label:sdg:far'")
+    assert [(r["provider"], r["route"]) for r in rows] == [("other", "model server on another computer")]

@@ -885,7 +885,9 @@ def backend_levels(backend) -> set[str]:
 
 
 def is_cloud(backend) -> bool:
-    return (getattr(backend, "name", "") or "") in OFF_COMPUTER
+    """Whether the text a backend reads leaves this computer (Claude's routes, another cloud provider, a model server
+    on another computer): what it is sent goes into the ledger."""
+    return (getattr(backend, "name", "") or "") in OFF_COMPUTER or provider_of(backend) is not None
 
 
 def route_name(backend) -> str:
@@ -894,6 +896,8 @@ def route_name(backend) -> str:
     name = getattr(backend, "name", "") or ""
     if name == providers.CLOUD_ROUTE:
         return providers.title(provider_of(backend))
+    if name not in OFF_COMPUTER and provider_of(backend) is not None:
+        return "model server on another computer"
     return ROUTE_NAMES.get(name, name)
 
 
