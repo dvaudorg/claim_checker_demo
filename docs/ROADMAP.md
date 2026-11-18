@@ -118,6 +118,27 @@ check. A model earns a stronger role than *suggestions only* only by measurement
   providers' own advice; until then Settings marks a provider *not yet measured*. Plan detection for Codex (its
   sign-in does not say the plan) and Antigravity (from the models `agy models` lists).
 
+## Small things left
+
+Known gaps of built features, gathered on 18 November 2026 from the *Not yet done* lists of the changelog (the
+release that left each one in brackets). None of them loses work; each is small.
+
+- **The AI run panel and the sidebar.** With both seats waiting, the panel's head says *Waiting for Claude Code…*
+  (0.19.13). A local seat short of memory may say *Waits for you* for a while before *Needs you* while Claude Code
+  works on other tasks (0.19.13). The sidebar's plain *Start* for the local side looks like Claude Code's: whether it
+  should name the model (*Start K2*) is open (0.19.15). The sidebar offers the local model's *Start* only while no
+  other job runs, otherwise only on the job's own page; work that asks the local model one request at a time
+  (comparing the routes, following references) says "1 task waits" before its *Start*, whatever the number (0.20.1).
+- **See what is sent** does not refresh while it is open (0.19.18).
+- **Stop on a check's first reading** leaves its local excerpts waiting under the local model's *Start*; a first
+  reading whose documents were switched to *Claude may read it* meanwhile is still offered to the local model only
+  (0.19.17).
+- **The concept map.** The links found in the text are English only; the downloaded picture is always light
+  (0.19.16).
+- **A team.** A codebook or a link between terms removed on one computer is not removed on the other (0.19.11).
+- **The AI mix** (I1) lends work to the local model only from an agent route (Claude Code, Codex, Antigravity), not
+  from the Claude API or another provider's API key (`routing.MIX_ROUTES`).
+
 ## Left to try with real accounts and a real team
 
 **I7. Cloud providers with real keys**
@@ -171,6 +192,9 @@ Kept so the same question is not opened again without a reason.
 - **A citation file or DOI** (J4.1). Dropped on 8 November 2026, by choice: the README's *How to cite ENLENS* gives the
   repository's address and the version used.
 - **A published manual site** (J2.4, MkDocs on GitHub Pages). Not made: the manual stays in the repository.
+- **Search by meaning starts its embedding model by itself** (17 November 2026, the owner's choice). The rule that no
+  AI model starts without its own *Start* (0.19.15, kept for work that is all the local model's since 0.20.1) is for
+  language models; the small embedding model that search by meaning needs loads when a search or an index needs it.
 - **An AI's wording of the assessment** (N4). The assessment in words stays made by rules. If an AI's wording is ever
   wanted, it is a separate draft sentence marked as the AI's, never mixed into the sentences made by rules.
 - **Ways of working together not chosen** (L, 12 November 2026): an ENLENS server, also one set up at a cloud host with
