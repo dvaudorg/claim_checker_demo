@@ -274,6 +274,8 @@ def _ocs(method: str, url: str, user: str, password: str, form: dict | None = No
         meta = (doc.get("ocs") or {}).get("meta") or {}
     except (ValueError, AttributeError):
         doc, meta = {}, {}
+    if not isinstance(meta, dict):   # (the drive's answer of an unexpected shape: not understood, in words below)
+        meta = {}
     if r.status in (401,):
         raise WebDAVProblem("The drive refused the user name and app password.", DENIED)
     if r.status == 404 and not meta:

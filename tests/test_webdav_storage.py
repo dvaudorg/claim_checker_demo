@@ -333,7 +333,7 @@ def test_move_from_a_drive_to_another_folder_and_from_elsewhere(anna_and_ben, dr
         assert "moved_away" in [x["kind"] for x in out["problems"]] and space.configured(carol.ws) is None
 
 
-def test_the_drive_through_the_app(api, drive):  # noqa: F811
+def test_the_drive_through_the_app(api, drive, monkeypatch):  # noqa: F811
     assert api("POST", "/api/projects", {"name": "Demo"})[0] == 200
     links = api("GET", "/api/space/links")[1]
     assert links["webdav_surfdrive"] == webdav.SURFDRIVE
@@ -352,6 +352,9 @@ def test_the_drive_through_the_app(api, drive):  # noqa: F811
     assert st == 200 and inv["shared"] is True
     st, p = api("POST", "/api/space/peek", {"link": inv["link"]})
     assert st == 200 and p["service"] == "webdav" and p["folder"] == "ENLENS - Demo" and "password" not in p
+    st, r = api("POST", "/api/join-team", {"link": inv["link"]})
+    assert st == 400 and r["kind"] == "space_in_use" and "Demo" in r["error"]   # (this computer's own space)
+    monkeypatch.setattr(space, "_others_using", lambda *_a: [])   # the rest as on a colleague's computer
     st, r = api("POST", "/api/join-team", {"link": inv["link"]})
     assert st == 400 and r["kind"] == "drive_needed"
     st, r = api("POST", "/api/join-team", {"link": inv["link"], "drive": {"user": "ben", "password": USERS["ben"]}})

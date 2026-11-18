@@ -163,7 +163,9 @@ already have can use *Join with an invite link…* on its Team page instead; it 
 project* (marked *Usual*) or *This project* (only when that copy is their copy of the team's project, sent to them as a
 file before). Their first rounds bring the documents and everything shared; you see them under *People* on *Team* ›
 *People and settings* once your ENLENS has let them in, which it does by itself at its next round; until they have sent
-anything they are listed as *nothing sent yet*. A link works once; *Withdraw* takes back one not used yet.
+anything they are listed as *nothing sent yet*. A link works once; *Withdraw* takes back one not used yet. One
+computer works in a space through one project: a link for a space that another project on the computer already works
+in (your own invite link, tried on your own computer) is refused, and ENLENS names the project to open instead.
 
 ## On the Team page
 
