@@ -1005,13 +1005,16 @@ def _store_label(cx, t, payload, obj, model):
 
 
 def _store_link(cx, t, payload, obj, model) -> tuple[bool, list[str]]:
-    """How two (or more) terms relate (link-v1): each quote must come from the passages shown for its term."""
+    """How two (or more) terms relate (link-v2, D1's last part: also needs, shapes and clashes with): each quote must
+    come from the passages shown for its term. Stored from the smaller term id, the relation turned round with it (as
+    the text patterns and a person's links are), as the AI's proposal (source `model`): a person accepts, changes or
+    rejects it on the Concepts page."""
     from .schema import LinkOut
+    from .terms import _INVERSE as inverse
 
     out = LinkOut.model_validate(obj)
     terms = {x["n"]: x for x in payload["terms"]}
     errors, rows = [], []
-    inverse = {"broader": "narrower", "narrower": "broader"}
     for i, r in enumerate(out.relations):
         if r.a not in terms or r.b not in terms or r.a == r.b:
             errors.append(f"relations[{i}]: a and b must be two different term numbers shown (1 to {len(terms)})")

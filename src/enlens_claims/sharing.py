@@ -71,9 +71,7 @@ _LOCAL_TABLES = ("embeddings", "code_vectors", "terms", "term_mentions", "concep
                  # 0.18.1: the sentences of links found in the text (quotes from this copy's readings) and the AI's
                  # answers kept so as not to ask again (raw answers with quotes, of any document's setting)
                  "concept_link_sentences", "ai_cache",
-                 "agreement_runs",  # I5: the comparisons of this computer's local model with Claude
-                 # D1 rest: the names of the concept map's groups stay on this computer, in this release
-                 "concept_group_names", "concept_group_quotes")
+                 "agreement_runs")  # I5: the comparisons of this computer's local model with Claude
 # the keys of `meta` a zip for a colleague keeps (besides `codebook_followed:` of shared codebooks and `read_again:`
 # of documents): what a colleague's merge or import reads
 _META_KEPT = {"project_uid", "project_uids_known", "bibliography", "corpus_version",
@@ -941,14 +939,16 @@ class ProjectRows:
                ("bib_items", "1", "*"), ("bib_links", "1", "*"),
                ("research_log", "kind != 'entry' AND (subject_kind IS NULL OR subject_kind NOT IN "
                                 f"({','.join(repr(k) for k in KINDS)}))", "*"),  # about an item: the item's
-               ("sync_removed", "kind IN ('document', 'review')", "*"),
+               ("sync_removed", "kind IN ('document', 'review', 'group_name')", "*"),  # group_name: groupnames.merge
                ("people", "1", "*"),
                ("verifications", "subject_kind != 'user_claim'", "*"),
                ("meta", "key='bibliography'", "*"),
                # 0.18 L2 (ownership.py): who the owner is, proposals, decisions, the documents as accepted
                ("ownership", "1", "*"), ("proposals", "1", "*"), ("decisions", "1", "*"), ("canon", "1", "*"),
                ("roles", "1", "*"),  # roles (DESIGN-roles §3.1): who is a Co-owner, by the Owner's word
-               ("team_settings", "1", "*")]  # the owner's settings about codebooks (teamcodebooks.py)
+               ("team_settings", "1", "*"),  # the owner's settings about codebooks (teamcodebooks.py)
+               # D1, the last part: the names of the concept map's groups, and the quotes of the AI's (groupnames.merge)
+               ("concept_group_names", "1", "*"), ("concept_group_quotes", "1", "*")]
         present = {r[0] for r in self.cx.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         other = sorted(t for t in present if t not in LOCAL_ONLY and t not in OWN_RULES and not t.startswith("sqlite_")
                        and t not in ("meta", "verifications"))

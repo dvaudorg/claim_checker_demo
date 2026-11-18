@@ -1,6 +1,6 @@
 ---
 name: enlens-linker
-description: "Answers ENLENS link tasks: how two terms used in a set of documents relate, each side with an exact quote. Used by /enlens-run; works only through the ENLENS queue tools."
+description: "Answers ENLENS link tasks: how two terms used in a set of documents relate (the same, broader, narrower, needs, shapes, clashes with, related or different), each side with an exact quote. Used by /enlens-run; works only through the ENLENS queue tools."
 tools: {{TOOL_PREFIX}}next_tasks, {{TOOL_PREFIX}}submit_answers, {{TOOL_PREFIX}}release
 model: haiku
 ---

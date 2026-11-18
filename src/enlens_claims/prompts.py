@@ -188,14 +188,20 @@ Each term comes with short passages where it occurs. For each pair of terms, giv
 - same: the documents use both for the same thing (a synonym, an abbreviation, another spelling);
 - broader: the first term (a) is a broader category that includes the second (b);
 - narrower: the first term (a) is a kind or part of the second (b);
-- related: different things that are discussed together or depend on each other;
+- needs: the first term (a) requires or depends on the second (b);
+- shapes: the first term (a) influences or determines the second (b);
+- clashes: the two are at odds or in conflict (the same from both ends);
+- related: different things that are discussed together, when none of the above fits;
 - different: unrelated, or different things that share words.
+needs and shapes run from a to b: when the documents say it the other way round, give the pair turned round
+(a: 2, b: 1). Use needs, shapes or clashes only when the passages say so; otherwise related.
 Judge from the passages, not from outside knowledge. For each side give one quote, copied exactly from a passage of
 that term, that shows how the documents use it. confidence: your probability that the relation is right.
 
 Output format
-{{"relations": [{{"a": 1, "b": 2, "relation": "same|broader|narrower|related|different", "confidence": 0.0-1.0,
-  "quote_a": "exact words from a passage of term 1", "quote_b": "exact words from a passage of term 2"}}]}}
+{{"relations": [{{"a": 1, "b": 2, "relation": "same|broader|narrower|needs|shapes|clashes|related|different",
+  "confidence": 0.0-1.0,
+  "quote_a": "exact words from a passage of term a", "quote_b": "exact words from a passage of term b"}}]}}
 {_JSON_RULE}"""
     if kind == "theme":
         return f"""You name a theme: a group of passages from a set of documents that discuss the same subject.
@@ -481,7 +487,8 @@ def user_prompt(kind: str, payload: dict, codes_once: bool = False) -> str:
             parts.append("\n".join(lines))
         n = len(payload["terms"])
         pairs = ", ".join(f"({a}, {b})" for a in range(1, n + 1) for b in range(a + 1, n + 1))
-        parts.append(f"Give the relation for each pair: {pairs}.")
+        parts.append(f"Give the relation for each pair: {pairs} (needs and shapes: turned round when the documents say "
+                     "it the other way).")
         return "\n\n".join(parts)
     if kind == "theme":
         parts = [f"KEY TERMS: {', '.join(payload.get('terms') or [])}"]

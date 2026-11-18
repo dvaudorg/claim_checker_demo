@@ -29,13 +29,6 @@ by `--local-only`.
 
 ## Left to build
 
-**D1. The concept map: group names with a team** · Level 0
-- The map's group names (0.19.16) stay on the computer they were given on. Shared with a team, a name would need a
-  rule for two people naming the same group, and for a group that is not the same on two copies (the groups are found
-  from each copy's own counts).
-- The AI's link tasks (`link`) do not yet propose the three kinds added in 0.19.16 (*needs*, *shapes*, *clashes
-  with*); only the text patterns and a person do.
-
 **I6. Local model tiers, chosen for you** · planned (bench of 16 November 2026, below) · Level 2
 - A researcher should never have to pick a model. ENLENS already reads the computer's memory and disk
   (`modeladvice.py`); it picks the tier itself, downloads its model, and sets the context length, reasoning (off for
@@ -158,6 +151,8 @@ Built and tested against stand-ins that follow each service's documents; not yet
 
 **A team on real computers**
 - Owner, Co-owner and Member roles, invites, a hand-over and removing a colleague, used by a real team over days.
+- The concept map's group names (D1): how often two copies find a group differently enough that a colleague's name
+  lands under *names kept for groups that are not on this map* rather than on its group.
 
 ## Parked or decided against
 

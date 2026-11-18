@@ -339,6 +339,90 @@ await scenario("download keeps the look of the group names", async (t) => {
     return { text: m ? m[0] : null };
   } finally { globalThis.getComputedStyle = real; }
 });
+
+// ---- D1, the last part: names from a team, and the zoom -------------------------------------------------------------
+const TEAM = { ...NAMED, groups: NAMED.groups.map((g) => (g.group === 1 ? { ...g, by: "Anna", named_at: "2026-11-12T09:00:00+00:00",
+    also_named: [{ id: "f1", name: "Hybrid work", name_source: "person", by: "Ben", at: "2026-11-10T09:00:00+00:00" }] }
+  : g.group === 3 ? { ...g, by: "Ben" } : g)) };
+await scenario("team names", async (t) => {
+  t.answer(`POST ${BASE}/names`, { record: {} });
+  await page(t, TEAM);
+  const out = { rows: rowsOf(t).slice(0, 3) };
+  await t.click("Rename the group “Mending together”");
+  const d = t.dialog();
+  out.dialog = t.text(d.querySelector(".cm-also-list"));
+  await t.click("Use “Hybrid work” as the new name", { within: d });
+  out.field = d.querySelector("input").value;
+  await t.click("Save", { within: d });
+  out.sent = t.calls.filter((c) => c.path === `${BASE}/names`).map((c) => ({ action: c.body.action, name: c.body.name, name_id: c.body.name_id }));
+  return out;
+});
+
+await scenario("zoom", async (t) => {
+  t.answer(`POST ${BASE}/names`, { record: {} });
+  await page(t, NAMED);
+  const svg = () => t.view.querySelector("svg.cm-svg");
+  const wrap = () => t.view.querySelector(".cm-svg-wrap");
+  const vb = () => svg().getAttribute("viewBox");
+  const bar = () => t.view.querySelector(".cm-zoom");
+  const state = () => ({ vb: vb(), status: t.text(bar().querySelector(".cm-zoom-status")),
+    disabled: t.buttons(bar()).filter((b) => b.disabled).map((b) => b.label), font: svg().style.fontSize || "",
+    zoomed: svg().getAttribute("data-zoomed"), near: svg().getAttribute("data-zoom") });
+  const out = { bar: { role: bar().getAttribute("role"), label: bar().getAttribute("aria-label"), buttons: t.buttons(bar()).map((b) => b.label) },
+    wrap: { tab: wrap().getAttribute("tabindex"), label: wrap().getAttribute("aria-label") }, start: state() };
+  await t.click("Zoom in");
+  out.in1 = state();
+  wrap().focus();
+  await t.press("+", wrap());
+  out.in2 = state();
+  await t.press("ArrowRight", wrap());
+  out.right = vb();
+  await t.press("+", wrap(), { ctrl: true });                 // the browser's own zoom: left alone
+  out.ctrlPlus = vb();
+  await t.press("0", wrap());
+  out.fit = state();
+  await t.press("-", wrap());
+  out.outAtOne = vb();
+  const plain = new Event("wheel", { deltaY: -100, clientX: 0, clientY: 0 });
+  wrap().dispatchEvent(plain);
+  out.plainWheel = { vb: vb(), prevented: plain.defaultPrevented };
+  const pinch = new Event("wheel", { deltaY: -100, ctrlKey: true, clientX: 0, clientY: 0 });
+  wrap().dispatchEvent(pinch);
+  out.pinch = { vb: vb(), prevented: pinch.defaultPrevented };
+  for (let i = 0; i < 8 && !t.find("Zoom in").disabled; i++) await t.click("Zoom in");
+  out.max = state();
+  // a rename draws the map again: the zoom stays
+  await t.click("Rename the group “Mending together”");
+  await t.type(t.dialog().querySelector("input"), "Repair cafés");
+  await t.click("Save", { within: t.dialog() });
+  out.afterRedraw = vb();
+  return out;
+});
+
+await scenario("zoom and download", async (t) => {
+  const files = [];
+  const realSave = URL.createObjectURL;
+  URL.createObjectURL = (blob) => { files.push({ blob }); return "blob:x"; };
+  const click = Element.prototype.click;
+  Element.prototype.click = function () { if (this.getAttribute("download")) files[files.length - 1].name = this.getAttribute("download"); else click.call(this); };
+  try {
+    await page(t, NAMED);
+    await t.click("Zoom in");
+    await t.click("Zoom in");
+    await t.click("SVG");
+    await t.settle(100);
+    const text = files[0] ? await files[0].blob.text() : "";
+    return { live: t.view.querySelector("svg.cm-svg").getAttribute("viewBox"), file: (/<svg[^>]*viewBox="([^"]*)"/i.exec(text) || [])[1] || null, head: text.slice(0, 300), n: files.length };
+  } finally { URL.createObjectURL = realSave; Element.prototype.click = click; }
+});
+
+await scenario("zoom resets with other filters", async (t) => {
+  await page(t);
+  await t.click("Zoom in");
+  const zoomed = t.view.querySelector("svg.cm-svg").getAttribute("viewBox");
+  await t.type(t.view.querySelectorAll(".cm-filters select")[0], "d2");
+  return { zoomed, after: t.view.querySelector("svg.cm-svg").getAttribute("viewBox") };
+});
 """
 
 
@@ -689,3 +773,58 @@ def test_the_picture_keeps_the_look_of_the_group_names_on_the_map(page):
     # its own regular weight, though SVG's default: it would take the name's strong weight otherwise
     assert 'fill="rgb(120, 113, 108)"' in draft and 'font-weight="400"' in draft, draft
     assert "stroke=" not in draft and "font-size=" not in draft      # the same as its text's: inherited, not repeated
+
+
+# ---- D1, the last part ------------------------------------------------------------------------------------------------
+@needs_node
+def test_a_name_from_the_team_says_who_gave_it_and_the_other_name_given(page):
+    """Names travel with a team: a group named by a colleague says so, and the other name a person gave the same group
+    stands under it and in the rename dialog, where one press puts it in the field."""
+    r = page["team names"]
+    assert r["rows"][0].startswith("Mending together (filled circle)\nnamed by Anna\nAlso named “Hybrid work” by Ben, 10 Nov 2026")
+    assert "named by the AI, accepted by Ben" in r["rows"][2]
+    assert r["dialog"].startswith("Also named “Hybrid work” by Ben, 10 Nov 2026") and "Use this one" in r["dialog"]
+    assert r["field"] == "Hybrid work"
+    assert r["sent"] == [{"action": "rename", "name": "Hybrid work", "name_id": "n1"}]
+
+
+def _box(vb: str) -> list[float]:
+    return [float(x) for x in vb.split()]
+
+
+@needs_node
+def test_the_map_zooms_by_its_buttons_keys_and_pinch_and_moves_when_zoomed_in(page):
+    z = page["zoom"]
+    assert z["bar"] == {"role": "toolbar", "label": "Zoom the map", "buttons": ["Zoom out", "Zoom in", "Whole map"]}
+    assert z["wrap"]["tab"] == "0" and "Plus and minus zoom" in z["wrap"]["label"]
+    s0 = z["start"]
+    x0, y0, w0, h0 = _box(s0["vb"])
+    assert (x0, y0) == (0, 0) and s0["status"] == "The whole map" and s0["disabled"] == ["Zoom out", "Whole map"]
+    assert s0["font"] == "" and s0["zoomed"] is None
+    _, _, w1, _ = _box(z["in1"]["vb"])
+    assert abs(w1 - w0 / 1.5) < 0.2 and z["in1"]["status"] == "Zoomed in 150 %" and z["in1"]["disabled"] == []
+    assert z["in1"]["zoomed"] == "true" and z["in1"]["near"] is None and z["in1"]["font"].startswith("calc(var(--fs-xs) / 1.22")
+    _, _, w2, _ = _box(z["in2"]["vb"])                                   # + on the map
+    assert abs(w2 - w0 / 2.25) < 0.2 and z["in2"]["near"] == "near"      # from twice the size on, every name shows
+    assert _box(z["right"])[0] > _box(z["in2"]["vb"])[0]                  # the arrow keys move it
+    assert z["ctrlPlus"] == z["right"]                                    # Ctrl + is the browser's
+    assert z["fit"]["vb"] == s0["vb"] and z["fit"]["status"] == "The whole map" and z["fit"]["font"] == ""
+    assert z["outAtOne"] == s0["vb"]
+    assert z["plainWheel"] == {"vb": s0["vb"], "prevented": False}       # a plain wheel scrolls the page
+    assert z["pinch"]["prevented"] is True and _box(z["pinch"]["vb"])[2] < w0
+    assert z["max"]["status"] == "Zoomed in 400 %" and z["max"]["disabled"] == ["Zoom in"]
+    assert abs(_box(z["max"]["vb"])[2] - w0 / 4) < 0.2
+    assert z["afterRedraw"] == z["max"]["vb"]                            # a redraw keeps the zoom
+
+
+@needs_node
+def test_a_zoomed_map_still_downloads_whole(page):
+    d = page["zoom and download"]
+    assert _box(d["live"])[0:2] != [0, 0] or _box(d["live"])[2] < 1000
+    assert d["file"] and _box(d["file"])[0:3] == [0, 0, 1200], (d["n"], d["head"])
+
+
+@needs_node
+def test_other_filters_show_the_whole_map_again(page):
+    r = page["zoom resets with other filters"]
+    assert _box(r["zoomed"])[2] < _box(r["after"])[2] and _box(r["after"])[0:2] == [0, 0]

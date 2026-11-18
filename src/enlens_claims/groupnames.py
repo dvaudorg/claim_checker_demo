@@ -22,11 +22,24 @@ or gained a third or more of its concepts is `changed`, with what left and what 
 the group as it is now. Under other filters or another size nothing is flagged: there the group differs because the
 view does.
 
-**Local to this computer**, in this release: the two tables are listed in `sync.common.LOCAL_ONLY`, in
-`sharing._LOCAL_TABLES` (a zip for a colleague leaves them out) and in the bundle's forget list; the AI's tasks for them
-(kind `group_name`, with their passages and answers) are in `sharing.LOCAL_TASK_KINDS`, so neither a zip for a
-colleague nor the shared folder carries them, and none comes in from a colleague. Names are not part of a
-team's shared work yet (the manual says so).
+**With a team** (roadmap D1, the last part). The names travel with the project, like the rest of its work: the two
+tables are merged by their own rules (`sync.common.OWN_RULES`, `merge` below), through a zip for a colleague, the shared
+folder and a storage space alike. Each kept name holds its group's concepts, the person who last changed it
+(`person_id`) and when (`updated_at`). The groups themselves are never sent: each copy finds them from its own counts,
+so on another copy a name goes to the group there that holds most of its concepts (`match`, the same rule as here),
+and a name that fits no group there is kept, listed apart, not drawn.
+
+- *One name, changed on two copies* (the same `name_id`): a person's decision (`person`, `ai`) beats an AI draft;
+  between two decisions the later one counts on every copy (then the larger person id, so every copy agrees). When the
+  two were different people's and the names differ, the one that lost is kept as a name of its own (an id made from
+  the name's id, the person and the time, so every copy makes the same one): nothing a person typed is lost.
+- *Two names for one group* (two `name_id`s that both fit it): the same order picks the one shown, on every copy; the
+  others that a person gave are shown with the group (`also_named`: "Also named … by …").
+- *A name removed* (*Use its concepts as the name*, *Forget this name*) is noted in `sync_removed` (kind `group_name`),
+  so a colleague's copy does not bring it back; a change made after the removal (a rename on another copy) wins.
+- The AI's tasks for the drafts (kind `group_name`, with their passages and answers) still stay on the computer they
+  were run on (`sharing.LOCAL_TASK_KINDS`); the name and its quote are what travels. A quote goes with its document:
+  it does not come in for a document that is not in this copy.
 
 **The AI's drafts** (Level 2 or 3, on request only). *Name the groups* sends one request, which only puts tasks in the
 queue (one per group, kind `group_name`) and makes a job that waits for its own Start, as every AI job does: nothing
@@ -58,6 +71,8 @@ MAX_CHARS = 6000         # and at most this much text
 MAX_CONCEPTS = 12        # concepts named to the AI
 MIN_QUOTE_WORDS = 3
 SOURCES = ("concepts", "person", "ai_draft", "ai")
+RANK = {"person": 2, "ai": 2, "ai_draft": 1}   # a person's decision (typed, or the AI's draft used) beats a draft
+REMOVED = "group_name"   # the kind of a removed name in `sync_removed`
 
 _T_OK = "temp.d1_name_docs"   # the documents the reader may read (_passages_of)
 NONE_MAY_READ = "No AI may read these documents, so the groups can only be named by you."
@@ -103,12 +118,20 @@ def _same_view(rec: dict, filters: dict, n: int) -> bool:
     return json.dumps(rec["filters"], sort_keys=True) == json.dumps(filters, sort_keys=True) and int(rec["n"] or 0) == n
 
 
-def match(records: list[dict], groups: list[list[str]], on_map: set[str]) -> dict[int, dict]:
-    """{group index: the kept name it takes} (see the module's notes): a group takes a name when it holds most of that
-    name's concepts on this map (and at least two, or all of them when the name has fewer); of several names, the one
-    that fits best. Deterministic."""
+def order_key(rec: dict) -> tuple:
+    """How kept names are ranked, the first first, the same on every copy: a person's decision before an AI draft; then
+    the later; then the larger person id; then the id."""
+    return (-RANK.get(rec.get("source"), 0), _neg_time(rec.get("updated_at")), _neg_time(rec.get("person_id")),
+            rec.get("name_id") or "")
+
+
+def match_all(records: list[dict], groups: list[list[str]], on_map: set[str]) -> dict[int, list[dict]]:
+    """{group index: every kept name that fits it, the one it takes first} (see the module's notes): a name fits a group
+    that holds most of the name's concepts on this map (and at least two, or all of them when the name has fewer). Of
+    several, `order_key` decides: it never depends on how well each fits, which differs from copy to copy (each finds
+    its groups from its own counts), so every copy shows the same name for the same group. Deterministic."""
     sets = [set(g) for g in groups]
-    cands: dict[int, list[tuple]] = {}
+    cands: dict[int, list[dict]] = {}
     for rec in records:
         rc = set(rec["concepts"])
         on = rc & on_map
@@ -117,10 +140,14 @@ def match(records: list[dict], groups: list[list[str]], on_map: set[str]) -> dic
         for gi, gs in enumerate(sets):
             k = len(rc & gs)
             if k * 2 > len(on) and k >= min(2, len(rc)):
-                fit = k / len(rc | gs)
-                cands.setdefault(gi, []).append((-fit, -k, _neg_time(rec["updated_at"]), rec["name_id"], rec))
+                cands.setdefault(gi, []).append(rec)
                 break      # most of its concepts: in one group at most
-    return {gi: sorted(cs, key=lambda c: c[:4])[0][4] for gi, cs in cands.items()}
+    return {gi: sorted(cs, key=order_key) for gi, cs in cands.items()}
+
+
+def match(records: list[dict], groups: list[list[str]], on_map: set[str]) -> dict[int, dict]:
+    """{group index: the kept name it takes} (`match_all`, its first)."""
+    return {gi: cs[0] for gi, cs in match_all(records, groups, on_map).items()}
 
 
 def _neg_time(at: str | None) -> str:
@@ -169,22 +196,36 @@ def attach(ws: Workspace, out: dict, members: list[list[str]], labels: dict[str,
     except Exception:  # noqa: BLE001 - a project opened by an older ENLENS: no table yet, no kept names
         records = []
     on_map = set(labels)
-    took = match(records, members, on_map)
+    fitting = match_all(records, members, on_map)
+    took = {gi: cs[0] for gi, cs in fitting.items()}
     fails = _failures(ws) if any(gi not in took or took[gi]["source"] != "person" for gi in range(len(members))) else []
     used = set()
+    who = _people(ws) if records else {}
     for gi, gr in enumerate(out["groups"]):
         ms = members[gi]
         gr["concepts"] = ms
         rec = took.get(gi)
+        gr["also_named"] = []
         if rec is None:
             gr.update(name=concepts_name([labels[x] for x in ms[:2]]), name_source="concepts", name_id=None,
-                      model=None, quote=None, changed=None)
+                      model=None, quote=None, changed=None, by=None, named_at=None)
         else:
-            used.add(rec["name_id"])
+            used.update(x["name_id"] for x in fitting[gi])
             gr.update(name=rec["name"], name_source=rec["source"], name_id=rec["name_id"],
                       model=rec["model"] if rec["source"] in ("ai", "ai_draft") else None,
                       quote=_quote_view(ws, rec["quote"]) if rec["source"] in ("ai", "ai_draft") else None,
-                      changed=changed(rec, ms, labels, filters, n))
+                      changed=changed(rec, ms, labels, filters, n),
+                      by=who.get(rec.get("person_id") or "", "you" if not rec.get("person_id") else "a colleague"),
+                      named_at=rec.get("updated_at"))
+            # the other names a person gave this group (on this copy or another): shown with it, never lost
+            seen = {rec["name"].lower()}
+            for x in fitting[gi][1:]:
+                if x["source"] == "ai_draft" or x["name"].lower() in seen:
+                    continue
+                seen.add(x["name"].lower())
+                gr["also_named"].append({"id": x["name_id"], "name": x["name"], "name_source": x["source"],
+                                         "by": who.get(x.get("person_id") or "", "a colleague"),
+                                         "at": x.get("updated_at")})
         gr["naming_failed"] = None
         if gr["name_source"] != "person":         # named by its concepts, or by the AI before ("Name the groups again")
             gs = set(ms)
@@ -198,6 +239,16 @@ def attach(ws: Workspace, out: dict, members: list[list[str]], labels: dict[str,
                               for r in records if r["name_id"] not in used]
     out["can_name"] = offer(ws, docs_in_scope, settings) if out["groups"] else {"offered": False, "why": None,
                                                                                "reader": None}
+
+
+def _people(ws: Workspace) -> dict[str, str]:
+    """{person id: name} for the names' "by" ("you" for this computer's person)."""
+    from . import people
+
+    try:
+        return people.names(ws)
+    except Exception:  # noqa: BLE001 - no settings to read (a test's bare project): only "you"
+        return {}
 
 
 def _quote_view(ws: Workspace, q: dict | None) -> dict | None:
@@ -245,7 +296,10 @@ def save(ws: Workspace, action: str, body: dict) -> dict:
     - `keep` {name_id, concepts, labels, filters, n}: the name now goes with the group as it is (a changed group).
     - `forget` {name_id}: a kept name no group takes, removed; `restore` {record}: put back (Undo).
     Raises KeyError for a name that is not there, ValueError for a request that cannot be done."""
+    from . import people
+
     at = now()
+    me = people.me()
     filters = body.get("filters") if isinstance(body.get("filters"), dict) else {}
     filters = {str(k): v for k, v in filters.items() if isinstance(v, (str, int, list))}
     n = int(body.get("n") or 0) if str(body.get("n") or "0").isdigit() else 0
@@ -261,8 +315,8 @@ def save(ws: Workspace, action: str, body: dict) -> dict:
         return r
 
     def group_now(cx, i, conc, labs, source=None):
-        sets = ["concepts_json=?", "labels_json=?", "filters_json=?", "n=?", "updated_at=?"]
-        args = [json.dumps(conc), json.dumps(labs, ensure_ascii=False), json.dumps(filters, sort_keys=True), n, at]
+        sets = ["concepts_json=?", "labels_json=?", "filters_json=?", "n=?", "updated_at=?", "person_id=?"]
+        args = [json.dumps(conc), json.dumps(labs, ensure_ascii=False), json.dumps(filters, sort_keys=True), n, at, me]
         if source:
             sets.append("source=?")
             args.append(source)
@@ -284,20 +338,22 @@ def save(ws: Workspace, action: str, body: dict) -> dict:
             else:
                 nid = uuid.uuid4().hex[:16]
                 cx.execute("INSERT INTO concept_group_names(name_id, name, source, model, concepts_json, labels_json, "
-                           "filters_json, n, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                           "filters_json, n, created_at, updated_at, person_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                            (nid, name, "person", None, json.dumps(concepts), json.dumps(labels, ensure_ascii=False),
-                            json.dumps(filters, sort_keys=True), n, at, at))
+                            json.dumps(filters, sort_keys=True), n, at, at, me))
             _forget_failures(cx, concepts)
         elif action == "use_concepts":
             if nid:
-                get(cx, nid)
+                r = get(cx, nid)
                 cx.execute("DELETE FROM concept_group_names WHERE name_id=?", (nid,))
                 cx.execute("DELETE FROM concept_group_quotes WHERE name_id=?", (nid,))
+                _note_removed(cx, nid, r["name"], at, me)
             _forget_failures(cx, concepts, ("failed", "done"))
             return {"record": None}
         elif action == "unaccept" and isinstance(body.get("before"), list):
             # Undo of Use this name: each name as it was before (its group, filters and size, and its source)
-            cols = ("name", "source", "model", "concepts_json", "labels_json", "filters_json", "n", "updated_at")
+            cols = ("name", "source", "model", "concepts_json", "labels_json", "filters_json", "n", "updated_at",
+                    "person_id")
             done = []
             for row in body["before"]:
                 if not isinstance(row, dict) or not row.get("name_id") or row.get("source") not in ("ai_draft", "ai"):
@@ -326,8 +382,8 @@ def save(ws: Workspace, action: str, body: dict) -> dict:
                               json.loads(r["labels_json"] or "{}"), "ai")
                     _forget_failures(cx, conc)
                 elif action == "unaccept" and r["source"] == "ai":
-                    cx.execute("UPDATE concept_group_names SET source='ai_draft', updated_at=? WHERE name_id=?",
-                               (at, r["name_id"]))
+                    cx.execute("UPDATE concept_group_names SET source='ai_draft', updated_at=?, person_id=? WHERE "
+                               "name_id=?", (at, me, r["name_id"]))
             if len(items) != 1:
                 return {"record": None, "before": before} if action == "accept" else {"record": None}
             nid = str(items[0]["name_id"])
@@ -342,6 +398,7 @@ def save(ws: Workspace, action: str, body: dict) -> dict:
             q = cx.execute("SELECT * FROM concept_group_quotes WHERE name_id=?", (nid,)).fetchone()
             cx.execute("DELETE FROM concept_group_names WHERE name_id=?", (nid,))
             cx.execute("DELETE FROM concept_group_quotes WHERE name_id=?", (nid,))
+            _note_removed(cx, nid, r["name"], at, me)
             return {"record": {"row": dict(r), "quote": dict(q) if q else None}}
         elif action == "restore":
             rec = body.get("record") if isinstance(body.get("record"), dict) else {}
@@ -349,9 +406,11 @@ def save(ws: Workspace, action: str, body: dict) -> dict:
             if not row or not row.get("name_id") or row.get("source") not in SOURCES[1:]:
                 raise ValueError("Nothing to put back.")
             cols = ("name_id", "name", "source", "model", "concepts_json", "labels_json", "filters_json", "n",
-                    "created_at", "updated_at")
+                    "created_at", "updated_at", "person_id")
+            # put back as now (Undo): later than the removal it undoes, on every copy that heard of that
             cx.execute(f"INSERT OR REPLACE INTO concept_group_names({', '.join(cols)}) VALUES "
-                       f"({','.join('?' * len(cols))})", tuple(row.get(c) for c in cols))
+                       f"({','.join('?' * len(cols))})", tuple(at if c == "updated_at" else row.get(c) for c in cols))
+            cx.execute("DELETE FROM sync_removed WHERE kind=? AND key=?", (REMOVED, row["name_id"]))
             q = rec.get("quote") if isinstance(rec.get("quote"), dict) else None
             if q and q.get("name_id") == row["name_id"]:
                 qc = ("name_id", "doc_id", "passage_id", "page", "start", "end", "quote")
@@ -366,6 +425,99 @@ def save(ws: Workspace, action: str, body: dict) -> dict:
     if action == "accept":         # what Use this name overwrote, for its Undo (`unaccept` {before})
         return {"record": recs[0] if recs else None, "before": before}
     return {"record": recs[0] if recs else None}
+
+
+def _note_removed(cx, name_id: str, name: str | None, at: str, person_id: str) -> None:
+    """A kept name removed: noted so that a colleague's copy does not bring it back (`merge`)."""
+    cx.execute("INSERT OR REPLACE INTO sync_removed(kind, key, title, at, person_id) VALUES (?,?,?,?,?)",
+               (REMOVED, name_id, name, at, person_id))
+
+
+# ---- with a team (the module's notes) --------------------------------------------------------------------------------
+NAME_COLS = ("name_id", "name", "source", "model", "concepts_json", "labels_json", "filters_json", "n", "created_at",
+             "updated_at", "person_id")
+QUOTE_COLS = ("name_id", "doc_id", "passage_id", "page", "start", "end", "quote")
+
+
+def _fork_id(name_id: str, person_id: str | None, at: str | None) -> str:
+    """The id of a person's version of a name kept as a name of its own: the same on every copy."""
+    return "f" + _h(name_id, person_id or "", at or "")[:15]
+
+
+def merge(cx, names: list[dict], quotes: list[dict], removed: list[dict], sender: str, me: str,
+          doc_here: Callable[[dict], dict | None]) -> int:
+    """A colleague's kept names into this copy (sync/merge.py, the module's notes). `names`, `quotes`, `removed`: the
+    rows of their `concept_group_names`, `concept_group_quotes` and their `sync_removed` rows of kind `group_name`;
+    `doc_here(quote row)`: the row with its ids as in this copy, or None when its document is not here. A name in
+    this person's own name from someone else's file is not taken (as for reviews: a file cannot change your work in
+    your name). Returns how many names came in or changed."""
+    gone = {r[0]: r[1] or "" for r in cx.execute("SELECT key, at FROM sync_removed WHERE kind=?", (REMOVED,))}
+    for r in removed:
+        key, at = str(r.get("key") or ""), str(r.get("at") or "")
+        if not key or (r.get("person_id") == me and sender != me):
+            continue
+        row = cx.execute("SELECT updated_at FROM concept_group_names WHERE name_id=?", (key,)).fetchone()
+        if row is not None and (row[0] or "") <= at:
+            cx.execute("DELETE FROM concept_group_names WHERE name_id=?", (key,))
+            cx.execute("DELETE FROM concept_group_quotes WHERE name_id=?", (key,))
+        if at > gone.get(key, ""):
+            _note_removed(cx, key, r.get("title"), at, r.get("person_id") or sender)
+            gone[key] = at
+    their_quotes = {q.get("name_id"): q for q in quotes}
+    n = 0
+
+    def put(row: dict, nid: str, quote: dict | None) -> None:
+        cx.execute(f"INSERT OR REPLACE INTO concept_group_names({', '.join(NAME_COLS)}) VALUES "
+                   f"({','.join('?' * len(NAME_COLS))})", tuple(nid if c == "name_id" else row.get(c) for c in NAME_COLS))
+        cx.execute("DELETE FROM concept_group_quotes WHERE name_id=?", (nid,))
+        q = doc_here(quote) if quote and row.get("source") in ("ai", "ai_draft") else None
+        if q:
+            cx.execute(f"INSERT OR REPLACE INTO concept_group_quotes({', '.join(QUOTE_COLS)}) VALUES "
+                       f"({','.join('?' * len(QUOTE_COLS))})", tuple(nid if c == "name_id" else q.get(c)
+                                                                     for c in QUOTE_COLS))
+
+    for r in sorted(names, key=lambda x: str(x.get("name_id") or "")):
+        nid = str(r.get("name_id") or "")
+        if not nid or r.get("source") not in RANK or not _clean(r.get("name"), MAX_NAME):
+            continue
+        r = {**r, "person_id": r.get("person_id") or sender}
+        if r["person_id"] == me and sender != me:
+            continue
+        if gone.get(nid, "") >= (r.get("updated_at") or "") and nid in gone:
+            continue                         # removed after this version was made
+        mine = cx.execute("SELECT * FROM concept_group_names WHERE name_id=?", (nid,)).fetchone()
+        if mine is None:
+            put(r, nid, their_quotes.get(nid))
+            n += 1
+            continue
+        mine = dict(mine)
+        mine["person_id"] = mine.get("person_id") or me
+        if all((mine.get(c) or None) == (r.get(c) or None) for c in NAME_COLS if c not in ("created_at", "model")):
+            continue
+        theirs_win = order_key(r) < order_key(mine)
+        win, lose = (r, mine) if theirs_win else (mine, r)
+        if theirs_win:
+            put(r, nid, their_quotes.get(nid))
+            n += 1
+        # two people's decisions on one name, with different words: the one that lost stays, as a name of its own
+        if (RANK.get(lose.get("source")) == 2 and RANK.get(win.get("source")) == 2
+                and lose["person_id"] != win["person_id"]
+                and _clean(lose.get("name"), MAX_NAME).lower() != _clean(win.get("name"), MAX_NAME).lower()):
+            fid = _fork_id(nid, lose["person_id"], lose.get("updated_at"))
+            if fid not in gone and not cx.execute("SELECT 1 FROM concept_group_names WHERE name_id=?",
+                                                  (fid,)).fetchone():
+                if lose is mine:
+                    q = cx.execute("SELECT * FROM concept_group_quotes WHERE name_id=?", (nid,)).fetchone()
+                    q = dict(q) if q else None
+                    put(lose, fid, None)
+                    if q and lose.get("source") == "ai":
+                        cx.execute(f"INSERT OR REPLACE INTO concept_group_quotes({', '.join(QUOTE_COLS)}) VALUES "
+                                   f"({','.join('?' * len(QUOTE_COLS))})",
+                                   tuple(fid if c == "name_id" else q.get(c) for c in QUOTE_COLS))
+                else:
+                    put(lose, fid, their_quotes.get(nid))
+                n += 1
+    return n
 
 
 # ---- the AI's drafts -----------------------------------------------------------------------------------------------
@@ -563,7 +715,9 @@ def apply(ws: Workspace, task_id: str) -> dict | None:
     name = name[:1].upper() + name[1:]
     p = payload["passages"][a.name_quote.passage - 1]
     hit = find_quote(p["text"], a.name_quote.quote)
-    at = now()
+    from . import people
+
+    at, me = now(), people.me()   # the draft is the person's who asked for it
     concepts, labels = payload.get("concept_ids") or [], payload.get("labels") or {}
     with ws.connect() as cx:
         # the name the group has now: the one the task was asked for, or one given since to the same concepts
@@ -583,15 +737,16 @@ def apply(ws: Workspace, task_id: str) -> dict | None:
         if nid is None:
             nid = uuid.uuid4().hex[:16]
             cx.execute("INSERT INTO concept_group_names(name_id, name, source, model, concepts_json, labels_json, "
-                       "filters_json, n, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                       "filters_json, n, created_at, updated_at, person_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                        (nid, name, "ai_draft", r[0]["model"], json.dumps(concepts),
                         json.dumps(labels, ensure_ascii=False), json.dumps(payload.get("filters") or {}, sort_keys=True),
-                        int(payload.get("n") or 0), at, at))
+                        int(payload.get("n") or 0), at, at, me))
         else:
             cx.execute("UPDATE concept_group_names SET name=?, source='ai_draft', model=?, concepts_json=?, "
-                       "labels_json=?, filters_json=?, n=?, updated_at=? WHERE name_id=?",
+                       "labels_json=?, filters_json=?, n=?, updated_at=?, person_id=? WHERE name_id=?",
                        (name, r[0]["model"], json.dumps(concepts), json.dumps(labels, ensure_ascii=False),
-                        json.dumps(payload.get("filters") or {}, sort_keys=True), int(payload.get("n") or 0), at, nid))
+                        json.dumps(payload.get("filters") or {}, sort_keys=True), int(payload.get("n") or 0), at, me,
+                        nid))
         cx.execute("DELETE FROM concept_group_quotes WHERE name_id=?", (nid,))
         _forget_failures(cx, concepts)        # named now: an earlier failure for it is no longer the page's news
         if hit:
@@ -682,7 +837,7 @@ def name_groups(ws: Workspace, f, n: int, which: str, backend, model: str, progr
         with ws.connect() as cx:
             text = (f"The AI ({used}) drafted names for {done} group{'s' if done != 1 else ''} of the concept map"
                     + (f"; {failed} could not be named" if failed else "")
-                    + ". Each is a draft until it is used or renamed; the names stay on this computer.")
+                    + ". Each is a draft until it is used or renamed.")
             researchlog.record(cx, "concept-groups-named", text, "concept-map", "groups", "Concept map",
                                data={"model": used, "named": done, "failed": failed, "kind": KIND})
     return {"named": done, "failed": failed, "groups": len(todo), "skipped": got["skipped"], "stopped": stopped,

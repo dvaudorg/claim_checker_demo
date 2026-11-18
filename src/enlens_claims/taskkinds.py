@@ -277,7 +277,7 @@ _core(name="label", prompt_version="label-v1", certainty="labels", claude=("haik
       helper="enlens-labeller", row="label", row_title="Codebook labels (profile)", batch=20, order=8,
       noun=("passage to label", "passages to label"), short="labels", title="Codebook labels",
       run_name="Codebook labels", output_cap=1500, corpus=True)
-_core(name="link", prompt_version="link-v1", certainty="relations", claude=("haiku", "sonnet"), local="small", bulk=True,
+_core(name="link", prompt_version="link-v2", certainty="relations", claude=("haiku", "sonnet"), local="small", bulk=True,
       helper="enlens-linker", row="link", row_title="How concepts relate", batch=10, order=7,
       noun=("pair of terms", "pairs of terms"), short="pairs of terms", title="How concepts relate",
       run_name="How concepts relate", output_cap=700, corpus=True)
