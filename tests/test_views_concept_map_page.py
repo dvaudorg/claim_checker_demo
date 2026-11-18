@@ -358,6 +358,48 @@ await scenario("team names", async (t) => {
   return out;
 });
 
+// review 5: the other name can be removed, with Undo
+await scenario("remove the other name", async (t) => {
+  t.answer(`POST ${BASE}/names`, (body) => ({ record: body.action === "forget" ? { row: { name_id: "f1" } } : {} }));
+  await page(t, TEAM);
+  await t.click("Remove the other name “Hybrid work”");
+  const toast = t.toasts();
+  document.querySelector("#toasts .toast-btn").click();
+  await t.settle();
+  return { sent: t.calls.filter((c) => c.path === `${BASE}/names`).map((c) => c.body), toast };
+});
+
+// review 8: a touch drag, then a press that is a click; a second finger never takes over a drag; two fingers pinch
+await scenario("touch", async (t) => {
+  await page(t, NAMED);
+  const wrap = () => t.view.querySelector(".cm-svg-wrap");
+  const vb = () => t.view.querySelector("svg.cm-svg").getAttribute("viewBox");
+  const ev = (type, id, x, y) => { const e = new Event(type, { pointerId: id, clientX: x, clientY: y, button: 0 }); wrap().dispatchEvent(e); return e; };
+  await t.click("Zoom in");
+  const start = vb();
+  ev("pointerdown", 1, 100, 100); ev("pointermove", 1, 160, 100); ev("pointerup", 1, 160, 100);   // a touch drag: no click
+  const dragged = vb();
+  // back to the whole map, then a press on a concept: it opens (before the fix the drag's mark stayed and ate it)
+  await t.press("0", wrap());
+  ev("pointerdown", 1, 10, 10); ev("pointerup", 1, 10, 10);
+  const click = new Event("click", {});
+  t.view.querySelector("a.cm-node").dispatchEvent(click);
+  const clickAfterDrag = click.defaultPrevented;
+  await t.click("Zoom in");
+  // one finger drags; a second finger's moves alone do nothing to it
+  const before = vb();
+  ev("pointerdown", 1, 100, 100);
+  ev("pointermove", 7, 400, 400);
+  const hijack = vb();
+  ev("pointerup", 1, 100, 100);
+  // a pinch: two fingers going apart zoom in
+  ev("pointerdown", 1, 100, 100); ev("pointerdown", 2, 200, 100);
+  ev("pointermove", 2, 300, 100);
+  const pinched = { vb: vb(), status: t.text(t.view.querySelector(".cm-zoom-status")) };
+  ev("pointerup", 2, 300, 100); ev("pointerup", 1, 100, 100);
+  return { start, dragged, clickAfterDrag, before, hijack, pinched };
+});
+
 await scenario("zoom", async (t) => {
   t.answer(`POST ${BASE}/names`, { record: {} });
   await page(t, NAMED);
@@ -828,3 +870,20 @@ def test_a_zoomed_map_still_downloads_whole(page):
 def test_other_filters_show_the_whole_map_again(page):
     r = page["zoom resets with other filters"]
     assert _box(r["zoomed"])[2] < _box(r["after"])[2] and _box(r["after"])[0:2] == [0, 0]
+
+
+@needs_node
+def test_the_other_name_can_be_removed_with_undo(page):
+    r = page["remove the other name"]
+    assert r["sent"][0] == {"action": "forget", "name_id": "f1"}
+    assert r["sent"][1] == {"action": "restore", "record": {"row": {"name_id": "f1"}}}
+    assert any(x.startswith("The other name is removed.") for x in r["toast"])
+
+
+@needs_node
+def test_touch_a_drag_leaves_the_next_click_alone_one_finger_drags_and_two_pinch(page):
+    r = page["touch"]
+    assert _box(r["dragged"])[0] < _box(r["start"])[0]                    # dragged to the right: the view moved left
+    assert r["clickAfterDrag"] is False                                   # a later press is a click again
+    assert r["hijack"] == r["before"]                                     # another pointer does not move the drag
+    assert _box(r["pinched"]["vb"])[2] < _box(r["start"])[2] and r["pinched"]["status"] == "Zoomed in 300 %"

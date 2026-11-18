@@ -958,7 +958,7 @@ html:has(.cb-savebar:not([hidden])) { scroll-padding-bottom: 6rem; }
 .cm-key { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
 .cm-swatch { flex: none; }
 .cm-how { margin: 0; }
-.cm-svg-wrap { width: 100%; overflow: hidden; }
+.cm-svg-wrap { width: 100%; overflow: hidden; touch-action: pan-x pan-y; }   /* a pinch zooms the map, not the page */
 .cm-svg { display: block; width: 100%; height: auto; }
 /* D1, the last part: the zoom (concept-map.js mapZoom). Zoomed in, the map is dragged to move it; lines keep their
    width, and words grow by the square root of the zoom: the map's own font size, set while it runs, is --fs-xs over

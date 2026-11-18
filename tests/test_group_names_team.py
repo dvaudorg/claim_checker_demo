@@ -21,10 +21,12 @@ ANNA, BEN, CLARA = "p" + "a" * 12, "p" + "b" * 12, "p" + "c" * 12
 T1, T2, T3 = "2026-11-01T09:00:00+00:00", "2026-11-01T10:00:00+00:00", "2026-11-01T11:00:00+00:00"
 
 
-def row(nid, name, source="person", person=ANNA, at=T1, concepts=("a", "b", "c")):
+def row(nid, name, source="person", person=ANNA, at=T1, concepts=("a", "b", "c"), by=None, after=()):
+    """A kept name; `by`: who changed it last (default its author); `after`: the versions it replaced ("time|person")."""
     return {"name_id": nid, "name": name, "source": source, "model": "claude-haiku-5-5" if source != "person" else None,
             "concepts_json": json.dumps(list(concepts)), "labels_json": json.dumps({c: c.upper() for c in concepts}),
-            "filters_json": "{}", "n": 30, "created_at": T1, "updated_at": at, "person_id": person}
+            "filters_json": "{}", "n": 30, "created_at": T1, "updated_at": at, "person_id": person,
+            "changed_by": by or person, "history_json": json.dumps(list(after))}
 
 
 @pytest.fixture
@@ -39,7 +41,7 @@ def put(ws, *rows):
     with ws.connect() as cx:
         for r in rows:
             cx.execute(f"INSERT OR REPLACE INTO concept_group_names({', '.join(groupnames.NAME_COLS)}) VALUES "
-                       f"({','.join('?' * len(groupnames.NAME_COLS))})", tuple(r[c] for c in groupnames.NAME_COLS))
+                       f"({','.join('?' * len(groupnames.NAME_COLS))})", tuple(r.get(c) for c in groupnames.NAME_COLS))
 
 
 def merge(ws, names=(), removed=(), quotes=(), sender=ANNA, me=BEN, doc_here=lambda q: q):
@@ -91,14 +93,49 @@ def test_the_same_time_is_settled_by_the_person_id_on_every_copy(proj):
 
 
 @pytest.mark.parametrize("draft_later", [True, False])
-def test_a_persons_name_beats_an_ai_draft_whenever_it_was_given(proj, draft_later):
+def test_a_persons_name_is_shown_before_an_ai_draft_made_at_the_same_time(proj, draft_later):
+    """Review 1: two versions of ONE name made apart are settled by the later change, whatever their kind (so every
+    copy ends the same); a person's name that lost stays as a name of its own, and the map shows it before the draft."""
     put(proj, row("n1", "Talk of solar", source="ai_draft", person=BEN, at=T3 if draft_later else T1))
     merge(proj, [row("n1", "Solar parks", person=ANNA, at=T2)])
-    assert names(proj) == {"n1": ("Solar parks", "person", ANNA)}   # the draft is not kept beside it
-    # and a draft that comes in never replaces a person's name
-    put(proj, row("n2", "Grid costs", person=BEN, at=T1))
-    merge(proj, [row("n2", "Talk of grids", source="ai_draft", person=ANNA, at=T3)])
-    assert names(proj)["n2"] == ("Grid costs", "person", BEN)
+    got = names(proj)
+    if draft_later:
+        assert got["n1"] == ("Talk of solar", "ai_draft", BEN) and ("Solar parks", "person", ANNA) in got.values()
+    else:
+        assert got == {"n1": ("Solar parks", "person", ANNA)}       # a draft that lost is not kept beside it
+    g = _attach(proj, [["a", "b", "c"], ["x", "y"]])["groups"][0]
+    assert (g["name"], g["name_source"]) == ("Solar parks", "person")
+
+
+def test_back_to_a_draft_reaches_every_copy(proj, tmp_path):
+    """Review 1: Anna used the AI's draft (ai), Ben has it; Anna puts it back to a draft (later, after the used one).
+    Ben's copy takes the draft, and Ben's file, which still holds the used name in Anna's name, changes nothing at
+    Anna's: both show the draft."""
+    used = row("n1", "Talk of solar", source="ai", person=ANNA, at=T1)
+    put(proj, used)                                                # Ben's copy
+    draft = row("n1", "Talk of solar", source="ai_draft", person=ANNA, at=T2, after=[f"{T1}|{ANNA}"])
+    merge(proj, [draft], sender=ANNA, me=BEN)
+    assert names(proj)["n1"][1] == "ai_draft"
+    annas = Workspace.create(tmp_path / "anna")
+    put(annas, draft)
+    merge(annas, [used], sender=BEN, me=ANNA)
+    assert names(annas)["n1"][1] == "ai_draft"
+    annas.close_all()
+
+
+def test_a_rename_of_a_colleagues_name_replaces_it_without_a_copy(proj):
+    """Review 5: Ben renamed Anna's name after seeing it (her version is in his history): it replaces hers on every
+    copy that holds it, and no "Also named" copy is left; a copy that holds a version neither knows keeps it apart."""
+    put(proj, row("n1", "Remote work", person=ANNA, at=T1))           # Clara's copy holds Anna's version
+    merge(proj, [row("n1", "Hybrid work", person=BEN, at=T2, after=[f"{T1}|{ANNA}"])], sender=BEN, me=CLARA)
+    assert names(proj) == {"n1": ("Hybrid work", "person", BEN)}
+    # Anna's version again (from a file that still has it): already replaced here
+    merge(proj, [row("n1", "Remote work", person=ANNA, at=T1)], sender=ANNA, me=CLARA)
+    assert names(proj) == {"n1": ("Hybrid work", "person", BEN)}
+    # a chain: two renames after it, the copy holding the first sees both in the history
+    put(proj, row("n2", "One", person=ANNA, at=T1))
+    merge(proj, [row("n2", "Three", person=BEN, at=T3, after=[f"{T1}|{ANNA}", f"{T2}|{ANNA}"])], sender=BEN, me=CLARA)
+    assert names(proj)["n2"] == ("Three", "person", BEN) and len(names(proj)) == 2
 
 
 def test_an_ai_name_used_by_a_person_counts_as_their_decision(proj):
@@ -128,6 +165,83 @@ def test_a_removed_name_stays_removed_unless_changed_after(proj):
 def test_a_name_in_your_own_name_from_someone_elses_file_is_not_taken(proj):
     merge(proj, [row("n1", "Mine?", person=BEN, at=T3)], sender=ANNA, me=BEN)
     assert names(proj) == {}
+    # what counts is who changed it last: Anna kept Ben's name (still his), so it comes in
+    merge(proj, [row("n2", "His, kept by her", person=BEN, by=ANNA, at=T3)], sender=ANNA, me=BEN)
+    assert names(proj) == {"n2": ("His, kept by her", "person", BEN)}
+
+
+@pytest.mark.parametrize("bad", [
+    {"concepts_json": "5"}, {"concepts_json": "[]"}, {"concepts_json": "not json"}, {"concepts_json": "[1, 2]"},
+    {"labels_json": "[]"}, {"labels_json": "{bad"}, {"filters_json": "7"}, {"name": ""}, {"name": 5},
+    {"source": "boss"}, {"person_id": "anna"}, {"changed_by": "x" * 13}, {"updated_at": "yesterday"},
+    {"updated_at": "9999-01-01T00:00:00+00:00"}, {"name_id": "../x"}, {"name_id": None}])
+def test_a_crafted_row_is_left_out_and_the_map_still_draws(proj, bad):
+    """Review 4: every incoming row is checked; one ENLENS could not have written, or dated far ahead, stays out."""
+    assert merge(proj, [{**row("n1", "Broken", at=T2), **bad}]) == 0
+    assert names(proj) == {}
+    _attach(proj, [["a", "b", "c"]])
+
+
+def test_what_comes_in_is_cut_to_size_and_a_broken_stored_row_does_not_break_the_map(proj):
+    merge(proj, [{**row("n1", "x" * 500, at=T2), "n": "lots", "model": 7,
+                  "labels_json": json.dumps({"a": "y" * 900, "zz": "not a concept of it"})}])
+    r = proj.query("SELECT * FROM concept_group_names")[0]
+    assert len(r["name"]) == groupnames.MAX_NAME and r["n"] == 0 and r["model"] is None
+    assert json.loads(r["labels_json"]) == {"a": "y" * 200}
+    put(proj, {**row("n2", "Bad", at=T2), "concepts_json": "5"}, {**row("n3", "Bad too", at=T2), "labels_json": "[]"})
+    out = _attach(proj, [["a", "b", "c"]])                          # no exception, the good name is used
+    assert out["groups"][0]["name"] == "x" * groupnames.MAX_NAME
+
+
+def test_a_name_dated_ahead_waits_and_a_change_made_after_seeing_it_is_later(proj):
+    """Review 3: a fast clock or a crafted date does not win for ever: more than ten minutes ahead, it waits; within
+    them it comes in, and a change made here afterwards is dated after it (the clock moves past what it has seen)."""
+    from enlens_claims.store import now
+
+    soon = groupnames._plus(now(), 300)
+    far = groupnames._plus(now(), groupnames.FUTURE + 120)
+    merge(proj, [row("n1", "Ahead", at=far)])
+    assert names(proj) == {}
+    merge(proj, [row("n1", "Ahead", at=soon)])
+    assert names(proj)["n1"][0] == "Ahead"
+    groupnames.save(proj, "rename", {"name_id": "n1", "name": "Mine now", "concepts": ["a", "b", "c"], "labels": {},
+                                     "filters": {}, "n": 30})
+    r = proj.query("SELECT updated_at, history_json FROM concept_group_names WHERE name_id='n1'")[0]
+    assert r["updated_at"] > soon and json.loads(r["history_json"])[-1] == f"{soon}|{ANNA}"
+    # a removal dated far ahead waits too
+    merge(proj, removed=[{"kind": "group_name", "key": "n1", "title": "x", "at": far, "person_id": ANNA}])
+    assert "n1" in names(proj)
+
+
+def test_undo_keep_and_restore_are_new_changes(proj):
+    """Review 2 and 9: Undo of Use this name and the Undo of Forget are changes made now by this person (so every copy,
+    the author's too, takes them); Keep the name keeps who gave it."""
+    me = people.me()
+    put(proj, row("n1", "Talk of solar", source="ai_draft", person=ANNA, at=T1))
+    r = groupnames.save(proj, "accept", {"name_id": "n1", "concepts": ["a", "b", "c"], "labels": {}, "filters": {}, "n": 30})
+    groupnames.save(proj, "unaccept", {"before": r["before"]})
+    got = proj.query("SELECT * FROM concept_group_names WHERE name_id='n1'")[0]
+    assert got["source"] == "ai_draft" and got["changed_by"] == me and got["person_id"] == me and got["updated_at"] > T1
+    assert len(json.loads(got["history_json"])) == 2               # the draft, then the used name
+    put(proj, row("n2", "Anna's", person=ANNA, at=T1))
+    groupnames.save(proj, "keep", {"name_id": "n2", "concepts": ["a", "b", "d"], "labels": {}, "filters": {}, "n": 30})
+    got = proj.query("SELECT * FROM concept_group_names WHERE name_id='n2'")[0]
+    assert (got["person_id"], got["changed_by"]) == (ANNA, me)
+    rec = groupnames.save(proj, "forget", {"name_id": "n2"})["record"]
+    groupnames.save(proj, "restore", {"record": rec})
+    got = proj.query("SELECT * FROM concept_group_names WHERE name_id='n2'")[0]
+    assert (got["person_id"], got["changed_by"]) == (ANNA, me) and got["updated_at"] > rec["row"]["updated_at"]
+    assert proj.scalar("SELECT COUNT(*) FROM sync_removed WHERE key='n2'") == 0
+
+
+def test_names_from_before_they_travelled_are_this_persons(proj):
+    """Review 6: a name with no person (made before they travelled) is filled with this copy's person, as reviews are."""
+    with proj.connect() as cx:
+        cx.execute("INSERT INTO concept_group_names(name_id, name, source, concepts_json, labels_json, filters_json, n, "
+                   "created_at, updated_at) VALUES ('old', 'Old name', 'person', '[\"a\", \"b\"]', '{}', '{}', 30, ?, ?)",
+                   (T1, T1))
+        people.adopt(cx, BEN)
+    assert proj.query("SELECT person_id, changed_by FROM concept_group_names")[0][:] == (BEN, BEN)
 
 
 def test_an_ai_names_quote_comes_in_only_for_a_document_here(proj):
@@ -183,29 +297,35 @@ def test_a_name_that_fits_no_group_here_is_kept_and_not_drawn(proj):
 def test_a_name_and_its_change_travel_both_ways_through_a_file(anna_and_ben):  # noqa: F811
     anna, ben = anna_and_ben
     cs = ["t1", "t2", "t3"]
+    body = lambda name, nid=None: {"name_id": nid, "name": name, "concepts": cs, "labels": {c: c for c in cs},  # noqa: E731
+                                   "filters": {}, "n": 30}
+
+    def rows(p):
+        with p:
+            return {r["name_id"]: (r["name"], r["person_id"]) for r in
+                    p.ws.query("SELECT name_id, name, person_id FROM concept_group_names")}
+
     with anna:
-        r = groupnames.save(anna.ws, "rename", {"name": "Water and arid land", "concepts": cs,
-                                                "labels": {c: c for c in cs}, "filters": {}, "n": 30})["record"]
-        nid = r["name_id"]
-        with anna.ws.connect() as cx:
-            cx.execute("UPDATE concept_group_names SET updated_at=? WHERE name_id=?", (T1, nid))
+        nid = groupnames.save(anna.ws, "rename", body("Water and arid land"))["record"]["name_id"]
     rep = ben.bring_in(anna.send())
-    assert rep["group_names"] == 1 and any("names of the concept map" in x or "name of the concept map" in x
-                                           for x in rep["lines"])
+    assert rep["group_names"] == 1 and any("of the concept map" in x for x in rep["lines"])
+    assert rows(ben) == {nid: ("Water and arid land", anna.id)}
+    # Ben renames it after seeing it: it replaces Anna's at Anna's, with no other copy left
     with ben:
-        got = ben.ws.query("SELECT name, person_id FROM concept_group_names WHERE name_id=?", (nid,))[0]
-        assert (got["name"], got["person_id"]) == ("Water and arid land", anna.id)
-        groupnames.save(ben.ws, "rename", {"name_id": nid, "name": "Arid regions", "concepts": cs,
-                                           "labels": {c: c for c in cs}, "filters": {}, "n": 30})
-        with ben.ws.connect() as cx:
-            cx.execute("UPDATE concept_group_names SET updated_at=? WHERE name_id=?", (T2, nid))
+        groupnames.save(ben.ws, "rename", body("Arid regions", nid))
     anna.bring_in(ben.send())
+    assert rows(anna) == {nid: ("Arid regions", ben.id)}
+    # both rename it, apart: the later change counts on both copies, the other stays as a name of its own
     with anna:
-        rows = {r["name"]: r["person_id"] for r in anna.ws.query("SELECT name, person_id FROM concept_group_names")}
-    assert rows == {"Arid regions": ben.id, "Water and arid land": anna.id}   # hers kept beside his, nothing lost
-    # Ben forgets his: the removal travels
+        groupnames.save(anna.ws, "rename", body("Dry land", nid))
+    with ben:
+        groupnames.save(ben.ws, "rename", body("Desert", nid))
+    anna.bring_in(ben.send())
+    ben.bring_in(anna.send())
+    assert rows(anna) == rows(ben)
+    assert sorted(v for v in rows(anna).values()) == sorted([("Dry land", anna.id), ("Desert", ben.id)])
+    # Ben forgets the name: the removal travels; the other name stays
     with ben:
         groupnames.save(ben.ws, "forget", {"name_id": nid})
     anna.bring_in(ben.send())
-    with anna:
-        assert [r["name"] for r in anna.ws.query("SELECT name FROM concept_group_names")] == ["Water and arid land"]
+    assert nid not in rows(anna) and len(rows(anna)) == 1

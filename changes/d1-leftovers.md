@@ -5,9 +5,12 @@
   space, like the rest of its work. Each copy still finds its groups from its own counts, so a name goes to the group
   there that holds most of its concepts; one that fits no group is kept under *names kept for groups that are not on
   this map*. When two people name the same group, every copy shows the later name, and the group says *Also named “…”
-  by …, date*, with *Use this one* in *Rename*: nothing a person typed is lost. A person's name always comes before an
-  AI draft, and a name removed on one copy is removed on the others, unless someone renamed it afterwards. A group
-  named by a colleague says *named by* and their name.
+  by …, date*, with *Use this one* in *Rename* and *Remove* beside it. A rename made after seeing a colleague's name
+  replaces it; two changes made at the same time on two copies keep the later, and the other stays as a name of its
+  own, so nothing a person typed is lost. Between two names for one group a person's comes before an AI draft. A name
+  removed on one copy is removed on the others, unless someone changed it afterwards. A group named by a colleague says
+  *named by* and their name; *Keep the name* keeps it theirs. A wrong clock cannot win for ever: a change made after
+  seeing another is always dated after it, and a name dated more than ten minutes ahead waits.
 - **Zoom on the concept map.** *Zoom in*, *Zoom out* and *Whole map* over the map; Ctrl or ⌘ and the wheel, a
   trackpad's pinch, and the keys **+**, **−** and **0**. Zoomed in, drag the map (or use the arrow keys) to move
   around it. Words grow more slowly than the map, and from twice the size on every concept's name shows. A downloaded
@@ -25,5 +28,7 @@
 ### For developers
 
 - `concept_group_names` and `concept_group_quotes` left `sync.common.LOCAL_ONLY` for `OWN_RULES`, merged by
-  `groupnames.merge` (a new column `person_id`; removals as `sync_removed` rows of kind `group_name`). The AI's
+  `groupnames.merge` (new columns `person_id`, `changed_by`, `history_json`; removals as `sync_removed` rows of kind
+  `group_name`; incoming rows checked by `groupnames.valid_row`; local changes dated by `groupnames.clock`).
+- `evaluation` compares two runs' link answers pair by pair, a pair turned round read from its smaller term. The AI's
   `group_name` tasks stay local (`sharing.LOCAL_TASK_KINDS`).

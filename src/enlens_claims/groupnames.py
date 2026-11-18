@@ -24,17 +24,24 @@ view does.
 
 **With a team** (roadmap D1, the last part). The names travel with the project, like the rest of its work: the two
 tables are merged by their own rules (`sync.common.OWN_RULES`, `merge` below), through a zip for a colleague, the shared
-folder and a storage space alike. Each kept name holds its group's concepts, the person who last changed it
-(`person_id`) and when (`updated_at`). The groups themselves are never sent: each copy finds them from its own counts,
+folder and a storage space alike. Each kept name holds its group's concepts, who gave it (`person_id`), who changed
+it last and when (`changed_by`, `updated_at`: its version), and the versions that change replaced (`history_json`).
+Every change made here is dated by `clock`: now, or just after the newest name or removal this copy has seen, so a
+slow clock never dates a change before one it followed. The groups themselves are never sent: each copy finds them from its own counts,
 so on another copy a name goes to the group there that holds most of its concepts (`match`, the same rule as here),
 and a name that fits no group there is kept, listed apart, not drawn.
 
-- *One name, changed on two copies* (the same `name_id`): a person's decision (`person`, `ai`) beats an AI draft;
-  between two decisions the later one counts on every copy (then the larger person id, so every copy agrees). When the
-  two were different people's and the names differ, the one that lost is kept as a name of its own (an id made from
-  the name's id, the person and the time, so every copy makes the same one): nothing a person typed is lost.
-- *Two names for one group* (two `name_id`s that both fit it): the same order picks the one shown, on every copy; the
-  others that a person gave are shown with the group (`also_named`: "Also named … by …").
+- *One name, changed on two copies* (the same `name_id`): a version that has the other in its history was made after
+  it and replaces it. Two made apart are settled by the later change (then the larger id of who made it), whatever
+  their kind, so every copy ends the same; when the one that lost was a person's decision in other words, it is kept
+  as a name of its own (an id made from the name's id, who changed it and when, so every copy makes the same one).
+- *Two names for one group* (two `name_id`s that both fit it): a person's decision (`person`, `ai`) before an AI
+  draft, then the later (`order_key`), on every copy; the others a person gave are shown with the group
+  (`also_named`: "Also named … by …", with *Remove*, a removal like *Forget this name*).
+- *What comes in is checked* (`valid_row`): a row ENLENS could not have written (broken JSON, a wrong type, an id that
+  is not a person's) is left out, and one dated more than `FUTURE` seconds ahead of this clock waits. A version last
+  changed by this copy's person, from someone else's file, is not taken (as for reviews). A colleague's file may carry
+  a third person's names, as it carries their reviews: they are trusted as the rest of the team's work is.
 - *A name removed* (*Use its concepts as the name*, *Forget this name*) is noted in `sync_removed` (kind `group_name`),
   so a colleague's copy does not bring it back; a change made after the removal (a rename on another copy) wins.
 - The AI's tasks for the drafts (kind `group_name`, with their passages and answers) still stay on the computer they
@@ -104,14 +111,30 @@ def _rows(ws: Workspace) -> list[dict]:
     out = []
     quotes = {r["name_id"]: dict(r) for r in ws.query("SELECT * FROM concept_group_quotes")}
     for r in ws.query("SELECT * FROM concept_group_names ORDER BY created_at, name_id"):
-        d = dict(r)
-        d["concepts"] = json.loads(d.pop("concepts_json") or "[]")
-        d["labels"] = json.loads(d.pop("labels_json") or "{}")
-        d["filters"] = json.loads(d.pop("filters_json") or "{}")
+        d = _parsed(dict(r))
+        if d is None:          # a row no ENLENS wrote (merge checks what comes in): left out, not a broken map
+            continue
         q = quotes.get(d["name_id"])
         d["quote"] = {k: q[k] for k in ("quote", "doc_id", "passage_id", "page", "start", "end")} if q else None
         out.append(d)
     return out
+
+
+def _parsed(d: dict) -> dict | None:
+    """A stored row with its JSON read (concepts: a list of ids, labels and filters: objects), or None when it is not
+    what ENLENS writes."""
+    try:
+        concepts = json.loads(d.pop("concepts_json") or "[]")
+        labels = json.loads(d.pop("labels_json") or "{}")
+        filters = json.loads(d.pop("filters_json") or "{}")
+        d.pop("history_json", None)
+    except (TypeError, ValueError):
+        return None
+    if (not isinstance(concepts, list) or not all(isinstance(c, str) for c in concepts) or not isinstance(labels, dict)
+            or not isinstance(filters, dict) or not isinstance(d.get("name"), str)):
+        return None
+    d.update(concepts=concepts, labels={str(k): str(v) for k, v in labels.items()}, filters=filters)
+    return d
 
 
 def _same_view(rec: dict, filters: dict, n: int) -> bool:
@@ -119,10 +142,11 @@ def _same_view(rec: dict, filters: dict, n: int) -> bool:
 
 
 def order_key(rec: dict) -> tuple:
-    """How kept names are ranked, the first first, the same on every copy: a person's decision before an AI draft; then
-    the later; then the larger person id; then the id."""
-    return (-RANK.get(rec.get("source"), 0), _neg_time(rec.get("updated_at")), _neg_time(rec.get("person_id")),
-            rec.get("name_id") or "")
+    """How DIFFERENT kept names that fit one group are ranked, the first first, the same on every copy: a person's
+    decision before an AI draft; then the later; then the larger id of who changed it; then the id. (Two versions of
+    the SAME name are settled by `merge`: the later change, whatever its kind.)"""
+    return (-RANK.get(rec.get("source"), 0), _neg_time(rec.get("updated_at")),
+            _neg_time(rec.get("changed_by") or rec.get("person_id")), rec.get("name_id") or "")
 
 
 def match_all(records: list[dict], groups: list[list[str]], on_map: set[str]) -> dict[int, list[dict]]:
@@ -298,8 +322,8 @@ def save(ws: Workspace, action: str, body: dict) -> dict:
     Raises KeyError for a name that is not there, ValueError for a request that cannot be done."""
     from . import people
 
-    at = now()
     me = people.me()
+    at = now()   # this copy's clock, read in the transaction below (`clock`)
     filters = body.get("filters") if isinstance(body.get("filters"), dict) else {}
     filters = {str(k): v for k, v in filters.items() if isinstance(v, (str, int, list))}
     n = int(body.get("n") or 0) if str(body.get("n") or "0").isdigit() else 0
@@ -314,15 +338,15 @@ def save(ws: Workspace, action: str, body: dict) -> dict:
             raise KeyError(i)
         return r
 
-    def group_now(cx, i, conc, labs, source=None):
-        sets = ["concepts_json=?", "labels_json=?", "filters_json=?", "n=?", "updated_at=?", "person_id=?"]
-        args = [json.dumps(conc), json.dumps(labs, ensure_ascii=False), json.dumps(filters, sort_keys=True), n, at, me]
-        if source:
-            sets.append("source=?")
-            args.append(source)
-        cx.execute(f"UPDATE concept_group_names SET {', '.join(sets)} WHERE name_id=?", (*args, i))
+    def group_now(cx, i, conc, labs, author=True, **more):
+        # the name with its group as it is now. `author`: the name becomes this person's (a rename, a draft used); not
+        # for Keep the name, which keeps who gave it (it is still their name; `changed_by` says who kept it)
+        _change(cx, i, at, me, concepts_json=json.dumps(conc), labels_json=json.dumps(labs, ensure_ascii=False),
+                filters_json=json.dumps(filters, sort_keys=True), n=n, **({"person_id": me} if author else {}), **more)
 
     with ws.connect() as cx:
+        at = clock(cx)
+        fill_people(cx, me)
         if action == "rename":
             name = _clean(body.get("name"), MAX_NAME)
             if not name:
@@ -331,16 +355,10 @@ def save(ws: Workspace, action: str, body: dict) -> dict:
                 raise ValueError("Say which concepts the group holds.")
             if nid:
                 get(cx, nid)
-                cx.execute("UPDATE concept_group_names SET name=?, source='person', model=NULL WHERE name_id=?",
-                           (name, nid))
                 cx.execute("DELETE FROM concept_group_quotes WHERE name_id=?", (nid,))
-                group_now(cx, nid, concepts, labels)
             else:
                 nid = uuid.uuid4().hex[:16]
-                cx.execute("INSERT INTO concept_group_names(name_id, name, source, model, concepts_json, labels_json, "
-                           "filters_json, n, created_at, updated_at, person_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                           (nid, name, "person", None, json.dumps(concepts), json.dumps(labels, ensure_ascii=False),
-                            json.dumps(filters, sort_keys=True), n, at, at, me))
+            group_now(cx, nid, concepts, labels, name=name, source="person", model=None)
             _forget_failures(cx, concepts)
         elif action == "use_concepts":
             if nid:
@@ -351,17 +369,17 @@ def save(ws: Workspace, action: str, body: dict) -> dict:
             _forget_failures(cx, concepts, ("failed", "done"))
             return {"record": None}
         elif action == "unaccept" and isinstance(body.get("before"), list):
-            # Undo of Use this name: each name as it was before (its group, filters and size, and its source)
-            cols = ("name", "source", "model", "concepts_json", "labels_json", "filters_json", "n", "updated_at",
-                    "person_id")
+            # Undo of Use this name: each name as it was before (its group, filters and size, and its source). An
+            # Undo is a new change: this copy's clock and this person, so every copy takes it (review, 18 Nov 2026)
+            cols = ("name", "source", "model", "concepts_json", "labels_json", "filters_json", "n")
             done = []
             for row in body["before"]:
                 if not isinstance(row, dict) or not row.get("name_id") or row.get("source") not in ("ai_draft", "ai"):
                     raise ValueError("Nothing to put back.")
                 r = get(cx, str(row["name_id"]))
                 if r["source"] == "ai":       # still the used name (not renamed meanwhile)
-                    cx.execute(f"UPDATE concept_group_names SET {', '.join(c + '=?' for c in cols)} WHERE name_id=?",
-                               (*(row.get(c) if c in row else r[c] for c in cols), r["name_id"]))
+                    _change(cx, r["name_id"], at, me, person_id=me,
+                            **{c: (row.get(c) if c in row else r[c]) for c in cols})
                 done.append(str(row["name_id"]))
             if len(done) != 1:
                 return {"record": None}
@@ -379,11 +397,10 @@ def save(ws: Workspace, action: str, body: dict) -> dict:
                     conc = _clean_ids(it.get("concepts")) or json.loads(r["concepts_json"] or "[]")
                     labs = it.get("labels") if isinstance(it.get("labels"), dict) else {}
                     group_now(cx, r["name_id"], conc, {str(k): _clean(v, 200) for k, v in labs.items()} or
-                              json.loads(r["labels_json"] or "{}"), "ai")
+                              json.loads(r["labels_json"] or "{}"), source="ai")
                     _forget_failures(cx, conc)
                 elif action == "unaccept" and r["source"] == "ai":
-                    cx.execute("UPDATE concept_group_names SET source='ai_draft', updated_at=?, person_id=? WHERE "
-                               "name_id=?", (at, me, r["name_id"]))
+                    _change(cx, r["name_id"], at, me, source="ai_draft", person_id=me)
             if len(items) != 1:
                 return {"record": None, "before": before} if action == "accept" else {"record": None}
             nid = str(items[0]["name_id"])
@@ -391,7 +408,7 @@ def save(ws: Workspace, action: str, body: dict) -> dict:
             get(cx, nid)
             if not concepts:
                 raise ValueError("Say which concepts the group holds.")
-            group_now(cx, nid, concepts, labels)
+            group_now(cx, nid, concepts, labels, author=False)
             _forget_failures(cx, concepts)
         elif action == "forget":
             r = get(cx, nid)
@@ -405,11 +422,12 @@ def save(ws: Workspace, action: str, body: dict) -> dict:
             row = rec.get("row") if isinstance(rec.get("row"), dict) else None
             if not row or not row.get("name_id") or row.get("source") not in SOURCES[1:]:
                 raise ValueError("Nothing to put back.")
-            cols = ("name_id", "name", "source", "model", "concepts_json", "labels_json", "filters_json", "n",
-                    "created_at", "updated_at", "person_id")
-            # put back as now (Undo): later than the removal it undoes, on every copy that heard of that
-            cx.execute(f"INSERT OR REPLACE INTO concept_group_names({', '.join(cols)}) VALUES "
-                       f"({','.join('?' * len(cols))})", tuple(at if c == "updated_at" else row.get(c) for c in cols))
+            # put back as a new change (Undo): this copy's clock, later than the removal it undoes on every copy that
+            # heard of it, and this person as who changed it; the name is still its author's
+            cols = ("name", "source", "model", "concepts_json", "labels_json", "filters_json", "n", "created_at",
+                    "person_id")
+            _change(cx, str(row["name_id"]), at, me, **{c: row.get(c) for c in cols},
+                    history_json=json.dumps((_history(row) + [stamp(row)])[-HISTORY:]))
             cx.execute("DELETE FROM sync_removed WHERE kind=? AND key=?", (REMOVED, row["name_id"]))
             q = rec.get("quote") if isinstance(rec.get("quote"), dict) else None
             if q and q.get("name_id") == row["name_id"]:
@@ -427,16 +445,83 @@ def save(ws: Workspace, action: str, body: dict) -> dict:
     return {"record": recs[0] if recs else None}
 
 
+# ---- with a team (the module's notes) --------------------------------------------------------------------------------
+NAME_COLS = ("name_id", "name", "source", "model", "concepts_json", "labels_json", "filters_json", "n", "created_at",
+             "updated_at", "person_id", "changed_by", "history_json")
+QUOTE_COLS = ("name_id", "doc_id", "passage_id", "page", "start", "end", "quote")
+FUTURE = 600          # seconds: a name or removal dated further ahead of this computer's clock is not taken (yet)
+HISTORY = 20          # the versions a name remembers it replaced (`history_json`)
+
+
+def _iso(at) -> str | None:
+    """A time as this module writes it (UTC, to the second, `store.now()`'s form), or None when it is not a time."""
+    import datetime as _dt
+
+    try:
+        t = _dt.datetime.fromisoformat(str(at))
+    except (TypeError, ValueError):
+        return None
+    if t.tzinfo is None:
+        return None
+    return t.astimezone(_dt.timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _plus(at: str, seconds: int) -> str:
+    import datetime as _dt
+
+    return (_dt.datetime.fromisoformat(at) + _dt.timedelta(seconds=seconds)).isoformat()
+
+
+def clock(cx) -> str:
+    """The time of a change made on this copy: now, or one second after the newest name or removal this copy holds
+    when that is later (a hybrid logical clock: a change made after seeing another is always later than it, whatever
+    this computer's clock says, so a slow clock cannot undo a colleague's rename)."""
+    t = now()
+    got = [x for x in (cx.execute("SELECT MAX(updated_at) FROM concept_group_names").fetchone()[0],
+                       cx.execute("SELECT MAX(at) FROM sync_removed WHERE kind=?", (REMOVED,)).fetchone()[0]) if x]
+    newest = max((x for x in (_iso(g) for g in got) if x), default=None)
+    return _plus(newest, 1) if newest and newest >= t else t
+
+
+def stamp(row: dict) -> str:
+    """A version of a name: when it was changed and by whom."""
+    return f"{row.get('updated_at') or ''}|{row.get('changed_by') or row.get('person_id') or ''}"
+
+
+def _history(row: dict) -> list[str]:
+    try:
+        h = json.loads(row.get("history_json") or "[]")
+    except (TypeError, ValueError):
+        return []
+    return [x for x in h if isinstance(x, str)][-HISTORY:] if isinstance(h, list) else []
+
+
+def _change(cx, nid: str, at: str, me: str, **fields) -> None:
+    """A change made on this copy: written at `at` (`clock`) with this person as who changed it, the version it
+    replaced added to its history, so another copy can tell a later change from one made at the same time."""
+    old = cx.execute("SELECT * FROM concept_group_names WHERE name_id=?", (nid,)).fetchone()
+    if old is None:
+        row = {c: None for c in NAME_COLS}
+        row.update(name_id=nid, created_at=at, person_id=me, history_json="[]")
+    else:
+        row = dict(old)
+        row["history_json"] = json.dumps((_history(row) + [stamp(row)])[-HISTORY:])
+    row.update(fields)
+    row.update(name_id=nid, updated_at=at, changed_by=me, created_at=row.get("created_at") or at)
+    cx.execute(f"INSERT OR REPLACE INTO concept_group_names({', '.join(NAME_COLS)}) VALUES "
+               f"({','.join('?' * len(NAME_COLS))})", tuple(row.get(c) for c in NAME_COLS))
+
+
+def fill_people(cx, me: str) -> None:
+    """Names from before they travelled (no person) are this copy's person's, as reviews are (people.adopt)."""
+    cx.execute("UPDATE concept_group_names SET person_id=? WHERE person_id IS NULL", (me,))
+    cx.execute("UPDATE concept_group_names SET changed_by=person_id WHERE changed_by IS NULL")
+
+
 def _note_removed(cx, name_id: str, name: str | None, at: str, person_id: str) -> None:
     """A kept name removed: noted so that a colleague's copy does not bring it back (`merge`)."""
     cx.execute("INSERT OR REPLACE INTO sync_removed(kind, key, title, at, person_id) VALUES (?,?,?,?,?)",
                (REMOVED, name_id, name, at, person_id))
-
-
-# ---- with a team (the module's notes) --------------------------------------------------------------------------------
-NAME_COLS = ("name_id", "name", "source", "model", "concepts_json", "labels_json", "filters_json", "n", "created_at",
-             "updated_at", "person_id")
-QUOTE_COLS = ("name_id", "doc_id", "passage_id", "page", "start", "end", "quote")
 
 
 def _fork_id(name_id: str, person_id: str | None, at: str | None) -> str:
@@ -444,78 +529,146 @@ def _fork_id(name_id: str, person_id: str | None, at: str | None) -> str:
     return "f" + _h(name_id, person_id or "", at or "")[:15]
 
 
+def valid_row(r: dict, sender: str, latest: str) -> dict | None:
+    """A colleague's name as this copy stores it, or None when it is not one ENLENS could have written (a broken or
+    crafted file: such a row would break the map), or dated more than FUTURE seconds after `latest`."""
+    from .people import ID_RE
+
+    if not isinstance(r, dict):
+        return None
+    nid, name = r.get("name_id"), _clean(r.get("name"), MAX_NAME) if isinstance(r.get("name"), str) else ""
+    if not isinstance(nid, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", nid) or not name:
+        return None
+    if r.get("source") not in RANK:
+        return None
+    at = _iso(r.get("updated_at"))
+    if at is None or at > latest:
+        return None
+    try:
+        concepts = json.loads(r.get("concepts_json") or "")
+        labels = json.loads(r.get("labels_json") or "{}")
+        filters = json.loads(r.get("filters_json") or "{}")
+    except (TypeError, ValueError):
+        return None
+    if (not isinstance(concepts, list) or not concepts or len(concepts) > 200
+            or not all(isinstance(c, str) and 0 < len(c) <= 200 for c in concepts)
+            or not isinstance(labels, dict) or not isinstance(filters, dict)):
+        return None
+    labels = {k: _clean(v, 200) for k, v in labels.items() if isinstance(k, str) and k in set(concepts)}
+    filters = {str(k): v for k, v in filters.items() if isinstance(v, (str, int, list))}
+    n = r.get("n")
+    n = n if isinstance(n, int) and 0 <= n <= 10000 else 0
+    person = r.get("person_id") if isinstance(r.get("person_id"), str) and ID_RE.fullmatch(r["person_id"]) else None
+    if r.get("person_id") not in (None, "") and person is None:
+        return None
+    person = person or sender
+    by = r.get("changed_by") if isinstance(r.get("changed_by"), str) and ID_RE.fullmatch(r["changed_by"]) else None
+    if r.get("changed_by") not in (None, "") and by is None:
+        return None
+    model = r.get("model") if isinstance(r.get("model"), str) else None
+    return {"name_id": nid, "name": name, "source": r["source"], "model": (model or "")[:100] or None,
+            "concepts_json": json.dumps(concepts), "labels_json": json.dumps(labels, ensure_ascii=False),
+            "filters_json": json.dumps(filters, sort_keys=True), "n": n,
+            "created_at": _iso(r.get("created_at")) or at, "updated_at": at, "person_id": person,
+            "changed_by": by or person, "history_json": json.dumps(_history(r))}
+
+
+def _valid_quote(q: dict | None) -> dict | None:
+    if not isinstance(q, dict) or not isinstance(q.get("quote"), str) or not q["quote"].strip():
+        return None
+    if not all(isinstance(q.get(k), int) for k in ("start", "end")) or q["start"] < 0 or q["end"] < q["start"]:
+        return None
+    if not isinstance(q.get("doc_id"), str) or not isinstance(q.get("passage_id"), str):
+        return None
+    return {**q, "quote": _clean(q["quote"], 1000), "page": q.get("page") if isinstance(q.get("page"), int) else None}
+
+
 def merge(cx, names: list[dict], quotes: list[dict], removed: list[dict], sender: str, me: str,
           doc_here: Callable[[dict], dict | None]) -> int:
     """A colleague's kept names into this copy (sync/merge.py, the module's notes). `names`, `quotes`, `removed`: the
     rows of their `concept_group_names`, `concept_group_quotes` and their `sync_removed` rows of kind `group_name`;
-    `doc_here(quote row)`: the row with its ids as in this copy, or None when its document is not here. A name in
-    this person's own name from someone else's file is not taken (as for reviews: a file cannot change your work in
-    your name). Returns how many names came in or changed."""
+    `doc_here(quote row)`: the row with its ids as in this copy, or None when its document is not here.
+
+    Two versions of one name: a version made after the other (the other is in its history) replaces it; two made
+    apart (neither knows the other) are settled by the later change, then the larger id of who made it, whatever their
+    kind, so every copy ends the same; the one that lost stays as a name of its own when it was a person's decision in
+    other words. Every row is checked first (`valid_row`), and one dated more than FUTURE seconds ahead of this clock
+    waits. A version or removal last changed by this person, from someone else's file, is not taken (as for reviews:
+    a file cannot change your work in your name). Returns how many names came in or changed."""
+    fill_people(cx, me)
+    latest = _plus(now(), FUTURE)
     gone = {r[0]: r[1] or "" for r in cx.execute("SELECT key, at FROM sync_removed WHERE kind=?", (REMOVED,))}
     for r in removed:
-        key, at = str(r.get("key") or ""), str(r.get("at") or "")
-        if not key or (r.get("person_id") == me and sender != me):
+        key, at = r.get("key"), _iso(r.get("at"))
+        if not isinstance(key, str) or not key or at is None or at > latest:
+            continue
+        if r.get("person_id") == me and sender != me:
             continue
         row = cx.execute("SELECT updated_at FROM concept_group_names WHERE name_id=?", (key,)).fetchone()
         if row is not None and (row[0] or "") <= at:
             cx.execute("DELETE FROM concept_group_names WHERE name_id=?", (key,))
             cx.execute("DELETE FROM concept_group_quotes WHERE name_id=?", (key,))
         if at > gone.get(key, ""):
-            _note_removed(cx, key, r.get("title"), at, r.get("person_id") or sender)
+            title = _clean(r.get("title"), MAX_NAME) if isinstance(r.get("title"), str) else None
+            who = r.get("person_id") if isinstance(r.get("person_id"), str) else sender
+            _note_removed(cx, key, title, at, who)
             gone[key] = at
-    their_quotes = {q.get("name_id"): q for q in quotes}
+    their_quotes = {q.get("name_id"): q for q in quotes if isinstance(q, dict)}
     n = 0
 
     def put(row: dict, nid: str, quote: dict | None) -> None:
         cx.execute(f"INSERT OR REPLACE INTO concept_group_names({', '.join(NAME_COLS)}) VALUES "
                    f"({','.join('?' * len(NAME_COLS))})", tuple(nid if c == "name_id" else row.get(c) for c in NAME_COLS))
         cx.execute("DELETE FROM concept_group_quotes WHERE name_id=?", (nid,))
-        q = doc_here(quote) if quote and row.get("source") in ("ai", "ai_draft") else None
+        q = _valid_quote(quote) if row.get("source") in ("ai", "ai_draft") else None
+        q = doc_here(q) if q else None
         if q:
             cx.execute(f"INSERT OR REPLACE INTO concept_group_quotes({', '.join(QUOTE_COLS)}) VALUES "
                        f"({','.join('?' * len(QUOTE_COLS))})", tuple(nid if c == "name_id" else q.get(c)
                                                                      for c in QUOTE_COLS))
 
-    for r in sorted(names, key=lambda x: str(x.get("name_id") or "")):
-        nid = str(r.get("name_id") or "")
-        if not nid or r.get("source") not in RANK or not _clean(r.get("name"), MAX_NAME):
+    later = lambda x: (x["updated_at"], x["changed_by"])  # noqa: E731
+    for raw in sorted((x for x in names if isinstance(x, dict)), key=lambda x: str(x.get("name_id") or "")):
+        r = valid_row(raw, sender, latest)
+        if r is None:
             continue
-        r = {**r, "person_id": r.get("person_id") or sender}
-        if r["person_id"] == me and sender != me:
+        nid = r["name_id"]
+        if r["changed_by"] == me and sender != me:
             continue
-        if gone.get(nid, "") >= (r.get("updated_at") or "") and nid in gone:
+        if nid in gone and gone[nid] >= r["updated_at"]:
             continue                         # removed after this version was made
         mine = cx.execute("SELECT * FROM concept_group_names WHERE name_id=?", (nid,)).fetchone()
         if mine is None:
             put(r, nid, their_quotes.get(nid))
             n += 1
             continue
-        mine = dict(mine)
-        mine["person_id"] = mine.get("person_id") or me
-        if all((mine.get(c) or None) == (r.get(c) or None) for c in NAME_COLS if c not in ("created_at", "model")):
+        mine = valid_row(dict(mine), me, "9999") or {**dict(mine), "updated_at": "", "changed_by": ""}
+        if stamp(mine) == stamp(r) or stamp(r) in _history(mine):
+            continue                         # the same version, or one this copy has already replaced
+        if stamp(mine) in _history(r):
+            put(r, nid, their_quotes.get(nid))   # made after this copy's: it replaces it
+            n += 1
             continue
-        theirs_win = order_key(r) < order_key(mine)
+        theirs_win = later(r) > later(mine)      # made apart: the later change, whatever its kind
         win, lose = (r, mine) if theirs_win else (mine, r)
         if theirs_win:
             put(r, nid, their_quotes.get(nid))
             n += 1
-        # two people's decisions on one name, with different words: the one that lost stays, as a name of its own
-        if (RANK.get(lose.get("source")) == 2 and RANK.get(win.get("source")) == 2
-                and lose["person_id"] != win["person_id"]
-                and _clean(lose.get("name"), MAX_NAME).lower() != _clean(win.get("name"), MAX_NAME).lower()):
-            fid = _fork_id(nid, lose["person_id"], lose.get("updated_at"))
+        # the one that lost, a person's decision in other words, stays as a name of its own (an AI draft does not)
+        if (RANK.get(lose.get("source")) == 2 and lose.get("name")
+                and _clean(lose["name"], MAX_NAME).lower() != _clean(win["name"], MAX_NAME).lower()):
+            fid = _fork_id(nid, lose.get("changed_by"), lose.get("updated_at"))
             if fid not in gone and not cx.execute("SELECT 1 FROM concept_group_names WHERE name_id=?",
                                                   (fid,)).fetchone():
                 if lose is mine:
                     q = cx.execute("SELECT * FROM concept_group_quotes WHERE name_id=?", (nid,)).fetchone()
-                    q = dict(q) if q else None
-                    put(lose, fid, None)
+                    put({**lose, "history_json": "[]"}, fid, None)
                     if q and lose.get("source") == "ai":
                         cx.execute(f"INSERT OR REPLACE INTO concept_group_quotes({', '.join(QUOTE_COLS)}) VALUES "
                                    f"({','.join('?' * len(QUOTE_COLS))})",
-                                   tuple(fid if c == "name_id" else q.get(c) for c in QUOTE_COLS))
+                                   tuple(fid if c == "name_id" else dict(q).get(c) for c in QUOTE_COLS))
                 else:
-                    put(lose, fid, their_quotes.get(nid))
+                    put({**lose, "history_json": "[]"}, fid, their_quotes.get(nid))
                 n += 1
     return n
 
@@ -717,9 +870,10 @@ def apply(ws: Workspace, task_id: str) -> dict | None:
     hit = find_quote(p["text"], a.name_quote.quote)
     from . import people
 
-    at, me = now(), people.me()   # the draft is the person's who asked for it
+    me = people.me()   # the draft is the person's who asked for it
     concepts, labels = payload.get("concept_ids") or [], payload.get("labels") or {}
     with ws.connect() as cx:
+        at = clock(cx)
         # the name the group has now: the one the task was asked for, or one given since to the same concepts
         recs = [dict(x) for x in cx.execute("SELECT name_id, source, concepts_json, updated_at FROM concept_group_names")]
         for x in recs:
@@ -734,19 +888,11 @@ def apply(ws: Workspace, task_id: str) -> dict | None:
             nid = took[gi]["name_id"] if gi in took else None
         if nid and next(x for x in recs if x["name_id"] == nid)["source"] == "person":
             return None          # the researcher named it meanwhile: never overwritten
-        if nid is None:
-            nid = uuid.uuid4().hex[:16]
-            cx.execute("INSERT INTO concept_group_names(name_id, name, source, model, concepts_json, labels_json, "
-                       "filters_json, n, created_at, updated_at, person_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                       (nid, name, "ai_draft", r[0]["model"], json.dumps(concepts),
-                        json.dumps(labels, ensure_ascii=False), json.dumps(payload.get("filters") or {}, sort_keys=True),
-                        int(payload.get("n") or 0), at, at, me))
-        else:
-            cx.execute("UPDATE concept_group_names SET name=?, source='ai_draft', model=?, concepts_json=?, "
-                       "labels_json=?, filters_json=?, n=?, updated_at=?, person_id=? WHERE name_id=?",
-                       (name, r[0]["model"], json.dumps(concepts), json.dumps(labels, ensure_ascii=False),
-                        json.dumps(payload.get("filters") or {}, sort_keys=True), int(payload.get("n") or 0), at, me,
-                        nid))
+        nid = nid or uuid.uuid4().hex[:16]
+        _change(cx, nid, at, me, name=name, source="ai_draft", model=r[0]["model"],
+                concepts_json=json.dumps(concepts), labels_json=json.dumps(labels, ensure_ascii=False),
+                filters_json=json.dumps(payload.get("filters") or {}, sort_keys=True), n=int(payload.get("n") or 0),
+                person_id=me)
         cx.execute("DELETE FROM concept_group_quotes WHERE name_id=?", (nid,))
         _forget_failures(cx, concepts)        # named now: an earlier failure for it is no longer the page's news
         if hit:

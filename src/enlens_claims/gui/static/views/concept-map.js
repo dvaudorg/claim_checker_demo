@@ -418,13 +418,34 @@ export function mapZoom(state = { k: 1, fx: 0.5, fy: 0.5 }) {
     const x = +a.getAttribute("data-x"), y = +a.getAttribute("data-y"), b = box();
     if (x < b.x || x > b.x + b.w || y < b.y || y > b.y + b.h) { state.fx = x / W; state.fy = y / H; apply(false); }
   });
+  // a press, a drag (one pointer, zoomed in) and a pinch (two fingers on a touch screen: the browser's own pinch is
+  // off over the map, views.css). Each pointer is followed by its id, so a second finger never takes over a drag
+  const down = new Map();   // pointer id -> where it is
+  let pinch = null;         // two fingers: their distance and the zoom when the pinch began
   wrap.addEventListener("pointerdown", (e) => {
-    if (state.k <= 1 || e.button !== 0 || !svg) return;
+    panned = false;         // a new press: a drag before it is over (a touch drag has no click after it)
+    if (!svg || (e.button !== undefined && e.button !== 0)) return;
+    down.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (down.size === 2) {
+      const [p, q] = [...down.values()];
+      pinch = { d: Math.hypot(p.x - q.x, p.y - q.y) || 1, k: state.k };
+      drag = null;
+      delete wrap.dataset.panning;
+      return;
+    }
+    if (down.size > 2 || state.k <= 1) return;
     drag = { x: e.clientX, y: e.clientY, b: box(), id: e.pointerId, on: false };
-    panned = false;
   });
   wrap.addEventListener("pointermove", (e) => {
-    if (!drag) return;
+    if (down.has(e.pointerId)) down.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinch && down.size >= 2) {
+      const [p, q] = [...down.values()];
+      const [px, py] = toMap({ clientX: (p.x + q.x) / 2, clientY: (p.y + q.y) / 2 });
+      set(pinch.k * (Math.hypot(p.x - q.x, p.y - q.y) || 1) / pinch.d, px, py);
+      panned = true;
+      return;
+    }
+    if (!drag || e.pointerId !== drag.id) return;
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
     if (!drag.on && Math.hypot(dx, dy) < 4) return;
     if (!drag.on) { drag.on = true; wrap.dataset.panning = "true"; if (wrap.setPointerCapture && drag.id !== undefined) try { wrap.setPointerCapture(drag.id); } catch (_) { /* gone */ } }
@@ -434,7 +455,11 @@ export function mapZoom(state = { k: 1, fx: 0.5, fy: 0.5 }) {
     state.fx = (nb.x + nb.w / 2) / W; state.fy = (nb.y + nb.h / 2) / H;
     apply(false);
   });
-  const endDrag = () => { if (drag && drag.on) panned = true; drag = null; delete wrap.dataset.panning; };
+  const endDrag = (e) => {
+    down.delete(e.pointerId);
+    if (down.size < 2) pinch = null;
+    if (drag && e.pointerId === drag.id) { if (drag.on) panned = true; drag = null; delete wrap.dataset.panning; }
+  };
   wrap.addEventListener("pointerup", endDrag);
   wrap.addEventListener("pointercancel", endDrag);
   // the click that ends a drag opens nothing (a concept, a line)
@@ -997,7 +1022,9 @@ export async function renderConceptMap(view, params, query) {
         h("td", { "data-label": "Group" }, h("div", { class: "cm-group-cell" },
           h("div", { class: "cm-group-title" }, swatch(g.group), h("span", { class: "serif cm-group-words" }, groupName(g)), h("span", { class: "visually-hidden" }, ` (${groupMark(g.group).words}${g.group > OWN_MARKS ? `, as every group from ${OWN_MARKS + 1} on` : ""})`)),
           h("div", { class: "cm-group-facts" }, sourceTag(g), ch ? tag({ kind: "attention" }, "changed since it was named") : null),
-          changeLine, (g.also_named || []).map((x) => h("p", { class: "muted small cm-group-also" }, `${alsoWords(x)}.`)), rests)),
+          changeLine, (g.also_named || []).map((x) => h("p", { class: "muted small cm-group-also" }, `${alsoWords(x)}. `,
+            // the other name, removed on every copy (a removal travels like a forgotten name); Undo puts it back
+            button({ kind: "quiet", sm: true, "aria-label": `Remove the other name “${x.name}”`, onClick: () => act({ action: "forget", name_id: x.id }, "The other name is removed.", { refocus: first, undo: (r) => ({ action: "restore", record: r.record }) }) }, "Remove"))), rests)),
         conceptsCell(ordered),
         h("td", {}, acts));
     });

@@ -360,7 +360,10 @@ def test_undo_of_use_this_name_puts_back_what_it_overwrote(project):
     back = groupnames.save(project, "unaccept", {"name_id": d["name_id"], "before": json.loads(json.dumps(r["before"]))})
     assert back["record"]["source"] == "ai_draft"
     now = dict(project.query("SELECT * FROM concept_group_names WHERE name_id=?", (d["name_id"],))[0])
-    assert now == was
+    # the name as it was; the Undo itself is a new change (its time, who made it, what it replaced: review of 18 Nov)
+    stamps = ("updated_at", "changed_by", "history_json")
+    assert {k: v for k, v in now.items() if k not in stamps} == {k: v for k, v in was.items() if k not in stamps}
+    assert now["updated_at"] > was["updated_at"] and len(json.loads(now["history_json"])) == 2
     # all at once, and back
     items = [{"name_id": x["name_id"], "concepts": x["concepts"][:2]} for x in m["groups"]]
     r = groupnames.save(project, "accept", {"items": items, "filters": {}, "n": 90})

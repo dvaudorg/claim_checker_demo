@@ -130,13 +130,21 @@ goes to the group there that holds most of them, by the same rule as on yours; a
 under *names kept for groups that are not on this map*, and comes back with its group.
 
 - When two people name the **same group**, the map shows the later name on every copy, and the group says *Also named
-  “…” by …* with the other name, its author and the date; *Rename* lists it too, with *Use this one*. Nothing a person
-  typed is lost: when both renamed the same name on their own copies, the one that lost stays as a name of its own.
-- A name a person gave (or an AI draft a person used) always comes before an AI draft, whenever the draft was made.
+  “…” by …* with the other name, its author and the date; *Rename* lists it too, with *Use this one*, and *Remove*
+  takes the other name away on every copy (with *Undo*). Nothing a person typed is lost by itself: when two people
+  changed the same name at the same time, each on their own copy, the later change counts and the other stays as a name
+  of its own. A change made after seeing the other (a rename of a colleague's name) simply replaces it.
+- Between two different names for one group, a name a person gave (or an AI draft a person used) comes before an AI
+  draft, whenever the draft was made.
+- *Keep the name* keeps it its author's name; the group says who named it, not who kept it.
 - A name you remove (*Use its concepts as the name*, *Forget this name*) is removed on your colleagues' copies too,
   unless someone renamed it after you removed it.
 - The AI's quote for its name goes with the name, but only to a copy that holds the quoted document. The AI's work
   that drafted it (its task) stays on the computer it ran on.
+- Times are compared as each copy records them, but a change made after seeing another is always counted as later,
+  whatever the computer's clock says; a name dated more than ten minutes ahead of your clock waits until it is not.
+- Names are trusted as your team's other work is: a colleague's file may carry names in a third person's name (as it
+  carries their reviews), but never changes one you changed last in yours.
 
 **Download the map.** *PNG* and *SVG* at the top right save the map as a picture, made in the page (nothing is sent
 anywhere): the title (*Concept map of* and the project's name), what was counted, the filters when one is set, the

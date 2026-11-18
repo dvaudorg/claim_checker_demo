@@ -104,3 +104,18 @@ def test_a_pair_turned_round_is_the_same_decision_when_two_routes_are_compared()
     lnk = {"terms": [{}, {}]}
     assert benchmark._decisions("link", lnk, _answer("needs", a=2, b=1)) == {"1-2": "needed_by"}
     assert benchmark._decisions("link", lnk, _answer("needed_by")) == {"1-2": "needed_by"}
+
+
+def test_comparing_two_runs_reads_a_pair_turned_round_as_the_same_decision(tmp_path):
+    """Review 7: evaluation._decision reads each pair from its smaller term number."""
+    from enlens_claims import evaluation
+
+    ws = Workspace.create(tmp_path / "e")
+    with ws.connect() as c:
+        for tid, ans in (("x1", _answer("needs", a=2, b=1)), ("x2", _answer("needed_by")), ("x3", _answer("needs"))):
+            c.execute("INSERT INTO results(task_id, attempt, kind, model, prompt_version, raw_json, valid, errors_json, "
+                      "received_at) VALUES (?,1,'link','m','link-v2',?,1,'[]','2026-11-18T00:00:00+00:00')",
+                      (tid, json.dumps(ans)))
+    d = {t: evaluation._decision(ws, t, "link") for t in ("x1", "x2", "x3")}
+    ws.close_all()
+    assert d["x1"] == d["x2"] == ((1, 2, "needed_by"),) and d["x3"] == ((1, 2, "needs"),)
