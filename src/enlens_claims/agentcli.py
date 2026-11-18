@@ -234,7 +234,9 @@ def _codex_status(path: str, out: dict) -> None:
     code, text = _run([path, "login", "status"], timeout=20)
     if code == 0 and not re.search(r"not logged in|not signed in", text, re.I):
         out["signed_in"] = True
-        out["account"] = _said(text.splitlines()[0] if text else "")
+        # "Logged in using ChatGPT (you@uni.nl)" → "ChatGPT (you@uni.nl)": the app writes "Signed in with …"
+        first = text.splitlines()[0] if text else ""
+        out["account"] = _said(re.sub(r"^\s*(?:logged|signed) in (?:using|with|as)\s+", "", first, flags=re.I))
     elif re.search(r"not logged in|not signed in|logged out|no credentials", text, re.I) or code != 0 and text:
         out["signed_in"] = False
     out["connector"] = codex_connector(path)

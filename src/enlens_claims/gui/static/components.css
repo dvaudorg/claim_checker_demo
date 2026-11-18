@@ -165,7 +165,7 @@ a > .icon:first-child { margin-right: 3px; }
 .option-card:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
 .option-card:disabled, .option-card[aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
 .option-card > input[type="radio"] { position: absolute; opacity: 0; pointer-events: none; }
-.option-card-head { display: flex; align-items: center; gap: 8px; }
+.option-card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }  /* a long tag goes under the title, never out of the card */
 .option-card-head > .icon { flex: none; color: var(--text-2); }
 .option-card-head > .chip { margin-left: auto; }
 .option-card-title { font-weight: var(--fw-strong); }

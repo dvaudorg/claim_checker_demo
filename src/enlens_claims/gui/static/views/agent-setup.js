@@ -6,7 +6,7 @@
 // Each agent is an adapter: Codex and Antigravity here, on GET/POST /api/agent-setup (stage 2, A4), Claude Code in
 // settings.js on /api/claude-setup. Settings → AI shows each one's checklist card (settings.js) with a button that
 // opens this dialog.
-import { api, h, toast, notice, fold, copyLine, workState, watchJob, replace } from "../lib.js";
+import { api, h, toast, notice, fold, copyLine, workState, watchJob, replace, rememberAgent } from "../lib.js";
 import { outsideSetup, stepButton } from "./outside-setup.js";
 import { appliedLine } from "./provider-setup.js";
 
@@ -77,6 +77,7 @@ export async function agentSetupDialog(ad, info = {}, opts = {}) {
   const stopPoll = () => { clearTimeout(timer); timer = null; polling = -1; };
   const fresh = async () => {
     cur = await ad.read(true);
+    rememberAgent(ad.route, cur.status || {});   // the sidebar's line follows the set-up
     if (opts.onChange) opts.onChange(cur);
     return st();
   };
@@ -118,7 +119,7 @@ export async function agentSetupDialog(ad, info = {}, opts = {}) {
   // ---- step 2: sign in
   const signNow = h("div", { class: "agent-step-now", "aria-live": "polite" });
   const signedAs = h("p", { class: "agent-found" });
-  const showSigned = () => replace(signedAs, st().signed_in === true ? workState("done", `Signed in${st().account ? ` as ${st().account}` : ""}.`) : "");
+  const showSigned = () => (st().signed_in === true ? replace(signNow) : null, replace(signedAs, st().signed_in === true ? workState("done", `Signed in${st().account ? ` with ${st().account}` : ""}.`) : ""));
   async function openSignIn() {
     let opened = { opened: false };
     try { opened = await ad.signIn(); } catch (e) { opened = { opened: false, error: e.message }; }

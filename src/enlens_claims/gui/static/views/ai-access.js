@@ -1,7 +1,7 @@
 // 0.11: who may read each document with AI. The three settings, the question asked when documents are added (and
 // once for a project that has none), the setting of each document on the Documents page, what Claude has read of a
 // document, and the panel "What happens to the text Claude reads" (Set up Claude, Settings → AI).
-import { App, api, h, icon, replace, toast, showError, fmt, P, dialog, button, iconButton, link, notice, card, choice, input, select, fold, tag, optionCards } from "../lib.js";  // eslint-disable-line no-unused-vars
+import { App, api, h, icon, replace, toast, showError, fmt, P, dialog, button, iconButton, link, notice, card, choice, input, select, fold, tag, optionCards, isAgent, agentTitle } from "../lib.js";  // eslint-disable-line no-unused-vars
 import { localModelHelp } from "./local-model.js";
 
 // Stage 1 of other cloud providers: while no provider but Anthropic is set up, "cloud" keeps its words ("Claude may
@@ -259,7 +259,7 @@ export function restrictedModelCard(s, servers, save, info = { servers }) {
     try { await save({ restricted_server: server, restricted_model: model }, state); const st = await api("GET", "/api/state"); App.state.restricted = st.restricted; toast(model ? `Documents marked Only a local AI are read by ${model}.` : "Excerpts from documents marked Only a local AI wait for your judgement.", "ok"); }
     catch (_) { /* shown */ }
   });
-  sect.append(h("p", { class: "lead" }, `${s.backend === "cloud_api" ? "The cloud provider" : "Claude"} never reads documents marked Only a local AI. Choose a model on this computer to read their excerpts in a check, the Profile and the other features; without one, they wait for your own judgement.`),
+  sect.append(h("p", { class: "lead" }, `${s.backend === "cloud_api" ? "The cloud provider" : isAgent(s) ? agentTitle(s) : "Claude"} never reads documents marked Only a local AI. Choose a model on this computer to read their excerpts in a check, the Profile and the other features; without one, they wait for your own judgement.`),
     h("div", { class: "save-row" }, field2("Local model", sel, servers && servers.length ? "Chat models of the model servers running on this computer." : "No model server is running on this computer just now (Ollama, LM Studio…)."), state));
   // 0.13.7: no model on this computer yet: get Ollama, or download a model into it with one button
   const rerender = () => window.dispatchEvent(new HashChangeEvent("hashchange"));

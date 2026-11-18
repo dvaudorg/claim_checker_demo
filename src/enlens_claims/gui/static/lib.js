@@ -819,6 +819,24 @@ export function claudeStatus(maxAge = 60000) {
 export function claudeSeenNow() { return claudeSeen.status; }
 export function rememberClaude(st) { claudeSeen.status = st || {}; claudeSeen.at = Date.now(); return claudeSeen.status; }
 
+// Stage 2: what Codex or Antigravity says about itself (found, signed in, its account), as claudeStatus() for Claude
+// Code: GET /api/agent-setup, asked again after a minute at most. rememberAgent(): a fresher answer from the set-up
+// dialog; when it changes whether the agent is ready, the app's chrome (the sidebar's line) is drawn again.
+const agentSeen = new Map();
+export function agentStatus(route, maxAge = 60000) {
+  if (route === "claude_code") return claudeStatus(maxAge);
+  const c = agentSeen.get(route);
+  if (c && Date.now() - c.at < maxAge) return Promise.resolve(c.status);
+  return api("GET", `/api/agent-setup?route=${encodeURIComponent(route)}`).then((r) => rememberAgent(route, r.status || {}, false));
+}
+export const agentSeenNow = (route) => (route === "claude_code" ? claudeSeenNow() : (agentSeen.get(route) || {}).status || null);
+export function rememberAgent(route, st, tell = true) {
+  const before = agentSeenNow(route);
+  const now = route === "claude_code" ? rememberClaude(st) : (agentSeen.set(route, { at: Date.now(), status: st || {} }), st || {});
+  if (tell && !!(before && before.ready) !== !!now.ready) for (const fn of App.listeners) fn(App.state);
+  return now;
+}
+
 // 0.13.6: whether a newer version waits (GET /api/update), shared by the sidebar's Update button, its pop-up and
 // Settings → Check for updates. The page asks when it opens and every UPDATE_EVERY; the server keeps its answer a
 // little less than that, so several tabs share one look. `fresh` looks again now. `install` is set by app.js (the
@@ -2848,9 +2866,18 @@ export function speedPicker(chosen, options = { slower: 1, normal: 2, faster: 4 
 // stronger one. Kept (Settings' claude_thought); for Claude only (a local model keeps its own choice). Fable for the
 // auditor stays its own switch in Settings.
 export const THOUGHT_CHOICES = [["efficient", "Energy efficient"], ["balanced", "Balanced"], ["intelligence", "Intelligence"]];
-const THOUGHT_NOTE = { efficient: "A lighter model for each kind of task: easiest on your plan's limits and on energy. Unsure answers still go to a stronger model.",
-  balanced: "The recommended model for each kind of task.",
-  intelligence: "A stronger model for each kind of task, thinking harder: uses your plan's limits sooner." };
+// stage 2: every route on the three-tier ladder (Claude's two, the agent CLIs, another cloud provider) takes it; on a
+// route billed per use (an API key) it is the bill, not a plan's limits, that a stronger model spends
+const thoughtNote = (v, s = App.settings()) => {
+  const perUse = ["anthropic", "cloud_api"].includes((s || {}).backend);
+  const spend = perUse ? "costs least per task" : "easiest on your plan's limits";
+  const more = perUse ? "costs more per task" : "uses your plan's limits sooner";
+  return { efficient: `A lighter model for each kind of task: ${spend} and on energy. Unsure answers still go to a stronger model.`,
+    balanced: "The recommended model for each kind of task.",
+    intelligence: `A stronger model for each kind of task, thinking harder: ${more}.` }[v] || "";
+};
+// who is given the thought: the agent's name on an agent route, "the AI" on another provider's API, Claude otherwise
+const thoughtWho = (s = App.settings()) => (isAgent(s) ? agentTitle(s) : (s || {}).backend === "cloud_api" ? "the AI" : "Claude");
 
 export async function saveThought(thought) {
   const r = await api("PUT", "/api/settings", { claude_thought: thought });
@@ -2864,8 +2891,8 @@ export async function saveThought(thought) {
 export function thoughtPicker(chosen, onPick = saveThought, opts = {}) {
   let current = chosen || "balanced";
   const line = h("span", { class: "muted small sc-speed-line" });
-  const show = (v) => { line.textContent = THOUGHT_NOTE[v] || ""; };
-  const group = choice({ sm: true, label: "How much thought Claude gives the tasks", class: "sc-speed-btns", value: current, options: THOUGHT_CHOICES,
+  const show = (v) => { line.textContent = thoughtNote(v); };
+  const group = choice({ sm: true, label: `How much thought ${thoughtWho()} gives the tasks`, class: "sc-speed-btns", value: current, options: THOUGHT_CHOICES,
     onPick: async (v) => {
       if (v === current) return;
       const before = current;

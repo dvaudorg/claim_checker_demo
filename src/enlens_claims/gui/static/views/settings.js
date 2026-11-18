@@ -42,7 +42,7 @@ export async function renderSettings(view, [section]) {
   // the version is a link (to Updates): it sits in the line under the title, since a page head's right holds only
   // actions (docs/DESIGN.md 4.14)
   view.appendChild(pageHead("Settings", { sub: [{
-    model: "Which AI reads your documents: Claude Code on your own Claude plan, a model on this computer, or none.",
+    model: "Which AI reads your documents: an AI on a plan you already have (Claude Code, Codex or Antigravity), a model on this computer, or none.",
     basics: "How strict a check is, how new checks start, and when you hear that work has finished.",
     explore: "The defaults of the Profile and Themes pages, and your codebooks.",
     documents: "Reading scanned PDFs, and search by meaning.",

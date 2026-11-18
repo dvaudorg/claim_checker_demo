@@ -1,5 +1,5 @@
 // Entry point: boots the shell, routes the hash, keeps the sidebar (project, jobs, privacy, theme) current.
-import { App, api, h, icon, setButtonKind, menu, plural, emptyState, Connection, replace, clear, toast, showError, store, navigate, parseQuery, onJobsChanged, fmt, TERMINAL, confirmDialog, P, watchJob, startClaudeNow, claudeStatus, claudeSeenNow, rememberClaude, claudeAccount, brand, appName, Updates, checkUpdate, onUpdateSeen, UPDATE_EVERY, button, iconButton, link, notice , cancelJob, ensureToken, keyWasStale, copyLine, WhatsNew, loadWhatsNew, showWhatsNew, markWhatsNewRead, isAgent, agentRoute, agentTitle, agentPlan, agentCompany } from "./lib.js";
+import { App, api, h, icon, setButtonKind, menu, plural, emptyState, Connection, replace, clear, toast, showError, store, navigate, parseQuery, onJobsChanged, fmt, TERMINAL, confirmDialog, P, watchJob, startClaudeNow, claudeStatus, claudeSeenNow, rememberClaude, rememberAgent, agentStatus, agentSeenNow, claudeAccount, brand, appName, Updates, checkUpdate, onUpdateSeen, UPDATE_EVERY, button, iconButton, link, notice , cancelJob, ensureToken, keyWasStale, copyLine, WhatsNew, loadWhatsNew, showWhatsNew, markWhatsNewRead, isAgent, agentRoute, agentTitle, agentPlan, agentCompany } from "./lib.js";
 import { FEATURES, SECTIONS, PLACES, aiTag } from "./features.js";
 import { PAGE_ROUTES, applyExtensions, jobRow } from "./registry.js";
 import { quietRound, quietRoundAgainIn, nextSyncLook } from "./views/team-state.js";   // 0.18 stage 5
@@ -186,19 +186,6 @@ export async function switchProject(name) {
   } catch (e) { showError(e); }
 }
 
-// Stage 2: what Codex or Antigravity says about itself (found, signed in, its account), as claudeStatus() for Claude
-// Code: GET /api/agent-setup, asked again after a minute at most.
-const agentSeen = new Map();
-function agentStatus(route) {
-  if (route === "claude_code") return claudeStatus();
-  const c = agentSeen.get(route);
-  if (c && Date.now() - c.at < 60000) return Promise.resolve(c.status);
-  return api("GET", `/api/agent-setup?route=${encodeURIComponent(route)}`).then((r) => {
-    agentSeen.set(route, { at: Date.now(), status: r.status || {} });
-    return r.status || {};
-  });
-}
-const agentSeenNow = (route) => (route === "claude_code" ? claudeSeenNow() : (agentSeen.get(route) || {}).status || null);
 
 // 0.13.4: hovering the line (or reaching it with the keyboard) opens a small card with what the tooltip said and, on
 // Claude Code, the account it is signed in to. Escape closes it; it stays open while the pointer is on it. Stage 2: so
@@ -235,7 +222,7 @@ function renderPrivacy() {
     }).catch(() => {
       if (!agentSeenNow(route)) {
         if (route === "claude_code") rememberClaude({ unknown: true });
-        else agentSeen.set(route, { at: Date.now(), status: { unknown: true } });
+        else rememberAgent(route, { unknown: true }, false);
         fill();
       }
     });
