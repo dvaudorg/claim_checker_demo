@@ -1689,7 +1689,7 @@ programs that follow their documentation and not yet tried with a real account.
   `~/.gemini/antigravity-cli/settings.json`: the line `mcp(enlens/*)` and its work folders as trusted workspaces) and
   `own_settings` (that file).
 - `POST /api/agent-setup/tidy` `{"route": "antigravity"}` → `{"removed": [...], "own_leftovers": []}`: takes those lines
-  out of the person's own settings, keeping every other key, after a copy of the file is kept as `settings.json.bak`.
+  out of the person's own settings, keeping every other key, after a copy of the file is kept as `settings.json.enlens-tidy.bak` (its permissions kept).
   400 for another route, or when the file is not JSON (left as it is).
 - `POST /api/projects/<p>/queue/agent` and `POST /api/projects/<p>/queue/agent/stop`: the same handler and answer as
   `queue/claude-code` (above, which stays), for the main route, whichever agent it is. Neither agent's headless mode is
@@ -1708,8 +1708,10 @@ programs that follow their documentation and not yet tried with a real account.
   empty work folder, in its sandbox, without slash commands, asking before every tool except `mcp(enlens/*)`, and with
   a home folder of its own (`HOME` and `USERPROFILE` set to `<data folder>/agy-home`, the `XDG_*` folders left out).
   ENLENS writes the settings there before every run: the allow rule `mcp(enlens/*)` alone, its work folder as the only
-  trusted one, no `toolPermission`, nothing that spends AI credits (`useG1Credits`, `useAiCredits`); the person's own
-  keys about telemetry and usage statistics are carried over. On macOS `Library/Keychains` there links to the person's,
+  trusted one, no key that approves tools, adds a connector or hook, or spends AI credits (`toolPermission`,
+  `useG1Credits`, `useAiCredits` and the like); an "off" of the person's own telemetry and usage-statistics keys is
+  carried over, never an "on". The person's `GEMINI_*`, `GOOGLE_*` and `CLOUDSDK_*` variables are left out, so no key
+  of theirs is billed. On macOS `Library/Keychains` there links to the person's,
   where the sign-in is kept.
 - `GET /api/state` (and the answer of `PUT /api/settings`) gains `"agent"`: `{"route", "title", "start": "Start Codex",
   "company", "provider", "card"}` when the main route is Claude Code, Codex or Antigravity (else null), and

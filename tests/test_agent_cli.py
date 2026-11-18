@@ -303,6 +303,20 @@ def test_enlens_own_antigravity_settings_hold_only_what_is_safe(clis):
     own = json.loads(mine.read_text())
     assert own == {"editorFont": "mono", "enableTelemetry": False, "permissions": {"allow": ["mcp(enlens/*)"]},
                    "trustedWorkspaces": [str(clis.agy_work_folder())]}
+    # an "off" of the person's wins on every call; an "on", or a telemetry object that logs prompts somewhere, never
+    # comes over, and connectors or approvals written into ENLENS's file by anyone are dropped
+    p.write_text(json.dumps({"telemetry": {"enabled": True, "logPrompts": True, "otlpEndpoint": "https://c.example"},
+                             "improveProducts": True, "usageStatisticsEnabled": False}))
+    mine.write_text(json.dumps({"usageStatisticsEnabled": True, "mcpServers": {"x": {"command": "x"}},
+                                "autoAcceptEdits": True, "telemetry": {"enabled": False, "outfile": "/tmp/log"}}))
+    clis.prepare_agy_home()
+    own = json.loads(mine.read_text())
+    assert own["usageStatisticsEnabled"] is False and own["telemetry"] == {"enabled": False}
+    assert "improveProducts" not in own and "mcpServers" not in own and "autoAcceptEdits" not in own
+    # a file agy is writing this very moment is left for the next call, never written from nothing
+    mine.write_text('{"enableTelemetry": fal')
+    clis.prepare_agy_home()
+    assert mine.read_text() == '{"enableTelemetry": fal'
     assert clis.always_proceeds() is False
     env = clis.agy_env()
     assert env["HOME"] == env["USERPROFILE"] == str(clis.agy_home()) and env["XDG_CONFIG_HOME"] is None
@@ -328,10 +342,16 @@ def test_the_lines_an_earlier_enlens_wrote_are_offered_and_removed(clis, api):
     assert st == 200 and len(body["removed"]) == 3 and body["own_leftovers"] == []
     assert json.loads(p.read_text()) == {"theme": "dark", "permissions": {"allow": ["read(*)"]},
                                          "trustedWorkspaces": ["/somewhere/else"]}
-    assert "mcp(enlens/*)" in p.with_name("settings.json.bak").read_text()
-    # only ENLENS's lines: a file with only those loses the keys it then has no use for
+    assert "mcp(enlens/*)" in p.with_name("settings.json.enlens-tidy.bak").read_text()
+    # only ENLENS's lines: a file with only those loses the keys it then has no use for; a private file stays private
     p.write_text(json.dumps({"permissions": {"allow": ["mcp(enlens/*)"]}, "trustedWorkspaces": [work]}))
+    import os
+    import stat
+
+    os.chmod(p, 0o600)
     assert clis.tidy_own_agy_settings()["removed"] and json.loads(p.read_text()) == {}
+    if os.name != "nt":
+        assert stat.S_IMODE(p.stat().st_mode) == 0o600
     assert clis.tidy_own_agy_settings() == {"removed": []}
     st, body = api("POST", "/api/agent-setup/tidy", {"route": "codex"})
     assert st == 400
@@ -494,6 +514,7 @@ def test_the_persons_own_permissions_never_reach_enlens_runs(clis, corpus, monke
     """A person whose own Antigravity runs every tool unasked, allows reading files and spends credits: ENLENS's runs
     see none of it (an earlier ENLENS refused to start instead), and the person's file stays as they set it."""
     monkeypatch.setenv("XDG_CONFIG_HOME", "/somewhere/the/persons/config")
+    monkeypatch.setenv("GEMINI_API_KEY", "the-persons-own-key")   # never billed for ENLENS's runs
     from enlens_claims import home
 
     ws = _project(corpus, "antigravity")
@@ -508,7 +529,7 @@ def test_the_persons_own_permissions_never_reach_enlens_runs(clis, corpus, monke
         if "-p" in run["argv"]:
             assert run["settings"] == {"permissions": {"allow": ["mcp(enlens/*)"]},
                                        "trustedWorkspaces": [str(clis.agy_work_folder())]}
-            assert run["xdg"] is None
+            assert run["xdg"] is None and run["gemini_key"] is None
     assert json.loads(p.read_text()) == mine
 
 
@@ -536,6 +557,8 @@ def test_a_tool_antigravity_refused_is_written_in_the_report(clis, corpus, monke
     o = clis.read_outcome("antigravity", json.dumps({"status": "SUCCESS", "response": "", "denied_actions": [
         {"action": "read_file", "display_name": "ReadFile"}, {"action": "run_command"}]}), 0)
     assert o["ok"] and o["refused"] == ["ReadFile", "run_command"]
+    for odd in ("read_file", 2, None, {"x": 1}):   # a shape agy might use instead: never a run-ending error
+        assert clis.read_outcome("antigravity", json.dumps({"status": "SUCCESS", "denied_actions": odd}), 0)["refused"] == []
 
 
 def test_a_codex_without_settings_on_its_command_line_is_refused(clis, corpus, monkeypatch):

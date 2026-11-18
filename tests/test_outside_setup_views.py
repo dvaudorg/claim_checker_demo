@@ -285,6 +285,14 @@ await scenario("Subscription: Claude Code, Codex or Antigravity", async (t) => {
   return out;
 });
 
+await scenario("a ready Antigravity offers to remove an earlier ENLENS's lines", async (t) => {
+  t.answer("GET /api/agent-setup?*", { route: "antigravity", title: "Antigravity", company: "Google", status: { found: true, signed_in: true, connector: true, ready: true },
+    recommended: REC, own_leftovers: ['the permission line "mcp(enlens/*)"'], own_settings: "/home/x/.gemini/antigravity-cli/settings.json" });
+  await settingsPage(t, { backend: "antigravity", allow_antigravity: true });
+  await t.settle(50);
+  return { note: t.text(t.view.querySelector(".set-agent-box .agent-leftovers")), button: !!t.view.querySelector("#agent-tidy-antigravity") };
+});
+
 await scenario("the agent-setup API is not there", async (t) => {
   t.answer("GET /api/agent-setup?*", t.fail(404, "No such API endpoint"));
   await settingsPage(t, { backend: "antigravity", allow_antigravity: true });
@@ -397,6 +405,8 @@ def test_the_fixes_of_the_final_review(page):
     lim = page["a shared project with the owner's limit in the consent"]["says"]
     assert "The team uses Anthropic only (set by Anna). So Antigravity reads none of this project’s documents." in lim
     assert "the Enable Telemetry setting is on (in Antigravity’s settings)" in r["says"] and "Only documents that allow Google Gemini are sent" in r["says"]
+    r = page["a ready Antigravity offers to remove an earlier ENLENS's lines"]   # the card, not only the dialog
+    assert "mcp(enlens/*)" in r["note"] and r["button"] is True
     r = page["Antigravity's sign-in and what is added"]
     assert "switch off Enable Telemetry in Antigravity’s settings, under AI credits and feedback" in r["intro"]
     assert r["disabled"] is True and r["againEarly"] is True and r["opened"] == 1
@@ -404,7 +414,7 @@ def test_the_fixes_of_the_final_review(page):
     assert "ENLENS’s own Antigravity settings, in a folder of ENLENS" in r["adds"] and "permission line" not in r["adds"]
     # what an ENLENS before 0.20.2 wrote into the person's own settings is offered for removal, and removed
     assert 'the permission line "mcp(enlens/*)"' in r["leftovers"] and "Remove them" in r["leftovers"]
-    assert r["tidied"] == {"route": "antigravity"} and "settings.json.bak" in r["afterTidy"]
+    assert r["tidied"] == {"route": "antigravity"} and "settings.json.enlens-tidy.bak" in r["afterTidy"]
 
 
 @needs_node

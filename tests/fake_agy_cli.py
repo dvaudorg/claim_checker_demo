@@ -59,7 +59,8 @@ def logged_in(st: dict) -> bool:
 def run(argv: list[str]) -> int:
     st = fa.load(STATE)
     st.setdefault("runs", []).append({"argv": argv, "cwd": os.getcwd(), "home": home(), "settings": settings(),
-                                      "xdg": os.environ.get("XDG_CONFIG_HOME")})
+                                      "xdg": os.environ.get("XDG_CONFIG_HOME"),
+                                      "gemini_key": os.environ.get("GEMINI_API_KEY")})
     fa.save(STATE, st)
     opts: dict = {}
     i = 0

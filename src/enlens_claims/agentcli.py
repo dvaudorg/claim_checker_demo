@@ -130,6 +130,9 @@ def enlens_agy_settings_path() -> Path:
     return agy_home() / ".gemini" / "antigravity-cli" / "settings.json"
 
 
+AGY_ENV_PREFIXES = ("GEMINI_", "GOOGLE_", "AGY_", "ANTIGRAVITY_", "CLOUDSDK_", "VERTEX")
+
+
 def agy_env() -> dict[str, str | None]:
     """What changes in the environment of every Antigravity process ENLENS starts (None: left out): its home is
     ENLENS's own, and a person's XDG folders, which would lead back to their own settings, are left out."""
@@ -137,6 +140,11 @@ def agy_env() -> dict[str, str | None]:
     env: dict[str, str | None] = {"HOME": h, "USERPROFILE": h}
     for k in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):
         env[k] = None
+    # a key or project of the person's own (GEMINI_API_KEY, GOOGLE_APPLICATION_CREDENTIALS, a settings path...) would
+    # bill ENLENS's runs to it or lead back to their settings: only the sign-in Antigravity keeps for itself is used
+    for k in os.environ:
+        if k.upper().startswith(AGY_ENV_PREFIXES):
+            env[k] = None
     return env
 
 
@@ -208,7 +216,8 @@ def known_options(route: str, path: str) -> set[str]:
     except OSError:
         return set()
     if key not in _OPTIONS:
-        code, text = _run([path, "exec", "--help"] if route == "codex" else [path, "--help"], timeout=30)
+        code, text = (_run([path, "exec", "--help"], timeout=30) if route == "codex"
+                      else _run([path, "--help"], timeout=30, env=agy_env()))
         _OPTIONS[key] = (set(re.findall(r"(?<![\w-])--[A-Za-z][A-Za-z-]+", text))
                          | set(re.findall(r"(?<![\w-])-[A-Za-z](?![\w-])", text))) if code == 0 else set()
     return _OPTIONS[key]
@@ -262,7 +271,7 @@ def status(route: str, refresh: bool = False) -> dict:
     path = "" if out["local_only"] else find(route)
     if path:
         out.update(found=True, path=path)
-        code, text = _run([path, "--version"], timeout=20)
+        code, text = _run([path, "--version"], timeout=20, env=agy_env() if route == "antigravity" else None)
         if code == 0 and text:
             out["version"] = _said(text.splitlines()[0])
         (_codex_status if route == "codex" else _agy_status)(path, out)
@@ -313,7 +322,10 @@ def codex_connector(path: str) -> bool | None:
 def _agy_status(path: str, out: dict) -> None:
     # signed in, and which models: asked in ENLENS's own home, where its runs start (its own sign-in where a CLI keeps
     # it in the home folder); the plugin: in the person's own Antigravity, where they type /enlens-run
-    prepare_agy_home()
+    try:
+        prepare_agy_home()
+    except (OSError, ValueError) as e:
+        out["problem"] = f"ENLENS's own Antigravity settings could not be written: {e}"
     code, text = _run([path, "models"], timeout=30, env=agy_env())
     if code == 0:
         out["signed_in"] = True
@@ -455,8 +467,13 @@ def open_sign_in(route: str) -> dict:
     import shlex
 
     home = str(agy_home())
-    line = (f"cd {shlex.quote(str(work))} && HOME={shlex.quote(home)} agy" if os.name != "nt"
-            else f'cd "{work}"; $env:USERPROFILE="{home}"; $env:HOME="{home}"; agy')
+    if os.name != "nt":
+        line = (f"cd {shlex.quote(str(work))} && env -u XDG_CONFIG_HOME -u XDG_DATA_HOME -u XDG_STATE_HOME "
+                f"-u XDG_CACHE_HOME HOME={shlex.quote(home)} agy")
+    else:   # in a child PowerShell, so the person's own session keeps its home
+        ps = lambda s: "'" + str(s).replace("'", "''") + "'"  # noqa: E731
+        line = (f"powershell -NoProfile -Command \"Set-Location -LiteralPath {ps(work)}; $env:USERPROFILE={ps(home)}; "
+                f"$env:HOME={ps(home)}; agy\"")
     return {"opened": bool(window), "window": window, "command": line, "folder": str(work)}
 
 
@@ -606,9 +623,23 @@ def prepare_agy_work_folder() -> Path:
             shutil.rmtree(child, ignore_errors=True) if child.is_dir() and not child.is_symlink() else child.unlink()
         except OSError:
             pass
-    (d / ".agents").mkdir(exist_ok=True)
-    (d / ".agents" / "mcp_config.json").write_text(json.dumps(agy_mcp_config(), indent=2), encoding="utf-8")
+    _write_agy_connector(d)
     return d
+
+
+def _write_agy_connector(work: Path) -> None:
+    """The work folder's `.agents/` holds ENLENS's connector settings and nothing else (anything a helper might have
+    left there is removed)."""
+    a = work / ".agents"
+    a.mkdir(parents=True, exist_ok=True)
+    for child in a.iterdir():
+        if child.name == "mcp_config.json":
+            continue
+        try:
+            shutil.rmtree(child, ignore_errors=True) if child.is_dir() and not child.is_symlink() else child.unlink()
+        except OSError:
+            pass
+    _write_json(a / "mcp_config.json", agy_mcp_config())
 
 
 def _read_json(p: Path) -> dict:
@@ -619,11 +650,10 @@ def _read_json(p: Path) -> dict:
         return {}
 
 
-def _write_json(p: Path, data: dict) -> None:
+def _write_json(p: Path, data: dict, private: bool = False) -> None:
+    """Written whole (home._write_whole: a reader never finds half of it; on Windows a moment's lock is waited out)."""
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_name(p.name + ".enlens-tmp")
-    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    os.replace(tmp, p)
+    core._write_whole(p, json.dumps(data, indent=2, ensure_ascii=False) + "\n", private=private)
 
 
 def agy_settings() -> dict:
@@ -631,19 +661,36 @@ def agy_settings() -> dict:
     return _read_json(agy_settings_path())
 
 
-# keys of the person's own settings carried into ENLENS's: what they chose about what Google may keep or use
+# keys about what Google may keep or use: only an "off" of the person's own is carried into ENLENS's settings
 PRIVACY_KEY = re.compile(r"telemetry|usage.?stat|feedback|analytics|crash.?report|improve", re.I)
-# keys never carried over and never kept in ENLENS's settings: what lets a tool run unasked, or spends credits
-UNSAFE_KEYS = ("toolPermission", "useG1Credits", "useAiCredits")
+# keys never kept in ENLENS's settings, whoever wrote them (agy itself, or the person in the sign-in window): what lets
+# a tool run unasked or reach further, connectors and hooks, and AI credits. Its own two (permissions,
+# trustedWorkspaces) are written by ENLENS.
+UNSAFE_KEY = re.compile(r"permission|approv|auto.?accept|yolo|proceed|allow|trust|sandbox|mcp|hook|plugin|extension|"
+                        r"credit|exclude.?tools|core.?tools|tools?$", re.I)
+_OFF = (False, "off", "false", "disabled", "never")
+
+
+def _is_off(v) -> bool:
+    return v in _OFF or (isinstance(v, str) and v.strip().lower() in _OFF)
+
+
+def _privacy_off(key: str, value):
+    """The "off" of a privacy key ({"enabled": false} of an object), or None when the value turns nothing off: an
+    "on", an endpoint or a file to log prompts to is never carried."""
+    if isinstance(value, dict):
+        return {"enabled": False} if _is_off(value.get("enabled")) else None
+    return value if _is_off(value) else None
 
 
 def prepare_agy_home() -> Path:
-    """ENLENS's own Antigravity home, written again before every run, sign-in and look: its settings allow only
-    ENLENS's connector (`permissions.allow` is exactly `mcp(enlens/*)`, no deny or ask rules are kept that could
-    hide it), trust only ENLENS's work folder, run nothing unasked (no toolPermission) and spend no AI credits (no
-    useG1Credits/useAiCredits). Every other key Antigravity keeps there is left (say, a telemetry switch the person
-    turned off in the sign-in window), and the person's own privacy choices (PRIVACY_KEY) are carried over. On macOS
-    Library/Keychains links to the person's, where the login keychain is."""
+    """ENLENS's own Antigravity home, written again before every helper, sign-in and look: its settings allow only
+    ENLENS's connector (`permissions` is exactly {"allow": ["mcp(enlens/*)"]}), trust only ENLENS's work folder, and
+    hold no key that lets a tool run unasked, adds a connector or hook, or spends AI credits (UNSAFE_KEY). Other keys
+    Antigravity keeps there (its sign-in's own) stay; a privacy key (PRIVACY_KEY) stays only as an "off" (a telemetry
+    object keeps only its `enabled: false`), and an "off" of the person's own settings wins over an "on" in ENLENS's,
+    on every call. On macOS Library/Keychains links to the person's, where the login keychain is. A settings file
+    that cannot be read (agy writing it this moment) is left for the next call rather than written from nothing."""
     h = agy_home()
     h.mkdir(parents=True, exist_ok=True)
     if sys.platform == "darwin":
@@ -655,15 +702,30 @@ def prepare_agy_home() -> Path:
             except OSError:
                 pass
     p = enlens_agy_settings_path()
-    data = _read_json(p)
+    raw = None
+    if p.exists():
+        try:
+            raw = json.loads(p.read_text(encoding="utf-8") or "{}")
+        except (OSError, ValueError):
+            return h   # half written by agy, or not JSON: the next call writes it
+    before = raw if isinstance(raw, dict) else {}
+    data: dict = {}
+    for k, v in before.items():
+        if UNSAFE_KEY.search(k):
+            continue
+        if PRIVACY_KEY.search(k):
+            v = _privacy_off(k, v)
+            if v is None:
+                continue
+        data[k] = v
     for k, v in agy_settings().items():
-        if PRIVACY_KEY.search(k) and k not in UNSAFE_KEYS and k not in data:
-            data[k] = v
-    for k in UNSAFE_KEYS:
-        data.pop(k, None)
+        if PRIVACY_KEY.search(k) and not UNSAFE_KEY.search(k):
+            off = _privacy_off(k, v)
+            if off is not None:
+                data[k] = off
     data["permissions"] = {"allow": [PERMISSION]}
     data["trustedWorkspaces"] = [str(agy_work_folder())]
-    if _read_json(p) != data or not p.exists():
+    if data != raw:
         _write_json(p, data)
     return h
 
@@ -704,8 +766,8 @@ def own_agy_leftovers() -> list[str]:
 
 def tidy_own_agy_settings() -> dict:
     """Take out of the person's own Antigravity settings what an earlier ENLENS added (own_agy_leftovers), keeping
-    every other key; a copy of the file as it was is kept as settings.json.bak first (the person pressed *Remove
-    them*). Returns {"removed": [...]}. Raises ValueError when the file is there but is not JSON (left as it is)."""
+    every other key and the file's permissions; a copy of the file as it was is kept as settings.json.enlens-tidy.bak
+    first (the person pressed *Remove them*). Returns {"removed": [...]}. Raises ValueError when the file is there but is not JSON (left as it is)."""
     p = agy_settings_path()
     if not p.exists():
         return {"removed": []}
@@ -730,8 +792,14 @@ def tidy_own_agy_settings() -> dict:
         data["trustedWorkspaces"] = [t for t in data["trustedWorkspaces"] if not _is_enlens_work(t)]
         if not data["trustedWorkspaces"]:
             del data["trustedWorkspaces"]
-    shutil.copyfile(p, p.with_name(p.name + ".bak"))
-    _write_json(p, data)
+    real = p.resolve()   # a settings file linked from elsewhere (dotfiles) is written where it really is
+    mode = real.stat().st_mode & 0o777
+    shutil.copy2(real, p.with_name(p.name + ".enlens-tidy.bak"))   # the 0.20.0 .bak (before ENLENS) stays as it is
+    _write_json(real, data)
+    try:
+        os.chmod(real, mode)   # a file kept private (it may hold connector tokens) stays so
+    except OSError:
+        pass
     return {"removed": removed}
 
 
@@ -1071,10 +1139,12 @@ def read_outcome(route: str, text: str, code: int | None) -> dict:
                 messages.append(str((err.get("message") if isinstance(err, dict) else err) or env.get("message") or ""))
             else:
                 messages.append(str(env.get("result") or env.get("response") or ""))
-            for d in env.get("denied_actions") or []:
+            denied = env.get("denied_actions")
+            for d in denied if isinstance(denied, list) else []:
                 name = (d.get("display_name") or d.get("action")) if isinstance(d, dict) else d
-                if name and str(name) not in refused:
-                    refused.append(_said(str(name), 60))
+                name = _said(str(name), 60) if isinstance(name, (str, int)) and str(name).strip() else ""
+                if name and name not in refused:
+                    refused.append(name)
     if not messages and failed:
         messages.append(_said(text or "", 400))
     said = " ".join(m for m in messages if m).strip()
@@ -1107,6 +1177,11 @@ def _spawn(run: dict, g: dict, path: str, opts: set[str], work: Path, ws) -> Non
     effort = r.effort(g["kind"])
     prompt = helper_prompt(route, project, g["kind"], g["model"], g["helper"])
     args = run_args(route, path, prompt, model_id, effort, work, opts, run["available"])
+    if route == "antigravity":   # enforced for every helper, not once a run: a run starts them for hours
+        prepare_agy_home()
+        _write_agy_connector(work)
+        if always_proceeds():
+            raise ValueError(ALWAYS_PROCEED.format(path=enlens_agy_settings_path()))
     run["n"] += 1
     out = runs_folder() / f"{_key(route, project)}-{run['n']}.out"
     fh = open(out, "w", encoding="utf-8")

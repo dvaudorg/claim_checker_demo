@@ -72,7 +72,7 @@ export function leftoversNote(r) {
     btn.disabled = true;
     try {
       const out = await api("POST", "/api/agent-setup/tidy", { route: "antigravity" });
-      replace(box, workState("done", `Removed from your own Antigravity settings (a copy of them as they were: settings.json.bak).${(out.own_leftovers || []).length ? " Some could not be removed." : ""}`));
+      replace(box, workState("done", `Removed from your own Antigravity settings (a copy of them as they were: settings.json.enlens-tidy.bak).${(out.own_leftovers || []).length ? " Some could not be removed." : ""}`));
     } catch (e) { btn.disabled = false; toast(e.message || String(e), "warn"); }
   }, { kind: "quiet", id: "agent-tidy-antigravity" });
   replace(box, notice({ kind: "attention", role: "note" },
