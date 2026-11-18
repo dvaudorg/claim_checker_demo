@@ -365,8 +365,17 @@ class App(LibraryMixin, QueueMixin):
         # I6: a person who set up an older model keeps it; Settings → Technical offers the tier's model beside it
         older = None
         if advice:
-            chosen = s.get("restricted_model") if s.get("restricted_server") == "ollama" else None
-            older = modeladvice.older_model(s.get("ollama_model") or chosen, advice)
+            # the main AI's Ollama model when the main AI is a local model, else the one for documents marked Only a
+            # local AI: the offer's download is then chosen for that use, never switching the main AI
+            if s.get("backend") in ("ollama", "auto") and s.get("ollama_model"):
+                chosen, use = s.get("ollama_model"), "ai"
+            elif s.get("restricted_server") == "ollama" and s.get("restricted_model"):
+                chosen, use = s.get("restricted_model"), "restricted"
+            else:
+                chosen, use = None, "ai"
+            older = modeladvice.older_model(chosen, advice)
+            if older:
+                older["use"] = use
         return {"servers": found, "suggested": modeladvice.suggested(advice) if advice else [dict(m) for m in llm.SUGGESTED_MODELS],
                 "advice": advice, "older_model": older, "ollama_app": ollama_setup.status()}
 

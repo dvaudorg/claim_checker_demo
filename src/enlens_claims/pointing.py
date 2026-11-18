@@ -8,7 +8,8 @@ itself, so it is in the excerpt by construction, and no judgement is stored: the
 "suggestions only"; the small tier is an explorer).
 
 The grammar bounds the answer: at most one mark per excerpt, the excerpt numbers an enum, the sentence numbers at most
-the longest excerpt's count; the token limit is `24 + 14 * K` (`cap`).
+the longest excerpt's count; the token limit is `24 + 14 * K` (`cap`). Sentences are marked `<s1>`, `<s2>`… in the
+prompt, never `[1]`, which scientific text uses for its citations.
 
 The lean (`p_yes` of the claim against its opposite) is measured on 15 passages only and the opposites the app would
 write are not measured at all, so it stays off (`LEAN`) until `tools/localbench/handhold_lp.py` has been run with
@@ -25,7 +26,8 @@ LONG_SENTENCE = 300       # a "sentence" longer than this (a run-on PDF paragrap
 MAX_PASSAGES = 20         # the schema without a payload (the registry's own view) allows this many
 MAX_SENTENCES = 60
 CAP_BASE, CAP_EACH = 24, 14
-OUTPUT_CAP = 160          # the registry's cap; a task's own is the smaller of this and `cap(k)`
+MAX_K = 60                # the most excerpts one task can hold (a press of Read these reads at most 40)
+OUTPUT_CAP = 24 + 14 * MAX_K   # the registry's cap; a task's own is `cap(k)`, which follows its excerpts
 # the lean, off until measured (see above); its threshold, from the bench's 48 rows (13 of 15 passages that matter)
 LEAN = False
 LEAN_MARGIN = 0.10
@@ -68,12 +70,14 @@ def sentences(text: str) -> list[tuple[int, int]]:
 
 
 def cap(k: int) -> int:
-    """The answer's token limit for `k` excerpts: about 12 tokens a mark, and a little for the brackets."""
-    return min(OUTPUT_CAP, CAP_BASE + CAP_EACH * max(1, int(k)))
+    """The answer's token limit for `k` excerpts: about 12 tokens a mark, and a little for the brackets. It follows k:
+    the schema allows a mark for every excerpt, so a lower ceiling would cut a full answer off."""
+    return CAP_BASE + CAP_EACH * max(1, int(k))
 
 
 def system_prompt() -> str:
-    return ("You point at the passages that bear on a claim. For each passage that states the claim, part of it, or "
+    return ("You point at the passages that bear on a claim. Each passage's sentences are marked <s1>, <s2> and so on. "
+            "For each passage that states the claim, part of it, or "
             "its opposite, give the passage number p and the number s of its one sentence that comes closest. List "
             "the passage that bears most on the claim first. Leave out passages that only share the topic. Write "
             'nothing else.\n\nAnswer in this format: {"marks": [{"p": 3, "s": 2}]}')
@@ -83,7 +87,7 @@ def user_prompt(payload: dict) -> str:
     parts = [f"CLAIM: {payload['claim']}"]
     for i, p in enumerate(payload["passages"], 1):
         text = p.get("text") or ""
-        numbered = " ".join(f"[{j}] {' '.join(text[a:b].split())}" for j, (a, b) in enumerate(sentences(text), 1))
+        numbered = " ".join(f"<s{j}> {' '.join(text[a:b].split())}" for j, (a, b) in enumerate(sentences(text), 1))
         parts.append(f"P{i}\n{numbered}")
     return "\n\n".join(parts)
 

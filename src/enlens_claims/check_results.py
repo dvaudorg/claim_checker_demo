@@ -201,7 +201,7 @@ def _readers_of(ws: Workspace, parts: list) -> dict[str, str]:
             out[t["task_id"]] = "waiting" if t["status"] in ("pending", "retry") else ("local" if local_part else "ai")
             continue
         route, model = r[0]["route"] or "", r[0]["model"] or ""
-        if local_part or route in (_cc.ROUTE_NAMES["local"], _cc.ROUTE_NAMES["baseline"]):
+        if local_part or tasks.is_local_route(route) or route == _cc.ROUTE_NAMES["baseline"]:   # I6: kept answers too
             out[t["task_id"]] = "local"
         elif route in (_cc.ROUTE_NAMES["claude_code"], _cc.ROUTE_NAMES["anthropic"]) or model == _cc.CHAT_MODEL or model.startswith("claude"):
             out[t["task_id"]] = "claude"
@@ -353,8 +353,14 @@ def _result(ws: Workspace, claim_id: str, threshold: float | None = None) -> tup
         return out, extra
     readers_of = _readers_of(ws, rounds)
     # I6: the parts a local model on this computer answered (its readings of before I6 count as they did: said below)
-    local_parts = {r["task_id"] for t in rounds for r in ws.query(
-        "SELECT task_id FROM results WHERE task_id=? AND valid=1 AND route=? LIMIT 1", (t["task_id"], tasks.LOCAL_ROUTE))}
+    # (the model of a part's latest valid answer, when a model on this computer gave it, asked or kept: a row counts as
+    # that local reading only when it is still that model's, not one Claude read again since)
+    local_parts: dict[str, str] = {}
+    for t in rounds:
+        last = ws.query("SELECT route, model FROM results WHERE task_id=? AND valid=1 ORDER BY attempt DESC LIMIT 1",
+                        (t["task_id"],))
+        if last and tasks.is_local_route(last[0]["route"]):
+            local_parts[t["task_id"]] = last[0]["model"] or ""
     out["suggestions"] = out["local_counted"] = 0
     shown = []
     for r_i, g in enumerate(groups, 1):
@@ -483,8 +489,8 @@ def _result(ws: Workspace, claim_id: str, threshold: float | None = None) -> tup
                                and p["doc_id"] not in nonsci)
             # I6: a local model's judgement of before I6, made when its readings still counted: it keeps counting
             # (an old status is not changed in silence), and the result says so until the person reviews it
-            item["local_counted"] = (part["task_id"] in local_parts and not item["suggestion"] and not item["reviewed"]
-                                     and item["counted"])
+            item["local_counted"] = (part["task_id"] in local_parts and v.get("model") == local_parts[part["task_id"]]
+                                     and not item["suggestion"] and not item["reviewed"] and item["counted"])
         item["nonscientific"] = p["doc_id"] in nonsci  # 0.18.6: its judgement is shown, never counted
         item["nonscientific_counted"] = counted_here and p["doc_id"] in marked  # 0.19.0 (K3): counted by exception
         if earlier and is_tombstone(p["passage_id"]):

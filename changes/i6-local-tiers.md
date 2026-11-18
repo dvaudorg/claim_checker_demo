@@ -17,7 +17,8 @@
   for documents Claude may read, set an answer. A check read only by a local model says *Waiting for your judgement*
   until you judge its excerpts; *Agree* takes a suggestion in one press. The checks list, the evidence map and the
   Excel rows agree. Checks made before keep their answers; the result says how many of the local model's judgements
-  still count unreviewed. Can change results, for new checks with a local model.
+  still count unreviewed. Under the AI mix *Mostly local*, Claude now reads every check of documents it may read after
+  the local model, whose reading stays a suggestion. Can change results, for new checks with a local model.
 - **Long local runs no longer fill the memory.** On a Mac, Ollama's MLX engine grew the 4B model from about 5 GB to
   12.7 GB over a long run. ENLENS now frees the model's memory when it has grown by about 1.6 GB, or when less than a
   fifth of the memory is free (it reloads in about 3 seconds), and lets go of an MLX model when the work ends.
@@ -46,5 +47,7 @@
 
 ### Not yet done
 
+- A colleague on an older version of ENLENS counts the local model's readings in a shared project until they update
+  (their copy does not know the mark that makes them suggestions).
 - The lean the small model may suggest (from its probability of "yes") stays off until it is measured with opposites
   it writes itself; the GGUF builds of Qwen 3.5 are not benched yet; the AI run panel still names the local model.

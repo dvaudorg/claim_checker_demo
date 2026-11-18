@@ -1109,7 +1109,7 @@ function localTierSection(s, info) {
     h("div", { class: "btn-row" }, button({ sm: true, onClick: async (e) => {
       setBusy(e.currentTarget, true);
       try {
-        const r = await api("POST", "/api/servers/pull", { models: [older.offer], url: ollama.url, use: "ai" });
+        const r = await api("POST", "/api/servers/pull", { models: [older.offer], url: ollama.url, use: older.use || "ai" });
         replace(area, h("p", { class: "muted small" }, `Downloading ${older.offer}; it is chosen when the download is done.`));
         if (r && r.job) watchJob(r.job.id, () => {}, 2000).promise.then((j) => replace(area, j.state === "done" ? notice({ kind: "done" }, h("p", {}, `${older.offer} reads your documents now.`)) : notice({ kind: "error", live: false }, h("p", {}, j.error || "The download did not finish.")))).catch(showError);
       } catch (err) { showError(err); }

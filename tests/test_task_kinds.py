@@ -113,7 +113,7 @@ for _key, _value in {"routing.ROW_OF": _GN, "routing.CLAUDE_DEFAULTS": ("haiku",
 # helper, batch or row of its own), so it appears only in the tables of its names, prompt version and limit
 _PT = "point"
 SNAPSHOT["tasks.KINDS"] += (_PT,)
-for _key, _value in {"prompts.VERSIONS": "point-v1", "llm.OUTPUT_CAP": 160,
+for _key, _value in {"prompts.VERSIONS": "point-v1", "llm.OUTPUT_CAP": 24 + 14 * 60,
                      "taskqueue.NOUN": ("set of excerpts to point at", "sets of excerpts to point at"),
                      "taskqueue.SHORT": "sets of excerpts", "taskqueue.KIND_TITLE": "Pointing at sentences"}.items():
     SNAPSHOT[_key][_PT] = _value

@@ -336,7 +336,7 @@ _core(name="check", prompt_version="check-v5", certainty="evidence", claude=("so
 # Claude Code (no helper, no Claude model), answered only by a local model in the place of `check` (tasks.run_one)
 _core(name="point", prompt_version="point-v1", noun=("set of excerpts to point at", "sets of excerpts to point at"),
       short="sets of excerpts", title="Pointing at sentences", run_name="Checking hypotheses (the small local model)",
-      output_cap=160)
+      output_cap=24 + 14 * 60)   # pointing.OUTPUT_CAP: a task's own follows its excerpts (pointing.cap)
 _core(name="reread", prompt_version="check-v5", certainty="evidence", claude=("sonnet", "auditor"), local="large",
       to_auditor=True, judging=True, helper="enlens-checker", row="check", batch=1, order=4,
       noun=("excerpt to read again", "excerpts to read again"), short="excerpts to read again",

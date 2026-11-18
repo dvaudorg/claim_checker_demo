@@ -124,7 +124,7 @@ def test_sentences_are_numbered_with_the_app_splitter_and_run_on_sentences_are_c
     assert all(b - a <= pointing.LONG_SENTENCE + 40 for a, b in spans[1:])   # a run-on PDF paragraph is cut
     assert "".join(text[a:b] for a, b in spans).replace(" ", "") == text.replace(" ", "")   # nothing lost, in order
     user = pointing.user_prompt({"claim": "Water use rises.", "passages": [{"text": "One. Two here."}]})
-    assert user == "CLAIM: Water use rises.\n\nP1\n[1] One. [2] Two here."
+    assert user == "CLAIM: Water use rises.\n\nP1\n<s1> One. <s2> Two here."   # never [1]: citations look like that
 
 
 def test_the_schema_is_bounded_by_the_task_and_the_cap_by_its_excerpts():
@@ -134,7 +134,8 @@ def test_the_schema_is_bounded_by_the_task_and_the_cap_by_its_excerpts():
     assert marks["maxItems"] == 9 and marks["items"]["properties"]["p"]["enum"] == list(range(1, 10))
     assert marks["items"]["properties"]["s"]["maximum"] == 5 and marks["items"]["required"] == ["p", "s"]
     assert schema.output_schema("point")["properties"]["marks"]["maxItems"] == pointing.MAX_PASSAGES
-    assert pointing.cap(8) == 24 + 14 * 8 == 136 and pointing.cap(20) == pointing.OUTPUT_CAP == 160
+    # the cap follows k: the schema allows a mark for every excerpt, so 20 or 40 excerpts are not cut off
+    assert pointing.cap(8) == 24 + 14 * 8 == 136 and pointing.cap(40) == 584 and pointing.cap(60) == pointing.OUTPUT_CAP
     # every tier: the search words are bounded too (the prompt says "at most 20")
     terms = schema.output_schema("expand")["properties"]["terms"]
     assert terms["maxItems"] == 20 and terms["items"]["maxLength"] == 60
@@ -296,7 +297,98 @@ def test_claude_reading_a_suggestion_again_makes_it_count(loaded):
         cx.execute("UPDATE tasks SET status='pending' WHERE task_id=?", (t["task_id"],))
     ok, errs = tasks.ingest_result(loaded, t["task_id"], raw, model="sonnet", route="Claude Code")
     assert ok, errs
-    assert claimcheck.result(loaded, cid)["status"] == "supported"
+    r = claimcheck.result(loaded, cid)
+    assert r["status"] == "supported" and r["local_counted"] == 0
+
+
+def test_a_pre_i6_notice_never_names_a_row_claude_read_again(loaded):
+    cid = claimcheck.check_claim(loaded, CLAIM, LocalStandIn(), QWEN, k=3, expand=False)
+    with loaded.connect() as cx:   # made before I6: the local model's readings counted
+        cx.execute("UPDATE verifications SET suggestion_json=NULL WHERE subject_id=?", (cid,))
+    assert claimcheck.result(loaded, cid)["local_counted"] == 1
+    t = loaded.query("SELECT * FROM tasks WHERE task_id=?", (f"check:{cid}",))[0]
+    words = " ".join(json.loads(t["payload_json"])["passages"][0]["text"].split()[:6])
+    with loaded.connect() as cx:   # a stronger model (Claude) reads the same search again
+        cx.execute("UPDATE tasks SET again=1, step=1 WHERE task_id=?", (t["task_id"],))
+    ok, errs = tasks.ingest_result(loaded, t["task_id"], json.dumps({"evidence": [
+        {"passage": 1, "verdict": "supports", "confidence": 0.9, "quote": words}]}), model="sonnet", route="Claude Code")
+    assert ok, errs
+    r = claimcheck.result(loaded, cid)
+    assert r["status"] == "supported" and r["local_counted"] == 0
+
+
+def test_a_check_answered_again_from_a_kept_local_answer_stays_a_suggestion(loaded):
+    be = LocalStandIn()
+    first = claimcheck.check_claim(loaded, CLAIM, be, QWEN, k=3, expand=False)
+    second = claimcheck.check_claim(loaded, CLAIM, be, QWEN, k=3, expand=False)
+    assert be.kinds == ["check"]                                              # the second came from the kept answer
+    routes = [r["route"] for r in loaded.query("SELECT route FROM results WHERE task_id=?", (f"check:{second}",))]
+    assert routes == ["local model server (kept answer)"]
+    for cid in (first, second):
+        r = claimcheck.result(loaded, cid)
+        assert r["status"] == "not_checked" and r["suggestions"] == len(r["passages"]) and r["local_counted"] == 0
+        assert {x["read_by"] for x in r["passages"]} == {"local"}
+    with loaded.connect() as cx:   # as if made before I6: the kept local answer is known as the local model's
+        cx.execute("UPDATE verifications SET suggestion_json=NULL WHERE subject_id=?", (second,))
+    assert claimcheck.result(loaded, second)["local_counted"] == 1
+
+
+@pytest.mark.parametrize("model,asked", [(QWEN, "check"), (K2, "point")])
+def test_under_the_ai_mix_claude_reads_every_local_check_again(loaded, model, asked):
+    """Mostly local: the local model reads first (in its own form), its reading stays a suggestion, and the check always
+    goes up to Claude, whose reading counts; the local reading is kept in the excerpt's history, counting for nothing."""
+    from enlens_claims.llm import BaselineBackend
+
+    cid = claimcheck.check_claim(loaded, CLAIM, BaselineBackend(), "baseline", k=3, expand=False)
+    tid = f"check:{cid}"
+    with loaded.connect() as cx:
+        cx.execute("UPDATE tasks SET status='pending', attempts=0, step=0, again=0 WHERE task_id=?", (tid,))
+    be = LocalStandIn(marks=[{"p": 1, "s": 1}])
+    assert tasks.answer_locally_first(loaded, tid, be, model) == "again" and be.kinds == [asked]
+    t = loaded.query("SELECT status, step, again, queued FROM tasks WHERE task_id=?", (tid,))[0]
+    assert (t["status"], t["step"], t["again"], t["queued"]) == ("done", 1, 1, 1)
+    r = claimcheck.result(loaded, cid)
+    assert r["suggestions"] == len(r["passages"]) and r["status"] == "not_checked"
+    words = " ".join(json.loads(loaded.scalar("SELECT payload_json FROM tasks WHERE task_id=?", (tid,)))["passages"][0]
+                     ["text"].split()[:6])
+    ok, errs = tasks.ingest_result(loaded, tid, json.dumps({"evidence": [
+        {"passage": 1, "verdict": "supports", "confidence": 0.9, "quote": words}]}), model="sonnet", route="Claude Code")
+    assert ok, errs
+    r = claimcheck.result(loaded, cid)
+    assert r["status"] == "supported" and r["suggestions"] == 0 and r["local_counted"] == 0
+    hist = [json.loads(v["ai_history_json"] or "[]") for v in
+            loaded.query("SELECT ai_history_json FROM verifications WHERE subject_id=?", (cid,))]
+    assert all(h and h[-1].get("suggestion") for h in hist)
+    # the answer before the stronger model is what the suggestions gave: nothing counted yet
+    assert r["status_first"] == "not_checked"
+    row = next(h for h in claimcheck.history(loaded) if h["hyp_id"] == cid)
+    assert row["status"] == "supported" and row["status_before_stronger"] == "not_checked"
+
+
+def test_a_first_reading_that_was_a_suggestion_counts_for_nothing():
+    from enlens_claims import verdicts
+
+    v = {"verdict": "supports", "confidence": 0.9, "user_verdict": None, "model": "sonnet", "suggestion_json": None,
+         "doc_id": "d", "ai_history_json": json.dumps([{"verdict": "refutes", "confidence": 0.95, "model": QWEN,
+                                                        "why": "stepped up", "suggestion": '{"by": "local"}'}])}
+    f = verdicts.first_reading(v)
+    assert verdicts.effective(f)["verdict"] == "not_enough_info" and verdicts._waits_for_person(f)
+    assert verdicts.claim_status([verdicts.effective(f)], 0.6) == "not_checked"
+
+
+def test_validation_leaves_out_pointers_and_marks_suggestions_shown_first(loaded):
+    from enlens_claims import validation
+
+    qwen = claimcheck.check_claim(loaded, CLAIM, LocalStandIn(), QWEN, k=3, expand=False)
+    k2 = claimcheck.check_claim(loaded, "Electrolysers need much fresh water.", LocalStandIn(marks=[{"p": 1, "s": 1}]),
+                                K2, k=3, expand=False)
+    for cid in (qwen, k2):
+        x = next(p for p in claimcheck.result(loaded, cid)["passages"] if (p["suggestion"] or {}).get("marked"))
+        claimcheck.set_judgement(loaded, cid, x["passage_id"], "refutes")
+    rec = validation.collect_person(loaded, "Pilot")
+    assert rec["checks_pointed"] == 1 and len(rec["checks"]) == 1 and rec["checks"][0]["shown_first"] is True
+    md = validation.person_markdown([rec])
+    assert "only pointed at by the small local model" in md and "not independent" in md
 
 
 def test_the_small_tier_answers_a_check_by_pointing_and_judges_nothing(loaded):
@@ -390,15 +482,39 @@ def test_the_guard_never_frees_a_model_ollama_does_not_list_and_falls_back_to_a_
     assert be._guard(QWEN) is False
 
 
-def test_low_free_memory_frees_the_model_and_the_guard_is_off_unless_the_app_turns_it_on(monkeypatch):
+def test_low_free_memory_frees_only_a_grown_mlx_model_and_the_guard_is_off_unless_the_app_turns_it_on(monkeypatch):
     monkeypatch.setattr(llm, "total_memory", lambda: 16 * GB)
     monkeypatch.setattr(llm, "free_memory", lambda: int(2.5 * GB))           # under a fifth
     fake = FakeOllama()
-    fake.held[K2] = int(1.2 * GB)
+    fake.held = {K2: int(1.2 * GB), QWEN: int(4.1 * GB)}
     off = OllamaBackend("http://localhost:11434", opener=fake)
-    assert off.memory_watch is False and off._guard(K2) is False
+    assert off.memory_watch is False and off._guard(QWEN) is False
     be = _guarded(fake)
-    assert be._guard(K2) is True and K2 not in fake.held
+    # a llama.cpp build does not grow: unloading it frees nothing that would come back, so short memory leaves it
+    for _ in range(3):
+        fake.held[K2] += int(0.6 * GB)
+        assert be._guard(K2) is False and K2 in fake.held
+    # an MLX model only once it has grown past its first reading by half a GB
+    assert be._guard(QWEN) is False                                           # its first reading
+    fake.held[QWEN] = int(4.4 * GB)
+    assert be._guard(QWEN) is False
+    fake.held[QWEN] = int(4.7 * GB)
+    assert be._guard(QWEN) is True and QWEN not in fake.held
+
+
+def test_after_a_free_the_guard_waits_a_few_requests_before_it_frees_again(monkeypatch):
+    monkeypatch.setattr(llm, "total_memory", lambda: 16 * GB)
+    monkeypatch.setattr(llm, "free_memory", lambda: int(2.0 * GB))           # still short after the free
+    fake = FakeOllama()
+    fake.grow = int(0.6 * GB)
+    be = _guarded(fake)
+    payload = {"claim": "x", "passages": _passages(2)}
+    fake.answer = '{"evidence": [], "rationale": ""}'
+    for _ in range(12):
+        be.complete("check", "s", "u", QWEN, payload)
+    frees = [i for i, (p, _b) in enumerate(fake.calls) if p == "/api/generate"]
+    chats_between = [sum(1 for p, _b in fake.calls[a:b] if p == "/api/chat") for a, b in zip(frees, frees[1:])]
+    assert frees and all(n >= llm.GUARD_COOLDOWN for n in chats_between)   # never a reload for every request
 
 
 def test_the_apps_backend_has_the_guard_on():

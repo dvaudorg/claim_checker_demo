@@ -477,6 +477,11 @@ def _errs(e: ValidationError) -> list[str]:
 
 
 LOCAL_ROUTE = "local model server"   # routing.ROUTE_NAMES of a model on this computer (Ollama, LM Studio…)
+
+
+def is_local_route(route: str | None) -> bool:
+    """I6: an answer of a model on this computer, asked now or kept from before ("local model server (kept answer)")."""
+    return (route or "").startswith(LOCAL_ROUTE)
 SUGGESTING_KINDS = ("check", "reread")  # the kinds whose answer judges excerpts of a check (`point` keeps its own)
 
 
@@ -492,7 +497,7 @@ def mark_suggestions(cx, t, payload: dict, route: str | None) -> None:
     ids = [p["passage_id"] for p in payload.get("passages") or []]
     if not ids:
         return
-    sug = json.dumps({"by": "local", "form": "check"}) if route == LOCAL_ROUTE else None
+    sug = json.dumps({"by": "local", "form": "check"}) if is_local_route(route) else None
     q = ",".join("?" * len(ids))
     cx.execute(f"UPDATE verifications SET suggestion_json=? WHERE subject_kind='user_claim' AND subject_id=? AND "
                f"passage_id IN ({q}) AND COALESCE(model, '') != ?", [sug, payload["subject_id"], *ids, PERSON])
@@ -861,6 +866,12 @@ def _history_entry(b, at: str | None = None, why: str | None = None) -> dict:
     """The AI's earlier grade of an excerpt (a row of `verifications`) as one entry of `ai_history_json`."""
     e = {"verdict": b["verdict"], "confidence": b["confidence"], "quote": b["quote"], "scope_note": b["scope_note"],
          "model": b["model"], "prompt_version": b["prompt_version"], "at": at, "replaced_at": now()}
+    try:
+        sug = b["suggestion_json"]
+    except (KeyError, IndexError):
+        sug = None
+    if sug:   # I6: that reading was a local model's suggestion: it never counted, nor does it as a first reading
+        e["suggestion"] = sug
     if why is not None:
         e["why"] = why
     return e
@@ -1568,7 +1579,8 @@ def answer_locally_first(ws: Workspace, task_id: str, backend, model: str) -> st
         return None  # answered, or held by Claude Code or another local run
     try:
         t0 = ws.query("SELECT * FROM tasks WHERE task_id=?", (task_id,))[0]
-        kept = cached_answer(ws, t0, model) if not t0["attempts"] else None
+        form = answer_form(t0, backend, model)   # I6: the small tier answers a check by pointing, here too
+        kept = cached_answer(ws, t0, model) if not t0["attempts"] and not form else None
         if kept is not None:
             ok, _e = ingest_result(ws, task_id, kept, model=model, provenance={"settings": {"from_cache": True}},
                                    route=f"{_route_name(backend)} (kept answer)", claim=claim, cached=True)
@@ -1579,11 +1591,12 @@ def answer_locally_first(ws: Workspace, task_id: str, backend, model: str) -> st
             t = ws.query("SELECT * FROM tasks WHERE task_id=?", (task_id,))[0]
             if t["status"] in ("done", "failed") or t["claimed_by"] != claim:
                 break
-            system, user = render(ws, t)
+            asked = {**dict(t), "kind": form} if form else t
+            system, user = render(ws, asked)
             _send(ws, t, backend)
-            raw, problem = _complete(backend, t, system, user, model)
+            raw, problem = _complete(backend, asked, system, user, model)
             ok, _e = ingest_result(ws, task_id, raw, model=model, provenance=_provenance(backend, model),
-                                   route=_route_name(backend), problem=problem, claim=claim)
+                                   route=_route_name(backend), problem=problem, claim=claim, as_kind=form)
             if ok:
                 break
     except NotHeld:
@@ -1606,6 +1619,11 @@ def answer_locally_first(ws: Workspace, task_id: str, backend, model: str) -> st
             obj = None
         c = certainty(t["kind"], obj)
         if (c is not None and c < STEP_UP_BELOW) or judging_changes(task_kind(t), obj):
+            how = "again"
+        elif t["kind"] == "check" and is_local_route(_route_name(backend)):
+            # I6: a local model's judgements of excerpts are suggestions only, so a check of documents Claude may read
+            # always goes up to Claude, who reads it again; the local reading stays a suggestion meanwhile (and in the
+            # excerpt's history once Claude has read it)
             how = "again"
     elif t["status"] != "done":
         how = "retry"

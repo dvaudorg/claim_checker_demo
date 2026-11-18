@@ -218,9 +218,10 @@ def _option(model: dict, use: str, role: str, facts: dict, fit: dict) -> dict:
 
 
 def no_graphics(facts: dict) -> bool:
-    """A computer without a graphics card a model can use: not Apple silicon, and no NVIDIA card's memory read. Such a
-    computer gets the small tier (I6): a larger model on the processor alone takes minutes a check."""
-    return not facts.get("unified") and not facts.get("gpu") and facts.get("system") in ("windows", "linux")
+    """A computer without a graphics card a model can use: not Apple silicon, and no NVIDIA card's memory read (an
+    Intel Mac included). Such a computer gets the small tier (I6): a larger model on the processor alone takes minutes
+    a check."""
+    return not facts.get("unified") and not facts.get("gpu")
 
 
 def _ladder(rungs: tuple, use: str, facts: dict) -> dict:
@@ -239,8 +240,9 @@ def _ladder(rungs: tuple, use: str, facts: dict) -> dict:
         return {"pick": None, "smaller": None, "larger": None, "options": [], "reason": why}
     comfy = [t for t in ok if t[2]["share"] <= COMFORT] or ok[:1]
     pi, pm, pf = comfy[0] if use == "embed" else comfy[-1]   # search by meaning starts with the small one
-    if use == "chat" and no_graphics(facts):
-        pi, pm, pf = ok[0]   # I6: no graphics card: the small tier (the others stay offered under Technical)
+    if use == "chat" and (no_graphics(facts) or (facts.get("memory") is None and not facts.get("gpu"))):
+        # I6: no graphics card, or memory that cannot be read: the small tier (the others stay offered under Technical)
+        pi, pm, pf = ok[0]
     pick = _option(pm, use, "recommended", facts, pf)
     smaller = next((_option(m, use, "smaller", facts, f) for i, m, f in reversed(ok) if i < pi), None)
     larger = next((_option(m, use, "larger", facts, f) for i, m, f in ok if i > pi), None)

@@ -163,7 +163,9 @@ def first_reading(v) -> dict | None:
         return None
     ok = before.get("verdict") in ("supports", "partially_supports", "refutes")
     d.update(verdict=before.get("verdict") if ok else "not_enough_info",
-             confidence=before.get("confidence") if ok else None, model=before.get("model") or d.get("model"))
+             confidence=before.get("confidence") if ok else None, model=before.get("model") or d.get("model"),
+             # I6: a first reading that was a local model's suggestion counted for nothing then, so not now either
+             suggestion_json=before.get("suggestion"))
     return d
 
 

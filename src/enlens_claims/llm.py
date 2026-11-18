@@ -72,6 +72,11 @@ GUARD_GROW_MIN = int(1.5 * (1 << 30))
 GUARD_GROW_SHARE = 0.10
 GUARD_FREE_SHARE = 0.20
 GUARD_EVERY = 20
+# "short of free memory" frees only an MLX model that has grown at least this much past its first reading (unloading a
+# llama.cpp build, or a model on a graphics card, frees nothing that grows); and nothing is freed again within
+# GUARD_COOLDOWN requests of the last free (each free costs a reload of about 3 s and the prompt cache)
+GUARD_SHORT_GROWN = int(0.5 * (1 << 30))
+GUARD_COOLDOWN = 5
 
 
 def _windows_memory():
@@ -398,6 +403,7 @@ class OllamaBackend:
         self._details: dict[str, dict] = {}
         self._version: str | None = None
         self.freed = 0                       # how often the guard freed the memory in this run
+        self._freed_at: int | None = None    # the request count at the last free (the cooldown)
         self.on_freed = None                 # optional callable(str) told when it did (the job's log line)
         if opener is None:
             opener = local_urlopen   # 0.19.10: 127.0.0.1 before ::1 (Windows)
@@ -500,7 +506,7 @@ class OllamaBackend:
         if kind == "point":   # I6: the pointer's limit follows its number of excerpts (pointing.cap)
             from .pointing import cap as point_cap
 
-            answer_cap = min(answer_cap, point_cap(len(payload.get("passages") or [])))
+            answer_cap = point_cap(len(payload.get("passages") or []))
         cap = answer_cap + allowance
         prompt_tokens = estimate_tokens(system) + estimate_tokens(user)
         need = prompt_tokens + cap + budget  # a forced answer carries the reasoning so far as notes
@@ -765,11 +771,14 @@ class OllamaBackend:
         """I6 (research section 2): Ollama's MLX runner keeps a prompt cache that grows by about 0.17 GB a check up to
         8 GiB, which a 16 GB computer cannot spare. Before each request of a long run, the model's memory is freed
         (`let_go`: only a model Ollama holds; nothing is loaded to unload it) when it has grown past its first reading
-        by GROW (`max(1.5 GB, 10 % of the memory)`), or when free memory is below a fifth; when /api/ps does not
-        answer, every MLX_EVERY-th request of an MLX model. The next request, part of the same job the person started,
+        by GROW (`max(1.5 GB, 10 % of the memory)`), or, for an MLX model that has grown at least GUARD_SHORT_GROWN, when
+        free memory is below a fifth; when /api/ps does not answer, every GUARD_EVERY-th request of an MLX model. Never
+        within GUARD_COOLDOWN requests of the last free. The next request, part of the same job the person started,
         loads it again (about 3 s). Returns whether it freed it."""
         if not self.memory_watch:
             return False
+        # within the cooldown the model's first reading after the reload is still noted (below), nothing is freed
+        cooling = self._freed_at is not None and self._requests - self._freed_at < GUARD_COOLDOWN
         total = total_memory() or 0
         grow = max(GUARD_GROW_MIN, int(GUARD_GROW_SHARE * total))
         why = None
@@ -788,10 +797,11 @@ class OllamaBackend:
                 self._base_vram[model] = now
             elif now > base + grow:
                 why = "grown"
-            free = free_memory()
-            if why is None and total and free is not None and free < GUARD_FREE_SHARE * total:
-                why = "short"
-        if why is None:
+            elif now >= base + GUARD_SHORT_GROWN and self.details(model).get("runner") == "mlx":
+                free = free_memory()
+                if total and free is not None and free < GUARD_FREE_SHARE * total:
+                    why = "short"
+        if why is None or cooling:
             return False
         # only a model Ollama lists as held (or, when it does not answer, the one this run's last request used): the
         # unload never loads it (let_go's rule)
@@ -801,6 +811,7 @@ class OllamaBackend:
             return False
         self._base_vram.pop(model, None)
         self.freed += 1
+        self._freed_at = self._requests
         if self.on_freed:
             try:
                 self.on_freed("Freed the local model's memory; it loads again for the next excerpts (about 3 s).")

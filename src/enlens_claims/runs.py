@@ -186,7 +186,7 @@ def provenance_table(ws: Workspace, task_ids: list[str] | None = None, kinds: tu
         route = r["route"] or s.get("route") or {"file queue": "file queue"}.get(s.get("backend"), "")
         cc = route == "Claude Code"
         claude_code = claude_code or cc
-        local = local or route == "local model server"
+        local = local or route.startswith("local model server")   # asked now, or a kept answer
         out.append({"Step": names.get(r["kind"], r["kind"]), "Route": route,
                     "Helper": r["helper"] or "",
                     "AI model": (f"{r['model']} (as set for the helper)" if cc else r["model"]) or "",

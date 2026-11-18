@@ -110,9 +110,29 @@ def test_search_by_meaning_starts_with_the_small_model_and_offers_the_multilingu
     assert modeladvice.advise(pc(16, disk=2))["embed"]["pick"] is None             # not even 0.3 GB of room to spare
 
 
-def test_a_computer_that_cannot_be_read_is_not_refused():
+def test_a_computer_that_cannot_be_read_is_not_refused_and_gets_the_small_tier():
     a = modeladvice.advise({"memory": None, "disk_free": None, "system": "linux", "unified": False, "gpu": None})
     assert a["chat"]["pick"] is not None and a["computer"]["words"] == ""
+    # memory that cannot be read never picks a larger tier (everything would "fit")
+    mac = modeladvice.advise({"memory": None, "disk_free": None, "system": "mac", "unified": True, "gpu": None})
+    assert mac["chat"]["pick"]["name"] == S
+
+
+def test_an_intel_mac_counts_as_no_graphics_card():
+    assert modeladvice.advise(pc(16, system="mac", unified=False))["chat"]["pick"]["name"] == S
+
+
+def test_the_older_model_offer_downloads_for_the_use_the_older_model_has(api, monkeypatch):
+    monkeypatch.setattr(modeladvice, "computer", lambda *a, **k: pc(16, system="mac", unified=True))
+    # Claude Code reads the documents; the old model reads those marked Only a local AI: the offer is for that use
+    api("PUT", "/api/settings", {"backend": "claude_code", "allow_claude_code": True, "ollama_model": "",
+                                 "restricted_server": "ollama", "restricted_model": "qwen3:8b"})
+    older = api("GET", "/api/servers")[1]["older_model"]
+    assert older == {"chosen": "qwen3:8b", "offer": M, "size": older["size"], "use": "restricted"}
+    api("PUT", "/api/settings", {"backend": "ollama", "ollama_model": "qwen3:8b"})
+    assert api("GET", "/api/servers")[1]["older_model"]["use"] == "ai"
+    js = (STATIC / "views" / "settings.js").read_text(encoding="utf-8")
+    assert 'use: older.use || "ai"' in js
 
 
 def test_an_older_model_keeps_working_and_the_tier_is_offered_beside_it():
