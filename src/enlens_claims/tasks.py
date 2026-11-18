@@ -1758,6 +1758,7 @@ def export(ws: Workspace, kind: str, batch_size: int = 25, limit: int | None = N
     todo: list[str] = []
     with ws.connect() as cx:
         dflt = access.default(ws)
+        me = access.sender()   # I7 stage 3: for the ledger, once for the export
         for c in range(0, len(cand), _EXPORT_CHUNK):
             if limit and len(todo) >= limit:
                 break
@@ -1770,7 +1771,8 @@ def export(ws: Workspace, kind: str, batch_size: int = 25, limit: int | None = N
                 # the file queue's tasks are for Claude (a chat, or Claude Code), as "Claude may read it" said
                 if access.recheck(cx, tid, dflt, provider=access.ANTHROPIC) != "cloud":
                     continue
-                access.record_sent(cx, tid, json.loads(payloads[tid]), "file queue", kind, provider=access.ANTHROPIC)
+                access.record_sent(cx, tid, json.loads(payloads[tid]), "file queue", kind, provider=access.ANTHROPIC,
+                                   person=me)
                 todo.append(tid)
     out_dir = ws.root / "tasks" / kind
     out_dir.mkdir(parents=True, exist_ok=True)

@@ -483,6 +483,9 @@ MIGRATIONS = [("documents", "declared_ref", "TEXT"), ("vca_refs", "alias_of", "T
               # review of 18 Nov 2026: who made the last change (the name stays its author's, `person_id`) and the
               # versions it replaced (a JSON list of "time|person"), so a copy tells a later change from one made apart
               ("concept_group_names", "changed_by", "TEXT"), ("concept_group_names", "history_json", "TEXT"),
+              # I7 stage 3 (ailog.py): who sent each passage (the person id of the copy that sent it) and on which
+              # model, so the AI log can say who ran what in a team. NULL: sent before, or by an older copy
+              ("ai_sent", "person_id", "TEXT"), ("ai_sent", "model", "TEXT"),
               ]
 
 
@@ -866,6 +869,10 @@ class Workspace:
             from .access import upgrade
 
             upgrade(self)
+        if not self.scratch:  # I7 stage 3: once, provider lists a shared project inherited from colleagues are cleared
+            from .access import settle_own_providers
+
+            settle_own_providers(self)
 
     def _conn(self) -> sqlite3.Connection:
         cx = getattr(self._local, "cx", None)

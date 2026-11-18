@@ -43,25 +43,33 @@ export const AGENT_CHOICE = {
 // the honest state of the agent CLIs (docs/manual/other-agents.md says the same)
 const untried = (title) => `Built from ${title}’s documentation and not yet tried with real accounts, nor measured with ENLENS.`;
 
-// Whether the open project is shared with a team: only Anthropic may read a shared project's documents (privacy.md)
+// Whether the open project is shared with a team, and the team's limit of providers when its owner set one (I7 stage 3:
+// each person chooses their own provider; privacy.md). {shared, limit: [ids] | null, note}
 async function projectShared() {
-  if (!App.project) return false;
-  try { const r = await api("GET", `/api/projects/${P(App.project)}`); return !!((r && r.ai_access) || {}).shared; } catch (_) { return false; }
+  if (!App.project) return { shared: false };
+  try { const a = ((await api("GET", `/api/projects/${P(App.project)}`)) || {}).ai_access || {}; return { shared: !!a.shared, limit: (a.team_limit && a.team_limit.providers) || null, note: a.providers_note || "" }; }
+  catch (_) { return { shared: false }; }
 }
-const sharedLine = (who) => h("p", { class: "small", id: "consent-shared" }, `This project is shared with a team: only Anthropic may read its documents, so ${who} reads none of them here.`);
+// one line in the consent dialog of a provider in a shared project: the choice is the person's own, and the team's
+// limit, when the owner set one that leaves this provider out
+const sharedLine = (who, prov, team) => {
+  if (!team || !team.shared) return null;
+  if (team.limit && prov && !team.limit.includes(prov)) return h("p", { class: "small", id: "consent-shared" }, `${team.note} So ${who} reads none of this project’s documents.`);
+  return h("p", { class: "small", id: "consent-shared" }, `This project is shared with a team: the provider is your own choice, for your copy. Your colleagues see in the research log which provider you allowed, and the AI log shows who ran what with which provider.`);
+};
 
 // The yes-first dialog of Codex or Antigravity (as Claude Code's): what is sent where, the maker's terms, which
 // documents, the honest state. `stay`: the words of the way out. Resolves true for yes. Used by Settings and the first run.
 export async function agentConsent(key, { stay = "Keep the AI on this computer" } = {}) {
   const a = AGENTS[key], c = AGENT_CHOICE[key];
-  const shared = await projectShared();
+  const team = await projectShared();
   return !!(await dialog({
     title: `Let ${a.title} read the excerpts, on ${a.plan}?`,
     body: h("div", {}, h("p", {}, `The AI buttons of ENLENS then prepare tasks; ${a.title} answers them, started by ENLENS when you press Start ${a.title}.`),
       h("p", {}, h("strong", {}, `The passages inside the tasks ${a.title} takes are sent to ${a.company}.`), " Your documents, results and reviews stay on this computer, and every answer is checked here against the text."),
       h("p", {}, h("strong", {}, c.terms)),
       h("p", {}, h("strong", {}, `Only documents that allow ${c.box} are sent.`), ` Every document allows Anthropic only until you tick ${c.box} for it on the Documents page; the others wait for another AI, or for you.`),
-      shared ? sharedLine(a.title) : null,
+      sharedLine(a.title, { codex: "openai", antigravity: "gemini" }[key], team),
       h("p", { class: "muted small" }, `ENLENS never sees your login and never runs on anyone else’s plan. ${untried(a.title)}`)),
     actions: [{ text: stay, value: false, id: "dlg-safe" }, { text: `Use ${a.title}`, value: true, primary: true }],
   }));
@@ -404,12 +412,12 @@ function modelSection(s, servers, watchers, info = { servers }) {
       if (!ok) { select(prev); return; }
     }
     if (key === "cloud_api" && prev !== "cloud_api") {
-      const shared = await projectShared();
+      const team = await projectShared();
       const ok = await dialog({
         title: "Use another cloud provider with your API key?",
         body: h("div", {}, h("p", {}, "The hypothesis and the excerpts the AI reads are then sent to the provider you choose below (OpenAI, Google, Mistral, Microsoft or OpenRouter), and the use is billed to your key."),
           h("p", {}, h("strong", {}, "Only documents that allow that provider are sent."), " Every document allows Anthropic only until you tick another provider for it on the Documents page; the others are read by your local model, or wait for you."),
-          shared ? sharedLine("that provider") : null,
+          sharedLine("that provider", null, team),
           h("p", { class: "muted small" }, "Nothing is sent before you also switch on “Allow cloud models”, store a key and save. ENLENS's models and settings were measured with Claude only.")),
         actions: [{ text: "Back", value: false, primary: true, id: "dlg-safe" }, { text: "Continue with another provider", value: true }],
         onOpen(dlg) { const b = dlg.querySelector("#dlg-safe"); if (b) b.focus(); },

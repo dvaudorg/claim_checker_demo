@@ -89,7 +89,7 @@ progress), then `review.py score` scores it against the Fable reference and `viz
 reviewer grades `review.py packet`'s claims from scratch and counts only after passing its hidden controls and quote
 check. A model earns a stronger role than *suggestions only* only by measurement on this bench.
 
-**I7. Cloud providers other than Claude** · Level 3 · stages 1 and 2 built (17 and 18 November 2026), stage 3 left
+**I7. Cloud providers other than Claude** · Level 3 · stages 1, 2 and 3 built (17, 18 and 18 November 2026)
 - *The wish:* a researcher whose plan or institution is with another major provider can use it instead of Claude:
   OpenAI, Google, Mistral (a European provider some universities' data rules prefer), Azure OpenAI (the route many
   institutions already have an agreement for) and OpenRouter. Claude stays the default and the reference; *as little
@@ -97,7 +97,7 @@ check. A model earns a stronger role than *suggestions only* only by measurement
 - *Built (stage 1):* an API key for each of the five (one OpenAI-compatible backend, the key in the keychain), and
   consent per provider: a document that *Claude may read* is allowed to Anthropic only until the person ticks more,
   for the project or the document. A model server on another computer counts as a cloud provider too (before, it could
-  read every *Claude may read it* document). In a shared project only Anthropic reads.
+  read every *Claude may read it* document). In a shared project only Anthropic read (until stage 3).
 - *Built (stage 2, 18 November 2026):* Codex (OpenAI, ChatGPT plans) and Antigravity (`agy`, Google, which
   replaced Gemini CLI for personal accounts in June 2026) answer the task queue as Claude Code does, chosen inside one
   *Subscription* card. ENLENS installs, signs in and adds itself to each (`agentcli.py`), and starts the helpers
@@ -105,8 +105,16 @@ check. A model earns a stronger role than *suggestions only* only by measurement
   `$enlens-run` / `/enlens-run` are installed for typing in the CLI. The queue reads for the agent's provider
   (`ENLENS_ROUTE` in the connector). Every provider gets the three tiers from its own line-up (`providers.LINEUP`),
   resolved against the models the key or plan lists, and *How much thought* applies to all.
-- *Stage 3:* the provider allowance travels with a shared project (sync, the owner's rules), so a team can use
-  another provider; each researcher still chooses their own route.
+- *Built (stage 3, 18 November 2026):* in a shared project each person chooses their own route and provider: a
+  member's Codex, Antigravity or API key reads the project's documents marked for cloud AI on their copy. The providers
+  a person ticks are their own consent and never travel (a colleague's new document or project file arrives without
+  them); the AI level of each document stays the team's. The owner may limit the providers the team may use (People
+  and settings › *AI providers*, off by default), a row of the owner's settings that travels and counts like the
+  codebook settings (`teamproviders.py`); work for a provider outside it is held, with a note naming the limit and who
+  set it. The **AI log** (`ailog.py`, `#/log/ai`, from the research log's line under its title): who ran which AI
+  work, with which provider, route and model, which kind of task, when, about what and how many excerpts, filtered by
+  person and provider; the ledger now names the person and the model (`ai_sent.person_id`, `ai_sent.model`), and a
+  colleague's rows come with the sync.
 - *Later:* defaults measured with the validation run (J4.3) and agreement with Claude (I5) rather than taken from the
   providers' own advice; until then Settings marks a provider *not yet measured*. Plan detection for Codex (its
   sign-in does not say the plan) and Antigravity (from the models `agy models` lists).
@@ -134,7 +142,7 @@ release that left each one in brackets). None of them loses work; each is small.
 
 ## Left to try with real accounts and a real team
 
-**I7. Cloud providers with real keys**
+**I7. Cloud providers with real keys, and in a real team**
 - Built against stand-ins that follow each provider's documents. To try: OpenAI's reasoning models
   (`max_completion_tokens`, temperature), Mistral's `random_seed` and structured output, Gemini's error shape and
   model ids, Azure's `/openai/v1` address with the `api-key` header, OpenRouter's structured output, the words of a
@@ -143,6 +151,9 @@ release that left each one in brackets). None of them loses work; each is small.
   `approval_policy="never"`, how a reached limit shows in `--json`, the models a ChatGPT plan offers.
 - Antigravity: the one sign-in window, whether `agy -p` loads the work folder's `.agents/mcp_config.json` and needs
   the folder trusted, the `mcp(enlens/*)` permission line, `agy models` on a free and a paid account, a reached limit.
+- Stage 3 in a real team: two people on different providers (Claude Code and Codex) on one shared project through a
+  real storage space or shared folder; the owner's limit reaching a member and holding their work; the AI log filling
+  with both people's rows. Tested only with two copies exchanging files on one computer.
 
 Built and tested against stand-ins that follow each service's documents; not yet tried for real.
 
@@ -174,6 +185,15 @@ Built and tested against stand-ins that follow each service's documents; not yet
 - Owner, Co-owner and Member roles, invites, a hand-over and removing a colleague, used by a real team over days.
 - The concept map's group names (D1): how often two copies find a group differently enough that a colleague's name
   lands under *names kept for groups that are not on this map* rather than on its group.
+
+## Open decisions
+
+- **Signing the owner's settings** (I7 stage 3, 18 November 2026). The owner's settings that travel as rows of
+  `team_settings` (the providers the team may use, the codebook settings) and the roles are not signed: a changed app
+  could write one in the owner's name, which other copies follow until the owner's copy answers it at its next round.
+  When such a row came in someone else's file, the research log names the person it says and the person whose file it
+  came in. Decided for now: keep this trust model and say so (the manual's *Roles*); signing the rows with the keys a
+  storage space already has is the way to close it, if a team needs it.
 
 ## Parked or decided against
 
