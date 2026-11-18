@@ -284,6 +284,46 @@ await scenario("S1 look then toggle option", async (t) => {
   await t.settle(2000);
   return { text: t.text(), prep: t.view.querySelectorAll(".prep-card").filter((x) => !t.hidden(x)).length };
 });
+// ---- S2: the codebook editor's example and "Why?" boxes, typed in while a request runs ---------------------------
+const CBK = "/api/projects/Study/codebooks";
+const CODE1 = { uid: "u1", code: "Mending", description: "Fixing things together", group: "1", include: "", exclude: "", keywords: [],
+  examples: [{ quote: "we mend chairs", doc_id: "d1", start: 1 }] };
+const CBBODY = { codebook: { name: "repair", title: "Repair", label: "code", where: "project", editable: true, directional: false,
+  used: { labels: 0, checks: 0 }, groups: [{ group: "1", group_name: "Practice" }], codes: [CODE1] } };
+async function editorFor(t) {
+  t.state({ settings: { backend: "claude_code" } });
+  t.answer(`GET ${CBK}/repair`, CBBODY);
+  t.answer(`GET ${CBK}/repair/offer`, { offer: null });
+  t.answer(`POST ${CBK}/repair/define/offer`, { offered: false, passages: 0, reader: "claude" });
+  t.answer("GET /api/projects/Study/sharing/codebook/repair", { shared: false });
+  t.answer("GET /api/projects/Study/shared-folder", { folder: null });
+  t.answer("GET /api/projects/Study/sync-poller", t.fail(404, "none"));
+  await t.render("views/codebooks.js", "renderCodebook", ["repair"]);
+  await t.click(/^Mending/);
+}
+await scenario("S2 example typed while adding", async (t) => {
+  t.answer(`POST ${CBK}/example`, async () => { await new Promise((r) => setTimeout(r, 300)); return { example: { quote: "we mend chairs", doc_id: "d1", start: 1 } }; });
+  await editorFor(t);
+  const ex = document.querySelector("textarea[placeholder^='Paste words']");
+  ex.value = "we mend chairs";
+  await t.click("Add the example");
+  ex.value = "we mend chairs and tables";   // typed after it, while the request runs
+  await t.settle(1000);
+  const ex2 = document.querySelector("textarea[placeholder^='Paste words']");
+  return { left: ex.value, same: ex === ex2 };
+});
+await scenario("S2 why typed while saving", async (t) => {
+  t.answer(`PUT ${CBK}/repair`, async () => { await new Promise((r) => setTimeout(r, 300)); return { ...CBBODY, changes: ["renamed"] }; });
+  await editorFor(t);
+  await t.type("Name", "Mending 2");
+  await t.settle(300);
+  const why = document.querySelector("input.cb-why");
+  why.value = "Clearer name";
+  await t.click("Save");
+  why.value = "Clearer name for the group";
+  await t.settle(1000);
+  return { left: why.value };
+});
 """
 
 
@@ -388,3 +428,14 @@ def test_s1_a_look_discarded_for_an_option_speaks_of_the_option(page):
     r = page["S1 look then toggle option"]
     assert r["prep"] == 0 and "among neighbours" not in r["text"], r
     assert "Check each part separately" in r["text"] and "hypothesis changed" not in r["text"], r["text"]
+
+
+@needs_node
+def test_s2_words_typed_while_an_example_is_added_are_kept(page):
+    r = page["S2 example typed while adding"]
+    assert r["left"] == "and tables", r
+
+
+@needs_node
+def test_s2_words_typed_while_the_codebook_is_saved_stay_in_why(page):
+    assert page["S2 why typed while saving"]["left"] == "for the group"
