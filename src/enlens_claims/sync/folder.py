@@ -1309,6 +1309,12 @@ def _leaks(cx: sqlite3.Connection, items: list[dict]) -> str | None:
     for (tid,) in cx.execute(f"SELECT task_id FROM tasks WHERE kind IN ({','.join('?' * len(kinds))})", kinds):
         if not _task_of(tid or "", checks, parts, runs):
             return "a task of a check or a set of themes that is not shared was among what was to go."
+    # this computer's own AI work (sharing.LOCAL_TASK_KINDS: draft names of groups, draft definitions of codes, the
+    # framework drafted from theory documents) never goes, nor its answers (hunt phase 1, MERGE-3)
+    local = sharing.LOCAL_TASK_KINDS
+    if cx.execute(f"SELECT 1 FROM tasks WHERE kind IN ({','.join('?' * len(local))}) UNION ALL SELECT 1 FROM results "
+                  f"WHERE kind IN ({','.join('?' * len(local))}) LIMIT 1", (*local, *local)).fetchone():
+        return "a draft the AI made for this computer only was among what was to go."
     if any(r not in runs for (r,) in cx.execute("SELECT DISTINCT run_id FROM theme_members")):
         return "a theme of a set of themes that is not shared was among what was to go."
     if cx.execute("SELECT 1 FROM shares WHERE state NOT IN ('shared', 'withdrawn') OR (state='withdrawn' AND title IS "

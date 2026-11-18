@@ -744,6 +744,16 @@ def strip(cx: sqlite3.Connection, root: Path | str | None, me: str) -> dict:
     cx.execute(f"DELETE FROM results WHERE task_id IN (SELECT task_id FROM tasks WHERE kind IN ({marks}))",
                LOCAL_TASK_KINDS)
     cx.execute(f"DELETE FROM tasks WHERE kind IN ({marks})", LOCAL_TASK_KINDS)
+    # a task of a check's or a theme run's kind that no shared item holds (the search words asked for a concept of the
+    # glossary, `expand:concept:…`; one left by a check removed long ago) is no one's to send: the shared folder never
+    # writes these (ProjectRows), so a zip of what was shared does not hold them either (hunt phase 1, MERGE-3 sweep)
+    theirs = {r["task_id"] for k, key in shared if k in ("check", "themes")
+              for r in rows_of(cx, k, key).get("tasks", [])}
+    marks = ",".join("?" * len(ITEM_TASK_KINDS))
+    for (tid,) in cx.execute(f"SELECT task_id FROM tasks WHERE kind IN ({marks})", ITEM_TASK_KINDS).fetchall():
+        if tid not in theirs:
+            cx.execute("DELETE FROM results WHERE task_id=?", (tid,))
+            cx.execute("DELETE FROM tasks WHERE task_id=?", (tid,))
     # the ledger of what was sent to Claude stays whole (a cap on what Claude may read counts every copy's reading),
     # but a row of work that is not shared no longer names its task (a check's id is in it)
     # (I7 stage 3: nor who sent it, nor on which model: the AI log says only "work not shared with the team")
@@ -766,9 +776,14 @@ def strip(cx: sqlite3.Connection, root: Path | str | None, me: str) -> dict:
 # tasks of these kinds belong to checks and theme runs (sync.fingerprints check_tasks, themes_tasks), never to the project
 ITEM_TASK_KINDS = ("check", "expand", "decompose", "reread", "second", "theme")
 # tasks of these kinds (and their results) are this copy's own, like the tables they fill (sync.LOCAL_ONLY): the AI's
-# draft name for a concept-map group (groupnames.KIND). They never leave in a zip or the shared folder, and never come
-# in from a colleague. Not in ITEM_TASK_KINDS: those belong to a check or a theme run (sync/folder.py)
-LOCAL_TASK_KINDS = ("group_name",)
+# draft name for a concept-map group (groupnames.KIND); the AI's draft definition of a code (codedefine.KIND: the
+# code's name, its group and the passages of its examples, of a codebook that may be private); the framework the AI
+# drafted from theory documents (theoryframe.KIND: the person's focus and the draft codebook's concepts, before it is a
+# codebook). Hunt phase 1 (MERGE-3): the last two went in a zip of what was shared and in the shared folder, though no
+# item covers them. What a colleague needs of them is in the codebook once the person makes or saves it (a draft's
+# words are marked there, `drafted`). They never leave in a zip or the shared folder, and never come in from a
+# colleague. Not in ITEM_TASK_KINDS: those belong to a check or a theme run (sync/folder.py)
+LOCAL_TASK_KINDS = ("group_name", "code_definition", "theory_frame")
 # tables without words of a document in them: a document kept out of the shared folder does not keep these rows out
 _NO_TEXT = {"ai_sent", "people", "bib_items", "bib_links", "research_log", "sync_removed", "runs", "meta",
             "ownership", "proposals", "decisions", "canon",  # 0.18 L2: they name documents, and hold none of their words

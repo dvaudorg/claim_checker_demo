@@ -73,11 +73,22 @@ class OwnerRules:
                         refused.append(("proposals", p["id"], p, None))
                     continue
                 self._via_proposal(cx, p, p["id"] not in have)  # roles-p2: a third person's proposal is "via" (§4.8)
+                # only its maker takes a proposal back (ownership.take_back), so a take-back is taken from the maker's
+                # own file only. Relayed, it is held back (as a relayed removal of a note is): a colleague's file made
+                # a third person's proposal "taken back" in every copy (hunt phase 1, MERGE-4). The maker's own file
+                # brings it, as it brings every take-back
+                first_hand = p.get("by") == via
                 if p["id"] not in have:
+                    if p["taken_back_at"] and not first_hand:
+                        p = dict(p, taken_back_at=None)
+                        rep["taken_back_held"] = rep.get("taken_back_held", 0) + 1
                     self._insert(cx, "proposals", [p])
                     if not p["taken_back_at"]:
                         rep["new"].append({"id": p["id"], "kind": p["kind"], "title": p["title"], "by": p["by"]})
                 elif p["taken_back_at"] and not have[p["id"]]:
+                    if not first_hand:
+                        rep["taken_back_held"] = rep.get("taken_back_held", 0) + 1
+                        continue
                     cx.execute("UPDATE proposals SET taken_back_at=? WHERE id=?", (p["taken_back_at"], p["id"]))
             # answers, rows of the documents, roles: one row per key and writer, the higher number stays. A writer
             # numbers each row above every row of its own (`_Ctx.put`, `_own_role_n`), so the number alone says which

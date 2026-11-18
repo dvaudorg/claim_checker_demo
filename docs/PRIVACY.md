@@ -270,7 +270,8 @@ folder](manual/privacy.md#what-goes-into-the-shared-folder)).
 - *A switch keeps documents marked Only a local AI or No AI out:* their text and files stay on the computer. Shared
   items about them still carry the words their excerpts quote, notes, judgements and the documents' titles.
 - *Never goes there:* private items, checks still in progress, earlier versions, the search index and glossary,
-  settings, the database itself and paths. A round that would write anything not shared writes nothing. ENLENS
+  the AI's drafts made for one computer (a group's draft name, a code's draft definition, a framework drafted from
+  theory documents, and the tasks and answers behind them), settings, the database itself and paths. A round that would write anything not shared writes nothing. ENLENS
   refuses a shared folder that contains the project or its own data folder.
 - *Who can read it:* anyone with access to the folder. The files are ordinary zip files, neither encrypted nor
   signed ([Who can read the folder](manual/privacy.md#who-can-read-the-folder)).
