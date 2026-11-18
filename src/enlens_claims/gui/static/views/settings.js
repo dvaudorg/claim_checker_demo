@@ -141,7 +141,7 @@ export async function renderSettings(view, [section]) {
     const t = document.getElementById(`s-${section}`); if (!t) return;
     const fold = t.closest("details"); if (fold && !fold.open) fold.open = true;
     t.scrollIntoView({ block: "start" });
-    const c = t.querySelector('[aria-checked="true"]') || t.querySelector(".settings-body input, .settings-body select, .settings-body textarea, input, select, textarea, button"); if (c) c.focus({ preventScroll: true });
+    const c = t.querySelector('[aria-checked="true"]') || t.querySelector("input, select, textarea") || t.querySelector("button:not(.help-mark)"); if (c) c.focus({ preventScroll: true });
   }, 80);
   return () => watchers.forEach((w) => w.stop());
 }
