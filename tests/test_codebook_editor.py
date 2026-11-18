@@ -587,3 +587,12 @@ def test_a_copy_with_no_codebook_named_says_so(demo):
     for source in (None, {}, {"of": ""}):
         with pytest.raises(ValueError, match="Choose the codebook to copy"):
             codebooks.create(demo, "my_copy", "", "project", "copy", source)
+
+
+def test_a_codebook_name_with_a_trailing_newline_is_no_name(demo):
+    """`$` also matches before a final newline: a name from a URL (`%0A`) or a colleague's setting got through."""
+    assert frameworks.NAME_RE.match("abc\n") is None and frameworks.NAME_RE.match("abc")
+    with pytest.raises(KeyError):
+        frameworks.delete(demo, "abc\n")
+    with pytest.raises(KeyError):
+        codebooks.locate(demo, "abc\n")
