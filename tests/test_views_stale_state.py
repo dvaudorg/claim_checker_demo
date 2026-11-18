@@ -215,6 +215,39 @@ await scenario("P-6 space links after a failure", async (t) => {
   }
   return { second: out[1], first: out[0], asks: n };
 });
+// ---- M1: a move to Cloudflare R2 after the account is chosen -------------------------------------------------------
+async function r2Setup(t, move) {
+  const ACCOUNTS = [{ id: "a1", name: "One" }, { id: "a2", name: "Two" }];
+  let n = 0;
+  const msgs = [];
+  t.answer("GET /api/space/links", {});
+  t.answer("GET /api/projects/Study/log?*", { entries: [], total: 0, groups: {}, group_names: {} });
+  t.answer("POST /api/projects/Study/shared-folder/sync", {});
+  t.answer("GET /api/projects/Study/owner", { owner: null, people: [] });
+  t.answer("GET /api/projects/Study/space/name", {});
+  t.answer("PUT /api/space/name", {});
+  t.answer(/^(POST|PUT) .*\/space\/(move|r2)$/, () => ({ job: { id: `j${++n}` } }));
+  t.answer("GET /api/jobs/j1", () => ({ id: "j1", state: "done", progress: { message: "Step one" }, result: { accounts: ACCOUNTS } }));
+  t.answer("GET /api/jobs/j2", () => ({ id: "j2", state: "done", progress: { message: "Step two" }, result: { moved: {} } }));
+  const m = await t.module("views/team-space.js");
+  const ctx = { project: "Study", refresh: async () => {}, startRound() {} };
+  const done = move ? m.setupDialog(ctx, "r2", { move: true }) : m.setupDialog(ctx, "r2");
+  await t.settle(100);
+  const d = t.dialog();
+  if (!move) await t.click("Next step", { within: d });   // past "Your name"
+  await t.click("I have an account", { within: d });
+  await t.click("R2 is switched on", { within: d });
+  await t.type("Token", "tok123");
+  await t.click(move ? "Move the team" : "Set up the storage space", { within: d });
+  await t.settle(3000);
+  const pick = t.dialogs().filter((x) => /Which Cloudflare account/.test(t.allText(x)))[0];
+  if (pick) { document.getElementById("space-r2-account").value = "a2"; await t.click("Use it", { within: pick }); }
+  await t.settle(3000);
+  const posts = t.calls.filter((c) => c.method === "POST" && /\/space\//.test(c.path)).map((c) => ({ path: c.path.split("/space/")[1], body: c.body }));
+  return { posts, picked: !!pick, errors: t.text(t.dialog() || undefined) };
+}
+await scenario("M1 move to r2 with several accounts", async (t) => r2Setup(t, true));
+await scenario("M1 first set-up to r2 with several accounts", async (t) => r2Setup(t, false));
 """
 
 
@@ -290,3 +323,20 @@ def test_p6_the_help_links_are_asked_for_again_after_a_failure(page):
     r = page["P-6 space links after a failure"]
     assert r["first"] is not None and r["second"] is not None
     assert r["asks"] == 2, r          # the failed answer was not kept for the session
+
+
+@needs_node
+def test_m1_a_move_to_r2_goes_on_as_a_move_after_the_account_is_chosen(page):
+    r = page["M1 move to r2 with several accounts"]
+    assert r["picked"], r
+    assert [p["path"] for p in r["posts"]] == ["move", "move"], r
+    last = r["posts"][-1]["body"]
+    assert last["service"] == "r2" and last["token"] == "tok123" and last["account_id"] == "a2", last
+
+
+@needs_node
+def test_m1_a_first_set_up_of_r2_goes_on_to_r2_after_the_account_is_chosen(page):
+    r = page["M1 first set-up to r2 with several accounts"]
+    assert r["picked"], r
+    assert [p["path"] for p in r["posts"]] == ["r2", "r2"], r
+    assert r["posts"][-1]["body"]["account_id"] == "a2", r
