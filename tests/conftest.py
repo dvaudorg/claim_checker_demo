@@ -78,6 +78,22 @@ def _no_real_claude_code(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_agent_clis(tmp_path, monkeypatch):
+    """Stage 2 of other cloud providers: as for Claude Code, tests never touch a real Codex or Antigravity (`codex`,
+    `agy` are "not found" unless a test points ENLENS_CODEX / ENLENS_AGY at the stand-ins), never write into the
+    person's own ~/.codex, ~/.agents or ~/.gemini (ENLENS_AGENT_HOME), and leave no runner of agentcli.py behind."""
+    monkeypatch.setenv("ENLENS_CODEX", str(tmp_path / "no-codex-here"))
+    monkeypatch.setenv("ENLENS_AGY", str(tmp_path / "no-agy-here"))
+    monkeypatch.setenv("ENLENS_AGENT_HOME", str(tmp_path / "agent-home"))
+    monkeypatch.delenv("ENLENS_ROUTE", raising=False)
+    from enlens_claims import agentcli
+
+    agentcli.reset_for_tests()
+    yield
+    agentcli.reset_for_tests()
+
+
+@pytest.fixture(autouse=True)
 def _no_real_enlens_home(tmp_path, monkeypatch):
     """0.13.11: tests never read the researcher's own ENLENS folder (~/enlens). Without this, a test that did not set
     ENLENS_HOME read the real settings, so the models recommended for the plan Claude Code found there (Max: Opus)

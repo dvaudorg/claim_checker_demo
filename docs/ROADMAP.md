@@ -96,7 +96,7 @@ progress), then `review.py score` scores it against the Fable reference and `viz
 reviewer grades `review.py packet`'s claims from scratch and counts only after passing its hidden controls and quote
 check. A model earns a stronger role than *suggestions only* only by measurement on this bench.
 
-**I7. Cloud providers other than Claude** · Level 3 · stage 1 built (17 November 2026), stages 2 and 3 left
+**I7. Cloud providers other than Claude** · Level 3 · stages 1 and 2 built (17 and 18 November 2026), stage 3 left
 - *The wish:* a researcher whose plan or institution is with another major provider can use it instead of Claude:
   OpenAI, Google, Mistral (a European provider some universities' data rules prefer), Azure OpenAI (the route many
   institutions already have an agreement for) and OpenRouter. Claude stays the default and the reference; *as little
@@ -105,15 +105,18 @@ check. A model earns a stronger role than *suggestions only* only by measurement
   consent per provider: a document that *Claude may read* is allowed to Anthropic only until the person ticks more,
   for the project or the document. A model server on another computer counts as a cloud provider too (before, it could
   read every *Claude may read it* document). In a shared project only Anthropic reads.
-- *Stage 2:* the Codex CLI (ChatGPT plans) and the Antigravity CLI (`agy`, Google) on the task queue, as Claude Code
-  is: both call MCP servers, so `next_tasks` and `submit_answers` serve them with the same quote check; each CLI gets a
-  set-up of its own (MCP configuration, helpers, instructions). How the sidebar's *Start Claude Code* reads with
-  several CLIs is settled then.
+- *Built (stage 2, 18 November 2026):* Codex (OpenAI, ChatGPT plans) and Antigravity (`agy`, Google, which
+  replaced Gemini CLI for personal accounts in June 2026) answer the task queue as Claude Code does, chosen inside one
+  *Subscription* card. ENLENS installs, signs in and adds itself to each (`agentcli.py`), and starts the helpers
+  itself, one CLI process per helper on its model, since neither CLI documents skills or subagents in headless runs;
+  `$enlens-run` / `/enlens-run` are installed for typing in the CLI. The queue reads for the agent's provider
+  (`ENLENS_ROUTE` in the connector). Every provider gets the three tiers from its own line-up (`providers.LINEUP`),
+  resolved against the models the key or plan lists, and *How much thought* applies to all.
 - *Stage 3:* the provider allowance travels with a shared project (sync, the owner's rules), so a team can use
   another provider; each researcher still chooses their own route.
-- *Later:* per-provider routing (a small, a middle and a strong model per kind, step up when unsure, *Energy
-  efficient / Balanced / Intelligence*), and defaults only after the validation run (J4.3) and agreement with Claude
-  (I5); until then Settings marks a provider *not yet measured*.
+- *Later:* defaults measured with the validation run (J4.3) and agreement with Claude (I5) rather than taken from the
+  providers' own advice; until then Settings marks a provider *not yet measured*. Plan detection for Codex (its
+  sign-in does not say the plan) and Antigravity (from the models `agy models` lists).
 
 ## Left to try with real accounts and a real team
 
@@ -121,7 +124,11 @@ check. A model earns a stronger role than *suggestions only* only by measurement
 - Built against stand-ins that follow each provider's documents. To try: OpenAI's reasoning models
   (`max_completion_tokens`, temperature), Mistral's `random_seed` and structured output, Gemini's error shape and
   model ids, Azure's `/openai/v1` address with the `api-key` header, OpenRouter's structured output, the words of a
-  refused key and a reached limit, and the macOS keychain.
+  refused key and a reached limit, and the macOS keychain. The recommended line-ups against each key's model list.
+- Codex: `codex login status`'s words, MCP settings given with `-c` (dotted keys) and approved under
+  `approval_policy="never"`, how a reached limit shows in `--json`, the models a ChatGPT plan offers.
+- Antigravity: the one sign-in window, whether `agy -p` loads the work folder's `.agents/mcp_config.json` and needs
+  the folder trusted, the `mcp(enlens/*)` permission line, `agy models` on a free and a paid account, a reached limit.
 
 Built and tested against stand-ins that follow each service's documents; not yet tried for real.
 

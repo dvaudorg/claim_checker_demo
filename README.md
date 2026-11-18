@@ -28,7 +28,8 @@ statement, with every quote checked against the source, on their own computer an
    them with AI: *Claude may read them*, *Only a local AI*, or *No AI*.
 4. **Explore and check.** Where AI work waits, press **Start Claude Code**; the results appear as they come in.
 
-No Claude plan? Choose *A model on this computer* on the first screen. Used ENLENS on another computer? Choose
+No Claude plan? *Other options* on the first screen offer Codex (a ChatGPT plan), Antigravity (a Google account,
+free or paid) or a model on this computer. Used ENLENS on another computer? Choose
 *Import from another computer*. Installing it for someone else, and every option:
 [Install and update](docs/manual/install.md) in the manual.
 
@@ -86,7 +87,8 @@ With Claude (the default), only the passages
 inside the AI's tasks are sent to Anthropic, through Claude Code on your own Claude plan (or the Claude API, when a
 shared installation switched it on), and only from documents marked *Claude may read it*; ENLENS records every passage
 it sends (*Sent to Claude* on the *Documents* page). Claude Code, as ENLENS starts it, has no tool that can open your
-files, so those passages are all it sees. To keep a document from Claude, mark it *Only a local AI* or *No
+files, so those passages are all it sees. With Codex or Antigravity instead, the same holds for OpenAI or Google,
+and only for documents that allow that company ([Other agents](docs/manual/other-agents.md)). To keep a document from Claude, mark it *Only a local AI* or *No
 AI*. To keep everything on the computer, choose *A model on this computer* in *Settings → AI*, or put
 `ENLENS_LOCAL_ONLY=1` before `sh` in the install line, which removes every cloud option for good. Apart from the AI you
 chose
