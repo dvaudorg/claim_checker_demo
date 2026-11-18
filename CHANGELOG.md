@@ -76,6 +76,9 @@ with your team, and the map zooms.
 
 ### Fixed
 
+- **A check could miss Codex or Antigravity when you allowed their company.** Allowing OpenAI or Google for a
+  project while a check by queue looked again could take its excerpts for ones a document's setting keeps from every
+  cloud AI and hand them to you for judgement for good, instead of to the agent. They now go to the queue.
 - The search-word answer is bounded (at most 20 words of at most 60 characters), so a small model cannot write until
   its answer is cut off.
 - The memory ENLENS reckons for a local model counts the memory it needs beyond its file and, on a Mac, what it grows
@@ -120,6 +123,8 @@ with your team, and the map zooms.
 
 ### Tests
 
+- `tests/test_provider_allow.py`: allowing the company between two looks of the queue never hands the excerpts to
+  the person.
 - `tests/test_local_tiers.py` (no model loaded): the pointer form, K2's real answers from the bench replayed
   (`tests/data/k2_pointer_replay.json`), suggestions only in the result, the list and Excel, old checks, the memory
   guard on made-up `/api/ps` readings, the engine in provenance, and the result card in Node.
