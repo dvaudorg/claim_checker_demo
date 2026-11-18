@@ -1176,8 +1176,9 @@ def save_uploads(ws: Workspace, files: list[tuple[str, bytes]]) -> Path:
 def make_second_backend(settings: dict, api_key: str = ""):
     """The backend for the second model of Settings (on the same server as the main model), and its name."""
     b = settings.get("backend", "auto")
-    if b in ("claude_code", "anthropic") and settings.get("routing", True):
-        # 0.8: on Claude the second opinion comes from the auditor (Opus, or Fable when switched on)
+    if (b in providers.AGENT_ROUTES or b == "anthropic") and settings.get("routing", True):
+        # 0.8: on Claude the second opinion comes from the auditor (Opus, or Fable when switched on); stage 2: on an
+        # agent CLI from its strongest model (the alias "opus", translated by its runner)
         be, _m = make_backend(settings, api_key, kinds=("second",))
         alias = be.router.model("second") or "opus"
         return be, (be.router.api_id(alias) if b == "anthropic" else alias)
