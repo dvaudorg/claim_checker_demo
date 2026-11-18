@@ -1,6 +1,6 @@
 // First run. When the AI model is already set up (someone installed the app), the user starts by naming a project
 // and adding documents. The model step appears only when no model works yet.
-import { App, api, h, icon, setButtonKind, replace, clear, toast, showError, field, navigate, store, brand, appName, pageHead, aiWhere, button, card, fold, link, notice, select, input as fieldInput, inset } from "../lib.js";
+import { App, api, h, icon, setButtonKind, replace, clear, toast, showError, field, navigate, store, brand, appName, pageHead, aiWhere, button, card, fold, link, notice, select, input as fieldInput, inset, isAgent } from "../lib.js";
 import { plainTestResult, claudeSetupCard } from "./settings.js";
 import { linkProjectDialog, importProjectDialog } from "./projects.js";
 import { joinDialog } from "./team-space.js";   // a colleague's invite link makes the first project
@@ -31,7 +31,8 @@ export async function renderSetup(view) {
         WELCOME_CARDS.length ? h("div", { class: "ov-grid ov-grid-small welcome-cards" }, WELCOME_CARDS.map((c) =>
           h("div", { class: "ov-card" }, h("div", { class: "ov-card-head" }, h("span", { class: "ov-card-icon" }, icon(c.icon || "grid", { size: 15 })), h("h3", {}, c.title)),
             c.text ? h("p", {}, c.text) : null))) : null,
-        modelOk && !cc ? aiWhere("The AI model is set up and runs on this computer: your documents never leave it.", "local") : null] }),
+        // stage 2: Codex and Antigravity read in the cloud, as Claude Code does: never "runs on this computer"
+        modelOk && !cc && !isAgent(s) ? aiWhere("The AI model is set up and runs on this computer: your documents never leave it.", "local") : null] }),
     steps);
   view.appendChild(wrap);
   const body = h("div", {});

@@ -5,7 +5,7 @@
 // pointer is replaced, a running spinner does not restart and the page does not flicker. The pieces (the sides, the
 // split bar, the start row) are in lib.js.
 import { App, api, h, icon, replace, clear, fmt, cancelJob, showError, memoryRefused, watchJob, TERMINAL, P, button, card, fold, link, notice, stopButton,
-  setBusy, plural, inStep, aiSide, aiSides, placeSide, redrawSide, sideFigures, setHalf, sidePct, modelFigures, readsLine, aiWhere, aiLead } from "../lib.js";
+  setBusy, plural, inStep, aiSide, aiSides, placeSide, redrawSide, sideFigures, setHalf, sidePct, modelFigures, readsLine, aiWhere, aiLead, isAgent, agentTitle } from "../lib.js";
 
 const STEP_ICON = { pending: "circle", running: "loader", done: "check", waiting: "clock" };
 // 0.19.4: the backends of Settings that are a model on this computer
@@ -150,9 +150,10 @@ export class AiRun {
     const has = (w) => this.engines.has(w);
     const waits = (k) => k === "wait" || k === "need" || k === "paused";
     if (has("local") && has("cloud") && waits(L) && waits(C)) return MIXED_FOOT;
-    if (has("cloud") && waits(C) && App.settings().backend === "claude_code") {
-      return L === "run" ? "Your local model reads its part meanwhile. Claude Code reads the rest once you press Start Claude Code (or type the command in Claude Code); the work waits in the queue meanwhile, and you can move around the app."
-        : "Claude Code reads it once you press Start Claude Code (or type the command in Claude Code). You can move around the app, or close it: the work waits in the queue, and its answer appears where you started it.";
+    if (has("cloud") && waits(C) && isAgent()) {
+      const t = agentTitle();   // stage 2: Claude Code, Codex or Antigravity
+      return L === "run" ? `Your local model reads its part meanwhile. ${t} reads the rest once you press Start ${t} (or type the command in ${t}); the work waits in the queue meanwhile, and you can move around the app.`
+        : `${t} reads it once you press Start ${t} (or type the command in ${t}). You can move around the app, or close it: the work waits in the queue, and its answer appears where you started it.`;
     }
     if (has("local") && waits(L)) {
       return C === "run" ? "Claude reads its part meanwhile. The work ends only once your local model has read its part too: press its Start, or stop the work."
@@ -346,7 +347,7 @@ export class AiRun {
         o = { running: { phase: m.phase, seconds: m.seconds, ...(L ? counts(L.waiting || 0) : {}) }, onStop: stopLocal, stopping };
       } else if (m && m.phase === "refused" && m.who === "local") {
         o = { memory: m.memory || null, refused: m.memory ? true : (m.error || true), count: L ? L.waiting : 0,
-          note: L ? null : "When this run has finished, you can start it from here.", sub: this.engines.has("cloud") ? "Claude Code reads the rest meanwhile." : null };
+          note: L ? null : "When this run has finished, you can start it from here.", sub: this.engines.has("cloud") ? `${agentTitle()} reads the rest meanwhile.` : null };
       } else if (L && L.problem) {
         o = { problem: L.problem };
       } else if (L && L.gate === "wait" && (L.waiting || 0) > 0) {
@@ -415,7 +416,7 @@ export class AiRun {
         if (!running) o = job.state === "done" ? { state: "done", what: this.active.cloud ? "Claude has answered its part" : "Nothing was sent to Claude" } : { state: "stopped" };
         else if (s.backend === "anthropic" && !localNow) o = { state: "run", what: "Claude reads the excerpts", line: compact ? null : readsLine("the excerpts it needs"), pct };
         else if (this.active.cloud) o = { state: "done", what: "Claude has answered its part" };
-        else o = { state: "later", what: s.backend === "claude_code" ? "Nothing waits for Claude Code yet" : "Its part comes after the steps above" };
+        else o = { state: "later", what: isAgent(s) ? `Nothing waits for ${agentTitle(s)} yet` : "Its part comes after the steps above" };
         const key = JSON.stringify({ ...o, line: !!o.line, pct: null });
         if (!side || this.sideKey.cloud !== key) {
           this.sideKey.cloud = key;
