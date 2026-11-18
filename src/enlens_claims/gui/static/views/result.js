@@ -1694,7 +1694,7 @@ export async function renderResult(view, [hypId], query) {
     if (p.reread && hist.length) {
       const first = hist[0];
       const info = p.reread_info || {};
-      // 0.19.18: says which model read it again (and which read it first), in one line; the reminder that a re-read is
+      // 0.20.3: says which model read it again (and which read it first), in one line; the reminder that a re-read is
       // still an AI's reading is in its title, not a line of its own
       const stepped = hist[hist.length - 1].why === "stepped up";
       const now = p.ai_model ? ` (${p.ai_model})` : "";

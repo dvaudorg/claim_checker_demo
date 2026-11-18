@@ -1546,7 +1546,7 @@ def _answer_now(ws: Workspace, hyp_id: str) -> dict | None:
 
 
 def _what_changed(before: dict | None, after: dict | None) -> str:
-    """0.19.18: what reading the new documents changed: "answer" (the answer is another), "evidence" (the same
+    """0.20.3: what reading the new documents changed: "answer" (the answer is another), "evidence" (the same
     answer, other counts of excerpts that count) or "" (nothing the list shows)."""
     if not before or not after:
         return ""

@@ -11,7 +11,7 @@ const CHECK_KINDS = ["check", "batch"];   // the jobs shown as rows at the top: 
 const LOOK_AGAIN = 3000;                  // how often the running checks are looked at while there are any (ms)
 // the filter chip of the answers that wait, by what they wait for: Claude Code, the local model, or both
 const waitingWords = (n, local) => (!local ? STATUS_SHORT.waiting : local >= n ? "Waiting for your local model" : "Waiting to be read");
-// 0.19.18: "3 of 3 hypotheses brought up to date · 1 answer changed, 1 with new evidence" (or "· nothing changed")
+// 0.20.3: "3 of 3 hypotheses brought up to date · 1 answer changed, 1 with new evidence" (or "· nothing changed")
 export function readNewAfter(r) {
   const a = (r && r.answers_changed) || 0, e = (r && r.evidence_changed) || 0;
   if (!r || !Array.isArray(r.hypotheses)) return "";
@@ -19,7 +19,7 @@ export function readNewAfter(r) {
   return " · " + [a ? `${a} ${a === 1 ? "answer" : "answers"} changed` : "", e ? `${e} with new evidence` : ""].filter(Boolean).join(", ");
 }
 const READ_NEW_WORDS = { doing: "reading for hypothesis", done: "hypotheses brought up to date", after: readNewAfter };
-// 0.19.18: the mark on a row the new documents changed (from the last time they were read, while the app runs)
+// 0.20.3: the mark on a row the new documents changed (from the last time they were read, while the app runs)
 export function newDocsMark(c) {
   if (!c || !c.changed || !c.before || !c.after) return null;
   const counts = (x) => `${x.supports} support, ${x.partly} partly, ${x.refutes} contradict`;
@@ -39,7 +39,7 @@ export async function answersList(box, query, opts = {}) {
   const threshold = App.settings().threshold ?? 0.6;
   const watchers = [];
   let rowsNow = [], countsNow = {}, running = [], drawn = false, stopped = false, timer = null;
-  let newDocs = new Map();  // 0.19.18: hyp_id -> what the last reading of the new documents changed (readNew result)
+  let newDocs = new Map();  // 0.20.3: hyp_id -> what the last reading of the new documents changed (readNew result)
   let steps = null;         // the lazy list of the rows (0.18.1: lazyList): a table drawn again (a check changed) keeps as many as were shown
   const fresh = latest();   // the newest look at the answers: an older answer never draws over it
 
@@ -262,7 +262,7 @@ export async function answersList(box, query, opts = {}) {
           x.corrected ? h("span", { class: "it corrected" }, icon("note", { size: 11 }), `${x.corrected} changed by you`) : null,
           x.docs_added_since ? h("span", { class: "it tag-new-docs", title: `${x.docs_added_since} ${x.docs_added_since === 1 ? "document was" : "documents were"} added to the project after this check; open the answer to have the AI read them` }, icon("upload", { size: 11 }), `${x.docs_added_since} ${x.docs_added_since === 1 ? "document" : "documents"} added since`) : null,
           newDocsMark(newDocs.get(x.hyp_id)),
-          // 0.19.18: as small as the other marks (it was a pill, wider than the rest of the line)
+          // 0.20.3: as small as the other marks (it was a pill, wider than the rest of the line)
           x.disagreements ? h("span", { class: "it it-attention", title: `A second opinion (another AI model, for comparison only) judged ${x.disagreements} ${x.disagreements === 1 ? "excerpt" : "excerpts"} differently from the first AI. The answer is unchanged: open it and read them yourself.` }, icon("alert-triangle", { size: 11 }), `2nd opinion differs: ${x.disagreements}`) : null,
           x.note ? h("span", { class: "it", title: x.note }, icon("note", { size: 11 }), "has notes") : null)),
       h("td", { "data-label": "Answer", class: "verdict-cell" }, statusBadge(x.status, { short: true, text: x.status_text || undefined }), " ", strongerMark(x.status_before_stronger, {}, { compact: true, plain: true }),
@@ -278,7 +278,7 @@ export async function answersList(box, query, opts = {}) {
   try {
     const titles = { "read-new": "Reading the new documents", "second-opinion": "A second opinion: another model reads the excerpts", more: "Looking for more evidence" };
     const jobs = (await api("GET", "/api/jobs")).jobs || [];
-    // 0.19.18: the marks of the last time the new documents were read, while the app has that job
+    // 0.20.3: the marks of the last time the new documents were read, while the app has that job
     const lastRead = jobs.find((j) => j.project === project && j.kind === "read-new" && j.state === "done");
     if (lastRead) { keepNewDocs((await api("GET", `/api/jobs/${P(lastRead.id)}`)).result); if (newDocs.size && !stopped) drawTable(); }
     const mine = query.job ? jobs.find((j) => j.id === query.job) : null;

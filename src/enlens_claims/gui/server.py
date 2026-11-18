@@ -1449,7 +1449,7 @@ class App(LibraryMixin, QueueMixin):
                                                               st, m, {**(info or {}), "index": _i}),
                                                           should_stop=job.cancel.is_set))
             return {"hypotheses": done, "passages": sum(d["passages"] for d in done),
-                    # 0.19.18: how many answers the new documents changed, and how many only got other counts
+                    # 0.20.3: how many answers the new documents changed, and how many only got other counts
                     "answers_changed": sum(d["changed"] == "answer" for d in done),
                     "evidence_changed": sum(d["changed"] == "evidence" for d in done)}
 

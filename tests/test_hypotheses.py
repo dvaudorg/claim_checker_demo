@@ -882,7 +882,7 @@ def test_documents_added_since_a_check_are_read_without_running_it_again(loaded,
     assert sorted((d["title"][:5], d["matching"]) for d in new) == [("A rec", False), ("Desal", True)]
     r = claimcheck.read_new_documents(loaded, hid, be, "m", k=4)
     assert r["documents"] == 2 and r["matching"] == 1 and r["passages"] >= 1
-    # 0.19.18: what reading them changed, from the answer and its counts before and after
+    # 0.20.3: what reading them changed, from the answer and its counts before and after
     assert r["before"] and r["after"] and r["changed"] == claimcheck._what_changed(r["before"], r["after"])
     assert r["after"]["status"] == claimcheck.history(loaded, hyp_id=hid)[0]["status"]
     res = claimcheck.result(loaded, hid)
@@ -957,7 +957,7 @@ def test_a_comment_alone_is_not_a_judgement_and_rereads_say_why(loaded):
 
 
 def test_what_reading_new_documents_changed():
-    """0.19.18: the Hypotheses list says which answers the new documents changed."""
+    """0.20.3: the Hypotheses list says which answers the new documents changed."""
     a = {"status": "supported", "supports": 2, "partly": 0, "refutes": 0}
     assert claimcheck._what_changed(a, dict(a)) == ""
     assert claimcheck._what_changed(a, {**a, "partly": 1}) == "evidence"
