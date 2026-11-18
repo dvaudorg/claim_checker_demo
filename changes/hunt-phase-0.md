@@ -31,6 +31,8 @@
 - **The research log** adds an entry once when Ctrl+Enter is pressed twice, and keeps what you typed while an entry
   was being saved. The same holds for a code's examples and the reason for a codebook change.
 - **A theory draft that changed elsewhere** is saved again with the new version, not once more with the old one.
+- **Removing an API key says when the key is still there.** A keychain that is locked, or whose prompt was refused,
+  kept the key while ENLENS showed none stored and went on using it.
 - **Plain messages in place of errors:** *Try again* for a drive on a project with no storage space, a new codebook
   as a copy with no codebook named, and a profile asked for with an empty codebook name. The storage space set-up
   asks for its help links again after a failed try.
@@ -44,7 +46,7 @@
 ### For developers
 
 - Model evaluation: a link pair no AI may read is no longer counted as a task (`evaluation.prepare`).
-- The first tool sweep of the bug hunt (ruff's bug rules, pyright, semgrep, eslint, `tsc --checkJs`, coverage): 21
+- The first tool sweep of the bug hunt (ruff's bug rules, pyright, semgrep, eslint, `tsc --checkJs`, coverage): 22
   faults, each fixed with a test that failed first.
 
 ### Tests

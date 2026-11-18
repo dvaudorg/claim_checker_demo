@@ -627,7 +627,13 @@ def set_cloud_key(provider: str, key: str) -> None:
 def forget_cloud_key(provider: str) -> None:
     from . import keychain
 
-    keychain.delete(_key_name(provider))
+    name = _key_name(provider)
+    keychain.delete(name)
+    # the system keychain's delete does not say whether it worked (locked, or its prompt refused): look instead
+    if keychain.get(name) is not None:
+        _KEY_STORED[provider] = True
+        raise ValueError("The key is still on this computer: its keychain would not remove it. Unlock the keychain "
+                         "and try again.")
     _KEY_STORED[provider] = False
 
 

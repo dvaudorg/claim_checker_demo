@@ -72,7 +72,10 @@ class SetupApi:
 
     def delete_provider_key(self, q):
         body = self._body()
-        home.forget_cloud_key(self._provider(body.get("provider") or _str(q, "provider")))
+        try:
+            home.forget_cloud_key(self._provider(body.get("provider") or _str(q, "provider")))
+        except ValueError as e:
+            raise ApiError(400, str(e)) from None
         return {"providers": self.app.providers_state()}
 
     def get_provider_models(self, q):
