@@ -46,6 +46,7 @@ export const JOB_KINDS = {
   "group-names": { icon: "sparkles", text: "Naming the groups of concepts", link: "#/concept-map" },   // D1 rest, the optional AI part
   quicklook: { icon: "eye", text: "Quick look", link: "#/sources" },
   "claude-install": { icon: "download", text: "Installing Claude Code", link: "#/settings/model" },
+  "agent-install": { icon: "download", text: "Installing an AI agent", link: "#/settings/model", label: (j, t) => j.title || t },   // 0.20.3: Codex, Antigravity
   "model-pull": { icon: "download", text: "Downloading a model", link: "#/settings/model" },   // 0.13.7
   "ollama-install": { icon: "download", text: "Installing Ollama", link: "#/settings/model" },   // 0.15.6
   bibliography: { icon: "library", text: "Bringing in the bibliography", link: "#/bibliography" },

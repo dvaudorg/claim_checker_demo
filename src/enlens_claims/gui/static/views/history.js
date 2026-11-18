@@ -262,8 +262,8 @@ export async function answersList(box, query, opts = {}) {
           x.corrected ? h("span", { class: "it corrected" }, icon("note", { size: 11 }), `${x.corrected} changed by you`) : null,
           x.docs_added_since ? h("span", { class: "it tag-new-docs", title: `${x.docs_added_since} ${x.docs_added_since === 1 ? "document was" : "documents were"} added to the project after this check; open the answer to have the AI read them` }, icon("upload", { size: 11 }), `${x.docs_added_since} ${x.docs_added_since === 1 ? "document" : "documents"} added since`) : null,
           newDocsMark(newDocs.get(x.hyp_id)),
-          // 0.20.3: as small as the other marks (it was a pill, wider than the rest of the line)
-          x.disagreements ? h("span", { class: "it it-attention", title: `A second opinion (another AI model, for comparison only) judged ${x.disagreements} ${x.disagreements === 1 ? "excerpt" : "excerpts"} differently from the first AI. The answer is unchanged: open it and read them yourself.` }, icon("alert-triangle", { size: 11 }), `2nd opinion differs: ${x.disagreements}`) : null,
+          // 0.20.3: shorter words (the attention tag, as the design guide asks for a needs-you mark)
+          x.disagreements ? tag({ kind: "attention", title: `A second opinion (another AI model, for comparison only) judged ${x.disagreements} ${x.disagreements === 1 ? "excerpt" : "excerpts"} differently from the first AI. The answer is unchanged: open it and read them yourself.` }, `2nd opinion differs: ${x.disagreements}`) : null,
           x.note ? h("span", { class: "it", title: x.note }, icon("note", { size: 11 }), "has notes") : null)),
       h("td", { "data-label": "Answer", class: "verdict-cell" }, statusBadge(x.status, { short: true, text: x.status_text || undefined }), " ", strongerMark(x.status_before_stronger, {}, { compact: true, plain: true }),
         x.status_any && x.status_any !== x.status ? h("div", { class: "muted small hist-any-line" }, "If the uncertain judgements counted too: ", STATUS_SHORT[x.status_any] || x.status_any) : null),

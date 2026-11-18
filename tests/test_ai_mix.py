@@ -271,8 +271,10 @@ def test_a_lapsed_local_claim_does_not_hold_its_task_for_good(mixed):
     with ws.connect() as cx:
         cx.execute("UPDATE tasks SET claimed_by='local-gone', claimed_at='2000-01-01T00:00:00+00:00' WHERE task_id=?",
                    (tid,))
-    assert tasks.answer_mix_waiting(ws, _Local(), "small") == {"answered": 1, "to_claude": 0}
+    # I6: a check read locally then always goes to Claude as well; what matters here is that it was read at all
+    assert tasks.answer_mix_waiting(ws, _Local(), "small") == {"answered": 0, "to_claude": 1}
     assert _row(ws, tid)["status"] == "done"
+    assert ws.scalar("SELECT claimed_by FROM tasks WHERE task_id=?", (tid,)) != "local-gone"
 
 
 def test_an_unexpected_failure_gives_the_task_back(mixed):

@@ -6,5 +6,4 @@
   after.
 - **A re-read excerpt names its model.** The note on an excerpt the AI read again says which model read it again and
   which read it first, in one line; the reminder that a re-read is still an AI's reading is in its tooltip.
-- **The second opinion's mark is as small as the others.** *2nd opinion differs: N* is a small mark in the line, no
-  longer a wider pill.
+- **The second opinion's mark is shorter.** It reads *2nd opinion differs: N*; its tooltip says how many excerpts.
