@@ -1,9 +1,10 @@
 # ENLENS roadmap
 
 What is still to do in ENLENS, and why. Written 6 November 2026; cut back on 16 November 2026, at ENLENS 0.19.13, to
-what is left, and cut again on 17 November 2026, at ENLENS 0.19.16: every item from A0 to N5 is built and tested, and what each one does is in `CHANGELOG.md` and the
-manual. The full roadmap, with the plan and the review notes behind every built item, is in the git history
-(`git show 02c1841:docs/ROADMAP.md`).
+what is left, and cut again on 17 November 2026, at ENLENS 0.19.16: every item from A0 to N5 is built and tested, and
+what each one does is in `CHANGELOG.md` and the manual. Brought up to date on 18 November 2026, at ENLENS 0.20.1, when
+D1's last part, I6 and I7's third stage were built: what is left of them is below. The full roadmap, with the plan and
+the review notes behind every built item, is in the git history (`git show 02c1841:docs/ROADMAP.md`).
 
 The items keep their letters (A to N), so a changelog entry that names one (A1, H3, K1) can still be traced. A letter
 missing from a section is not planned for ENLENS.
@@ -29,39 +30,21 @@ by `--local-only`.
 
 ## Left to build
 
-**I6. Local model tiers, chosen for you** · built on `work/i6-local-tiers` (18 November 2026, unreleased; bench of
-16 November 2026, below) · Level 2
-- Built: ENLENS picks the tier from the computer's memory, graphics card and disk (`modeladvice.py`), downloads its
-  model on the person's *Set up the local model*, and sets the context length, reasoning (off for checks) and seed;
-  model names only under *Settings → Technical → The local model*, where an older model set up before keeps working
-  and the tier's model is offered beside it. The memory reckoning counts each model's load overhead, its tier's
-  context and, on Ollama's MLX runner, the growth the memory guard allows.
+**I6. Local model tiers, chosen for you** · Level 2 · built in 0.20.1 (the tier chosen from the computer, suggestions
+only, K2's `point` form, the memory guard, the engine named with every local answer: `CHANGELOG.md`)
 
-  | Computer | Model | What it does |
-  | --- | --- | --- |
-  | Small (about 8 GB, or no graphics card) | `ifm/k2-horizon:0.9b` (1.1 GB) | Explorer only: points at sentences (`point` form), sorts the reading order |
-  | 16 GB laptop | `qwen3.5:4b` (3.7 GB file) | Suggestions only, better ones |
-  | Larger (about 24 GB or more) | `qwen3.5:9b` | Suggestions only until measured; if it proves well calibrated, its surest answers may be trusted |
-  | Documents Claude may read | Claude | Decides, as today |
+| Computer | Model | What it does |
+| --- | --- | --- |
+| Small (about 8 GB, or no graphics card) | `ifm/k2-horizon:0.9b` (1.1 GB) | Explorer only: points at sentences (`point` form), sorts the reading order |
+| 16 GB laptop | `qwen3.5:4b` (3.7 GB file) | Suggestions only, better ones |
+| Larger (about 24 GB or more) | `qwen3.5:9b` | Suggestions only until measured |
+| Documents Claude may read | Claude | Decides, as today |
 
-- Built, **suggestions only**: a local model never sets a status. Every excerpt it reads goes to *Awaiting manual
-  review* with its marked sentence and lean, shown before the researcher's own grade (the owner's decision: the tool
-  speeds research up, it is not an exam); no local confidence number. Checks a local model judged before keep their
-  answer and say how many of its judgements still count unreviewed.
-- Built: K2's short answer form (`point`, `pointing.py`: numbered sentences, ENLENS cuts the quote, a grammar bounded by
-  the task, a cap of 24 + 14 tokens an excerpt); `maxItems`/`maxLength` on search words for every tier; the memory guard
-  of long runs (frees a grown MLX model, about 3 s to reload; an MLX model is let go of at the end of a job); the engine
-  (runner, quantisation, Ollama's version) with every local answer, the *Engine* column and a plain-words note in *How
-  these results were made*; *Repeatable results* says "not guaranteed" for MLX without asking the model.
-- Left to try (each needs a model loaded):
-  1. Bench `qwen3.5:4b-q4_K_M` (and `9b-q4_K_M`) against the nvfp4 numbers before pinning the GGUF tags
-     (`modeladvice.MEDIUM_MODEL`, `LARGE_MODEL`: one line each).
-  2. Run `tools/localbench/handhold_lp.py` with opposites written by K2 to set the lean's threshold (0.10 rests on 15
-     passages that matter); then turn the lean on (`pointing.LEAN`, with the small `opposite` step).
-  3. Check once on Ollama 0.40.16 that an unload frees the MLX runner's memory (Activity Monitor; ollama/ollama#17792).
-  4. Check whether `maxItems`/`maxLength` bound the answer on the MLX path, with one `expand` task.
-- Left to build: the AI run panel (progress) still names the local model (*Start/Stop qwen3.5:4b*, its *Model* row);
-  plain words there, with the name under Technical, is a follow-up.
+- **Plain words in the AI run panel.** It still names the local model (*Start qwen3.5:4b*, *Stop qwen3.5:4b*, its
+  *Model* row), the one place a model's name shows outside *Settings → Technical*; the sidebar's plain *Start* for the
+  local side looks like Claude Code's (0.19.15). Both should say what starts in plain words, the name under Technical.
+- **K2's lean**, off for now (`pointing.LEAN`): turned on once its threshold is set (*Left to try*, below).
+- **A stronger role than suggestions only**, for the large tier first, only by measurement on the bench below.
 
 *The bench (16 November 2026).* 45 checks from the green hydrogen pilot (30 real VCA claims, 15 planted controls: a
 hidden supporting sentence, a claim turned into its opposite, unrelated passages), each answered 7 times by each
@@ -97,35 +80,16 @@ progress), then `review.py score` scores it against the Fable reference and `viz
 reviewer grades `review.py packet`'s claims from scratch and counts only after passing its hidden controls and quote
 check. A model earns a stronger role than *suggestions only* only by measurement on this bench.
 
-**I7. Cloud providers other than Claude** · Level 3 · stages 1, 2 and 3 built (17, 18 and 18 November 2026)
-- *The wish:* a researcher whose plan or institution is with another major provider can use it instead of Claude:
-  OpenAI, Google, Mistral (a European provider some universities' data rules prefer), Azure OpenAI (the route many
-  institutions already have an agreement for) and OpenRouter. Claude stays the default and the reference; *as little
-  AI as possible* is unchanged. (First written as I6 on 17 November 2026; I6 is now the local model tiers.)
-- *Built (stage 1):* an API key for each of the five (one OpenAI-compatible backend, the key in the keychain), and
-  consent per provider: a document that *Claude may read* is allowed to Anthropic only until the person ticks more,
-  for the project or the document. A model server on another computer counts as a cloud provider too (before, it could
-  read every *Claude may read it* document). In a shared project only Anthropic read (until stage 3).
-- *Built (stage 2, 18 November 2026):* Codex (OpenAI, ChatGPT plans) and Antigravity (`agy`, Google, which
-  replaced Gemini CLI for personal accounts in June 2026) answer the task queue as Claude Code does, chosen inside one
-  *Subscription* card. ENLENS installs, signs in and adds itself to each (`agentcli.py`), and starts the helpers
-  itself, one CLI process per helper on its model, since neither CLI documents skills or subagents in headless runs;
-  `$enlens-run` / `/enlens-run` are installed for typing in the CLI. The queue reads for the agent's provider
-  (`ENLENS_ROUTE` in the connector). Every provider gets the three tiers from its own line-up (`providers.LINEUP`),
-  resolved against the models the key or plan lists, and *How much thought* applies to all.
-- *Built (stage 3, 18 November 2026):* in a shared project each person chooses their own route and provider: a
-  member's Codex, Antigravity or API key reads the project's documents marked for cloud AI on their copy. The providers
-  a person ticks are their own consent and never travel (a colleague's new document or project file arrives without
-  them); the AI level of each document stays the team's. The owner may limit the providers the team may use (People
-  and settings › *AI providers*, off by default), a row of the owner's settings that travels and counts like the
-  codebook settings (`teamproviders.py`); work for a provider outside it is held, with a note naming the limit and who
-  set it. The **AI log** (`ailog.py`, `#/log/ai`, from the research log's line under its title): who ran which AI
-  work, with which provider, route and model, which kind of task, when, about what and how many excerpts, filtered by
-  person and provider; the ledger now names the person and the model (`ai_sent.person_id`, `ai_sent.model`), and a
-  colleague's rows come with the sync.
-- *Later:* defaults measured with the validation run (J4.3) and agreement with Claude (I5) rather than taken from the
-  providers' own advice; until then Settings marks a provider *not yet measured*. Plan detection for Codex (its
-  sign-in does not say the plan) and Antigravity (from the models `agy models` lists).
+**I7. Cloud providers other than Claude** · Level 3 · stages 1 to 3 built (API keys and consent per provider in
+0.19.19; Codex and Antigravity in 0.20.0; each person's own provider in a shared project, the owner's limit and the AI
+log in 0.20.1)
+- **Measured defaults.** Each provider's three tiers come from its own advice (`providers.LINEUP`); they should come
+  from the validation run (J4.3) and the agreement with Claude (I5). Until then Settings marks a provider *not yet
+  measured*.
+- **Plan detection** for Codex (its sign-in does not say the plan) and Antigravity (from the models `agy models`
+  lists).
+- **The AI mix (I1) from every route.** It lends work to the local model only from an agent route (Claude Code, Codex,
+  Antigravity), not from the Claude API or another provider's API key (`routing.MIX_ROUTES`).
 
 ## Small things left
 
@@ -134,8 +98,7 @@ release that left each one in brackets). None of them loses work; each is small.
 
 - **The AI run panel and the sidebar.** With both seats waiting, the panel's head says *Waiting for Claude Code…*
   (0.19.13). A local seat short of memory may say *Waits for you* for a while before *Needs you* while Claude Code
-  works on other tasks (0.19.13). The sidebar's plain *Start* for the local side looks like Claude Code's: whether it
-  should name the model (*Start K2*) is open (0.19.15). The sidebar offers the local model's *Start* only while no
+  works on other tasks (0.19.13). The sidebar offers the local model's *Start* only while no
   other job runs, otherwise only on the job's own page; work that asks the local model one request at a time
   (comparing the routes, following references) says "1 task waits" before its *Start*, whatever the number (0.20.1).
 - **See what is sent** does not refresh while it is open (0.19.18).
@@ -145,8 +108,6 @@ release that left each one in brackets). None of them loses work; each is small.
 - **The concept map.** The links found in the text are English only; the downloaded picture is always light
   (0.19.16).
 - **A team.** A codebook or a link between terms removed on one computer is not removed on the other (0.19.11).
-- **The AI mix** (I1) lends work to the local model only from an agent route (Claude Code, Codex, Antigravity), not
-  from the Claude API or another provider's API key (`routing.MIX_ROUTES`).
 
 ## Left to try with real accounts and a real team
 
@@ -164,6 +125,15 @@ release that left each one in brackets). None of them loses work; each is small.
   with both people's rows. Tested only with two copies exchanging files on one computer.
 
 Built and tested against stand-ins that follow each service's documents; not yet tried for real.
+
+**I6. Local model tiers with real models** (each needs a model loaded)
+1. Bench `qwen3.5:4b-q4_K_M` (and `9b-q4_K_M`) against the nvfp4 numbers before pinning the GGUF tags
+   (`modeladvice.MEDIUM_MODEL`, `LARGE_MODEL`: one line each); and whether the `qwen3.5` tags pull MLX or GGUF on
+   Windows.
+2. Run `tools/localbench/handhold_lp.py` with opposites written by K2 to set the lean's threshold (0.10 rests on 15
+   passages that matter); then turn the lean on (`pointing.LEAN`, with the small `opposite` step).
+3. Check once on Ollama 0.40.16 that an unload frees the MLX runner's memory (Activity Monitor; ollama/ollama#17792).
+4. Check whether `maxItems`/`maxLength` bound the answer on the MLX path, with one `expand` task.
 
 **L5 and L7. A shared folder**
 - Between two computers through a real OneDrive, Dropbox and network drive, and on a real Windows PC. The first try on
@@ -191,8 +161,9 @@ Built and tested against stand-ins that follow each service's documents; not yet
 
 **A team on real computers**
 - Owner, Co-owner and Member roles, invites, a hand-over and removing a colleague, used by a real team over days.
-- The concept map's group names (D1): how often two copies find a group differently enough that a colleague's name
-  lands under *names kept for groups that are not on this map* rather than on its group.
+- The concept map's group names (D1): their sync end to end through a real shared folder or storage space (tested
+  with the same merge as a project file), and how often two copies find a group differently enough that a colleague's
+  name lands under *names kept for groups that are not on this map* rather than on its group.
 
 ## Open decisions
 

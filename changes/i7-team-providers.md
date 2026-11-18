@@ -16,6 +16,20 @@
   how many excerpts from how many documents, and what it was about (a link to the hypothesis, codebook, themes or
   document). Filter by person and provider. A colleague's rows arrive with the sync.
 
+### Changes that can alter your results
+
+- **Provider ticks a shared project brought from colleagues are cleared once.** In 0.19.19 and 0.20.0 a member's copy
+  kept the ticks of whoever sent the project; they now count as consent, so on the first opening after the update
+  ENLENS clears, once, the ticks in a shared project that you did not set yourself, and the Documents page says so:
+  tick again what you allow. A colleague still on an older ENLENS allows Anthropic only in a shared project.
+
+### Fixed
+
+- **The connector chose excerpts for Anthropic whatever agent asked.** When Codex or Antigravity used ENLENS's
+  connector in a chat (`open_check`, `more_passages`), the excerpts were chosen for Anthropic, so a document that
+  allows Anthropic only could reach OpenAI or Google that way. They are now chosen for the agent's own company, and the
+  ledger names it.
+
 ### Privacy
 
 - **The ledger of what was sent now names who sent it and on which model**, so a team can trace AI results. A row a

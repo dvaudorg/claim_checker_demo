@@ -32,3 +32,10 @@
   `group_name`; incoming rows checked by `groupnames.valid_row`; local changes dated by `groupnames.clock`).
 - `evaluation` compares two runs' link answers pair by pair, a pair turned round read from its smaller term. The AI's
   `group_name` tasks stay local (`sharing.LOCAL_TASK_KINDS`).
+
+### Not yet done
+
+- Group names' sync is tested with the same merge a project file goes through, not end to end through a real shared
+  folder or storage space. A colleague's file may carry a third person's names (as it may carry their reviews), but it
+  never changes a name you changed last.
+- A downloaded picture of the map is always light, and the links found in the text are English only.
