@@ -166,6 +166,36 @@ await scenario("P-1 drawer text typed while adding", async (t) => {
   await t.settle(1000);
   return { left: ta.value };
 });
+
+// ---- P-4: the theory draft, a second edit waiting while the first is answered 409 ---------------------------------
+await scenario("P-4 draft 409 with a waiting edit", async (t) => {
+  const BASE = "/api/projects/Study/codebook-theory/draft";
+  const C = (o) => ({ group: "", meaning: "", when_to_use: "", when_not: "", keep: true, checked: false, how: "found", sources: [], examples: [], words: [], ai: null, ...o });
+  const DRAFT = (rev) => ({ title: "Repair theory", name: "repair", where: "project", doc_ids: ["d1"], focus: "", rev,
+    reading: { state: "none", job: null, problems: [] }, left_out: [], groups: [{ key: "g1", name: "Practice", about: "" }],
+    concepts: [C({ key: "c1", name: "habitus", group: "g1", meaning: "Lasting dispositions" })] });
+  const OFFER = { offered: true, reader: "claude", parts: 1, why: "", documents: [{ doc_id: "d1", title: "Practice theory", level: "cloud", parts: 1, offered: true, why: "" }] };
+  let server = 3, gets = 0;
+  const revs = [];
+  t.state({ settings: { backend: "claude_code" } });
+  t.answer(`GET ${BASE}`, async () => { gets++; if (gets > 1) await new Promise((r) => setTimeout(r, 500)); return { draft: DRAFT(server), offer: OFFER, documents: [{ doc_id: "d1", title: "Practice theory" }] }; });
+  t.answer(`GET ${BASE}/counts`, { documents: 1, counts: {} });
+  t.answer(`PUT ${BASE}`, async (body) => {
+    revs.push(body.rev);
+    if (revs.length === 1) { await new Promise((r) => setTimeout(r, 1500)); server = 9; }   // changed elsewhere meanwhile
+    if (body.rev !== server) return t.fail(409, "The draft changed.");
+    server = body.rev + 1;
+    return { draft: { rev: server, reading: { stale: false } } };
+  });
+  await t.render("views/theory-draft.js", "renderTheoryDraft");
+  await t.click(/^Habitus /);
+  await t.type("Definition", "Ways of acting learnt over a life");
+  await t.settle(900);                       // the first save is sent and waits for its answer
+  await t.type("Definition", "Ways of acting learnt over a whole life");
+  await t.settle(1000);                      // the second is due and waits for the first
+  await t.settle(8000);
+  return { revs };
+});
 """
 
 
@@ -226,3 +256,11 @@ def test_p1_ctrl_enter_twice_adds_one_entry_in_the_drawer(page):
 @needs_node
 def test_p1_text_typed_while_an_entry_is_added_is_kept_in_the_drawer(page):
     assert page["P-1 drawer text typed while adding"]["left"] == "First entry, and a second thought"
+
+
+@needs_node
+def test_p4_a_waiting_save_does_not_send_the_old_revision_during_the_reload(page):
+    r = page["P-4 draft 409 with a waiting edit"]
+    # the second request after the 409 must carry the revision the reload brought (9), not the old one (3): the old
+    # one would be answered 409 again, with a second "changed elsewhere" toast
+    assert r["revs"] == [3, 9], r
