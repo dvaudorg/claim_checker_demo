@@ -95,6 +95,15 @@ await scenario("JS-4 codes list follows codebook", async (t) => {
   const place = document.getElementById("dv-add-code").getAttribute("placeholder");
   return { opts, place, gets: t.calls.filter((c) => c.path.includes("/frameworks/")).map((c) => c.path.split("/").pop()) };
 });
+
+// ---- JS-5: the code picker when its codebook cannot be loaded -----------------------------------------------------
+await scenario("JS-5 picker without its codebook", async (t) => {
+  t.answer("GET /api/projects/Study/frameworks/x", t.fail(404, "Unknown framework: x"));
+  const m = await t.module("views/options.js");
+  const got = await m.pickCode({ project: "Study", framework: "x" });
+  await t.settle(50);
+  return { got: got === undefined ? "undefined" : got, toasts: t.toasts(), dialogs: t.dialogs().length };
+});
 """
 
 
@@ -128,3 +137,10 @@ def test_js4_the_codes_to_pick_from_are_the_chosen_codebooks(page):
     r = page["JS-4 codes list follows codebook"]
     assert "beta" in r["gets"]
     assert r["opts"] == ["B1"] and r["place"] == "e.g. B1"
+
+
+@needs_node
+def test_js5_a_codebook_that_cannot_be_loaded_is_told_to_the_person(page):
+    r = page["JS-5 picker without its codebook"]
+    assert r["got"] == "undefined" and r["dialogs"] == 0
+    assert any("Unknown framework: x" in x for x in r["toasts"]), r["toasts"]
