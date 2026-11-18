@@ -8,7 +8,15 @@
   to it. Then *Start Codex* or *Start Antigravity* wherever work waits works like *Start Claude Code*: ENLENS starts
   the helpers in the background, each on its model, checks every quote, and stops them with *Stop* or when you quit.
   You can also type `$enlens-run <project>` in Codex or `/enlens-run <project>` in Antigravity yourself. Neither is
-  measured with ENLENS yet: Settings says so.
+  measured with ENLENS yet, nor tried with real accounts: Settings says so. The first-run page offers them too.
+- **Every set-up of something outside ENLENS works the same way.** The API keys (OpenAI, Google Gemini, Mistral, Azure
+  OpenAI, OpenRouter and the Claude API) and the three agents are set up step by step in a dialog, like the storage
+  space: one thing at a time, the address to open with a Copy button, the button waiting for the last step. A key the
+  provider refuses is said so at once and not kept; the done step lists the models ENLENS applied and switches the
+  route on in one press.
+- **Work a provider may not read says so, and goes on once you allow it.** With Codex (or another provider) as the AI
+  and documents that allow Anthropic only, a check no longer waits silently: it says "Codex reads only documents that
+  allow OpenAI: 0 of 3 do", with *Allow OpenAI for this project*, and the same check continues after the press.
 - **Recommended models, applied by themselves.** Every provider now gets ENLENS's three tiers (small tasks such as
   labels and links; judging excerpts; second opinions and hard cases) from its own current line-up: for example
   GPT-6 Luna, GPT-6.2 Sol and GPT-6.2 Astra on OpenAI, Gemini 3.5 Flash-Lite, Gemini 4 Hydrogen and Gemini 4 Carbon on
@@ -31,15 +39,20 @@
 - **Each agent is closed in as far as it allows.** Codex runs read-only, without its command, web search and image
   tools, with only ENLENS's three queue tools and none of your own Codex settings. Antigravity's own tools cannot be
   switched off from outside: ENLENS starts it in an empty folder of its own, in its sandbox, adds one permission line
-  (`mcp(enlens/*)`, after keeping a copy of your settings) and refuses to start it while it is set to run every tool
-  without asking.
+  (`mcp(enlens/*)`, after keeping a copy of your settings), marks its own empty work folder as trusted, and refuses
+  to start it while it is set to run every tool without asking.
+- **Each agent's consent says what its maker does with the text on that kind of account:** ChatGPT Plus and Pro may
+  be used to train OpenAI's models unless *Improve the model for everyone* is off; Antigravity on a personal Google
+  account while its *Enable Telemetry* setting is on. In a shared project only Anthropic reads, as before.
 
 ### Tests
 
 - `tests/test_agent_cli.py`: the provider-gated queue both ways and after a change of route, set-up, sign-in and
   repair of both agents, the runner (start, stop, a reached limit, Antigravity's always-proceed refusal, stopping
   every run at quit), and the API, against stand-in `codex` and `agy` programs (`tests/fake_codex_cli.py`,
-  `tests/fake_agy_cli.py`). `tests/test_providers.py`: the three tiers and the recommendations per provider.
+  `tests/fake_agy_cli.py`). `tests/test_providers.py`: the three tiers and the recommendations per provider, a
+  refused key. `tests/test_provider_allow.py`: a held check waits with its reason and continues once OpenAI is
+  allowed; a shared project ends with the reason. `tests/test_outside_setup_views.py`: the set-up dialogs in Node.
 
 ### Not yet done
 
