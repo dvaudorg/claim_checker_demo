@@ -476,6 +476,9 @@ MIGRATIONS = [("documents", "declared_ref", "TEXT"), ("vca_refs", "alias_of", "T
               # `cloud` allows (a JSON list of providers.ALLOWABLE; NULL: the project's `ai_providers_default`, absent:
               # Anthropic only), and who received each passage sent (NULL: Anthropic, as everything before)
               ("documents", "ai_providers", "TEXT"), ("ai_sent", "provider", "TEXT"),
+              # I7 stage 3 (ailog.py): who sent each passage (the person id of the copy that sent it) and on which
+              # model, so the AI log can say who ran what in a team. NULL: sent before, or by an older copy
+              ("ai_sent", "person_id", "TEXT"), ("ai_sent", "model", "TEXT"),
               ]
 
 

@@ -1138,34 +1138,36 @@ class App(LibraryMixin, QueueMixin):
         """Stage 2: whether these checks wait only because the agent's company may not read their documents (the
         project allows Anthropic only, and Codex answers): the job then says so, in plain words, instead of waiting
         silently for an agent that is never handed the excerpts; once the person allows the company, the excerpts go
-        to the queue (claimcheck.advance_queued) and the job goes on. Where allowing is not possible (a shared
-        project allows Anthropic only, or a document's own setting keeps them from every cloud AI), the excerpts wait
-        for the person's judgement instead and the check finishes. True while it waits for the person to allow."""
+        to the queue (claimcheck.advance_queued) and the job goes on. I7 stage 3: the owner's limit of the providers
+        the team may use holds them the same way, with a note naming the limit and who set it (they go on when the
+        owner widens it). Where a document's own setting keeps them from every cloud AI, the excerpts wait for the
+        person's judgement instead and the check finishes. True while it waits."""
         held = claimcheck.held_parts(ws, left)
         if not held:
             return False
-        from .. import providers
+        from .. import providers, teamproviders
 
         route = taskqueue.queue_route()
         prov = taskqueue.route_provider(route)
         title, company = taskqueue.route_title(route), providers.company(prov)
-        shared = access.is_shared(ws._conn(), ws) and prov != access.ANTHROPIC
         for h in held:
-            if h["why"] != "provider" or shared:
+            if h["why"] == "setting":
                 claimcheck.hand_to_person(ws, h["task_id"])
-                tracker.step("note", (f"{title} may not read this shared project's documents (only Anthropic may): "
-                                      if shared and h["why"] == "provider" else
-                                      "A document's AI setting keeps these excerpts from every cloud AI now: ") +
+                tracker.step("note", "A document's AI setting keeps these excerpts from every cloud AI now: "
                              f"the {h['passages']} {'excerpt waits' if h['passages'] == 1 else 'excerpts wait'} for "
                              "your judgement", {"keep": True})
-        waiting = [h for h in held if h["why"] == "provider" and not shared]
+        # I7 stage 3: in a shared project too, the person's own consent; the owner's limit holds the work as well,
+        # with a note that names it and who set it (the person cannot allow it: the owner can, or another route)
+        waiting = [h for h in held if h["why"] in ("provider", "limit")]
         if not waiting:
             return False
         n = sum(h["passages"] for h in waiting)
-        text = (f"{title} reads only documents that allow {company}, and this project's do not: allow {company} for "
-                f"this project and the check goes on by itself")
+        limit = teamproviders.note(ws._conn(), prov) if any(h["why"] == "limit" for h in waiting) else None
+        text = limit or (f"{title} reads only documents that allow {company}, and this project's do not: allow "
+                         f"{company} for this project and the check goes on by itself")
         tracker.model_report({"phase": "held", "seconds": time.time() - t0, "text": text, "agent": route,
-                              "agent_title": title, "provider": prov, "company": company, "excerpts": n})
+                              "agent_title": title, "provider": prov, "company": company, "excerpts": n,
+                              "limit": bool(limit)})
         tracker.say(f"{n} {'excerpt waits' if n == 1 else 'excerpts wait'}: {title} may not read them yet", step="grade")
         return True
 
@@ -1863,6 +1865,7 @@ ROUTES: list[tuple[str, re.Pattern, str]] = [(m, re.compile("^" + p + "$"), h) f
     ("POST", rf"/api/projects/{P}/bibliography/files", "post_bibliography_files"),
     ("GET", rf"/api/projects/{P}/bibliography/to-find\.(csv|xlsx)", "get_bibliography_export"),
     # 0.16: the research log, notes and highlights, earlier versions, your own codebooks (api_record.py)
+    ("GET", rf"/api/projects/{P}/ai-log", "get_ai_log"),   # I7 stage 3: who ran which AI work (ailog.py)
     ("GET", rf"/api/projects/{P}/log", "get_log"),
     ("POST", rf"/api/projects/{P}/log", "post_log"),
     ("GET", rf"/api/projects/{P}/log\.(md|xlsx)", "get_log_export"),
@@ -1943,6 +1946,8 @@ ROUTES: list[tuple[str, re.Pattern, str]] = [(m, re.compile("^" + p + "$"), h) f
     ("PUT", rf"/api/projects/{P}/owner/settings", "put_owner_settings"),
     ("GET", rf"/api/projects/{P}/owner/codebooks", "get_owner_codebooks"),    # team codebooks (teamcodebooks.py)
     ("PUT", rf"/api/projects/{P}/owner/codebooks", "put_owner_codebooks"),
+    ("GET", rf"/api/projects/{P}/owner/providers", "get_owner_providers"),    # I7 stage 3 (teamproviders.py)
+    ("PUT", rf"/api/projects/{P}/owner/providers", "put_owner_providers"),
     ("POST", rf"/api/projects/{P}/owner/apply", "post_owner_apply"),
     ("POST", rf"/api/projects/{P}/owner/proposals/{P}/accept", "post_proposal_accept"),
     ("POST", rf"/api/projects/{P}/owner/proposals/{P}/decline", "post_proposal_decline"),

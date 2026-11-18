@@ -704,7 +704,9 @@ def held_parts(ws: Workspace, hyp_ids: list[str]) -> list[dict]:
     """Stage 2: the parts of these checks by queue held out of the queue: open main parts of a round not in the queue
     because a document in them may not be read by the queue's provider now. Each {"task_id", "passages", "why"}:
     "provider" (its documents are marked for cloud AI but do not allow that provider: allowing it lets the check go
-    on), or "setting" (a document's setting or cap keeps it from any cloud AI now)."""
+    on), "limit" (I7 stage 3: they would, but the owner's limit of the providers the team may use leaves that provider
+    out: the note says so, teamproviders.note), or "setting" (a document's setting or cap keeps it from any cloud AI
+    now)."""
     if not hyp_ids:
         return []
     prov = tasks.queue_provider()
@@ -720,6 +722,14 @@ def held_parts(ws: Workspace, hyp_ids: list[str]) -> list[dict]:
                 mine = access.levels(cx, docs, provider=prov, budget=False)
                 chosen = access.levels(cx, docs, provider=None, budget=False)
             why = "provider" if any(chosen.get(d) == "cloud" and mine.get(d) != "cloud" for d in docs) else "setting"
+            if why == "provider" and prov is not None:
+                from .teamproviders import allows as team_allows
+
+                try:
+                    if not team_allows(ws._conn(), prov):
+                        why = "limit"
+                except Exception:  # noqa: BLE001 - read as the person's own consent
+                    pass
             out.append({"task_id": t["task_id"], "passages": len(json.loads(t["payload_json"])["passages"]),
                         "why": why})
     return out

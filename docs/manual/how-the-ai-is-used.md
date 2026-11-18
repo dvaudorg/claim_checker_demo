@@ -44,6 +44,10 @@ go to the company of the agent you chose ([Codex and Antigravity](other-agents.m
 real account yet, nor measured them: its defaults were measured on Claude only. For other providers there are API keys
 ([Settings](settings.md#another-cloud-provider-with-an-api-key)).
 
+In a shared project each person chooses their own route and provider, within the providers the owner allows (no limit
+unless the owner sets one). The **AI log** (from the research log's line under its title) says who ran which AI work,
+with which provider and model, when, about what, and how many excerpts were sent ([The AI log](privacy.md#the-ai-log)).
+
 For a shared installation that runs unattended, use the **Claude API** with the team's key instead: the same queue and
 the same models per task (`enlens queue run --backend anthropic`).
 

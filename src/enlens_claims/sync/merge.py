@@ -318,6 +318,8 @@ class _Merge(CodebookRules, ReadingRules, ShareRules, OwnerRules):
                 row["role"] = None
             if "nonscientific" in row:  # 0.18.6: the Non-scientific mark too (docrole.py)
                 row["nonscientific"] = None
+            if "ai_providers" in row:  # I7 stage 3: which cloud providers may read it is each person's own consent
+                row["ai_providers"] = None  # (teamproviders.py): this copy's project choice applies, never theirs
             if row["sha1"] in sha_here:  # the file is here already (another reading of it): sha1 is unique
                 row["sha1"] = f"{(row['sha1'] or '').split('~')[0]}~{fp[:6]}"
             sha_here.add(row["sha1"])
@@ -452,8 +454,17 @@ class _Merge(CodebookRules, ReadingRules, ShareRules, OwnerRules):
                                          if self._id("task_id", r["task_id"]) in added])
         sent = [r for r in _rows(self.icx, "SELECT * FROM ai_sent") if self._doc_ok(r) and r["doc_id"] in self.docs]
         have = {tuple(r) for r in cx.execute("SELECT passage_id, task_id, route, sent_at FROM ai_sent")}
-        self._insert(cx, "ai_sent", sent, verb="",
-                     fix=lambda t: None if (t["passage_id"], t["task_id"], t["route"], t["sent_at"]) in have else t)
+
+        def fix_sent(t: dict) -> dict | None:
+            if (t["passage_id"], t["task_id"], t["route"], t["sent_at"]) in have:
+                return None
+            # I7 stage 3 (the AI log): a row in this person's name comes from this copy only; one a file brings that
+            # this copy does not hold still counts as read (the cap), but names nobody
+            if t.get("person_id") is not None and t.get("person_id") == self.me:
+                t["person_id"] = None
+            return t
+
+        self._insert(cx, "ai_sent", sent, verb="", fix=fix_sent)
 
     # checks and theme runs --------------------------------------------------------------------
     def _units(self, cx: sqlite3.Connection, kind: str) -> None:

@@ -28,7 +28,12 @@ allows (`documents.ai_providers`, a JSON list; NULL: the project's `ai_providers
 provider every function gives the setting as the person chose it (what is stored, synced, shared and shown). The
 decision points name theirs: the work split (`Readers.provider`, the backend's own), the guard (`require`, `may_read`),
 the queue for Claude Code, the file queue and the connector (Anthropic), a remote embedder (its address). A model server
-on this computer is no provider (None). In a shared project only Anthropic may read.
+on this computer is no provider (None).
+
+Shared projects (I7 stage 3, teamproviders.py): each person reads with the provider they chose, for the providers they
+allowed on their own copy; that consent is theirs and does not travel (sync/merge.py, bundle._forget_folder). The
+owner may limit the providers the team may use (a setting that travels with the owner's rules): a provider outside it
+counts as not allowed, in every copy. Until stage 3 a shared project allowed Anthropic only.
 
 The stored setting of a task (`tasks.access`) is the one for the provider the project's tasks are labelled for
 (`labels_provider`, the main route's; meta `ai_labels_for`, absent: Anthropic, as before), so that the queue, the waits
@@ -58,8 +63,6 @@ PROMISE = ("Documents you mark as local stay on this computer. ENLENS never send
            "feature, and shows you how much of every other document it has sent.")
 _KEEP = object()
 ANTHROPIC = providers.ANTHROPIC
-SHARED_ONLY_ANTHROPIC = ("Other providers come to shared projects later: your colleagues have not agreed to them. "
-                         "Only Anthropic may read this project's documents.")
 
 
 # ---------------------------------------------------------------------------------------------
@@ -213,7 +216,7 @@ def _ws_of(cx) -> Workspace | None:
 
 def is_shared(cx, ws: Workspace | None = None) -> bool:
     """Whether the project is worked on with colleagues (teamcodebooks.is_team: an owner's chain, an exchange, a
-    shared folder or a storage space). When that cannot be said: shared (only Anthropic reads)."""
+    shared folder or a storage space). When that cannot be said: shared."""
     try:
         from .teamcodebooks import is_team
 
@@ -235,12 +238,12 @@ def _own_list(raw) -> list[str] | None:
 
 class _Allow:
     """Whether a `cloud` document allows the provider that reads, looked up once per call: the project's default and
-    whether it is shared are read only when needed."""
+    the team's limit (I7 stage 3, teamproviders.py) are read only when needed."""
 
     def __init__(self, cx, ws: Workspace | None, provider: str):
         self.cx, self.ws, self.provider = cx, ws, provider
         self._dflt: list[str] | None = None
-        self._shared: bool | None = None
+        self._team: bool | None = None
 
     def _ws(self) -> Workspace | None:
         if self.ws is None and self.cx is not None:
@@ -253,16 +256,23 @@ class _Allow:
             self._dflt = providers_default(ws) if ws is not None else list(providers.DEFAULT_ALLOWED)
         return self._dflt
 
-    def shared(self) -> bool:
-        if self._shared is None:
-            self._shared = is_shared(self.cx, self._ws())
-        return self._shared
+    def team_allows(self) -> bool:
+        """The owner's limit lets this provider read (no limit: yes). When the limit cannot be read, only Anthropic
+        reads in a shared project, as before stage 3."""
+        if self._team is None:
+            try:
+                from .teamproviders import allows
+
+                self._team = allows(self.cx, self.provider) if self.cx is not None else True
+            except Exception:  # noqa: BLE001
+                self._team = self.provider == ANTHROPIC or not is_shared(self.cx, self._ws())
+        return self._team
 
     def allows(self, raw) -> bool:
         own = _own_list(raw)
         if self.provider not in (own if own is not None else self.default()):
             return False
-        return self.provider == ANTHROPIC or not self.shared()
+        return self.team_allows()
 
 
 class AccessError(RuntimeError):
@@ -787,13 +797,6 @@ def _level_now(cx, row, dflt: str | None, budget: bool, provider=None) -> tuple[
     return stored, lv
 
 
-def _check_allowance(ws: Workspace, plist: list[str]) -> None:
-    """A list of providers other than Anthropic is refused in a shared project (R5: the allowance does not travel with
-    a team yet, so colleagues have not agreed to it)."""
-    if any(p != ANTHROPIC for p in plist) and is_shared(ws._conn(), ws):
-        raise ValueError(SHARED_ONLY_ANTHROPIC)
-
-
 def _providers_words(plist: list[str] | None) -> str:
     if plist is None:
         return "the project's choice"
@@ -804,7 +807,6 @@ def set_providers_default(ws: Workspace, value) -> list[str]:
     """The cloud providers that may read the project's `cloud` documents without their own choice. Takes effect for
     every task not answered yet; goes into the research log."""
     plist = providers.clean_list(value)
-    _check_allowance(ws, plist)
     before = providers_default(ws)
     _write_config(ws, {"ai_providers_default": plist})
     with ws.connect() as cx:
@@ -812,8 +814,11 @@ def set_providers_default(ws: Workspace, value) -> list[str]:
         if before != plist:
             from . import researchlog
 
+            # I7 stage 3: in a team the entry travels (who did what), and says the choice is one person's own
+            own = " One person's own choice, for their copy: each person chooses theirs." \
+                if is_shared(cx, ws) else ""
             researchlog.record(cx, "ai-access", f"Cloud providers that may read documents marked Cloud AI may read it: "
-                                                f"{_providers_words(plist)} (before: {_providers_words(before)}).",
+                                                f"{_providers_words(plist)} (before: {_providers_words(before)}).{own}",
                                data={"providers_default": plist})
     return plist
 
@@ -828,7 +833,6 @@ def set_documents(ws: Workspace, doc_ids: list[str], setting: Any = _KEEP, note:
     plist = None
     if allow is not _KEEP and allow is not None:
         plist = providers.clean_list(allow)
-        _check_allowance(ws, plist)
     lv = None
     if setting is not _KEEP:
         lv = clean(setting, allow_empty=True)
@@ -979,6 +983,18 @@ def route_name(backend) -> str:
     return ROUTE_NAMES.get(name, name)
 
 
+def _limit_note(where, provider: str) -> str | None:
+    """The note of the team's limit when it leaves this provider out (I7 stage 3), else None."""
+    if where is None:
+        return None
+    try:
+        from .teamproviders import note
+
+        return note(where._conn() if isinstance(where, Workspace) else where, provider)
+    except Exception:  # noqa: BLE001 - the plain refusal then
+        return None
+
+
 def require(backend, task, where=None) -> None:
     """Refuse to hand a task to a model its setting does not allow (before anything is sent). With `where` (the
     workspace, or a connection inside the caller's transaction) the setting is worked out again from the task's
@@ -1004,9 +1020,11 @@ def require(backend, task, where=None) -> None:
     if lv == "none":
         raise AccessError(f"Task {task['task_id']} holds text of a document marked No AI: no model may read it.")
     if lv not in backend_levels(backend):
-        if prov is not None and prov != ANTHROPIC and _as_chosen(where, task) == "cloud":
-            raise AccessError(f"Task {task['task_id']} holds text of a document that {providers.title(prov)} may not "
-                              "read: its AI setting allows other providers only.")
+        if prov is not None and _as_chosen(where, task) == "cloud":
+            why = _limit_note(where, prov)   # I7 stage 3: the team's limit, named, when it is the reason
+            if why or prov != ANTHROPIC:
+                raise AccessError(f"Task {task['task_id']} holds text of a document that {providers.title(prov)} may "
+                                  f"not read: {why or 'its AI setting allows other providers only.'}")
         raise AccessError(f"Task {task['task_id']} holds text of a document marked Only a local AI: "
                           f"{route_name(backend) or 'this model'} may not read it.")
 
@@ -1378,11 +1396,28 @@ def _with_context(cx, payload: Any, pids: set[str]) -> set[str]:
 _ANTHROPIC_ROUTES = {"Claude Code", "Claude API", "Claude app (connector)", "Claude", "file queue"}
 
 
+def _sender() -> str | None:
+    """This installation's person id for the ledger (I7 stage 3), read and never made here; None when it cannot be
+    read (the row then says nobody, as rows written before)."""
+    try:
+        from .home import load_settings
+
+        pid = load_settings().get("person_id") or ""
+        if not pid:
+            from .people import me
+
+            pid = me()
+        return pid or None
+    except Exception:  # noqa: BLE001 - the ledger row is written all the same
+        return None
+
+
 def record_sent(cx, task_id: str | None, payload: Any, route: str, feature: str | None = None,
-                context: bool = True, provider: str | None = None) -> int:
+                context: bool = True, provider: str | None = None, model: str | None = None) -> int:
     """Write one ledger row per passage (and, with `context`, the passage shown before it) of this payload, as it
     leaves for a cloud model. A Claude chat is shown the excerpts without their context (`context=False`).
-    `provider`: who receives it (stage 1 of other cloud providers; by default Anthropic for Claude's routes)."""
+    `provider`: who receives it (stage 1 of other cloud providers; by default Anthropic for Claude's routes).
+    I7 stage 3: each row names the person who sent it and the model (`model`, else the task's), for the AI log."""
     if provider is None:
         provider = ANTHROPIC if route in _ANTHROPIC_ROUTES else providers.OTHER
     pids, _dids = ids_in(payload)
@@ -1397,9 +1432,13 @@ def record_sent(cx, task_id: str | None, payload: Any, route: str, feature: str 
         if is_tombstone(p):     # ("<doc_id>:r1-0005", see reread.py): it is still that document's text that leaves
             docs[p] = p.rsplit(":", 1)[0]
     at = now()
-    rows = [(p, docs[p], route, task_id, at, feature, provider) for p in sorted(pids) if p in docs]
-    cx.executemany("INSERT INTO ai_sent(passage_id, doc_id, route, task_id, sent_at, feature, provider) VALUES "
-                   "(?,?,?,?,?,?,?)", rows)
+    if model is None and task_id:
+        got = cx.execute("SELECT model FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+        model = got[0] if got else None
+    who = _sender()
+    rows = [(p, docs[p], route, task_id, at, feature, provider, who, model) for p in sorted(pids) if p in docs]
+    cx.executemany("INSERT INTO ai_sent(passage_id, doc_id, route, task_id, sent_at, feature, provider, person_id, "
+                   "model) VALUES (?,?,?,?,?,?,?,?,?)", rows)
     return len(rows)
 
 
@@ -1505,15 +1544,26 @@ def project_info(ws: Workspace) -> dict:
     """What the Documents page needs about the project: its default, whether it was chosen, the banner."""
     lv = levels(ws, provider=None)   # as the person chose them (a provider's allowance is shown apart)
     counts = {k: sum(1 for v in lv.values() if v == k) for k in LEVELS}
-    shared = is_shared(ws._conn(), ws)
+    cx = ws._conn()
+    shared = is_shared(cx, ws)
+    team_limit = None
+    if shared:
+        try:
+            from . import teamproviders
+
+            lim = teamproviders.limit(cx)
+            if lim is not None:
+                team_limit = {"providers": lim["providers"], "note": teamproviders.note(cx)}
+        except Exception:  # noqa: BLE001 - the page then shows no limit line
+            team_limit = None
     return {"default": default(ws), "chosen": default_chosen(ws), "banner": bool(ws.config.get("ai_access_banner")),
             "ask": not default_chosen(ws) and (bool(ws.config.get("ai_access_ask")) or bool(lv)),
             "counts": counts, "labels": LABEL, "who": WHO, "local_only": _local_only(), "promise": PROMISE,
             "ledger_since": ws.meta("ai_sent_since") or None,
-            # stage 1 of other cloud providers: who may read the `cloud` documents without their own choice, and
-            # why a shared project allows Anthropic only
-            "providers_default": providers_default(ws), "shared": shared,
-            "providers_note": SHARED_ONLY_ANTHROPIC if shared else None, **_route_allows(ws, lv)}
+            # stage 1 of other cloud providers: who may read the `cloud` documents without their own choice (this
+            # person's own, also in a shared project: I7 stage 3), and the team's limit when its owner set one
+            "providers_default": providers_default(ws), "shared": shared, "team_limit": team_limit,
+            "providers_note": team_limit["note"] if team_limit else None, **_route_allows(ws, lv)}
 
 
 def _route_allows(ws: Workspace, chosen: dict[str, str]) -> dict:
@@ -1547,4 +1597,6 @@ def sending(ws: Workspace, payload: Any, backend, feature: str, task_id: str | N
         raise AccessError("This text comes from a document this model may not read.")
     if is_cloud(backend):
         with ws.connect() as cx:
-            record_sent(cx, task_id, payload, route_name(backend), feature, provider=provider_of(backend))
+            record_sent(cx, task_id, payload, route_name(backend), feature, provider=provider_of(backend),
+                        model=getattr(backend, "model", None) if isinstance(getattr(backend, "model", None), str)
+                        else None)

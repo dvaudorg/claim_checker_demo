@@ -104,12 +104,31 @@ and nothing reaches OpenAI, Google, Mistral, Azure or OpenRouter, nor Codex or A
   was sent* records the company and the agent.
 - **A model server on another computer** (not `localhost`, `127.0.0.1` or `::1`) counts as a cloud provider too: an
   OpenAI address as OpenAI, any other as *a server on another computer*, which no document allows until you do.
-- **In a shared project** only Anthropic may read documents marked *Claude may read it* (so not Codex or Antigravity),
-  whatever your copy allows,
-  and the page says why: *Other providers come to shared projects later: your colleagues have not agreed to them.*
-  Setting another provider there is refused.
+- **In a shared project each person chooses their own provider.** Your colleagues may use Claude Code, Codex,
+  Antigravity or an API key, each on their own computer, and so may you. The providers you tick are yours: they stay in
+  your copy, never travel to a colleague's, and a colleague's ticks never reach yours (a new document from them, or a
+  copy made from their file, starts with your own project choice). What the team decides is each document's AI
+  setting (*Cloud AI may read it*, *Only a local AI*, *No AI*), as before. Your colleagues see in the research log
+  which providers you allowed, and the [AI log](#the-ai-log) shows who ran which AI work with which provider.
+- **The owner may limit the providers the team may use** (Team › People and settings › *AI providers*; no limit by
+  default). With a limit, a provider outside it reads none of the project's documents in anyone's copy, whatever that
+  person ticked: its work waits, and the page says *The team uses Anthropic only (set by Anna): OpenAI reads none of
+  this project's documents.* Only the owner can widen it; you can also choose a route inside it. The limit travels
+  with the owner's other settings, so a member cannot set it, and a colleague's older ENLENS (from before this
+  change) allows Anthropic only in a shared project.
 - **Your key** is kept in the system's keychain, never in a project, a log or a moving file. Each provider's terms
   decide what it keeps and whether it trains on it: check them first.
+
+### The AI log
+
+The research log's line under its title leads to the **AI log**: one row each time AI work sent excerpts of the
+project's documents to a cloud provider. A row says who sent them (you, or a colleague by name), to which provider,
+through which route (Claude Code, Codex, an API key…) and on which model, what kind of task it was (a check, the
+Profile's AI pass, theme names…), when, how many excerpts from how many documents, and what it was about: the
+hypothesis, codebook, themes or document, as a link when this copy holds it. Filter it by person and by provider.
+In a team, colleagues' rows arrive with the sync, for the documents your copy holds; a colleague's work they have not
+shared says only *work not shared with the team*. Rows written before the AI log existed name nobody in a team (*not recorded*);
+in a project you work on alone they are yours. Nothing on the page is a setting, and it never sends anything.
 
 ### What happens in each feature
 

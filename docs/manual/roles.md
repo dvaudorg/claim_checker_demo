@@ -50,6 +50,12 @@ leaves a passage of it out), each card says so.
   list says so). A copy that does not have the codebook yet uses its own setting until it comes. *None* leaves it to
   each computer. Co-owners and Members see both settings and who set them; only the owner of the time can change them,
   and a copy counts only what that owner wrote.
+- The *AI providers* card after it holds one more: **Limit the providers the team may use** (off by default: each
+  person reads with the cloud provider they chose on their own computer). On, the owner ticks the providers the team
+  may use (Anthropic only, say) and presses *Save*; a provider outside the list then reads none of the project's
+  documents in anyone's copy, and a person whose route is outside it has that work held, with a note that names the
+  limit and who set it ([Privacy](privacy.md#other-cloud-providers)). It travels and counts as the codebook settings
+  do; Co-owners and Members see it as a sentence with who set it. Each change is in the research log.
 
 The number on *Waiting for your word* counts what waits for your word, and a colleague's declined proposals you have not
 seen yet.
