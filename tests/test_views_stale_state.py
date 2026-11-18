@@ -44,6 +44,31 @@ await scenario("JS-2 strictness second change", async (t) => {
   await t.settle(5000);
   return { put, stored: t.LIB.App.settings().threshold };
 });
+
+// ---- JS-3: Look before checking, edited while it runs -------------------------------------------------------------
+await scenario("JS-3 look then edit", async (t) => {
+  const A = "Repair cafés build community among neighbours";
+  const B = "Repair cafés reduce the waste of households";
+  t.state({ settings: { backend: "claude_code", threshold: 0.6 } });
+  let job = { id: "p1", state: "running", progress: {} };
+  t.answer("GET /api/projects/Study", { frameworks: [], passages: 40 });
+  t.answer("GET /api/projects/Study/documents", { documents: [] });
+  t.answer("GET /api/projects/Study/hypotheses?*", { hypotheses: [] });
+  t.answer("POST /api/projects/Study/hypotheses/similar", {});
+  t.answer("POST /api/projects/Study/prepare", { job: { id: "p1" } });
+  t.answer("GET /api/jobs/p1", () => job);
+  await t.render("views/hypotheses.js", "renderHypotheses", [], {});
+  await t.type("Your hypothesis", A);
+  await t.settle(1000);
+  await t.click("Look before checking");
+  await t.type("Your hypothesis", B);
+  await t.settle(1000);
+  job = { id: "p1", state: "done", result: { parts: ["Repair cafés build community", "among neighbours"], terms: [[], []], split: true } };
+  await t.settle(2000);
+  const run = t.buttons().map((b) => b.label).filter((l) => /^Check/.test(l));
+  return { run, text: t.text(), prep: t.view.querySelectorAll(".prep-card").filter((x) => !t.hidden(x)).length };
+});
+
 """
 
 
@@ -63,3 +88,11 @@ def test_js1_profile_ai_card_follows_the_codebook(page):
 def test_js2_a_second_strictness_change_during_a_save_is_kept(page):
     r = page["JS-2 strictness second change"]
     assert r["put"][-1] == 0.7 and r["stored"] == 0.7
+
+
+@needs_node
+def test_js3_a_look_taken_before_an_edit_is_not_shown_as_what_will_be_checked(page):
+    r = page["JS-3 look then edit"]
+    assert not any("parts" in x for x in r["run"]), r["run"]
+    assert r["prep"] == 0 and "among neighbours" not in r["text"]
+
