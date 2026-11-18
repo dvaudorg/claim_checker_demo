@@ -293,4 +293,7 @@ def join_proof(join_secret: bytes, part: str, person: str, public: dict) -> str:
 
 
 def check_join_proof(join_secret: bytes, part: str, person: str, public: dict, proof: str) -> bool:
-    return isinstance(proof, str) and hmac.compare_digest(join_proof(join_secret, part, person, public), proof)
+    # hunt phase 1: as bytes: compare_digest raises TypeError for a str with a letter outside ASCII (a forged or
+    # damaged file), which stopped the round instead of refusing the file
+    return isinstance(proof, str) and hmac.compare_digest(join_proof(join_secret, part, person, public).encode(),
+                                                          proof.encode("utf-8", "surrogateescape"))

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import bisect
 import json
+import math
 import mimetypes
 import os
 import re
@@ -65,9 +66,11 @@ from .api_common import (  # noqa: F401 - the names are importable from here as 
     Jobs,
     MAX_JSON,
     MAX_UPLOAD,
+    UPLOAD_BATCH_MAX,
     XLSX,
     _PDFIUM_LOCK,
     _body_int,
+    _body_text,
     _bool,
     _cell,
     _check_options,
@@ -78,6 +81,7 @@ from .api_common import (  # noqa: F401 - the names are importable from here as 
     _installation,
     _int,
     _list,
+    _path_text,
     _str,
     _text_with_quote,
     _usable_embedder,
@@ -265,7 +269,12 @@ class App(LibraryMixin, QueueMixin):
     # -- read-only views -------------------------------------------------------------------------
     def state(self) -> dict:
         try:
-            home.cleanup_quicklooks()  # quick looks not kept go to the trash after a week
+            # quick looks not kept go to the trash after a week; hunt phase 1: not one whose job is queued or running
+            # (as a removal waits for it, gui/api_documents.py `delete_project`), and the look and the move are one step
+            # under the jobs' lock, so no job of it starts in between
+            with self.jobs.lock:
+                busy = {j.project for j in self.jobs.jobs.values() if j.state in ("queued", "running") and j.project}
+                home.cleanup_quicklooks(busy=busy)
         except OSError:
             pass
         s = self.settings()
@@ -998,7 +1007,7 @@ class App(LibraryMixin, QueueMixin):
         s = self.settings()
         text = str(body.get("text") or "")
         claimcheck._clean(text)  # the plain mistakes are reported at once, not as a failed job
-        fw, code = body.get("framework") or None, body.get("code") or None
+        fw, code = _body_text(body, "framework"), _body_text(body, "code")   # (a list here was a 500: unhashable)
         frameworks.resolve(ws, fw, code)
         opts = _check_options(body, s)
         prepared = {}
@@ -1229,7 +1238,7 @@ class App(LibraryMixin, QueueMixin):
         s = self.settings()
         text = str(body.get("text") or "")
         claimcheck._clean(text)
-        fw, code = body.get("framework") or None, body.get("code") or None
+        fw, code = _body_text(body, "framework"), _body_text(body, "code")   # (a list here was a 500: unhashable)
         frameworks.resolve(ws, fw, code)
         decompose = bool(body["decompose"]) if "decompose" in body else bool(s["decompose"])
         expand = bool(body["expand"]) if "expand" in body else bool(s["expand"])
@@ -1348,9 +1357,12 @@ class App(LibraryMixin, QueueMixin):
         ws = self.ws(name)
         s = self.settings()
         items = body.get("items")
+        if items and not isinstance(items, list):   # hunt phase 1: a number here was a 500 ("not iterable")
+            raise ApiError(400, "items must be a list of hypotheses, each {\"text\": …}.")
         if not items:
             items = claimcheck.parse_batch(str(body.get("text") or ""))
-        items = [{"text": str(i.get("text") or ""), "framework": i.get("framework") or None, "code": i.get("code") or None}
+        items = [{"text": str(i.get("text") or ""), "framework": _body_text(i, "framework"),
+                  "code": _body_text(i, "code")}
                  for i in items if isinstance(i, dict)]
         if not items:
             raise ApiError(400, "No hypotheses found. Give one per line, or a CSV with a 'hypothesis' column.")
@@ -1522,12 +1534,13 @@ class App(LibraryMixin, QueueMixin):
         ws = self.ws(name)
         inputs: list[Path] = list(paths or [])
         if body.get("batch"):
-            folder = ws.root / "uploads" / re.sub(r"[^A-Za-z0-9_-]", "", str(body["batch"]))
-            if not folder.is_dir():
+            batch = re.sub(r"[^A-Za-z0-9_-]", "", str(body["batch"]))
+            folder = ws.root / "uploads" / batch
+            if len(batch) > UPLOAD_BATCH_MAX or not folder.is_dir():   # (no upload makes a longer one: post_upload)
                 raise ApiError(400, "Nothing was uploaded in that batch.")
             inputs.append(folder)
         if body.get("path"):
-            p = Path(str(body["path"])).expanduser()
+            p = Path(_path_text(str(body["path"]))).expanduser()
             if not p.exists():
                 raise ApiError(400, f"Nothing at {p}. Give the full path of a folder, a zip or a file on this computer.")
             inputs.append(p)
@@ -2000,6 +2013,17 @@ DOWNLOADS = {"get_hypothesis_export", "get_export", "get_document_file", "get_pr
 DOWNLOADS |= api_corpus.DOWNLOADS | api_checks_extra.DOWNLOADS
 # (these may take the token as ?token=, for plain links)
 
+def _no_constant(name: str):
+    raise ApiError(400, f"The request holds {name}, which is not a number JSON knows: send an ordinary number.")
+
+
+def _finite_float(text: str) -> float:
+    f = float(text)
+    if not math.isfinite(f):
+        raise ApiError(400, f"The number {text[:30]} in the request is too large: send an ordinary number.")
+    return f
+
+
 _HEADER_CTRL = re.compile(r"[\x00-\x1f\x7f]")  # never in a header value: CR and LF would start a header of their own
 
 
@@ -2092,7 +2116,10 @@ class Handler(BaseHTTPRequestHandler, DocumentsApi, ExploreApi, ChecksApi, Setup
         if not raw:
             return {}
         try:
-            obj = json.loads(raw)
+            # hunt phase 1: Python reads JSON's Infinity, NaN and 1e400 (float infinity) although JSON has no such
+            # numbers, and int() of one raised OverflowError deep in a handler (Settings, themes): a 500 "Unexpected
+            # problem" in place of a 400 in words. They are refused here, once for every endpoint
+            obj = json.loads(raw, parse_constant=_no_constant, parse_float=_finite_float)
         except json.JSONDecodeError:
             raise ApiError(400, "The request body is not valid JSON.") from None
         if not isinstance(obj, dict):
@@ -2156,7 +2183,11 @@ class Handler(BaseHTTPRequestHandler, DocumentsApi, ExploreApi, ChecksApi, Setup
                 if mt and m == method:
                     hname = addons.handler_name(name)
                     token = self.headers.get("X-Enlens-Token") or (_str(q, "token") if hname in downloads else None)
-                    if not token or not secrets.compare_digest(token, self.app.token):
+                    # hunt phase 1: as bytes, still in constant time: compare_digest refuses two str when one holds a
+                    # letter outside ASCII ("jelszó"), and that TypeError was a 500 in place of the 401 that says how to
+                    # open ENLENS
+                    if not token or not secrets.compare_digest(token.encode("utf-8", "surrogateescape"),
+                                                               self.app.token.encode("utf-8")):
                         raise ApiError(401, "Missing or wrong token. Open ENLENS from its icon (or run enlens-gui).")
                     if self.headers.get("X-Enlens-Seen") == "1":  # a tab in front of the person (gui/notify.py)
                         self.app.seen = time.time()

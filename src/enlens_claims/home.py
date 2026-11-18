@@ -22,6 +22,7 @@ import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterable
 
 from .llm import (AnthropicBackend, BackendError, BaselineBackend, CloudBackend, LocalBackend, OllamaBackend,
                   detect_local, is_chat_model)
@@ -1116,10 +1117,26 @@ def open_project(name: str) -> Workspace:
     except OSError:
         stamp = None
     if hit and hit[0] == stamp:
-        return hit[1]
-    ws = Workspace.open(path)
-    _OPEN[key] = (stamp, ws)
+        ws = hit[1]
+    else:
+        ws = Workspace.open(path)
+        _OPEN[key] = (stamp, ws)
+    _follow_codebooks(ws)
     return ws
+
+
+def _follow_codebooks(ws: Workspace) -> None:
+    """A codebook kept with all projects may have been changed in another project since this one last looked: its
+    labels here follow the renames and merges now (codebooks.follow), at every opening (the app opens a project at
+    each request, the connector at each call), not only on the Profile and Codebooks pages: Search by code, the concept
+    map, the themes' code grid and the reading view found none of a renamed code's labels until then. It writes only
+    when a change is new here; a codebook that cannot be read is left for the pages that say so."""
+    from . import codebooks
+
+    try:
+        codebooks.follow(ws)
+    except Exception:  # noqa: BLE001 - opening a project never fails for it
+        pass
 
 
 def close_project(path: str | Path) -> None:
@@ -1333,15 +1350,18 @@ def keep_project(name: str) -> bool:
     return forget_temporary(name)
 
 
-def cleanup_quicklooks(now_: float | None = None) -> list[str]:
-    """Move quick looks older than QUICKLOOK_DAYS days that were not kept to the trash. Returns their names."""
+def cleanup_quicklooks(now_: float | None = None, busy: Iterable[str] = ()) -> list[str]:
+    """Move quick looks older than QUICKLOOK_DAYS days that were not kept to the trash. Returns their names. Hunt
+    phase 1: one in `busy` (a job of it is queued or running) waits for a later look: its job would go on writing
+    through the path, into a new quick look of the same file (which gets the same name)."""
     data = _quicklooks()
     if not data:
         return []
     t = time.time() if now_ is None else now_
     moved = []
+    busy = set(busy)
     for name, q in list(data.items()):
-        if t - float(q.get("created_at") or t) < QUICKLOOK_DAYS * 86400:
+        if t - float(q.get("created_at") or t) < QUICKLOOK_DAYS * 86400 or name in busy:
             continue
         try:
             if name in list_projects():

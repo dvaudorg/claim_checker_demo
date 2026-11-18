@@ -19,6 +19,7 @@ import io
 import json
 import re
 import threading
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -27,6 +28,14 @@ from .review import csv_uncell
 from .textutil import tokens
 
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}\Z")  # (`$` also matches before a final newline)
+
+
+def name_key(name: str | None) -> str:
+    """What two names of codes or groups are compared by: one name when they differ only by case or by how an accent
+    is written ("ő" as one character, as typed, or as "o" and a combining accent, as macOS writes file names and many
+    Mac exports do). Two such codes look the same to a person while their labels never meet. Each name is kept as
+    written: only the comparison folds (labels stored under a name stay under it)."""
+    return unicodedata.normalize("NFC", str(name or "")).casefold()
 
 
 @dataclass(frozen=True)
@@ -80,8 +89,8 @@ class Framework:
         if self.name == "sdg_goals":
             m = re.match(r"^(?:sdg|goal)?\s*(\d{1,2})(?:\s*\.\s*\w+)?\.?$", c.lower())
             return str(int(m.group(1))) if m and str(int(m.group(1))) in self.codes else None
-        low = {k.lower(): k for k in self.codes}
-        return low.get(c.lower())
+        low = {name_key(k): k for k in self.codes}
+        return low.get(name_key(c))
 
     def code_text(self, code: str) -> str:
         """The words a code is matched by: its description and group name (or its own matching text)."""
@@ -247,6 +256,13 @@ def _delimiter(text: str) -> str:
 EXTRA_COLUMNS = ("when_to_use", "when_not_to_use", "keywords", "examples")
 
 
+def lines(text: str) -> io.StringIO:
+    """CSV text to read, with every kind of line end read as one: a spreadsheet on an old Mac ("CSV (Macintosh)")
+    ends lines with a carriage return alone, which the csv module refused (`_csv.Error`). A line break inside a quoted
+    cell (the editor's `examples`) stays a line break."""
+    return io.StringIO(text, newline=None)
+
+
 def _split_list(value: str | None, sep: str) -> tuple[str, ...]:
     out = []
     for x in (value or "").split(sep):
@@ -262,10 +278,13 @@ def parse_csv(text: str, allow_empty: bool = False, extra: bool = False) -> dict
     (`EXTRA_COLUMNS`); a codebook not made in the editor keeps them out, so a CSV that happened to have a column of
     that name is read as before 0.16."""
     text = text.lstrip("\ufeff")
-    reader = csv.DictReader(io.StringIO(text), delimiter=_delimiter(text))
+    reader = csv.DictReader(lines(text), delimiter=_delimiter(text))
     # 0.17.2: a codebook's CSV is written through review.csv_cell (a spreadsheet would run "=..." as a formula); the
     # apostrophe it adds comes off again here, so the codebook reads as it was written
-    rows = [{k: csv_uncell(v) for k, v in r.items()} for r in reader]
+    try:
+        rows = [{k: csv_uncell(v) for k, v in r.items()} for r in reader]
+    except csv.Error as e:   # (not a ValueError: every page that lists codebooks answered "Unexpected problem")
+        raise ValueError(f"The file cannot be read as CSV ({e}). Save it again as CSV (UTF-8).") from None
     if not rows:
         heads = {(c or "").strip().lower() for c in (reader.fieldnames or [])}
         if allow_empty and {"code", "description"} <= heads:
@@ -429,6 +448,11 @@ def save(ws, name: str, csv_text: str, title: str | None = None, label: str | No
     folder = Path(ws.root) / "frameworks"
     folder.mkdir(exist_ok=True)
     new = not (folder / f"{n}.csv").exists()
+    if new and n not in available(ws):
+        from .codebooks import held_message, name_held
+
+        if name_held(ws, n):   # a removed codebook's labels and versions are kept under its name (codebooks.py)
+            raise ValueError(held_message(n))
     (folder / f"{n}.csv").write_text(csv_text.lstrip("﻿"), encoding="utf-8")
     meta = {k: v for k, v in (("title", title), ("label", label), ("directional", bool(directional) or None)) if v}
     side = folder / f"{n}.json"

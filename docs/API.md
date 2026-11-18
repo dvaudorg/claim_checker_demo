@@ -366,7 +366,10 @@ is not one, 409 when no Ollama answers on this computer (or at the address in Se
 `{"error", "report": {"other": {"name"} | null, "triggers": n, "views": n, "config": [keys changed], "bib_paths": n,
 "cache": bool}}` and nothing is linked; the same request with `"clean": true` cleans it like a project brought in from a
 file (a shared-folder record, file paths of the other computer, and what was stored for speed go; the documents and
-the work stay) and links it. `DELETE /api/projects/<p>` `{"confirm": "<p>"}` → `{"result": "unlinked" | "moved to …/trash/…"}`.
+the work stay) and links it. `DELETE /api/projects/<p>` `{"confirm": "<p>"}` → `{"result": "unlinked" | "moved to …/trash/…"}`;
+409 with `"kind": "busy"` and the `job_id` while a job of the project is queued or running (its message names the job:
+stop it or wait, then remove the project). A quick look is not moved to the trash at the end of its week while a job of
+it runs either.
 
 `GET /api/projects/<p>/export.zip` → the whole project as one zip, to give to a colleague or move to another
 computer: a consistent copy of the database, `config.json`, the project's codebooks, and the original file of every
@@ -822,7 +825,10 @@ recognised pages may contain recognition errors).
 
 Uploading (one request per file, all files of one upload share a `batch` id chosen by the page, `[A-Za-z0-9_-]`):
 `POST /api/projects/<p>/uploads?batch=<b>&name=<file name>` with the raw file as body →
-`{"batch": "b", "name": "report.pdf", "size": 123}`. Accepted: `.pdf .html .htm .txt .md .zip` (zips are opened,
+`{"batch": "b", "name": "report.pdf", "size": 123}`. `name` is the name the file was kept under: a name a file of the
+batch has already (also when it differs only by case or by composed or decomposed accents, or once `:` `?` `*` are
+cleaned to `_`) gets a number, `report (2).pdf`; a Windows device name (`CON.txt`) gets a `_` in front; a name over
+240 bytes is shortened, keeping its extension. A batch id of more than 100 characters is a 400. Accepted: `.pdf .html .htm .txt .md .zip` (zips are opened,
 also nested; a `manifest.csv` inside, columns `file, reference, doi`, names the works). Max 2 GB per file.
 
 `POST /api/projects/<p>/ingest` `{"batch": "b", "exclude": "A_18_* draft*"}` or `{"path": "/Users/me/Reports"}`
@@ -1144,7 +1150,8 @@ Check job `progress` (poll it to draw the live panel):
 The `terms` step is absent when `expand` is false. `model` is filled by local servers while they stream.
 
 `POST /api/jobs/<id>/cancel` → stops the job (a stopped check leaves nothing in the history; 0.19.13: except a check by
-queue whose Claude Code part is done, kept with its excerpts waiting for the local model).
+queue whose Claude Code part is done, kept with its excerpts waiting for the local model). A job that has already ended
+is left as it is (200 with its view; `stopped` stays false).
 
 The check prompt is `check-v3`: for each excerpt the AI may add a `scope_note`, a short phrase such as "about
 fully remote workers, not hybrid", when the excerpt is about another group, setting, place or period than the
@@ -1307,7 +1314,8 @@ the check (those with matching excerpts), for every part, as a further round res
 run again, so reviews are kept. Documents without a matching excerpt are only marked as looked at, so the
 hypothesis no longer counts them. `POST /api/projects/<p>/read-new` `{}` (every hypothesis with documents added
 since), `{"hyp_ids": […]}` or `{"batch": "b…"}` → one job that does this for each, one after the other (400 when
-none has new documents). `result`: `{"hypotheses": [{"hyp_id", "documents", "matching", "passages", "rounds"}],
+none has new documents). A second press for hypotheses a `read-new` job reads already gives that job back; one that
+covers others too, or a hypothesis whose `read-unread` job runs, is a 409 (wait, then press again). `result`: `{"hypotheses": [{"hyp_id", "documents", "matching", "passages", "rounds"}],
 "passages"}`.
 
 `GET /api/projects/<p>/hypotheses/<hyp_id>/unread` (roadmap N5, 0.18.7) → the documents this check never showed an

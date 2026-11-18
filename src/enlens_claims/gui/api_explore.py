@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from urllib.parse import unquote
 
-from .api_common import ApiError, XLSX, _bool, _csv, _disposition, _filename, _float, _int, _list, _str, _xlsx_with_provenance
+from .api_common import ApiError, XLSX, _body_int, _bool, _csv, _disposition, _filename, _float, _int, _list, _str, _xlsx_with_provenance
 from .. import frameworks, home, sync
 
 
@@ -334,8 +334,8 @@ class ExploreApi:
         from .. import themes
 
         body = self._body()
-        tid = body.get("theme_id")
-        themes.edit(self.app.ws(name), run_id, str(body.get("what") or ""), int(tid) if tid is not None else None,
+        tid = _body_int(body, "theme_id", None, -10 ** 9, 10 ** 9)   # hunt phase 1: a list here was a 500 from int()
+        themes.edit(self.app.ws(name), run_id, str(body.get("what") or ""), tid,
                     body.get("value"), body.get("passage_id") or None, reason=str(body.get("why") or "") or None)
         return {"saved": True}
 

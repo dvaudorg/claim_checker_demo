@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import math
 import re
 import threading
 import time
@@ -19,6 +20,7 @@ from ..llm import BackendError
 
 MAX_UPLOAD = 2 * 1024 ** 3   # bytes per file
 MAX_JSON = 20 * 1024 ** 2    # bytes per JSON body (a batch of hypotheses, a codebook)
+UPLOAD_BATCH_MAX = 100       # characters of an upload batch's name (the page's are about 20; a folder: 255 bytes)
 
 
 class ApiError(Exception):
@@ -309,7 +311,8 @@ class Jobs:
                         llm.USED.reset(used_token)
                         GATE.reset(gate_token)
                         access.FORCE_LOCAL.reset(token)
-                    job.state = "cancelled" if job.cancel.is_set() and job.result is None else "done"
+                    with self.lock:   # hunt phase 1: as one step with Stop's look at the state (Jobs.cancel)
+                        job.state = "cancelled" if job.cancel.is_set() and job.result is None else "done"
                 finally:
                     if lock and held["thread"] is not None:
                         held["thread"] = None
@@ -428,10 +431,27 @@ class Jobs:
                 self.turns.wait(self.WAKE)
 
     def cancel(self, job: Job) -> None:
-        """Stop a job; one that waits for its turn leaves the queue at once (and the jobs behind it move up)."""
-        job.cancel.set()
+        """Stop a job; one that waits for its turn leaves the queue at once (and the jobs behind it move up).
+
+        Hunt phase 1: a job that has already ended is left as it is. Stop that reaches the app just after the end (a
+        second tab, a click as the job finishes) set the flag anyway, and the finished job's view said "stopped" from
+        then on, so the pages took its whole result for a stopped one (a drafted definition was dropped). The look and
+        the flag are one step under the lock, as is the job's own end state (Jobs.start), so a Stop lands either while
+        the job still runs (it sees it) or after it ended (nothing changes)."""
+        with self.lock:
+            if job.state not in ("queued", "running"):
+                return
+            job.cancel.set()
         with self.turns:
             self.turns.notify_all()
+
+    def busy(self, project: str) -> Job | None:
+        """Hunt phase 1: a job of the project that is queued or running (the earliest), if any. A project is not
+        removed while one is: the job keeps the Workspace it opened, and its next connection opens the database by its
+        path, which after a new project of the same name is made is that project's (it wrote the old project's
+        documents into the new one). Call it with the lock held when the removal must not race a new job."""
+        mine = [j for j in self.jobs.values() if j.project == project and j.state in ("queued", "running")]
+        return min(mine, key=lambda j: j.created) if mine else None
 
     def holder(self, project: str, kind: str, lane: str | None = None) -> Job | None:
         """0.18: the job a new job of `kind` (and `lane`) in `project` would wait for now, if any (the poller asks)."""
@@ -527,7 +547,7 @@ def _check_options(body: dict, s: dict) -> dict:
     def num(key, lo, hi):
         try:
             v = int(body.get(key) if body.get(key) is not None else s[key])
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             raise ApiError(400, f"{key} must be a whole number.") from None
         return max(lo, min(v, hi))
 
@@ -562,9 +582,29 @@ def _body_int(body: dict, key: str, default: int | None, lo: int, hi: int) -> in
         return default
     try:
         v = int(v)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):   # (OverflowError: a JSON 1e400 is float infinity)
         raise ApiError(400, f"{key} must be a whole number.") from None
     return max(lo, min(v, hi))
+
+
+def _body_text(body: dict, key: str) -> str | None:
+    """Hunt phase 1: a text field of a JSON body, None when absent or empty; a number, list or object in its place is
+    a 400 in words (it reached the database or a dict lookup and came back as a 500 "Unexpected problem")."""
+    v = body.get(key)
+    if v is None or v == "":
+        return None
+    if not isinstance(v, str):
+        raise ApiError(400, f"{key} must be text.")
+    return v
+
+
+def _path_text(text: str) -> str:
+    """Hunt phase 1: a path a person typed, refused in words when no file system could hold it (a part over 255
+    bytes, or 4,096 in all): looking for it raised OSError "File name too long", a 500 "Unexpected problem"."""
+    if len(text.encode("utf-8", "surrogateescape")) > 4096 or any(
+            len(part.encode("utf-8", "surrogateescape")) > 255 for part in re.split(r"[/\\]", text)):
+        raise ApiError(400, "That path is too long for a folder or file on this computer. Check it and try again.")
+    return text
 
 
 def _int(q: dict, key: str, default: int, lo: int, hi: int) -> int:
@@ -594,9 +634,14 @@ def _str(q: dict, key: str) -> str | None:
 def _float(q: dict, key: str, default: float) -> float:
     v = _str(q, key)
     try:
-        return float(v) if v not in (None, "") else float(default)
+        f = float(v) if v not in (None, "") else float(default)
     except ValueError:
         raise ApiError(400, f"{key} must be a number.") from None
+    # hunt phase 1: float() also reads "1e400", "inf" and "nan", and int() of infinity raised OverflowError, which every
+    # caller's int(_float(...)) passed on as a 500 "Unexpected problem" (an address edited to ?offset=1e400 did it)
+    if not math.isfinite(f):
+        raise ApiError(400, f"{key} must be a number (infinity, and numbers that large, are not accepted).")
+    return f
 
 
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"

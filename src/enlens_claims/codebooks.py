@@ -34,13 +34,14 @@ import re
 import shutil
 import threading
 import time
+import unicodedata
 import uuid
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Callable
 
 from . import frameworks, history
-from .frameworks import BUNDLED, NAME_RE, Code
+from .frameworks import BUNDLED, NAME_RE, Code, name_key
 from .review import csv_cell, csv_uncell
 from .store import Workspace, now
 from .textutil import fast_normalise, normalise
@@ -298,6 +299,14 @@ def removed_codes(ws: Workspace, name: str) -> list[dict]:
     return out
 
 
+# the AI's labels of a code given with its wording as it was before a time: by when the passage's task was made (its
+# question holds the wording of then: a task that waited in the queue across a change of wording and was answered
+# after it read the earlier wording all the same) or the label, whichever is earlier
+_ASKED_BEFORE = ("FROM labels l LEFT JOIN tasks t ON t.task_id=l.task_id WHERE l.framework=? AND l.code=? AND "
+                 "l.source='model' AND MIN(COALESCE(t.created_at, l.created_at, ''), COALESCE(l.created_at, "
+                 "t.created_at, '')) < ?")
+
+
 def stale(ws: Workspace, name: str) -> dict[str, dict]:
     """{code: {"since", "passages"}}: codes whose wording (definition, when to use it or not) changed after the AI
     labelled passages with it, and how many such passages."""
@@ -316,8 +325,7 @@ def stale(ws: Workspace, name: str) -> dict[str, dict]:
         since = by_uid.get(ids.get(code) or default_uid(name, code))
         if not since:
             continue
-        n = int(ws.scalar("SELECT COUNT(DISTINCT passage_id) FROM labels WHERE framework=? AND code=? AND "
-                          "source='model' AND COALESCE(created_at, '') < ?", (name, code, since)) or 0)
+        n = int(ws.scalar(f"SELECT COUNT(DISTINCT l.passage_id) {_ASKED_BEFORE}", (name, code, since)) or 0)
         if n:
             out[code] = {"since": since, "passages": n}
     return out
@@ -357,14 +365,14 @@ def _clean_state(st: dict) -> dict:
     codes = []
     names: dict[str, str] = {}
     groups = []
-    gseen = set()
+    as_written: dict[str, str] = {}   # a group by `name_key`: the group as first written
     for g in st.get("groups") or []:
         if not isinstance(g, dict):
             continue
         key = _clean_text(g.get("group"), 60)
-        if key in gseen:
+        if name_key(key) in as_written:
             continue
-        gseen.add(key)
+        as_written[name_key(key)] = key
         groups.append({"group": key, "group_name": _clean_text(g.get("group_name"), 120)})
     for i, c in enumerate(st.get("codes") or [], 1):
         if not isinstance(c, dict):
@@ -378,15 +386,17 @@ def _clean_state(st: dict) -> dict:
                              "more in its definition.")
         if not desc:
             raise ValueError(f"The code {code!r} has no definition. Say in a sentence what it is about.")
-        low = code.lower()
+        low = name_key(code)   # "Kő" typed and "Kő" from a Mac file (decomposed) are one name, as "kő" and "Kő" are
         if low in names:
             raise ValueError(f"Two codes are called {code!r}: give each its own name.")
         names[low] = code
         uid = str(c.get("uid") or "")
         group = _clean_text(c.get("group"), 60)
-        if group not in gseen:
-            gseen.add(group)
+        # a group written another way only by case or accent form is the group already there, as it was written
+        if name_key(group) not in as_written:
+            as_written[name_key(group)] = group
             groups.append({"group": group, "group_name": ""})
+        group = as_written[name_key(group)]
         kws = []
         for k in (c.get("keywords") or []):
             k = _clean_text(k, 80).replace(";", ",")
@@ -518,6 +528,9 @@ def _version_files(ws: Workspace, name: str) -> list[Path]:
         d = _version_dir(folder(ws, where), name)
         if d.is_dir():
             out += [p for p in d.glob("c*.json") if _VID.fullmatch(p.stem)]
+            # (before the fix in `move`, moving a codebook onto an old history of its name put its versions one
+            # folder down, in `history/<name>/<name>/`: they are found there too)
+            out += [p for p in (d / name).glob("c*.json") if _VID.fullmatch(p.stem)]
     return out
 
 
@@ -529,7 +542,7 @@ def versions_present(ws: Workspace, ids: list[str]) -> set[str]:
     for where in ("project", "home"):
         hist = folder(ws, where) / "history"
         if hist.is_dir():
-            for p in hist.glob("*/c*.json"):
+            for p in [*hist.glob("*/c*.json"), *hist.glob("*/*/c*.json")]:   # (the second: see `_version_files`)
                 if p.stem in want:
                     found.add(p.stem)
     return found
@@ -587,14 +600,17 @@ def save(ws: Workspace, name: str, state: dict, merges: list[dict] | None = None
         if dst not in new_uids:
             raise ValueError(f"{cur_name[src]!r} is merged into a code that is not in the codebook any more.")
     # a code may not take the name of a code removed or merged away in this same change: their labels would mix
-    freed = {cur_name[u] for u in cur_by_uid if u not in new_uids}
+    freed = {name_key(cur_name[u]) for u in cur_by_uid if u not in new_uids}   # (compared as `_clean_state` compares)
     for c in new["codes"]:
-        if c["code"] in freed and cur_name.get(c["uid"]) != c["code"]:
+        if name_key(c["code"]) in freed and cur_name.get(c["uid"]) != c["code"]:
             raise ValueError(f"{c['code']!r} is the name of a code you remove or merge in this same change, and its "
                              "labels would mix with this code's. Choose another name.")
     # a code may not take the name of codes whose labels wait under Removed codes (unless it is that code coming back)
+    orphan_keys = {name_key(o) for o in orphan_codes}
     for c in new["codes"]:
-        if c["code"] in orphan_codes and not (c["uid"] and removed_meta.get(c["uid"], {}).get("code") == c["code"]):
+        if c["code"] in orphan_codes or (name_key(c["code"]) in orphan_keys and cur_name.get(c["uid"]) != c["code"]):
+            if c["uid"] and name_key(removed_meta.get(c["uid"], {}).get("code")) == name_key(c["code"]):
+                continue   # that code coming back (a code kept as it is never clashes with labels of an older spelling)
             raise ValueError(f"{c['code']!r} is the name of a removed code whose labels wait under Removed codes. "
                              "Bring that code back from there, or choose another name.")
     # what changed, code by code
@@ -903,13 +919,51 @@ def _moves_any(cx, name: str, events: list[dict], only: set | None = None) -> in
 # ---------------------------------------------------------------------------------------------
 # making, moving, copying and removing codebooks
 # ---------------------------------------------------------------------------------------------
-def _free_name(ws: Workspace, name: str) -> str:
+def name_held(ws: Workspace, name: str, cx=None, everywhere: bool = False) -> bool:
+    """Whether a removed codebook's work still holds the name: its labels or its read passages (done `label:<name>:…`
+    tasks) in this project, or its earlier versions (`history/<name>/`, here or in the folder for all projects).
+    All of them are keyed by the bare name, and `remove` keeps them so the codebook can come back (History › Restore):
+    a new codebook of the name took them over (it counted the old labels, listed them under *Removed codes*, and the
+    AI never read those passages for it). `cx`: the connection to read with (inside a sync's write). `everywhere`: a
+    codebook to be kept with all projects shows in every project, so the earlier versions kept in any of them count too
+    (`remove` always keeps one; another project's labels cannot be read from here)."""
+    q = cx.execute if cx is not None else ws._conn().execute
+    if q("SELECT 1 FROM labels WHERE framework=? LIMIT 1", (name,)).fetchone():
+        return True
+    head = f"label:{name}:"
+    if q("SELECT 1 FROM tasks WHERE task_id >= ? AND task_id < ? AND +status='done' LIMIT 1",
+         (head, head[:-1] + ";")).fetchone():
+        return True
+    if _version_files(ws, name):
+        return True
+    if everywhere:
+        from . import home
+
+        for pname in home.list_projects():
+            d = _version_dir(home.project_path(pname) / "frameworks", name)
+            if d.is_dir() and any(_VID.fullmatch(p.stem) for p in d.glob("c*.json")):
+                return True
+    return False
+
+
+def held_message(name: str) -> str:
+    return (f"A removed codebook called {name!r} still has its labels or its earlier versions, kept under that name: a "
+            "new codebook of the name would take them over. Bring it back from History (Restore), or choose another "
+            "name.")
+
+
+def _free_name(ws: Workspace, name: str, where: str = "project") -> str:
     n = (name or "").strip().lower().replace(" ", "_")
+    # an accented letter keeps its letter ("kőzet" is "kozet"), however the accent is written: typed (one character)
+    # it was dropped and made "kzet", decomposed (as a Mac writes it) it was kept, and one name gave two codebooks
+    n = unicodedata.normalize("NFKD", n).encode("ascii", "ignore").decode("ascii")
     n = re.sub(r"[^a-z0-9_-]", "", n)[:40]
     if not NAME_RE.match(n) or n in BUNDLED:
         raise ValueError("Give the codebook a short name: letters, digits, - or _ (and not 'sdg' or 'sdg_goals').")
     if n in frameworks.available(ws) or (_home_folder() / f"{n}.csv").exists():
         raise ValueError(f"A codebook called {n!r} exists already: choose another name.")
+    if name_held(ws, n, everywhere=where == "home"):
+        raise ValueError(held_message(n))
     return n
 
 
@@ -927,7 +981,7 @@ def create(ws: Workspace, name: str, title: str = "", where: str = "project", st
 
     if where not in ("project", "home"):
         raise ValueError("A codebook is kept with this project or with all projects.")
-    n = _free_name(ws, name)
+    n = _free_name(ws, name, where)
     source = source or {}
     state: dict = {"title": title or n.replace("_", " ").capitalize(), "label": label or "code", "directional": False,
                    "groups": [], "codes": []}
@@ -1080,8 +1134,17 @@ def move(ws: Workspace, name: str, to: str) -> dict:
             shutil.move(str(f / f"{name}.{ext}"), str(dest / f"{name}.{ext}"))
     hist = _version_dir(f, name)
     if hist.is_dir():
-        _version_dir(dest, name).parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(hist), str(_version_dir(dest, name)))
+        # file by file into the folder there: it may hold versions of an earlier codebook of the name (removed, its
+        # history kept on purpose), and moving the whole folder put it INSIDE that one (`history/x/x/`), where the
+        # history no longer saw it. A version's id is random, so two never meet.
+        into = _version_dir(dest, name)
+        into.mkdir(parents=True, exist_ok=True)
+        for p in sorted(hist.iterdir()):
+            shutil.move(str(p), str(into / p.name))
+        try:
+            hist.rmdir()
+        except OSError:
+            pass
     title = frameworks.get(name, ws).title
     with ws.connect() as cx:
         researchlog.record(cx, "codebook-moved", f"The codebook {researchlog.quoted(title, 80)} is now kept "
@@ -1132,8 +1195,11 @@ def _protected_csv(text: str) -> str:
     delim = frameworks._delimiter(text)
     buf = io.StringIO()
     w = csv.writer(buf, delimiter=delim, lineterminator="\n")
-    for row in csv.reader(io.StringIO(text), delimiter=delim):
-        w.writerow([csv_cell(csv_uncell(x)) for x in row])
+    try:   # (`frameworks.lines`: a file with an old Mac's line ends is read as the codebook list reads it)
+        for row in csv.reader(frameworks.lines(text), delimiter=delim):
+            w.writerow([csv_cell(csv_uncell(x)) for x in row])
+    except csv.Error as e:
+        raise ValueError(f"The codebook's file cannot be read as CSV ({e}).") from None
     return buf.getvalue()
 
 
@@ -1327,15 +1393,21 @@ def try_codes(ws: Workspace, state: dict, progress: Callable[[int, int], None] |
 
     from .concordance import CHUNK
 
+    from .docrole import theory_docs
+
     fw = _draft(state)
     idx = passage_index(ws)
-    n_rows = len(idx.doc_of)
+    # theory documents are never labelled with a codebook (as `keyword_pass` leaves them out): neither in the counts nor
+    # in what they are a share of; a working document is labelled, so it stays in
+    theory = theory_docs(ws._conn())
+    which = [i for i, d in enumerate(idx.doc_of) if d not in theory]
+    n_rows = len(which)
     idf = idx.bm25.idf
     totals: dict[str, float] = {}
     per: dict[str, dict] = {c: {"passages": 0, "docs": set(), "examples": []} for c in fw.codes}
     titles = {r[0]: r[1] for r in ws.query("SELECT doc_id, title FROM documents")}
     # the passages' text a chunk at a time, not all of it at once
-    rows = (r for k in range(0, n_rows, CHUNK) for r in idx.read(range(k, min(k + CHUNK, n_rows))))
+    rows = (r for k in range(0, n_rows, CHUNK) for r in idx.read(which[k:k + CHUNK]))
     for n, r in enumerate(rows, 1):
         cands = keyword_candidates(fw, r["text"], idf, totals)
         for code, _c in rank_candidates(cands)[:MAX_CANDIDATES]:
@@ -1348,7 +1420,7 @@ def try_codes(ws: Workspace, state: dict, progress: Callable[[int, int], None] |
                                       "text": _sentence(r["text"], 300)})
         if progress and n % 500 == 0:
             progress(n, n_rows)
-    total_docs = len(set(idx.doc_of))
+    total_docs = len(set(idx.doc_of) - theory)
     out = {}
     for code, p in per.items():
         share = p["passages"] / max(1, n_rows)
@@ -1367,8 +1439,7 @@ def relabel_passages(ws: Workspace, name: str, code: str) -> list[str]:
     st = stale(ws, name).get(code)
     if not st:
         return []
-    pids = [r[0] for r in ws.query("SELECT DISTINCT passage_id FROM labels WHERE framework=? AND code=? AND "
-                                   "source='model' AND COALESCE(created_at, '') < ?", (name, code, st["since"]))]
+    pids = [r[0] for r in ws.query(f"SELECT DISTINCT l.passage_id {_ASKED_BEFORE}", (name, code, st["since"]))]
     with ws.connect() as cx:
         for pid in pids:
             cx.execute("DELETE FROM tasks WHERE task_id=? AND status IN ('done', 'failed')", (f"label:{name}:{pid}",))
@@ -1472,7 +1543,10 @@ def _restore(ws: Workspace, name: str, vid: str) -> dict:
         d = json.loads(p.read_text(encoding="utf-8"))
         if name in frameworks.available(ws):
             raise ValueError("Another codebook of that name is in use now.") from None
-        _write(p.parent.parent.parent, name, d.get("csv") or "code,description\n", d.get("meta") or {})
+        # the codebook's folder: the one its history is in (a version may lie one folder down: `_version_files`)
+        home_of = next(folder(ws, w) for w in ("project", "home")
+                       if p.is_relative_to(_version_dir(folder(ws, w), name)))
+        _write(home_of, name, d.get("csv") or "code,description\n", d.get("meta") or {})
         follow(ws, name)
         with ws.connect() as cx:
             researchlog.record(cx, "restored", f"Brought back the codebook {researchlog.quoted(st['title'], 80)} as it "

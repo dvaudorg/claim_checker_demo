@@ -58,6 +58,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import qdpx
+from .frameworks import name_key
 
 MAX_QDC = 20 * 1024 ** 2
 MAX_QDE = 64 * 1024 ** 2
@@ -368,8 +369,9 @@ def _enlens_group(name: str, desc: str) -> tuple[str, str] | None:
 
 
 class _Unique:
-    """Names unique without regard to case, each at most `size` characters: the second "Name" becomes "Name (2)". A
-    counter per name, so a thousand codes of one name cost a thousand lookups, not half a million."""
+    """Names unique without regard to case or accent form (`frameworks.name_key`, as the editor compares them), each
+    at most `size` characters: the second "Name" becomes "Name (2)". A counter per name, so a thousand codes of one
+    name cost a thousand lookups, not half a million."""
 
     def __init__(self, size: int):
         self.size = size
@@ -380,14 +382,14 @@ class _Unique:
     def take(self, name: str) -> str:
         base = _cut(name, self.size)
         out = base
-        if out.lower() in self.used:
-            n = self.next.get(base.lower(), 1)
-            while out.lower() in self.used:
+        if name_key(out) in self.used:
+            n = self.next.get(name_key(base), 1)
+            while name_key(out) in self.used:
                 n += 1
                 tail = f" ({n})"
                 out = _cut(name, self.size - len(tail)).rstrip("…").rstrip() + tail
-            self.next[base.lower()] = n
-        self.used.add(out.lower())
+            self.next[name_key(base)] = n
+        self.used.add(name_key(out))
         if out != base:
             self.renamed.append((name, out))
         return out

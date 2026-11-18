@@ -559,6 +559,9 @@ def _main(argv: list[str] | None = None) -> int:
                 "hypotheses": ws.scalar("SELECT COUNT(*) FROM hypotheses")})
         return 0
     ws = Workspace.open(a.ws)
+    from .home import _follow_codebooks
+
+    _follow_codebooks(ws)  # labels follow a shared codebook's renames made in another project, as the app's opening does
 
     if a.cmd == "export-project":
         from . import bundle

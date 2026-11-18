@@ -30,6 +30,7 @@ import sqlite3
 import uuid
 from pathlib import Path
 
+from ..frameworks import name_key
 from .fingerprints import HEAD, _codebook_fp, _home_codebooks, code_fp, codebook_state, head_fp
 
 
@@ -75,6 +76,21 @@ class CodebookRules:
                 self._mark(cx, "codebook", name, of, copies_there[name]["person_id"], copies_there[name]["at"])
                 self.r["codebooks"]["clash"].append({"name": name, "of": of})
                 continue
+            if name not in here and fp_in not in seen_here.get(name, set()) and \
+                    not (seen_here.get(name, set()) & seen_there.get(name, set())):
+                from ..codebooks import name_held
+
+                if name_held(self.ws, name, cx):
+                    # a codebook of this copy was removed under the name, and its labels or versions are kept under
+                    # it (codebooks.name_held); theirs, never exchanged with it, is another codebook: it comes in
+                    # beside, as a codebook both made under one name does, and their labels go with it
+                    new = f"{name}-{fp_in[:6]}"
+                    self.fw[name] = new
+                    self._take_codebook(src, dest, name, new)
+                    self.codebook_marks.append((new, name))
+                    self._mark(cx, "codebook", new, name)
+                    self.r["codebooks"]["clash"].append({"name": new, "of": name})
+                    continue
             if name not in here:
                 self._take_codebook(src, dest, name, name)
                 self.history.add(("codebook", name))
@@ -187,20 +203,20 @@ class CodebookRules:
         # two codes may not share a name (labels name their code): one of theirs that came in under the name of another
         # code here takes a name of its own, and only their labels made with it follow it there
         renamed = []
-        taken = {c["code"].lower() for c in out if c["uid"] not in theirs_in}
+        taken = {name_key(c["code"]) for c in out if c["uid"] not in theirs_in}   # (as the editor compares names)
         for c in out:
             if c["uid"] not in theirs_in:
                 continue
-            if c["code"].lower() in taken:
+            if name_key(c["code"]) in taken:
                 old, n = c["code"], 1
-                while c["code"].lower() in taken:
+                while name_key(c["code"]) in taken:
                     tail = f" ({who['name']})" if n == 1 else f" ({who['name']} {n})"
                     c["code"] = old[:max(1, 40 - len(tail))].rstrip() + tail
                     n += 1
                 renamed.append({"op": "rename", "from": old, "to": c["code"], "uid": c["uid"],
                                 "id": uuid.uuid4().hex[:12], "at": self.at, "seq": 0})
                 rep.setdefault("renamed", []).append({"from": old, "to": c["code"]})
-            taken.add(c["code"].lower())
+            taken.add(name_key(c["code"]))
         # the codebook's own settings
         head = mine
         mh, th = head_fp(mine), head_fp(theirs)

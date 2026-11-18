@@ -11,7 +11,7 @@ import re
 import time
 from pathlib import Path
 
-from .api_common import ApiError, XLSX, _csv, _disposition, _filename, _float, _int, _str, _usable_embedder
+from .api_common import ONE_START, ApiError, XLSX, _csv, _disposition, _filename, _float, _int, _str, _usable_embedder
 from .. import claimcheck, home, sync, taskqueue
 from ..llm import BackendError
 
@@ -356,7 +356,31 @@ class ChecksApi:
         ws = self.app.ws(name)
         if not ws.scalar("SELECT 1 FROM hypotheses WHERE hyp_id=?", (hyp_id,)):
             raise ApiError(404, "No such hypothesis.")
-        return {"job": self.app.start_read_new(name, [hyp_id]).view()}
+        return {"job": self._read_new_once(name, [hyp_id]).view()}
+
+    def _read_new_once(self, name, ids):
+        """Hunt phase 1: the documents added since the checks are read by one job at a time, as "read unread" does
+        (`post_read_unread`). By Claude Code's queue (or while the local model waits for its Start) a job does not
+        hold the model's turn, so a second press started a second job beside the first: it found the first one's round
+        waiting and ended in error ("Grade the passages already shown first (submit_grades)", the connector's words),
+        and two presses at the same moment could both make a round of the same documents. A press for hypotheses a
+        job reads already gives that job back; one that covers others too waits until it has finished. The look and
+        the start are one step (ONE_START)."""
+        with ONE_START:
+            with self.app.jobs.lock:
+                live = [j for j in self.app.jobs.jobs.values()
+                        if j.project == name and j.state in ("queued", "running")]
+            for j in live:
+                if j.kind == "read-new" and set(ids) <= set(getattr(j, "hyp_ids", ())):
+                    return j
+            if any(j.kind == "read-new" and set(ids) & set(getattr(j, "hyp_ids", ())) for j in live):
+                raise ApiError(409, "The new documents are being read for some of these hypotheses already: wait "
+                                    "until that has finished, then press again for the rest.")
+            if any(j.kind == "read-unread" and j.scope in ids for j in live):
+                raise ApiError(409, "Wait until the documents not read yet have been read, then read the new ones.")
+            job = self.app.start_read_new(name, ids)
+            job.hyp_ids = tuple(ids)
+            return job
 
     def get_unread(self, name, hyp_id, q):
         """Roadmap N5: the documents this check never read, those with its search words apart (no model reads)."""
@@ -372,19 +396,21 @@ class ChecksApi:
         ws = self.app.ws(name)
         if not ws.scalar("SELECT 1 FROM hypotheses WHERE hyp_id=?", (hyp_id,)):
             raise ApiError(404, "No such hypothesis.")
-        with self.app.jobs.lock:   # a second press, or a second tab: the same job, never a second round beside it
-            live = [j for j in self.app.jobs.jobs.values() if j.project == name and j.state in ("queued", "running")]
-        same = [j for j in live if j.kind == "read-unread" and j.scope == hyp_id]
-        if same:
-            return {"job": same[0].view()}
-        if any(j.kind == "read-new" for j in live):
-            raise ApiError(409, "Wait until the new documents have been read, then read these.")
-        wait = claimcheck.further_round_waits(ws, hyp_id)
-        if wait:
-            raise ApiError(409, wait)
-        if not claimcheck.unread_documents(ws, hyp_id)["matching_n"]:
-            raise ApiError(400, "No document with this check's search words is left unread.")
-        return {"job": self.app.start_read_unread(name, hyp_id).view()}
+        with ONE_START:   # hunt phase 1: the look and the start as one step (two presses at the same moment)
+            with self.app.jobs.lock:   # a second press, or a second tab: the same job, never a second round beside it
+                live = [j for j in self.app.jobs.jobs.values()
+                        if j.project == name and j.state in ("queued", "running")]
+            same = [j for j in live if j.kind == "read-unread" and j.scope == hyp_id]
+            if same:
+                return {"job": same[0].view()}
+            if any(j.kind == "read-new" for j in live):
+                raise ApiError(409, "Wait until the new documents have been read, then read these.")
+            wait = claimcheck.further_round_waits(ws, hyp_id)
+            if wait:
+                raise ApiError(409, wait)
+            if not claimcheck.unread_documents(ws, hyp_id)["matching_n"]:
+                raise ApiError(400, "No document with this check's search words is left unread.")
+            return {"job": self.app.start_read_unread(name, hyp_id).view()}
 
     def post_read_new(self, name, q):
         ws = self.app.ws(name)
@@ -393,7 +419,7 @@ class ChecksApi:
             [h["hyp_id"] for h in claimcheck.history(ws) if h["docs_added_since"]]
         if not ids:
             raise ApiError(400, "No hypothesis has documents added since its check.")
-        return {"job": self.app.start_read_new(name, ids).view()}
+        return {"job": self._read_new_once(name, ids).view()}
 
     def post_second_opinion(self, name, q):
         return {"job": self.app.start_second_opinion(name, self._body()).view()}

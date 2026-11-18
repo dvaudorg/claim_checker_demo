@@ -8,11 +8,13 @@ from __future__ import annotations
 import io
 import json
 import re
+import threading
 import time
+import unicodedata
 from pathlib import Path
 from urllib.parse import unquote
 
-from .api_common import ApiError, MAX_UPLOAD, XLSX, _cell, _csv, _disposition, _filename, _float, _str, _text_with_quote, page_images_available, render_page
+from .api_common import ApiError, MAX_UPLOAD, UPLOAD_BATCH_MAX, XLSX, _body_text, _cell, _csv, _disposition, _filename, _float, _path_text, _str, _text_with_quote, page_images_available, render_page
 from .. import access, claimcheck, home, ingest
 
 
@@ -29,7 +31,8 @@ class DocumentsApi:
     def post_link(self, q):
         body = self._body()
         try:
-            name = home.link_existing(str(body.get("path") or ""), body.get("name") or None, clean=bool(body.get("clean")))
+            name = home.link_existing(_path_text(str(body.get("path") or "")), _body_text(body, "name"),
+                                      clean=bool(body.get("clean")))
         except home.NeedsCleaning as e:  # roles (DESIGN-roles §5.7): another person's folder: the page asks first
             raise ApiError(409, str(e), kind="needs_cleaning", extra={"needs_cleaning": e.report, "report": e.report}) from None
         home.update_settings({"project": name})
@@ -44,10 +47,14 @@ class DocumentsApi:
             raise ApiError(400, "Confirm by sending the project's name as 'confirm'.")
         if name not in home.list_projects():
             raise ApiError(404, f"No project called {name!r}.")
-        try:
-            return {"result": home.remove_project(name)}
-        except home.FolderInUse as e:  # 0.15.7 (Windows): said in words, not "something went wrong"
-            raise ApiError(409, str(e)) from None
+        # hunt phase 1: never from under a job of the project (Jobs.busy says why); the look and the removal are one
+        # step under the jobs' lock, so no job of the project starts in between (a quick look's Discard comes here too)
+        with self.app.jobs.lock:
+            busy_with(self.app.jobs.busy(name), "remove the project")
+            try:
+                return {"result": home.remove_project(name)}
+            except home.FolderInUse as e:  # 0.15.7 (Windows): said in words, not "something went wrong"
+                raise ApiError(409, str(e)) from None
 
     def get_documents(self, name, q):
         return self.app.documents(name)
@@ -347,12 +354,14 @@ class DocumentsApi:
         if fname.startswith("."):
             fname = "_" + fname
         n = self._body_size()
+        if len(_str(q, "batch") or "") > UPLOAD_BATCH_MAX:   # (a folder name of 255 bytes at most)
+            raise ApiError(400, f"batch must be a short name ({UPLOAD_BATCH_MAX} characters at most).")
         folder = home.upload_folder(ws, _str(q, "batch"))
-        target = folder / fname
-        if not target.resolve().is_relative_to(folder.resolve()):
+        if not (folder / fname).resolve().is_relative_to(folder.resolve()):
             raise ApiError(400, "That file name is not accepted.")
+        target = _free_upload_name(folder, fname)
         self._save_body(target, n, allow_empty=True)
-        return {"batch": folder.name, "name": fname, "size": n}
+        return {"batch": folder.name, "name": target.name, "size": n}
 
     def post_ingest(self, name, q):
         return {"job": self.app.start_ingest(name, self._body()).view()}
@@ -363,6 +372,58 @@ class DocumentsApi:
     def get_passage(self, name, passage_id, q):
         around = max(0, min(int(_float(q, "around", 1)), 5))
         return claimcheck.neighbours(self.app.ws(name), passage_id, around, around)
+
+
+def busy_with(job, what: str) -> None:
+    """Hunt phase 1: refuse (409, kind "busy") what would pull a project from under its job, naming the job."""
+    if job is None:
+        return
+    title = job.title if len(job.title) <= 80 else job.title[:79].rstrip() + "…"
+    doing = "is waiting to run" if job.state == "queued" else "is still running"
+    raise ApiError(409, f"“{title}” {doing} in this project. Stop it in the sidebar, or wait until it has "
+                        f"finished, then {what}.", kind="busy", extra={"job_id": job.id})
+
+
+_UPLOAD_NAMES = threading.Lock()   # the look for a free name in a batch folder and the taking of it, as one step
+_DEVICES = re.compile(r"(CON|PRN|AUX|NUL|COM[0-9¹²³]|LPT[0-9¹²³])", re.I)
+
+
+def _name_key(name: str) -> str:
+    """How macOS and Windows compare two file names: case, and composed or decomposed accents, do not count."""
+    return unicodedata.normalize("NFC", name).casefold()
+
+
+def _free_upload_name(folder: Path, fname: str) -> Path:
+    """Hunt phase 1: the file an upload is written to in its batch folder, under a name no file of the batch has yet.
+    Two different files called report.txt (picked in two folders) came to one batch, and the second overwrote the
+    first: one document was added for the two the page listed, and a cut-off second upload removed the first file.
+    A taken name gets a number ("report (2).txt"), as a file manager does; taken means the same name as macOS and
+    Windows see it (case, composed or decomposed accents), and names made equal by the cleaning of : ? * count too.
+    A name Windows keeps for a device (CON.txt, nul.pdf) gets a "_" in front, and a name too long for the disk is
+    shortened, keeping its extension. The file is created here, under the lock, so two uploads at once never share
+    it."""
+    ext = Path(fname).suffix
+    stem = fname[:len(fname) - len(ext)]
+    if _DEVICES.fullmatch(stem.split(".")[0].strip()):
+        stem = "_" + stem
+    if len(ext.encode("utf-8", "surrogateescape")) > 20:
+        stem, ext = stem + ext, ""
+
+    def fit(tail: str) -> str:   # 240 bytes in all: a file system's 255, with room for the reader's own copies
+        s = stem
+        while len((s + tail).encode("utf-8", "surrogateescape")) > 240:
+            s = s[:-1]
+        return s.rstrip(" .") + tail
+
+    with _UPLOAD_NAMES:
+        taken = {_name_key(p.name) for p in folder.iterdir()}
+        candidate, i = fit(ext), 1
+        while _name_key(candidate) in taken:
+            i += 1
+            candidate = fit(f" ({i}){ext}")
+        target = folder / candidate
+        target.open("xb").close()
+    return target
 
 
 def _older(ws) -> list[str]:

@@ -1011,7 +1011,15 @@ export async function renderCodebook(view, [name]) {
       w.promise.then((job) => {
         relabelRuns.delete(code);
         if (isStopped(job)) toast("Stopped. The passages labelled so far keep their new labels.", "info", { small: true, ttl: 2500 });
-        else if (job.state === "done") toast(`The passages of “${code}” are labelled again, with its new wording.`, "ok", { small: true, action: { text: "See them on Profile", href: `#/profile?framework=${encodeURIComponent(name)}` } });
+        else if (job.state === "done") {
+          // hunt phase 1: said only of the passages the AI did read (one kept from AI, waiting for the local model or
+          // whose answers could not be used keeps its earlier labels)
+          const read = (job.result && job.result.read) || 0, left = Math.max(0, (r.passages || 0) - read);
+          const why = "kept from AI, waiting for your local model, or answers that could not be used";
+          if (!read) toast(`No passage of “${code}” was read again (${why}). Their labels stay as they were.`, "info");
+          else toast(left ? `${plural(read, "passage")} of “${code}” labelled again, with its new wording; ${plural(left, "passage")} not (${why}).`
+            : `The passages of “${code}” are labelled again, with its new wording.`, "ok", { small: true, action: { text: "See them on Profile", href: `#/profile?framework=${encodeURIComponent(name)}` } });
+        }
         else if (job.state === "error") jobFailed(job);
         if (body.isConnected) drawNotices();
       }).catch(showError);

@@ -1,7 +1,7 @@
 // Projects: create, link an existing workspace folder, switch, remove.
 import { quickLookButton } from "./quicklook.js";
 import { App, api, h, icon, replace, append, toast, showError, field, navigate, dialog, confirmDialog, pageHead, P, fmt, download, button, downloadButton, card, input, tag, emptyState,
-  optionCards, switchControl, fold, link } from "../lib.js";
+  optionCards, switchControl, fold, link, notice } from "../lib.js";
 import { MOVE_TITLE, MOVING, BOTH, NOT_FRESH, moveSummary, secondName, foreignServers, serverLine, movedText, linkCleanTitle, LINK_CLEAN } from "./move-state.js";   // roles
 import { zipButton } from "./share.js";   // 0.18: the two downloads, what you shared or the whole project
 import { FEATURES } from "../features.js";
@@ -339,6 +339,7 @@ export async function renderProjects(view) {
     if (!projects.length) { list.appendChild(emptyState("folder", "No projects yet", "Create one to get started.")); return; }
     for (const p of projects) {
       const current = p.name === App.project;
+      const busyNote = h("div", { class: "pj-busy" });   // hunt phase 1: why Remove was refused (a job still runs), here
       list.appendChild(card({ as: "div" },
         h("div", { class: "row pj-row" },
           h("div", { class: "grow" },
@@ -356,8 +357,9 @@ export async function renderProjects(view) {
             button({ kind: "danger", sm: true, onClick: async () => {
               const ok = await confirmDialog({ title: `Remove project “${p.name}”?`, message: p.linked ? "The folder is no longer used by the app and is left untouched on disk." : "The project (documents, results, notes) is moved to a trash folder inside the app's data folder.", confirmText: "Remove", typeToConfirm: p.name });
               if (!ok) return;
-              try { const r = await api("DELETE", `/api/projects/${P(p.name)}`, { confirm: p.name }); await App.refresh(); toast(r.result === "unlinked" ? "Project removed: its folder is left as it was." : "Project removed: it is in the trash folder inside the data folder.", "ok"); if (!App.state.projects.length) navigate("#/setup"); else draw(); } catch (e) { showError(e); }
-            } }, icon("trash", { size: 13 }), "Remove")))));
+              try { const r = await api("DELETE", `/api/projects/${P(p.name)}`, { confirm: p.name }); await App.refresh(); toast(r.result === "unlinked" ? "Project removed: its folder is left as it was." : "Project removed: it is in the trash folder inside the data folder.", "ok"); if (!App.state.projects.length) navigate("#/setup"); else draw(); } catch (e) { if (e && e.kind === "busy") replace(busyNote, notice({ kind: "attention", live: "polite" }, h("p", {}, e.message))); else showError(e); }
+            } }, icon("trash", { size: 13 }), "Remove"))),
+        busyNote));
     }
   };
   draw();

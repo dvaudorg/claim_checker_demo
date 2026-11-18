@@ -212,6 +212,7 @@ An edit changes no result by itself: labels are moved, never made or deleted.
 | Rename a code, or merge two | Follow it. This holds in every other project that uses a codebook kept with all projects, when it is opened. A merge can be undone by restoring the codebook from before. |
 | Remove a code | Wait under *Removed codes*, are not counted, and come back with *Bring it back*. |
 | Reword a code after the AI labelled with it | Stay as they are. The code shows *earlier wording* and *Label them again*, which has the AI label only those passages again. |
+| Rename, merge or remove a code while the AI's label tasks wait (Claude Code's queue) | An answer that names a code as the task showed it lands where the change took it: on the new name, on the code it was merged into, or under *Removed codes*. A task asked before a code was reworded counts as labelled with the earlier wording. |
 
 *By document* shows a notice when the codebook changed since the keyword pass (*Find the codes again* takes seconds), when
 codes were reworded and when removed codes' labels wait, each with *Open the codebook*.
@@ -220,7 +221,9 @@ codes were reworded and when removed codes' labels wait, each with *Open the cod
 
 The ⋯ menu beside the codebook has *Keep it with all my projects* and *Keep it with this project only*; for a codebook
 kept with all projects, *This project's own copy (change it here only)*; and *Remove the codebook*, which asks *Why?*.
-Labels made with a codebook stay when it is removed: they are results. *CSV* downloads the codebook (a cell that starts with `=`, `@` or a sign gets an apostrophe in front, so a spreadsheet
+Labels made with a codebook stay when it is removed: they are results. They and the codebook's earlier versions keep
+its name, so a new codebook cannot take that name (it would take them over): bring the removed one back from its
+History (*Restore*), or choose another name. *CSV* downloads the codebook (a cell that starts with `=`, `@` or a sign gets an apostrophe in front, so a spreadsheet
 shows it and does not run it as a formula; ENLENS takes the apostrophe off again when it reads the file), *Download
 as .qdc* downloads it as a REFI-QDA codebook for NVivo, ATLAS.ti and MAXQDA (each code with its definition, when to
 use it, keywords and examples; [the whole project](explore.md#for-nvivo-atlasti-and-maxqda) goes too). Neither file
