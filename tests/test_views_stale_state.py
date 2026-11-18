@@ -196,6 +196,25 @@ await scenario("P-4 draft 409 with a waiting edit", async (t) => {
   await t.settle(8000);
   return { revs };
 });
+
+// ---- P-6: the team space's help links, asked for again after a failure ---------------------------------------------
+await scenario("P-6 space links after a failure", async (t) => {
+  let n = 0;
+  t.answer("GET /api/space/links", () => (++n === 1 ? t.fail(500, "not now") : { b2_signup: "https://example.org/b2-sign-up" }));
+  t.answer("GET /api/projects/Study/owner", { owner: null, people: [] });
+  const m = await t.module("views/team-space.js");
+  const ctx = { project: "Study", refresh: async () => {} };
+  const out = [];
+  for (let i = 0; i < 2; i++) {
+    const done = m.setupDialog(ctx, "b2");
+    await t.settle(100);
+    const d = t.dialog();
+    out.push(d ? t.allText(d) : null);
+    if (d) { await t.click("Cancel", { within: d }); }
+    await Promise.race([done, t.settle(100)]);
+  }
+  return { second: out[1], first: out[0], asks: n };
+});
 """
 
 
@@ -264,3 +283,10 @@ def test_p4_a_waiting_save_does_not_send_the_old_revision_during_the_reload(page
     # the second request after the 409 must carry the revision the reload brought (9), not the old one (3): the old
     # one would be answered 409 again, with a second "changed elsewhere" toast
     assert r["revs"] == [3, 9], r
+
+
+@needs_node
+def test_p6_the_help_links_are_asked_for_again_after_a_failure(page):
+    r = page["P-6 space links after a failure"]
+    assert r["first"] is not None and r["second"] is not None
+    assert r["asks"] == 2, r          # the failed answer was not kept for the session
