@@ -81,6 +81,10 @@ def summary(r: dict) -> list[str]:
                    "owner” in the Team tab.")
     if pr.get("decided"):
         out.append(f"The owner's answer to {_n(pr['decided'], 'proposal')} came in.")
+    if pr.get("taken_back_held"):  # hunt phase 1 (MERGE-4): only its maker takes a proposal back
+        out.append(f"{who}'s file says that {_n(pr['taken_back_held'], 'proposal')} of other people "
+                   f"{'was' if pr['taken_back_held'] == 1 else 'were'} taken back. Only the person who made a proposal "
+                   "can take it back, so it still waits until their own file says so.")
     not_here = d.get("not_here") or []  # 0.18 (the shared folder)
     if not_here:
         names = ", ".join(f"“{x['title']}”" for x in not_here[:3]) + (" and more" if len(not_here) > 3 else "")

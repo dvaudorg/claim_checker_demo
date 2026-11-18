@@ -96,7 +96,11 @@ codes, pairs of glossary terms with short passages where each occurs, the passag
 consecutive passages of one document (references), the passages that hold a code's examples with the code's name and
 group (a draft definition, `codedefine.py`), and, when a person asks for an excerpt to be read again, their
 comment. A document linked to a bibliography entry is titled by that work's title
-(`bibliography.py`). Tasks of documents marked *Only a local AI* or *No AI* are never among them. A code's
+(`bibliography.py`). Tasks of documents marked *Only a local AI* or *No AI* are never among them. Words of the
+documents that a task sends without their passages (the concepts named in *Name the groups* and *Other wordings*, the
+titles of the researcher's own documents in a framework from theory) follow the same rule: only those found in a
+document the reader may read are sent, and a document made stricter while such a task waits takes the task out of the
+queue (`access.words_floor`). A code's
 definition, *when to use it* and *when not* go with every label task of its codebook, whatever document it labels: a
 definition the local model drafted from documents marked *Only a local AI* does too once it is kept, so the editor
 says to rewrite it if it gives away what those documents say.
@@ -270,7 +274,8 @@ folder](manual/privacy.md#what-goes-into-the-shared-folder)).
 - *A switch keeps documents marked Only a local AI or No AI out:* their text and files stay on the computer. Shared
   items about them still carry the words their excerpts quote, notes, judgements and the documents' titles.
 - *Never goes there:* private items, checks still in progress, earlier versions, the search index and glossary,
-  settings, the database itself and paths. A round that would write anything not shared writes nothing. ENLENS
+  the AI's drafts made for one computer (a group's draft name, a code's draft definition, a framework drafted from
+  theory documents, and the tasks and answers behind them), settings, the database itself and paths. A round that would write anything not shared writes nothing. ENLENS
   refuses a shared folder that contains the project or its own data folder.
 - *Who can read it:* anyone with access to the folder. The files are ordinary zip files, neither encrypted nor
   signed ([Who can read the folder](manual/privacy.md#who-can-read-the-folder)).
@@ -282,7 +287,10 @@ space](manual/privacy.md#through-a-storage-space-of-your-teams-own-0180rc2)):
 
 - *Encrypted before it leaves:* each file with the project's key (AES-256-GCM, a fresh 96-bit nonce per file), and
   signed with its writer's own key (Ed25519). A copy takes in a file only when it is signed by the member whose part
-  of the space it is in; anything else is set aside.
+  of the space it is in; anything else is set aside. An older copy of a colleague's own file put back in its place
+  (by the storage service, a member who can write there, or a drive's version history) is set aside too: a copy
+  remembers the latest description of each colleague it took (with their *Keep … out* switch) and the latest point
+  of their work, and never goes back to an earlier one.
 - *What the company can see:* how many files there are, their sizes and when they change; the team's roster (random
   member identifiers, public keys and dates, signed but not encrypted); nothing of the files' contents, and no names
   of people or documents. Readings and original files are stored under a keyed hash of their names.
@@ -347,7 +355,9 @@ in with their work, with a count of what Claude read there.
 - **The storage space's keys** (the project's key, each member's own keys, the storage service's keys, a drive's app
   password) are kept in the system's keychain: macOS Keychain, Windows Credential Manager, or `secret-tool` on Linux. Where none can be used,
   they are kept in files in ENLENS's folder readable by the user only (`keychain.py`). Never in a project, a zip, the
-  shared folder or the space.
+  shared folder or the space. They are kept per storage space, so one computer works in a space through one project
+  only: joining a space that another project on the computer already uses is refused, and leaving the space in one
+  project never deletes keys another project on the computer still uses.
 - **A cloud provider's API key** (OpenAI, Gemini, Mistral, Azure, OpenRouter) is kept in the system's keychain, or in
   a user-only key file where there is none (`keychain.py`). Never in `settings.json`, a log, an error message, the
   record of how an answer was made, a project, or a *Move ENLENS to another computer* file. The app shows only

@@ -969,7 +969,8 @@ cannot be read again now, and the result has `summary`: `{"moved", "left_as_they
 (`ingest.READER`) beside each document's `reader`, and (0.19) `new_reader_changes`. 0.19: a document reader 5
 read is one of "the documents an earlier reader read" only when reader 6 would read it otherwise (a PDF, or a
 document one of whose passages holds both languages of a document in two); `POST …/reread` of any other answers 409
-with the reason.
+with the reason. 0.20.4: of the documents reader 6 read, every one but a PDF is one of them (reader 7 reads PDFs as
+reader 6 did).
 
 `POST /api/projects/<p>/new-reader/preview` `{"doc_ids"?: [doc_id]}` (0.18.0rc2) → `{"job"}` (kind
 `new_reader_preview`): the dry run before moving several documents; same `doc_ids` rules, errors and 409 as the move.

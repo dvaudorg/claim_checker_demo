@@ -269,19 +269,60 @@ def _read_json(path: Path, tries: int = 6):
     return None
 
 
-def _read_dict(path: Path, strict: bool) -> dict:
+class Damaged(ValueError):
+    """A file of the data folder did not hold what ENLENS writes there: it was set aside, and the change not made."""
+
+
+# what each small file of the data folder holds, for the words when it is damaged
+_HOLDS = {"links.json": ("the list of projects you linked from other folders",
+                         "Projects you linked before are untouched in their folders: link them again."),
+          "quicklook.json": ("the list of quick looks not kept yet", ""),
+          "benchmarks.json": ("the model test's speeds", "")}
+
+
+_NOT_JSON = object()
+
+
+def _set_aside(path: Path) -> Path:
+    """Put a damaged file of the data folder aside as `<name>.damaged` (an earlier one is not written over)."""
+    aside = path.with_name(f"{path.name}.damaged")
+    if aside.exists():
+        aside = path.with_name(f"{path.name}.damaged-{time.strftime('%Y%m%d-%H%M%S')}")
+    os.replace(path, aside)
+    return aside
+
+
+def _read_dict(path: Path, strict: bool, keep_going: bool = False) -> dict:
     """A small file of the data folder that holds a JSON object ({} when there is none, or it holds something else).
     `strict` (before a change is written back): a file that cannot be read raises Unreadable instead of counting as
-    empty, so what it holds is never replaced by the one change."""
+    empty, so what it holds is never replaced by the one change. Hunt phase 1 (FILES-4): nor one that does not parse
+    (cut short by a power cut before it reached the disk, a sync tool, a hand edit): it counted as empty, and linking
+    one more project wrote a list with that one alone. It is set aside as `<name>.damaged` and Damaged says so in
+    words, so the change is made on the next try with a new file; `keep_going` (a list that only saves work, such as
+    the quick looks not kept yet): set aside, then the change goes on with a new one."""
     try:
         data = _read_json(path)
     except ValueError:
-        return {}
+        data = _NOT_JSON
     except Unreadable:
         if strict:
             raise
         return {}
-    return data if isinstance(data, dict) else {}
+    if isinstance(data, dict):
+        return data
+    if data is None or not strict:
+        return {}
+    try:
+        aside = _set_aside(path)
+    except OSError as e:
+        raise Unreadable(f"{path.name} in ENLENS's data folder is damaged and could not be set aside ({e}). Nothing "
+                         "was changed: try again in a moment.") from e
+    if keep_going:
+        return {}
+    what, then = _HOLDS.get(path.name, (f"the file {path.name}", ""))
+    raise Damaged(f"The file that holds {what} ({path.name} in ENLENS's data folder) was damaged and could not be "
+                  f"read. It is kept as {aside.name} beside it, and a new one is started; nothing else was changed. "
+                  f"Try again. {then}".strip())
 
 
 def _stored_settings() -> dict | None:
@@ -1047,7 +1088,19 @@ def create_project(name: str) -> Workspace:
         if n in links:  # a link whose folder is gone (0.11.1): the new project is made in the data folder, not there
             links.pop(n)
             _save_links(links)
+        claim_name(n)
     return Workspace.create(home() / "projects" / n)
+
+
+def claim_name(name: str) -> None:
+    """Hunt phase 1 (FILES-5): a name a new project takes (made, brought in from a zip, linked) is no quick look's
+    any more. A quick look whose folder went outside ENLENS (the Finder, a clean-up tool) stayed on the list of those
+    not kept until its week was up, so a project made under its name in that week went to the trash in its place."""
+    with LOCK:
+        data = _quicklooks(strict=True)
+        if name in data:
+            del data[name]
+            _save_quicklooks(data)
 
 
 _OPEN: dict[str, tuple[float, Workspace]] = {}
@@ -1111,6 +1164,7 @@ def link_existing(path: str, name: str | None = None, clean: bool = False) -> st
         links = _links(strict=True)
         links[n] = str(src)
         _save_links(links)
+        claim_name(n)
     return n
 
 
@@ -1215,8 +1269,10 @@ QUICKLOOK_DAYS = 7
 
 
 def _quicklooks(strict: bool = False) -> dict[str, dict]:
-    """The quick looks not kept yet. `strict`: before they are changed and written back (`_read_dict`)."""
-    return _read_dict(home() / "quicklook.json", strict)
+    """The quick looks not kept yet. `strict`: before they are changed and written back (`_read_dict`; a damaged
+    list is set aside and a new one started: it only saves clearing up, and a quick look left off it stays a
+    project)."""
+    return _read_dict(home() / "quicklook.json", strict, keep_going=True)
 
 
 def mark_temporary(name: str, **about) -> None:
@@ -1311,7 +1367,7 @@ def record_benchmark(model: str, kinds: dict) -> None:
     """Keep the model test's median seconds per task of each kind (estimates of long runs use them)."""
     p = home() / "benchmarks.json"
     with LOCK:
-        data = _read_dict(p, strict=True)
+        data = _read_dict(p, strict=True, keep_going=True)  # (only estimates: a damaged file set aside, started anew)
         data.setdefault(model, {}).update({k: v.get("seconds_median") for k, v in kinds.items()
                                            if v.get("seconds_median")})
         _write_whole(p, json.dumps(data, indent=2))

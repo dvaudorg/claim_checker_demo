@@ -26,6 +26,7 @@ where it is.
 | 4 | 0.17.2 | Reader 3, plus: a text file with one paragraph per line, and a Word file's content controls and tables inside tables (see *What reader 4 changed* below). PDFs and web pages read as with reader 3. |
 | 5 | 0.18.1 | Reader 4, plus: tables found from their ruled lines and joined across pages, figures as blocks of their own with their captions, and a Word file's or web page's pictures by their alternative text (see *What reader 5 changed* below). Plain text files read as with reader 4. |
 | 6 | 0.19 | Reader 5, plus, in PDFs: text a figure hides is not read, publishing details at the foot of the first page are set aside, the title is not the journal's name, and running heads beside a page number are found; and, in a document printed in two languages (a side-by-side translation), no passage holds both (see *What reader 6 changed* below). Other documents read as with reader 5. |
+| 7 | 0.20.4 | Reader 6, plus, in text files, Word files and web pages: a line that comes back in an interview is not taken for a running head, short paragraphs one per line are paragraphs, a Word file's text box is read once, and a text saved as ISO-8859-2 keeps its letters (see *What reader 7 changed* below). PDFs read as with reader 6. |
 
 
 ## What the reader does
@@ -57,9 +58,10 @@ has; without it, it reads the PDF's text layer, without columns or tables):
 **Word files, web pages and text files** are read with the same repairs, their headings and reference list set aside
 in the same way. A Word file's tables are read row by row, a table inside a table's cell after the row that holds it;
 text in its content controls (a cover page, a contents box, form fields) is read like any other text, and Word's own
-table of contents is set aside as a book's is. Footnotes, comments and text boxes are not read. A picture in a Word
-file or web page (reader 5) is kept by its alternative text, as a block left out of the passages, without the
-picture itself.
+table of contents is set aside as a book's is. Footnotes and comments are not read. A text box is read once, as a
+paragraph of its own after the paragraph that holds it (reader 7; earlier readers read its words twice, joined to that
+paragraph). A picture in a Word file or web page (reader 5) is kept by its alternative text, as a block left out of
+the passages, without the picture itself.
 
 **Text files and books.** Many `.txt` and `.md` files are text copied out of a PDF by a converter: every running
 head and page number is still in the text, while the pages, the headings and often the spaces between words are
@@ -67,7 +69,7 @@ gone. Reader 3 reads such files by rules on the text alone (no AI):
 
 | It finds | How |
 | --- | --- |
-| Running heads and footers | They come back about once a page, next to a page break or at regular intervals ("Frontiers in Neurology 04 frontiersin.org"); a short one in capitals with its page number ("2 INTRODUCTION") from two pages, or from the contents. Answers that recur in an interview ("[P] Ja.") recur irregularly, mid-text: they stay. |
+| Running heads and footers | They come back about once a page, next to a page break or at regular intervals ("Frontiers in Neurology 04 frontiersin.org"); a short one in capitals with its page number ("2 INTRODUCTION") from two pages, or from the contents. Answers that recur in an interview ("[P] Ja.") recur irregularly, mid-text: they stay (with a blank line between every two turns, from reader 7). |
 | Page numbers | Lines that are only a number, counting up a page apart. |
 | Paragraphs and headings | A short line that ends a sentence ends its paragraph; a short line on its own is a heading. A Markdown file, web page or Word file that marks fewer than three headings gets headings this way too. |
 | A book's parts | The table of contents (lines ending in page numbers that go up) is set aside, and its entries find the chapter headings. Front matter before the first chapter (half title, other books by the author, copyright page, dedication, lists of figures) is set aside, but an abstract, summary or preface stays. Notes, bibliography, index, *About the author* and acknowledgements at the end are set aside; an index is also known by its lines ("archetypes, 112–116, 191"). |
@@ -125,6 +127,32 @@ other Word files, web pages and text files read the same. In PDFs:
 
 Only the documents this changes are offered the new reader: PDFs, and documents in two languages one of whose passages
 held both.
+
+**What reader 7 changed.** Reader 7 reads text files, Word files and web pages otherwise than reader 6; PDFs read the
+same. The four changes came from a search for faults in how ENLENS reads (November 2026):
+
+- **A line that comes back in an interview.** A line that comes back about once a page was taken for a running head
+  when it stood next to a blank line most times. In an interview typed with a blank line between turns, or a Word file
+  or web page whose paragraphs are one line each, every line stands next to a blank line, so a question the
+  interviewer asked now and then ("Could you tell me a little more about that?") was set aside as a running head and
+  left out of searches, codes, themes and checks. Where a blank line stands between nearly every two lines, reader 7
+  takes such a line for a running head only when it stands at a page break most times, or when a sentence runs on
+  across it at least once, as it does across a running head between two pages. Text copied out of a PDF whose
+  paragraphs run over several lines reads as before; in a copy whose every paragraph is one line, a running head that
+  never falls in the middle of a sentence can now stay in the text.
+- **Short paragraphs, one per line.** A text file without blank lines whose lines nearly all end a sentence, the next
+  starting with a capital (survey answers, notes saved by Word as plain text), was read as one or two paragraphs when
+  its lines were shorter than 160 characters, so every quote in it was cited as paragraph 1. Reader 7 takes each line
+  as a paragraph, whatever its length. Text wrapped to one width reads as before.
+- **A Word file's text box** was read twice (Word keeps the box and an older copy of it), joined to the last word of
+  the paragraph that holds it. Reader 7 reads it once, as a paragraph of its own after that paragraph.
+- **ISO-8859-2.** A Polish, Czech or Slovak text file or web page saved as ISO-8859-2 (Latin-2, by older Unix and
+  Linux tools), with no encoding named in it, was read as Windows-1250: ą, ś, ź, š, ž came out as ±, ¶, Ľ and the
+  like, and those words could not be found. Reader 7 reads such a file as ISO-8859-2 when that clearly fits one
+  language better; a file saved as Windows-1250 or -1252 reads as before.
+
+Text files, Word files and web pages read by reader 6 are offered reader 7 (whether one reads otherwise is known only
+by reading it again: the preview of the move says what changes); PDFs read by reader 6 are not.
 
 
 ## Measuring how well ENLENS reads

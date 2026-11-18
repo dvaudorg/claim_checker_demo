@@ -344,7 +344,10 @@ class App(LibraryMixin, QueueMixin):
             return None
         try:
             ws = home.open_project(name)
-            n = ws.scalar(f"SELECT COUNT(*) FROM tasks WHERE {taskqueue.WAITING}") or 0  # the partial index alone
+            # the partial index alone; less the AI mix's local share, which Claude Code is never handed (hunt
+            # phase 1: the same test as the queue's own count, taskqueue.local_share)
+            share, args = taskqueue.local_share()
+            n = ws.scalar(f"SELECT COUNT(*) FROM tasks t WHERE {taskqueue.WAITING} AND NOT {share}", args) or 0
         except Exception:  # noqa: BLE001
             return None
         return {"waiting": int(n)}

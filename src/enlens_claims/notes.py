@@ -389,7 +389,10 @@ def merge(cx: sqlite3.Connection, rows: list[dict], fix, sender: str | None = No
     sender (`sync_via`); it brings up to date only a row that came relayed itself; its author's own row takes its
     place whatever its time. Without `sender`: as before."""
     me = _me()
-    gone = {r[0] for r in cx.execute("SELECT key FROM sync_removed WHERE kind='note'")}
+    # who removed each note noted as removed: only its author's removal keeps a note out. A colleague's file could
+    # say that they removed a third person's note, and that note then never came here, from its author's own file
+    # either (hunt phase 1, MERGE-6). A note of removal without a name (from before 0.14) still keeps it out
+    gone = {r[0]: r[1] for r in cx.execute("SELECT key, person_id FROM sync_removed WHERE kind='note'")}
     docs = {r[0] for r in cx.execute("SELECT doc_id FROM documents")}
     cols = [r[1] for r in cx.execute("PRAGMA table_info(notes)")]
     via_here: set[str] = set()
@@ -402,7 +405,10 @@ def merge(cx: sqlite3.Connection, rows: list[dict], fix, sender: str | None = No
     pair = first_hand and bool(sender) and _partner(cx, me) == sender  # (your other account's own file)
     n = 0
     for r in rows:
-        if not isinstance(r.get("note_id"), str) or not _ID.fullmatch(r["note_id"]) or r["note_id"] in gone:
+        if not isinstance(r.get("note_id"), str) or not _ID.fullmatch(r["note_id"]):
+            continue
+        if r["note_id"] in gone and (gone[r["note_id"]] is None or not r.get("person_id")
+                                     or gone[r["note_id"]] == r.get("person_id")):
             continue
         r = fix(r)
         if r is None or r.get("doc_id") not in docs:

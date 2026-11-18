@@ -166,7 +166,8 @@ def test_read_these_adds_one_round_limited_to_them_and_keeps_the_reviews(project
     assert claimcheck.new_documents(ws, hid) == []                              # nothing counts as added since
     # nothing left: another press reads nothing and makes no round
     again = claimcheck.read_unread_documents(ws, hid, BE, "m", k=8)
-    assert again == {"hyp_id": hid, "documents": 0, "documents_read": 0, "left": 0, "passages": 0, "rounds": []}
+    assert again == {"hyp_id": hid, "documents": 0, "documents_read": 0, "left": 0, "passages": 0, "rounds": [],
+                     "failed": False}   # "failed" since the hunt of phase 1 (CHECKS-3): a reading that did not work says so
 
 
 def test_the_routes_the_export_and_the_page_contract(project):

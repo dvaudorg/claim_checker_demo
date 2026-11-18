@@ -15,6 +15,7 @@ import re
 import shutil
 import sqlite3
 import threading
+import unicodedata
 import weakref
 import zipfile
 import zlib
@@ -30,13 +31,21 @@ from .store import Workspace, now
 from .textutil import find_dois, split_sentences
 
 SUPPORTED = {".pdf", ".html", ".htm", ".txt", ".md", ".docx"}
+# Hunt phase 1: documents of a kind ENLENS does not read, named under `failed` when added (with what to do) rather than
+# passed over without a word; any other file (a picture, a spreadsheet) is not a document and is still passed over
+_SAVE_AS = "a kind of file ENLENS does not read: save it as PDF or Word (.docx) and add that"
+NOT_READ_KINDS = {".doc": "an older Word file, which ENLENS does not read: save it as .docx or PDF and add that",
+                  ".rtf": _SAVE_AS, ".odt": _SAVE_AS, ".pages": _SAVE_AS, ".wpd": _SAVE_AS, ".epub": _SAVE_AS,
+                  ".ppt": "slides, which ENLENS does not read: save them as PDF and add that",
+                  ".pptx": "slides, which ENLENS does not read: save them as PDF and add that",
+                  ".odp": "slides, which ENLENS does not read: save them as PDF and add that"}
 
 # 0.15 (roadmap): the reader, which turns a file into the stored text and passages (read_file, assemble, layout,
 # make_passages). Each document records the one that read it (documents.reader). A change that gives a document other
 # text or passages raises this number: documents already in a project keep the reading they have, so every result in
 # them stays where it is, until a person has one read with the new reader (planned with the next reader); only new
 # documents get the new reader.
-READER = 6  # 1: ENLENS 0.5 to 0.14 (pypdf's page text, cut by sentences); 2: ENLENS 0.15.0 (reader.py);
+READER = 7  # 1: ENLENS 0.5 to 0.14 (pypdf's page text, cut by sentences); 2: ENLENS 0.15.0 (reader.py);
             # 3: ENLENS 0.15.1 (reader.py with reader3.py: text-only files, books, words run together);
             # 4: ENLENS 0.17.2 (reader4.py: a text file's lines as paragraphs; Word's nested tables read once, and
             #    its content controls read)
@@ -46,6 +55,9 @@ READER = 6  # 1: ENLENS 0.5 to 0.14 (pypdf's page text, cut by sentences); 2: EN
             #    publishing details in the first page's footer set aside, a journal's name not the title; and, any
             #    kind of file, languages.py: in a document in two languages, a side-by-side translation, no passage
             #    holds both)
+            # 7: ENLENS 0.20.4 (reader7.py, text files, Word files and web pages only: a line that comes back in text
+            #    whose every line is a paragraph is not a running head, short sentences one per line are paragraphs,
+            #    a Word text box read once as paragraphs of its own, ISO-8859-2 files read as written)
 REF_HEADING = re.compile(
     r"(?:^|\s)(References|REFERENCES|Bibliography|BIBLIOGRAPHY|Literature [Cc]ited|Works [Cc]ited|Reference [Ll]ist)"
     r"\s*:?\s+(?=\[?\(?\d|[A-Z][A-Za-z'\-]+,?\s+[A-Z]|[A-Z]{2,})"
@@ -72,13 +84,20 @@ class RawDoc:
     # pagination readers 2 to 4 read, when they differ (`as_read_by`)
     before_5: dict | None = None
     figures: set[str] | None = None
+    # reader 7 (hunt phase 1) reads a Word file's text boxes once and takes a text or web page saved as ISO-8859-2
+    # (`_read_docx`, `decode_text`): `before_7` is what readers 1 to 6 read (its pages, headings, title, pagination,
+    # figures and their own `before_5`), when that differs (`as_read_by`)
+    before_7: dict | None = None
 
     def as_read_by(self, reader: int) -> "RawDoc":
-        """The file as the given reader reads it: itself, or for readers before 5 the Word text and web page they
-        read (and for readers 1 to 3 the Word text of reader 3, as before)."""
+        """The file as the given reader reads it: itself, or for readers before 7 the Word text and the decoding of a
+        text file or web page they read, for readers before 5 the Word text and web page they read (and for readers
+        1 to 3 the Word text of reader 3, as before)."""
         raw = self
         import dataclasses
 
+        if reader < 7 and raw.before_7:
+            raw = dataclasses.replace(raw, **raw.before_7, before_7=None)
         if reader < 5 and raw.before_5:
             raw = dataclasses.replace(raw, **raw.before_5, before_5=None)
         if reader < 4 and raw.before_4:
@@ -190,19 +209,32 @@ def read_file(path: Path, ocr: "OcrOptions | None" = None, should_stop=None) -> 
                       page_sizes=sizes or None)
     if ext == ".docx":
         sha1 = _sha1(path)
-        pages, title, heads, before, before5, figs = _read_docx(path)
+        pages, title, heads, before, before5, figs, before7 = _read_docx(path)
         return RawDoc(path, "docx", pages, title, sha1, paginated=len(pages) > 1, headings=heads, before_4=before,
-                      before_5=before5, figures=figs or None)
+                      before_5=before5, figures=figs or None, before_7=before7)
     data = path.read_bytes()
     sha1 = hashlib.sha1(data).hexdigest()
+    html = ext in (".html", ".htm")
+    decoded = decode_text(data, html=html)
+    raw = _text_raw(path, ext, decoded, sha1)
+    # reader 7 takes a file saved as ISO-8859-2 (Latin-2); readers 1 to 6 read it as Windows-1250 or -1252
+    before = decode_text(data, html=html, reader=6)
+    if before != decoded:
+        old = _text_raw(path, ext, before, sha1)
+        raw.before_7 = {"pages": old.pages, "meta_title": old.meta_title, "paginated": old.paginated,
+                        "headings": old.headings, "before_5": old.before_5, "figures": old.figures}
+    return raw
+
+
+def _text_raw(path: Path, ext: str, text: str, sha1: str) -> RawDoc:
+    """A web page, text or Markdown file read from its decoded text."""
     if ext in (".html", ".htm"):
         p = _TextOnly()
-        p.feed(decode_text(data, html=True))
+        p.feed(text)
         text5, text = "".join(p.parts5), "".join(p.parts)
         return RawDoc(path, "html", [text5], (p.title or "").strip() or None, sha1, paginated=False,
                       headings=p.headings, before_5={"pages": [text]} if text5 != text else None,
                       figures=p.alts or None)
-    text = decode_text(data)
     heads = None
     if ext == ".md":
         heads = markdown_headings(text)
@@ -242,9 +274,9 @@ def _letters(text: str) -> float:
     return sum(c.isalpha() for c in high) / len(high) if high else 1.0
 
 
-def _single_byte(data: bytes) -> str:
+def _single_byte(data: bytes, reader: int | None = None) -> str:
     """Text that is not UTF-8 and names no encoding: Windows-1250 or Windows-1252, whichever reads as one language
-    (on a tie, the one whose characters beyond ASCII are letters)."""
+    (on a tie, the one whose characters beyond ASCII are letters). Reader 7: or ISO-8859-2 (see `_latin2`)."""
     read = []
     for enc in ("cp1252", "cp1250"):
         try:
@@ -254,8 +286,31 @@ def _single_byte(data: bytes) -> str:
     if not read:
         return data.decode("cp1252", errors="replace")
     if len(read) == 1 or read[0] == read[1]:
-        return read[0]
-    return read[1] if (_fits(read[1]), _letters(read[1])) > (_fits(read[0]), _letters(read[0])) else read[0]
+        best = read[0]
+    else:
+        best = read[1] if (_fits(read[1]), _letters(read[1])) > (_fits(read[0]), _letters(read[0])) else read[0]
+    if (reader or READER) >= 7:
+        return _latin2(data, best)
+    return best
+
+
+# Hunt phase 1 (READERS-5), reader 7: a Polish, Czech or Slovak text saved as ISO-8859-2 (Latin-2, by older Unix and
+# Linux tools and corpora) was read as Windows-1250, which puts other letters at 0xA1 to 0xBF: "Wartość ścieków"
+# came out "Warto¶ć ¶cieków", with no warning, and those words could not be searched or quoted. Latin-2 is taken only
+# when it reads clearly better: a byte in 0x80 to 0x9F rules it out (control characters there; Windows-1250 puts
+# š, ś, ž, ź and quotation marks there), and it must fit one language strictly better than the reading chosen
+# above; on a tie that reading stays (an English Windows-1252 text whose only such byte is "©" reads "Š" in Latin-2,
+# as good a fit, and stays Windows-1252; Hungarian reads the same in both).
+_C1 = re.compile(rb"[\x80-\x9f]")
+
+
+def _latin2(data: bytes, best: str) -> str:
+    """`best` (the Windows-1250 or -1252 reading), or the ISO-8859-2 reading when it fits one language strictly
+    better and the file has no byte that rules it out."""
+    if _C1.search(data):
+        return best
+    l2 = data.decode("iso8859-2")
+    return l2 if l2 != best and _fits(l2) > _fits(best) else best
 
 
 def _mostly_utf8(data: bytes) -> str | None:
@@ -268,10 +323,10 @@ def _mostly_utf8(data: bytes) -> str | None:
     return text if good and bad <= max(1, good // 10) else None
 
 
-def decode_text(data: bytes, html: bool = False) -> str:
+def decode_text(data: bytes, html: bool = False, reader: int | None = None) -> str:
     """The text of a .txt, .md or web page file: by its byte-order mark (UTF-8, UTF-16, UTF-32); UTF-8 (also with a few
     damaged bytes); for a web page, the encoding it declares (`<meta charset>`, `<?xml encoding>`); else Windows-1250
-    or -1252 (see _single_byte)."""
+    or -1252, and from reader 7 (`reader`, default the current one) ISO-8859-2 (see _single_byte)."""
     for bom, enc in _BOMS:
         if data.startswith(bom):
             return data[len(bom):].decode(enc, errors="replace")
@@ -301,20 +356,23 @@ def decode_text(data: bytes, html: bool = False) -> str:
                 except UnicodeDecodeError:
                     pass
             break
-    return _single_byte(data)
+    return _single_byte(data, reader)
 
 
 _W ="{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 _WP = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}"   # reader 5: an image's docPr
+_MC_FALLBACK = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback"   # reader 7: a box's copy
 DOCX_MAX = 200 * 1024 ** 2   # bytes of XML read from one Word file (a zip): a bound against zip bombs
 DOCX_CORE_MAX = 1024 ** 2    # bytes of a Word file's document properties (where its title is): the same, for them
 
 
-def _read_docx(path: Path) -> tuple[list[str], str | None, set[str], dict | None, dict | None, set[str]]:
+def _read_docx(path: Path) -> tuple[list[str], str | None, set[str], dict | None, dict | None, set[str], dict | None]:
     """A Word file (.docx: a zip of XML) with the standard library: its paragraphs (separated by a blank line, as in a
     text file), its headings (paragraph styles Title and Heading 1 to 9), its pages where Word marked them (a page
     break, or where Word last laid out a new page), and its title (document properties). Tables are read row by row;
-    footnotes, comments and text boxes are left out.
+    footnotes and comments are left out. Readers 1 to 6 read a text box's words twice (Word keeps the box and an
+    older copy of it) and joined them to the paragraph that holds it; reader 7 reads it once, as paragraphs of its own
+    after that paragraph: the seventh value is what readers 1 to 6 read (for `RawDoc.before_7`) when that differs.
 
     Reader 4 reads text inside content controls and custom XML around paragraphs and tables (readers 1 to 3 dropped
     it), and a table inside a table's cell once, its rows after the row that holds it (readers 1 to 3 read it three
@@ -368,15 +426,20 @@ def _read_docx(path: Path) -> tuple[list[str], str | None, set[str], dict | None
     body = root.find(f"{_W}body")
     pages3, heads3 = _docx_text(body, 3)
     pages4, heads4 = _docx_text(body, 4)
+    figs5: set[str] = set()
+    pages5, heads5 = _docx_text(body, 5, figs5)
     figs: set[str] = set()
-    pages, heads = _docx_text(body, 5, figs)
+    pages, heads = _docx_text(body, 7, figs)
     before = None
     if pages3 != pages4 or heads3 != heads4:
         before = {"pages": pages3, "headings": heads3, "paginated": len(pages3) > 1}
     before5 = None
-    if pages4 != pages or heads4 != heads:
+    if pages4 != pages5 or heads4 != heads5:
         before5 = {"pages": pages4, "headings": heads4, "paginated": len(pages4) > 1}
-    return pages, title, heads, before, before5, figs
+    before7 = None
+    if pages5 != pages or heads5 != heads or figs5 != figs:
+        before7 = {"pages": pages5, "headings": heads5, "paginated": len(pages5) > 1, "figures": figs5 or None}
+    return pages, title, heads, before, before5, figs, before7
 
 
 # block-level elements that only wrap other block-level elements: a content control (its content) and custom XML
@@ -413,10 +476,24 @@ def _docx_text(body, version: int, figs: set[str] | None = None) -> tuple[list[s
     pages: list[list[str]] = [[]]
     heads: set[str] = set()
 
-    def para_text(p) -> tuple[str, bool]:
-        """The paragraph's text, and whether a new page starts in it (before its text)."""
+    def walk(el, boxes: list):
+        """Reader 7: the paragraph's own elements, in order. Word keeps a text box twice, as the shape (mc:Choice)
+        and as an older copy for programs that do not know shapes (mc:Fallback): the copy is skipped, and a box's
+        content (w:txbxContent) is put in `boxes`, to be read as paragraphs of its own after this one."""
+        yield el
+        for c in el:
+            if c.tag == _MC_FALLBACK:
+                continue
+            if c.tag == f"{_W}txbxContent":
+                boxes.append(c)
+                continue
+            yield from walk(c, boxes)
+
+    def para_text(p, boxes: list | None = None) -> tuple[str, bool]:
+        """The paragraph's text, and whether a new page starts in it (before its text). With `boxes` (reader 7), the
+        text boxes in it are not read into it but put there."""
         out, new_page = [], False
-        for el in p.iter():
+        for el in (p.iter() if boxes is None else walk(p, boxes)):
             tag = el.tag
             if tag == f"{_W}t":
                 out.append(el.text or "")
@@ -455,8 +532,13 @@ def _docx_text(body, version: int, figs: set[str] | None = None) -> tuple[list[s
                 if heading:
                     heads.add(" ".join(piece.split()))
 
-    def paragraph(p) -> None:
-        text, new_page = para_text(p)
+    v7 = version >= 7
+
+    def paragraph(p, in_box: bool = False) -> None:
+        boxes: list | None = [] if v7 else None
+        text, new_page = para_text(p, boxes)
+        if in_box:   # (a box does not start a page of the document)
+            text, new_page = text.replace("\f", " "), False
         st = style(p).lower().replace(" ", "")
         add(text, new_page, st == "title" or bool(re.fullmatch(r"heading[1-9]", st)))
         if version >= 5 and figs is not None:
@@ -465,6 +547,25 @@ def _docx_text(body, version: int, figs: set[str] | None = None) -> tuple[list[s
                 if alt and alt != d.get("name") and alt not in figs:
                     figs.add(alt)
                     add(alt, False, False)
+        for box in boxes or []:   # reader 7: a text box's paragraphs and tables, after the paragraph that holds it
+            for b in _docx_blocks(box):
+                if b.tag == f"{_W}p":
+                    paragraph(b, True)
+                else:
+                    table(b)
+
+    def flat(el) -> str:
+        """Reader 7: the words of a text box in a table's cell, once, its own boxes after their paragraph."""
+        parts = []
+        for b in _docx_blocks(el):
+            if b.tag == f"{_W}p":
+                boxes: list = []
+                parts.append(para_text(b, boxes)[0].replace("\f", " ").strip())
+                parts += [flat(x) for x in boxes]
+            else:
+                parts += [flat(cell) for row in _docx_children(b, f"{_W}tr")
+                          for cell in _docx_children(row, f"{_W}tc")]
+        return " ".join(x for x in parts if x)
 
     def table(tbl) -> None:
         # reader 4: each row once, its cells' own paragraphs; a table in a cell comes after the row that holds it
@@ -475,9 +576,13 @@ def _docx_text(body, version: int, figs: set[str] | None = None) -> tuple[list[s
                 for b in _docx_blocks(cell):
                     if b.tag == f"{_W}tbl":
                         inner.append(b)
+                    elif v7:   # a text box in the cell: its words once, after its paragraph's, in the cell
+                        boxes: list = []
+                        parts.append(para_text(b, boxes)[0].replace("\f", " ").strip())
+                        parts += [flat(x) for x in boxes]
                     else:
                         parts.append(para_text(b)[0].replace("\f", " ").strip())
-                cells.append(" ".join(parts).strip())
+                cells.append(" ".join(x for x in parts if x).strip() if v7 else " ".join(parts).strip())
             add(" | ".join(c for c in cells if c), False, False)
             for t in inner:
                 table(t)
@@ -1157,15 +1262,44 @@ def _read_problem(e: BaseException) -> str:
     return str(e) or type(e).__name__
 
 
+def unpack_names(names: list[str]) -> list[str]:
+    """The names to unpack a zip's files under, one per name in order: each as it is, except a name that is another's
+    but for its case or the form of its accents ("Report.pdf" and "report.pdf"; "másolat.pdf" written with "á" or
+    with "a" and its accent apart), which gets " (2)" (" (3)", …) before its extension. Hunt phase 1: a disk that does
+    not tell such names apart (macOS's and Windows's, as they come) wrote the two files to one place, so the first
+    document was read with the second's words and the second was then a duplicate: one of them was lost without a
+    word. The plan is the same on every computer, so a zip unpacks to the same names everywhere."""
+    seen: set[str] = set()
+    out = []
+    for name in names:
+        key = unicodedata.normalize("NFC", name).casefold()
+        if key in seen:
+            head, slash, base = name.rpartition("/")
+            stem, dot, ext = base.rpartition(".") if "." in base.lstrip(".") else (base, "", "")
+            k = 2
+            while True:
+                new = f"{head}{slash}{stem} ({k}){dot}{ext}"
+                key = unicodedata.normalize("NFC", new).casefold()
+                if key not in seen:
+                    name = new
+                    break
+                k += 1
+        seen.add(key)
+        out.append(name)
+    return out
+
+
 def _safe_extract(zf: zipfile.ZipFile, dest: Path, budget: list[int] | None = None, strip: str = "",
-                  problems: list[tuple[str, str]] | None = None) -> list[Path]:
+                  problems: list[tuple[str, str]] | None = None, distinct: bool = False) -> list[Path]:
     """Unpack `zf` into `dest`. With `strip` (a folder in the zip, ending in "/"), only what is in that folder is
     unpacked, without the folder itself. 0.14.3: with `problems`, a file of the zip that cannot be unpacked (damaged,
     password-protected) is left out and noted there as (name, what went wrong); without it, that stops the unpacking
-    (a project zip must come whole)."""
+    (a project zip must come whole). With `distinct` (sources), two names that differ only by case or by the form
+    of their accents are kept apart (`unpack_names`)."""
     out = []
     root = dest.resolve()
     budget = budget if budget is not None else [MAX_UNPACKED]
+    members = []
     for info in zf.infolist():
         name = zip_name(info)
         if info.is_dir() or name.startswith("__MACOSX") or Path(name).name.startswith("._"):
@@ -1174,6 +1308,9 @@ def _safe_extract(zf: zipfile.ZipFile, dest: Path, budget: list[int] | None = No
             if not name.startswith(strip) or name == strip:
                 continue
             name = name[len(strip):]
+        members.append((info, name))
+    planned = unpack_names([n for _i, n in members]) if distinct else [n for _i, n in members]
+    for (info, _name), name in zip(members, planned):
         if info.file_size > budget[0]:
             break  # the rest would exceed the budget: stop unpacking
         budget[0] -= info.file_size
@@ -1262,8 +1399,20 @@ def discover(inputs: list[str | Path], unpack_dir: Path, manifests: list[Path] |
         elif p.suffix.lower() == ".zip" and zipfile.is_zipfile(p):
             if depth.get(p, 0) > 2:
                 continue
-            # one folder per zip file: two zips with the same name (from different folders) must not mix
-            tag = hashlib.sha1(str(p.resolve()).encode()).hexdigest()[:8]
+            # one folder per zip file: two zips with the same name (from different folders) must not mix. Hunt phase 1
+            # (READERS-1): nor a zip and a newer one put at the same place later: the folder was named by the zip's
+            # path only, so the newer zip unpacked over the first, and a document added from the first lost its
+            # original (reported as changed, no longer opened or read again). Named by the path and the content, a
+            # newer zip gets a folder of its own, and the same zip added again unpacks onto its own identical copy.
+            # Documents added before keep the paths they recorded.
+            try:
+                content = _sha1(p)
+            except OSError as e:
+                if failed is None:
+                    raise
+                failed.append(f"{p.name}: {e.strerror or e}")
+                continue
+            tag = hashlib.sha1(f"{p.resolve()}\0{content}".encode()).hexdigest()[:8]
             stem = re.sub(r"[^A-Za-z0-9_-]", "_", p.stem).strip("_")[:60] or "zip"  # no dots: '...zip' cannot be '..'
             dest = unpack_dir / f"{stem}-{tag}"
             if not dest.resolve().is_relative_to(unpack_dir.resolve()):
@@ -1271,7 +1420,7 @@ def discover(inputs: list[str | Path], unpack_dir: Path, manifests: list[Path] |
             problems: list[tuple[str, str]] | None = [] if failed is not None else None
             try:
                 with zipfile.ZipFile(p) as zf:
-                    got = _safe_extract(zf, dest, budget, problems=problems)
+                    got = _safe_extract(zf, dest, budget, problems=problems, distinct=True)
             except (*ZIP_ERRORS, OSError) as e:
                 if failed is None:
                     raise
@@ -1282,10 +1431,22 @@ def discover(inputs: list[str | Path], unpack_dir: Path, manifests: list[Path] |
             for x in got:
                 depth[x] = depth.get(p, 0) + 1
                 queue.append(x)
+        elif p.suffix.lower() == ".zip" and p.is_file():
+            # Hunt phase 1 (READERS-6): a zip cut off in a download has no list of its files at the end, so
+            # `is_zipfile` says no, and it was passed over without a word: the add reported nothing about it
+            if failed is not None:
+                failed.append(f"{p.name}: {zip_problem(zipfile.BadZipFile())}")
         elif p.suffix.lower() in SUPPORTED and p.is_file() and p.name.lower() not in NOT_SOURCES:
             files.append(p)
         elif p.name.lower() == "manifest.csv" and manifests is not None:
             manifests.append(p)
+        elif (failed is not None and p.suffix.lower() in NOT_READ_KINDS and p.is_file()
+              and not p.name.startswith((".", "~$"))):
+            # Hunt phase 1: a document of a kind ENLENS does not read (an older Word file, rich text, slides) was
+            # passed over without a word, so a folder of .doc files added nothing and said nothing. It is named
+            # under the files that could not be read, with what to do; other files (pictures, spreadsheets, notes)
+            # are still passed over, as they are not documents to read
+            failed.append(f"{p.name}: {NOT_READ_KINDS[p.suffix.lower()]}")
     return files
 
 

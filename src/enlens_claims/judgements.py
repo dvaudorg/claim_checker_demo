@@ -229,6 +229,10 @@ def delete_claim(ws: Workspace, claim_id: str, why: str | None = None, _log: boo
             cx.execute("DELETE FROM results WHERE task_id >= ? AND task_id < ?", lo_hi)
             cx.execute("DELETE FROM tasks WHERE task_id >= ? AND task_id < ?", lo_hi)
         cx.execute("DELETE FROM second_opinions WHERE subject_id=?", (claim_id,))
+        # every person's judgement of its excerpts goes with it: "how often you agreed" (people.agreement) reads
+        # this table alone, and a removed check must not keep counting there. A colleague's copy does not bring
+        # them back: the check is in sync_removed and a merge takes judgements only of checks this copy has.
+        cx.execute("DELETE FROM judgements WHERE claim_id=?", (claim_id,))
         cx.execute("DELETE FROM user_claims WHERE claim_id=?", (claim_id,))
         hid = hyp[0] if hyp and hyp[0] else claim_id
         if not cx.execute("SELECT 1 FROM user_claims WHERE hyp_id=?", (hid,)).fetchone():

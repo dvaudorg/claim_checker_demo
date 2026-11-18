@@ -635,9 +635,20 @@ def _bib_work(etype: str, citekey: str, f: dict) -> dict:
     key = f"bib:{citekey[:120]}" if citekey else _hash_key(title, year, creators)
     container = tex(f.get("journal") or f.get("journaltitle") or f.get("booktitle") or f.get("institution")
                     or f.get("school") or f.get("publisher") or f.get("organization") or "") or None
-    return _work(key, etype, title, creators, year, _doi_from(f.get("doi"), f.get("url"), f.get("note")),
-                 re.sub(r"\s+", "", f.get("url", "").replace("\\_", "_").replace("\\&", "&").replace("\\%", "%")
-                        .replace("\\#", "#")) or None, container, f.get("isbn"), None, files)
+    url = re.sub(r"\s+", "", _tex_id(f.get("url")))
+    # hunt phase 1 (FILES-6): the doi (and a doi in the note) unescaped as the url is: read raw, `10.1016/j.wat\_res`
+    # kept its backslash, never matched its document by DOI and was looked up for retractions under a DOI that does
+    # not exist (checked, with no notice)
+    return _work(key, etype, title, creators, year, _doi_from(_tex_id(f.get("doi")), url, _tex_id(f.get("note"))),
+                 url or None, container, f.get("isbn"), None, files)
+
+
+def _tex_id(s: str | None) -> str:
+    """An identifier field of BibTeX (doi, url) as written, with LaTeX's escapes of `_ & % #` undone: `\\_`, and
+    Mendeley's `{\\_}`. Nothing else changes (`tex` would also drop a backslash command or turn `~` into a space, which
+    a link may hold)."""
+    s = re.sub(r"\{\\([_&%#])\}", r"\1", s or "")
+    return re.sub(r"\\([_&%#])", r"\1", s)
 
 
 # -- Zotero's CSV export ---------------------------------------------------------------------

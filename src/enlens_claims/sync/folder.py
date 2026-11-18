@@ -161,7 +161,7 @@ def _copy_whole(src: Path, dest: Path) -> None:
 def _int(v: Any) -> int | None:
     try:
         return int(v)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):   # (a colleague's JSON may say 1e999, read as infinity)
         return None
 
 
@@ -217,16 +217,11 @@ def team_name(ws: Workspace) -> str:
 
 
 def _set_config(ws: Workspace, **changes: Any) -> None:
-    try:
-        cfg = json.loads(ws.config_path.read_text(encoding="utf-8")) if ws.config_path.exists() else {}
-    except (OSError, ValueError):
-        cfg = {}
-    for k, v in changes.items():
-        if v is None:
-            cfg.pop(k, None)
-        else:
-            cfg[k] = v
-    ws.config_path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    # hunt phase 1 (FILES-3): written whole, and a file that does not parse is refused in words, never written over
+    # as if it held nothing (`store.change_config`; a value None takes the setting out)
+    from ..store import change_config
+
+    change_config(ws.config_path, changes)
     ws._config_cache = None
 
 
@@ -812,7 +807,8 @@ def _asked_to_begin_again(ws: Workspace, cx: sqlite3.Connection, team: Path, min
             whole = False
         if not whole:
             return True
-        names = [n for n in note.get("readings") or [] if isinstance(n, str) and _READING.fullmatch(n)]
+        said = note.get("readings")   # (a colleague's file: a list, or it names nothing)
+        names = [n for n in said if isinstance(n, str) and _READING.fullmatch(n)] if isinstance(said, list) else []
         if note.get("kind") == "documents" and names:
             if can_write is None:
                 taken_out = _taken_out(cx, team, me)
@@ -920,7 +916,8 @@ def _mend_readings(team: Path, mine: Path, me: str) -> None:
     for p in _people_dirs(team):
         notes = _json(p / "waiting.json") if p.name != me else None
         for note in (notes or {}).values():
-            for n in (note.get("readings") or []) if isinstance(note, dict) else []:
+            said = note.get("readings") if isinstance(note, dict) else None   # (a colleague's file: a list, or nothing)
+            for n in said if isinstance(said, list) else []:
                 f = mine / "docs" / n if isinstance(n, str) and _READING.fullmatch(n) else None
                 if f is not None and f.is_file() and not _reading_whole(f):
                     _remove([f])
@@ -1309,6 +1306,12 @@ def _leaks(cx: sqlite3.Connection, items: list[dict]) -> str | None:
     for (tid,) in cx.execute(f"SELECT task_id FROM tasks WHERE kind IN ({','.join('?' * len(kinds))})", kinds):
         if not _task_of(tid or "", checks, parts, runs):
             return "a task of a check or a set of themes that is not shared was among what was to go."
+    # this computer's own AI work (sharing.LOCAL_TASK_KINDS: draft names of groups, draft definitions of codes, the
+    # framework drafted from theory documents) never goes, nor its answers (hunt phase 1, MERGE-3)
+    local = sharing.LOCAL_TASK_KINDS
+    if cx.execute(f"SELECT 1 FROM tasks WHERE kind IN ({','.join('?' * len(local))}) UNION ALL SELECT 1 FROM results "
+                  f"WHERE kind IN ({','.join('?' * len(local))}) LIMIT 1", (*local, *local)).fetchone():
+        return "a draft the AI made for this computer only was among what was to go."
     if any(r not in runs for (r,) in cx.execute("SELECT DISTINCT run_id FROM theme_members")):
         return "a theme of a set of themes that is not shared was among what was to go."
     if cx.execute("SELECT 1 FROM shares WHERE state NOT IN ('shared', 'withdrawn') OR (state='withdrawn' AND title IS "
@@ -1593,7 +1596,9 @@ def _person(mine: Path, me: str, name: str, keep_out: bool) -> None:
             "keep_out": keep_out}
     have = _json(mine / "person.json") or {}
     if {k: have.get(k) for k in want} != want:
-        _put_json(mine / "person.json", {**want, "updated_at": now()})
+        # "n" counts this copy's writes of the file: with "updated_at" (whole seconds) it tells a storage space's copies
+        # which of two files is the newer, so an older one put back there is set aside (space.py `_older`)
+        _put_json(mine / "person.json", {**want, "updated_at": now(), "n": (_int(have.get("n")) or 0) + 1})
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1676,8 +1681,13 @@ def _bundle_meta(f: Path, pid: str, seq: int, uid: str, who: str, epoch: str | N
     if "rows.sqlite" not in names:
         raise _Stop("damaged", f"{who}'s work number {seq} in the shared folder is damaged (it holds no database). It "
                                "is left aside; nothing was changed.", seq)
-    if meta.get("format") != BUNDLE_FORMAT or _int(meta.get("seq")) != seq or \
-            (meta.get("from") or {}).get("id") != pid or meta.get("project_uid") != uid:
+    # every field read later is checked for its type here, where a bundle that fails stops its writer's stream only
+    # (`_withdrawals_first` and `status` read through here and catch only _Stop): "from" as plain text, or a list of
+    # items that is a number, is a damaged bundle, never an error of the whole round
+    if meta.get("format") != BUNDLE_FORMAT or _int(meta.get("seq")) != seq or not isinstance(meta.get("from"), dict) \
+            or meta["from"].get("id") != pid or meta.get("project_uid") != uid or \
+            not isinstance(meta.get("items") or [], list) or not isinstance(meta.get("documents") or [], list) or \
+            any(_int(meta.get(k)) is None for k in ("sync_format", "sync_needs") if meta.get(k) is not None):
         raise _Stop("damaged", f"{who}'s work number {seq} in the shared folder is not what its name says (another "
                                "project, another person, or a damaged file). It is left aside; nothing was changed.",
                     seq)
@@ -2161,7 +2171,8 @@ def _withdrawals_first(ws: Workspace, team: Path, me: str, opened: _Opened, shou
                 _bundle_meta(f, pdir.name, seq, uid, "a colleague", head_epoch)
                 bcx = sqlite3.connect(opened(f, "a colleague", seq) / "rows.sqlite")
                 try:
-                    marks.update({(r["kind"], r["key"]): r for r in _rows(bcx, "SELECT * FROM shares")})
+                    # (a colleague's table may lack a column: such a row says nothing, it never stops the round)
+                    marks.update({(r.get("kind"), r.get("key")): r for r in _rows(bcx, "SELECT * FROM shares")})
                 finally:
                     bcx.close()
             except (_Stop, OSError, sqlite3.Error):

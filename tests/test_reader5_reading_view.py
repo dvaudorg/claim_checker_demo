@@ -36,7 +36,7 @@ def test_reader_5_is_offered_where_it_can_change_the_reading(tmp_path):
     offered = {(d["reader"], d["kind"]) for d, yes in zip(docs, json.loads(r.stdout)) if yes}
     every = {(r, k) for r in (1, 2, 3) for k in ("pdf", "html", "text", "docx")}  # reader 3 text: offered 4 and 5
     assert offered == every | {(4, "pdf"), (4, "html"), (4, "docx")}  # a reader-4 text file reads the same by reader 5
-    assert re.search(r"^export const reader = \{ latest: 6 \};", _src("doc-shared.js"), re.M)   # 0.19: reader 6
+    assert re.search(r"^export const reader = \{ latest: 7 \};", _src("doc-shared.js"), re.M)   # 0.20.4: reader 7
 
 
 def test_a_figure_is_shown_in_the_text_with_its_caption_and_its_page():
@@ -92,7 +92,7 @@ def test_figure_key_is_kept_by_page_and_box():
 def test_the_news_of_reader_5_is_said_to_documents_of_reader_4():
     src = _src("sources.js", "doc-reading.js", "doc-shared.js")
     assert "const READER_5_NEWS = " in src and "shows figures and pictures with their captions" in src
-    assert "? READER_5_NEWS : READER_6_NEWS)" in src and "`Read by the reader of ENLENS 0.17.2 to 0.18.0. ${READER_5_NEWS}`" in src
+    assert "older.some((d) => d.reader === 4) ? READER_5_NEWS" in src and "`Read by the reader of ENLENS 0.17.2 to 0.18.0. ${READER_5_NEWS}`" in src
     assert "`Read by the reader of ENLENS 0.15.1 to 0.17.1. ${READER_4_NEWS}`" in src  # reader 3 keeps its sentence
 
 

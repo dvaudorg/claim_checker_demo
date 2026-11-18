@@ -303,3 +303,79 @@ def test_documents_added_since_whose_reading_failed_can_be_read_again(solar, tmp
     assert out["passages"] and not any(r["ok"] for r in out["rounds"])
     res = claimcheck.hypothesis_result(solar, hid)
     assert res["docs_added_since"] or res["incomplete"], (res["docs_added_since"], res["incomplete"])
+
+
+# ---------------------------------------------------------------------------------------------
+# siblings found by the fixer
+# ---------------------------------------------------------------------------------------------
+def test_documents_never_read_whose_reading_failed_can_be_read_again(solar):
+    """CHECKS-3's sibling, *Read these* (roadmap N5): a round whose AI answers fail three times showed its excerpts,
+    so `_unread_split` counted its documents as read in this check, though nothing of them counted, and *Read these*
+    could never read them again."""
+    hid = claimcheck.check_hypothesis(solar, PART_BILLS, Scripted(RULES), "claude-opus", expand=False, k=1, per_doc=1)
+    before = claimcheck.unread_documents(solar, hid)
+    assert before["matching_n"] >= 1, before
+    out = claimcheck.read_unread_documents(solar, hid, Unusable({}), "claude-opus", k=4)
+    assert out["failed"] and not any(r["ok"] for r in out["rounds"]), out
+    assert claimcheck.unread_documents(solar, hid)["matching_n"] == before["matching_n"]
+
+
+def test_a_failed_reading_of_new_documents_is_said_and_leaves_them_waiting(solar, tmp_path):
+    """CHECKS-3, what the job says: the documents stay *added since* (not marked as looked at) and the job's result
+    says the reading did not work, so the page can say so."""
+    import time
+
+    hid = _two_part_check(solar)
+    time.sleep(1.1)
+    more = tmp_path / "more"
+    _corpus(more, {"bills2.txt": "Second bills study\n\nRooftop solar panels lowered household electricity bills "
+                   "again in a second survey of towns, with savings each month.\n"})
+    ingest.ingest(solar, [more], ai_access="cloud")
+    checked = solar.scalar("SELECT docs_checked_at FROM hypotheses WHERE hyp_id=?", (hid,))
+    out = claimcheck.read_new_documents(solar, hid, Unusable({}), "claude-opus", k=4)
+    assert out["failed"] and not any(r["ok"] for r in out["rounds"])
+    assert solar.scalar("SELECT docs_checked_at FROM hypotheses WHERE hyp_id=?", (hid,)) == checked
+    assert [d["matching"] for d in claimcheck.new_documents(solar, hid)] == [True]
+    row = next(h for h in claimcheck.history(solar) if h["hyp_id"] == hid)
+    assert row["docs_added_since"] == 1
+    # and Read it again, with an AI whose answers pass, reads them
+    again = claimcheck.read_new_documents(solar, hid, Scripted(RULES), "claude-opus", k=4)
+    assert not again["failed"] and again["passages"]
+    assert claimcheck.new_documents(solar, hid) == []
+
+
+def test_get_check_of_a_hypothesis_in_parts_gives_every_part_and_its_evidence(solar):
+    """CHECKS-1, the rest of the answer: each part with its own status and check_id (the key for more_passages), and
+    the evidence of both parts, not the first part's alone."""
+    pytest.importorskip("mcp")
+    from mcp import Client
+
+    from enlens_claims.mcp_server import build_server
+
+    hid = _two_part_check(solar)
+    res = claimcheck.hypothesis_result(solar, hid)
+
+    async def run():
+        async with Client(build_server()) as c:
+            return json.loads((await c.call_tool("get_check", {"check_id": res["parts"][0]["claim_id"]})).content[0].text)
+
+    got = asyncio.run(run())
+    assert got["claim"] == HYP
+    assert [(p["check_id"], p["status"]) for p in got["parts"]] == [(p["claim_id"], p["status"]) for p in res["parts"]]
+    assert {e["part"] for e in got["evidence"]} == {1, 2}
+    assert got["passages_read"] == res["excerpts_read"]
+
+
+def test_removing_every_document_takes_every_judgement_with_the_checks(loaded):
+    """CHECKS-7's sibling: *Remove every document* (`reset_corpus`) removes every check but left the people's
+    judgements of their excerpts in `judgements`, where "how often you agreed" still counted them."""
+    from enlens_claims.llm import BaselineBackend
+    from test_shared_projects import CLAIM, _claim, _excerpts
+
+    hid = claimcheck.check_hypothesis(loaded, CLAIM, BaselineBackend(), "baseline", k=3)
+    ex = _excerpts(loaded, hid)[0]
+    claimcheck.set_judgement(loaded, _claim(loaded, hid), ex["passage_id"], "supports")
+    assert loaded.scalar("SELECT COUNT(*) FROM judgements")
+    loaded.reset_corpus()
+    assert not loaded.scalar("SELECT COUNT(*) FROM hypotheses")
+    assert loaded.scalar("SELECT COUNT(*) FROM judgements") == 0

@@ -273,7 +273,11 @@ class CodebookRules:
         except ValueError:
             meta = {}
         meta["title"] = f"{meta.get('title') or of} ({self.sender['name'] or 'a colleague'}'s version)"
-        side.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+        from ..home import _write_whole
+
+        # hunt phase 1 (files sweep): whole, as the codebooks' own files are (codebooks._write): the side file holds
+        # the codes' ids, groups and history, and a write in place cut off left it empty
+        _write_whole(side, json.dumps(meta, indent=2))
 
     def _follow_codebooks(self, cx: sqlite3.Connection) -> None:
         """0.16 (codebooks.py): labels follow a codebook's renames and merges. Yours follow the changes your copy had not

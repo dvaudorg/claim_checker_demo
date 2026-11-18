@@ -120,8 +120,9 @@ enlens --ws pilot coverage
 - **What is skipped**: duplicate files (same bytes); notes that travel with a corpus (`problems.txt`, `README.md`,
   `notes.txt`); files matching `--exclude PATTERN` (for example a download that turned out to be the wrong document:
   `enlens --ws pilot ingest enlens_text.zip --exclude 'A_18_*'`; repeat it for several patterns). A file that cannot
-  be read (damaged or password-protected, also inside a zip) is listed under `failed` with the reason, and the others
-  are added; the connector's `create_project` and `add_sources` return them as `could_not_read`.
+  be read (damaged or password-protected, also inside a zip, or a zip cut off in a download) is listed under `failed`
+  with the reason, and so is a document of a kind ENLENS does not read (`.doc`, `.rtf`, `.odt`, `.pptx`), with what to
+  do; the others are added. The connector's `create_project` and `add_sources` return them as `could_not_read`.
 - **Unreadable text.** Scanned PDFs without a text layer come out empty: run OCR first. Text layers without a character
   map come out as `(cid:53)` codes or as shifted letters (`5HQHZDEOH DQG` for `Renewable and`): such passages get
   section `unreadable` and are never sent to a model, and `ingest` lists documents that are mostly unreadable. Get
@@ -316,8 +317,8 @@ enlens --ws pilot gold-export gold.jsonl
 ```
 
 Rows with an invalid correction (also an unknown direction or influence) are reported and change nothing. The file may
-be saved by Excel (UTF-8 with or without byte-order mark, or Windows-1252). Reviewed items do not reappear in later
-queues. When a task is answered again (`refresh`), a reviewed claim with the same text keeps the decision; a claim
+be saved by Excel (UTF-8 with or without byte-order mark, or Windows-1252; commas, semicolons or tabs between cells).
+Reviewed items do not reappear in later queues. When a task is answered again (`refresh`), a reviewed claim with the same text keeps the decision; a claim
 whose text changed has its review marked superseded and comes back to the queue. `gold.jsonl` is the growing gold set:
 use it to compare prompts, models and thresholds.
 

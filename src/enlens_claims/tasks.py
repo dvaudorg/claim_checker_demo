@@ -1783,11 +1783,19 @@ def run(ws: Workspace, kind: str, backend, limit: int | None = None, model: str 
     _sync_thresholds(ws)
     stats = {"done": 0, "retry": 0, "failed": 0}
     left: set[str] = set()   # tasks this backend may not read: they wait for a model that may, or the person
+    held: set[str] = set()   # tasks a helper of the queue (Claude Code) is answering now: its answer counts
     may = access.backend_levels(backend)
     prov = access.provider_of(backend)
     dflt = access.default(ws)
+    # hunt phase 1 (QUEUE-6): each task is taken by this run while it is asked, as `taskqueue.run_here` and
+    # `answer_locally_first` take theirs: a task a live claim of the queue holds is left to its helper (asking it here
+    # too asked it twice, and the helper's answer was then refused), and the answer is stored only while this run
+    # still holds the task. A task never queued (the SDG pack, acceptance runs) is free, as before.
+    from .taskqueue import _cutoff
+
+    claim = "here-" + uuid.uuid4().hex[:12]
     for _round in range(MAX_ATTEMPTS):
-        todo = pending(ws, kind, limit)
+        todo = [t for t in pending(ws, kind, limit) if t["task_id"] not in held]
         if not todo:
             break
         for t in todo:
@@ -1803,15 +1811,29 @@ def run(ws: Workspace, kind: str, backend, limit: int | None = None, model: str 
                 if access.recheck(cx, t["task_id"], dflt, provider=prov) not in may:
                     left.add(t["task_id"])
                     continue
-            system, user = render(ws, t)
-            _send(ws, t, backend)
-            raw, problem = _complete(backend, t, system, user, model or t["model"])
-            used = "baseline" if backend.name == "baseline" else (model or t["model"])
-            ingest_result(ws, t["task_id"], raw, model=used, provenance=_provenance(backend, used), problem=problem)
+                got = cx.execute("UPDATE tasks SET claimed_by=?, claimed_at=? WHERE task_id=? AND status IN "
+                                 "('pending', 'retry') AND (claimed_by IS NULL OR claimed_by='' OR claimed_at < ?)",
+                                 (claim, now(), t["task_id"], _cutoff())).rowcount
+            if not got:
+                held.add(t["task_id"])
+                continue
+            try:
+                system, user = render(ws, t)
+                _send(ws, t, backend)
+                raw, problem = _complete(backend, t, system, user, model or t["model"])
+                used = "baseline" if backend.name == "baseline" else (model or t["model"])
+                ingest_result(ws, t["task_id"], raw, model=used, provenance=_provenance(backend, used),
+                              problem=problem, claim=claim)
+            except NotHeld:
+                held.add(t["task_id"])   # taken from this run meanwhile (its time ran out): the other's answer counts
+            finally:
+                _unclaim(ws, t["task_id"], claim)
     for r in ws.query("SELECT status, COUNT(*) FROM tasks WHERE kind=? GROUP BY status", (kind,)):
         stats[r[0]] = r[1]
     if left:
         stats["left_for_another_reader"] = len(left)
+    if held:
+        stats["left_to_the_helper_answering_them"] = len(held)
     return stats
 
 
@@ -1835,15 +1857,24 @@ You are answering model tasks for the ENLENS claims pipeline.
 _EXPORT_CHUNK = 200  # tasks whose payloads are read at once while the file queue checks what may leave
 
 
-def export(ws: Workspace, kind: str, batch_size: int = 25, limit: int | None = None) -> list[Path]:
+def export(ws: Workspace, kind: str, batch_size: int = 25, limit: int | None = None,
+           report: dict | None = None) -> list[Path]:
     _sync_thresholds(ws)
     # 0.11: the file queue hands tasks to a worker outside this program, so only tasks whose documents Claude may
     # read are written; the others stay pending for a local model or a person. 0.17.2: only the ids are listed; a
     # task's payload is read for the few tasks of a chunk, then again for the batch it is written in, so 20,000
     # waiting tasks are never all in memory
+    # hunt phase 1 (QUEUE-5): a task a live claim of the queue holds (a Claude Code helper answers it now) is left to
+    # that helper: written here too, two workers answered it and the helper's answer was refused as "already
+    # answered". Each task is taken (status `exported`) in the transaction that finds it free, so a helper never takes
+    # it between the look and the files either; `report` (a dict, when given) gets the number left ("held").
+    from .taskqueue import _cutoff
+
     cand = [r[0] for r in ws.query(
         "SELECT task_id FROM tasks WHERE kind=? AND status IN ('pending','retry') "
         "AND COALESCE(NULLIF(access,''),'cloud')='cloud' ORDER BY task_id", (kind,))]
+    held = 0
+    before: dict[str, tuple] = {}   # each taken task's status and prompt version, given back if the files fail
     # the passages leave with the files: recorded per task in order, so a document's cap counts the tasks written
     # before each one (a task over the cap stays pending for a local model or a person)
     todo: list[str] = []
@@ -1862,9 +1893,32 @@ def export(ws: Workspace, kind: str, batch_size: int = 25, limit: int | None = N
                 # the file queue's tasks are for Claude (a chat, or Claude Code), as "Claude may read it" said
                 if access.recheck(cx, tid, dflt, provider=access.ANTHROPIC) != "cloud":
                     continue
+                row = cx.execute("SELECT status, prompt_version FROM tasks WHERE task_id=? AND status IN ('pending', "
+                                 "'retry') AND (claimed_by IS NULL OR claimed_by='' OR claimed_at < ?)",
+                                 (tid, _cutoff())).fetchone()
+                if row is None:
+                    held += 1   # a helper of the queue answers it now
+                    continue
+                # 0.14.3: with the version of the instructions written beside it (SYSTEM.md)
+                # (a lapsed claim's mark goes: its helper is told the task was taken from it, not that it was answered)
+                cx.execute("UPDATE tasks SET status='exported', prompt_version=COALESCE(NULLIF(?, ''), "
+                           "prompt_version), claimed_by=NULL, claimed_at=NULL WHERE task_id=?", (prompts.VERSIONS.get(kind), tid))
+                before[tid] = (row[0], row[1])
                 access.record_sent(cx, tid, json.loads(payloads[tid]), "file queue", kind, provider=access.ANTHROPIC,
                                    person=me)
                 todo.append(tid)
+    if report is not None:
+        report["held"] = held
+    try:
+        return _write_batches(ws, kind, todo, batch_size)
+    except BaseException:
+        with ws.connect() as cx:   # no file holds them: they wait again as they did
+            cx.executemany("UPDATE tasks SET status=?, prompt_version=? WHERE task_id=? AND status='exported'",
+                           [(st, pv, tid) for tid, (st, pv) in before.items()])
+        raise
+
+
+def _write_batches(ws: Workspace, kind: str, todo: list[str], batch_size: int) -> list[Path]:
     out_dir = ws.root / "tasks" / kind
     out_dir.mkdir(parents=True, exist_ok=True)
     (ws.root / "results" / kind).mkdir(parents=True, exist_ok=True)
@@ -1883,10 +1937,6 @@ def export(ws: Workspace, kind: str, batch_size: int = 25, limit: int | None = N
                 _sys, user = render(ws, rows[tid])
                 f.write(json.dumps({"task_id": tid, "user": user}, ensure_ascii=False) + "\n")
         files.append(path)
-    with ws.connect() as cx:
-        # 0.14.3: with the version of the instructions written beside it (SYSTEM.md)
-        cx.executemany("UPDATE tasks SET status='exported', prompt_version=COALESCE(NULLIF(?, ''), prompt_version) "
-                       "WHERE task_id=?", [(prompts.VERSIONS.get(kind), tid) for tid in todo])
     return files
 
 

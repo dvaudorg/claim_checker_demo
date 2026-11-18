@@ -487,10 +487,16 @@ def _text_with_quote(path: Path, quote: str, name: str) -> bytes | None:
 
     # 0.14.3: read as the document was read when it was added (a Windows-1250 file kept its accented letters there,
     # so its quotes are found here too)
-    raw = decode_text(path.read_bytes(), html=path.suffix.lower() in (".html", ".htm"))
+    data = path.read_bytes()
+    html_file = path.suffix.lower() in (".html", ".htm")
     # 0.14.3: a quote accepted earlier is placed, not checked again (the whole-word rule is for new answers; a long
-    # quote cut at 2,000 characters may end inside a word)
-    hit = find_quote(raw, quote[:2000], whole_words=False)
+    # quote cut at 2,000 characters may end inside a word). Hunt phase 1: reader 7 reads a file saved as ISO-8859-2
+    # otherwise than readers 1 to 6, so a quote of a document they read is looked for in their reading too
+    for reader in (None, 6):
+        raw = decode_text(data, html=html_file, reader=reader)
+        hit = find_quote(raw, quote[:2000], whole_words=False)
+        if hit:
+            break
     if not hit:
         return None
     a, b = hit[0], hit[1]

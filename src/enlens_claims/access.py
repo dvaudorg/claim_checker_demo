@@ -327,12 +327,11 @@ def default(ws: Workspace) -> str:
 
 
 def _write_config(ws: Workspace, changes: dict) -> None:
-    try:
-        cfg = json.loads(ws.config_path.read_text(encoding="utf-8")) if ws.config_path.exists() else {}
-    except (OSError, json.JSONDecodeError):
-        cfg = {}
-    cfg.update(changes)
-    ws.config_path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    # hunt phase 1 (FILES-3): written whole, and a file that does not parse is refused in words, never written over
+    # as if it held nothing (`store.change_config`)
+    from .store import change_config
+
+    change_config(ws.config_path, changes)
     ws._config_cache = None
     held = _WS_FOR_PATH.get(str(ws.root))
     if held is not None:
@@ -556,6 +555,59 @@ def _core_hooks() -> None:
 
     register_floor(docrole.origin_floor)
     register_hidden(docrole.kept_here)
+    register_floor(words_floor)
+
+
+# hunt phase 1 (QUEUE-1, -2): the payload key of a task that sends words of the documents with no passage or document id
+# beside them: {"terms": the term ids whose wordings the prompt names, "docs": the documents whose titles it names}
+WORDS_KEY = "words_of"
+
+
+def words_floor(cx, payload: Any, dflt: str | None = None) -> str | None:
+    """Words of the documents a task sends with no passage or document id beside them (a concept's wordings in *Other
+    wordings* and *Name the groups*, the titles of the researcher's own documents in a framework from theory) go no
+    further than the documents they come from, as their passages would (`WORDS_KEY` in the payload). A wording is the
+    words of every document it occurs in, so it may go as far as the least restricted of them; a title only as far as
+    its own document. Worked out again whenever the task's setting is (`relabel`, `recheck`): a document made stricter
+    while the task waits makes the task stricter too; without this, a payload with no id was `cloud` for good. The
+    setting the person chose counts, not a reached cap (a cap counts the share of a document's passages sent, and a
+    wording or a title sends none). A wording found in no document any more counts as No AI. None for any other task."""
+    if not isinstance(payload, dict):
+        return None
+    w = payload.get(WORDS_KEY)
+    if not isinstance(w, dict):
+        w = _words_before(cx, payload)
+        if w is None:
+            return None
+    tids = list(dict.fromkeys(t for t in w.get("terms") or [] if isinstance(t, str)))
+    dids = list(dict.fromkeys(d for d in w.get("docs") or [] if isinstance(d, str)))
+    out = list(levels(cx, dids, budget=False, dflt=dflt).values()) if dids else []
+    where: dict[str, set[str]] = {}
+    for t in tids:
+        where[t] = {r[0] for r in cx.execute("SELECT DISTINCT p.doc_id FROM term_mentions m JOIN passages p ON "
+                                             "p.passage_id=m.passage_id WHERE m.term_id=?", (t,))}
+    seen = {d for ds in where.values() for d in ds}
+    lv = levels(cx, seen, budget=False, dflt=dflt) if seen else {}
+    for ds in where.values():
+        out.append(min((lv.get(d, "none") for d in ds), key=RANK.__getitem__, default="none"))
+    return most(out) if out else None
+
+
+def _words_before(cx, payload: dict) -> dict | None:
+    """The words a task made before `WORDS_KEY` sends, from its payload (a task waiting in the queue across the
+    update): a group's name (its "concepts" are the first of its "concept_ids", in order) and a concept's other
+    wordings (the wordings of the concept whose label the claim names). None for any other payload."""
+    ids, shown = payload.get("concept_ids"), payload.get("concepts")
+    if isinstance(ids, list) and isinstance(shown, list) and "map_groups" in payload:
+        return {"terms": [t for t in ids[:len(shown)] if isinstance(t, str)]}
+    term, claim = payload.get("concept"), payload.get("claim")
+    if isinstance(term, str) and isinstance(claim, str) and claim.startswith("the concept: "):
+        members = [r[0] for r in cx.execute("SELECT term_id FROM concept_terms WHERE concept_id=(SELECT concept_id "
+                                            "FROM concept_terms WHERE term_id=?)", (term,))] or [term]
+        q = ",".join("?" * len(members))
+        return {"terms": [t for t, label in cx.execute(f"SELECT term_id, label FROM terms WHERE term_id IN ({q})",
+                                                       members) if label and label in claim] or [term]}
+    return None
 
 
 _core_hooks()
@@ -1606,8 +1658,13 @@ def upgrade(ws: Workspace) -> dict:
     recorded provenance) enter the ledger with the time of the answer."""
     if not default_chosen(ws):
         _write_config(ws, {"ai_access_default": "local" if _local_only() else "cloud", "ai_access_banner": True})
+    from .store import AI_ACCESS_UPGRADE_DUE
+
     out = {"relabelled": 0, "backfilled": 0}
     with ws.connect() as cx:
+        # hunt phase 1 (FILES-2): the note `Workspace._setup` left that this is still to do goes with the work below,
+        # in this one transaction, so an opening stopped before it is saved does it again the next time
+        cx.execute("DELETE FROM meta WHERE key=?", (AI_ACCESS_UPGRADE_DUE,))
         if cx.execute("SELECT value FROM meta WHERE key='ai_access_upgraded'").fetchone():
             return out
         out["relabelled"] = relabel(cx)

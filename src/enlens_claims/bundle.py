@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from . import __version__
-from .store import Workspace, scratch
+from .store import Workspace, scratch, write_config
 
 STORED = {".pdf", ".zip", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".docx", ".xlsx", ".pptx", ".gz"}  # compressed
 MAX_IMPORT = 8 * 1024 ** 3
@@ -408,20 +408,25 @@ def import_project(zip_path: str | Path, dest: str | Path, merge_only: bool = Fa
         except BaseException:
             shutil.rmtree(staging, ignore_errors=True)
             raise
+    from . import home
+
+    # hunt phase 1 (FILES-5): a project of the data folder takes its name off the quick looks (one whose folder went)
+    if not merge_only and dest.parent.name == "projects" and \
+            dest.parent.resolve() == (home.home() / "projects").resolve():
+        home.claim_name(dest.name)
     ws = Workspace.open(dest)  # opened in staging already: the tables and columns of this version are there
     try:
         sent = json.loads(ws.config_path.read_text(encoding="utf-8")) if ws.config_path.exists() else {}
     except (OSError, ValueError):
         sent = {}
-    ws.config_path.write_text(json.dumps(_clean_config(sent), indent=2), encoding="utf-8")
-    ws._config_cache = None
+    cfg = _clean_config(sent)
     if before_011:
         # 0.11: a project made before per-document AI settings: the app asks once who may read its documents
-        cfg = json.loads(ws.config_path.read_text(encoding="utf-8")) if ws.config_path.exists() else {}
         cfg.pop("ai_access_default", None)
         cfg.pop("ai_access_banner", None)
         cfg["ai_access_ask"] = True
-        ws.config_path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    write_config(ws.config_path, cfg)  # hunt phase 1 (FILES-3): whole, once
+    ws._config_cache = None
     root = dest.resolve()
     files = meta.get("files") if isinstance(meta.get("files"), dict) else {}
     with ws.connect() as cx:
@@ -818,7 +823,7 @@ def clean_linked(path: str | Path, other: bool) -> dict:
         f = root / "config.json"
         if f.exists():
             shutil.copyfile(f, root / "config.json.before-linking")
-        f.write_text(json.dumps(new, indent=2), encoding="utf-8")
+        write_config(f, new)  # hunt phase 1 (FILES-3): whole
     if other:
         maker = report["other"]
         if (root / "cache").is_dir():

@@ -72,8 +72,8 @@ parts](how-a-check-works.md#a-hypothesis-checked-in-parts). *Who says what*, the
 ## Checking many at once
 
 The same box checks a list of hypotheses one after the other. Write them one per line, or load a spreadsheet or CSV
-with a column `hypothesis` (or `claim`, `text`, `statement`) and optional `framework` and `code` columns. The button
-counts what it will check (*Check 3*). *Look before checking* is for one hypothesis at a time. A hypothesis that
+with a column `hypothesis` (or `claim`, `text`, `statement`; it may be the only column) and optional `framework` and
+`code` columns. The button counts what it will check (*Check 3*). *Look before checking* is for one hypothesis at a time. A hypothesis that
 cannot be checked is listed and the next one is checked; a problem with the AI stops the set and keeps what was
 done. Each answer then appears in the list under the box.
 
