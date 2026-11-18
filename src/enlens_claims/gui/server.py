@@ -1448,7 +1448,10 @@ class App(LibraryMixin, QueueMixin):
                                                           progress=lambda st, m, info=None, _i=i: tracker.step(
                                                               st, m, {**(info or {}), "index": _i}),
                                                           should_stop=job.cancel.is_set))
-            return {"hypotheses": done, "passages": sum(d["passages"] for d in done)}
+            return {"hypotheses": done, "passages": sum(d["passages"] for d in done),
+                    # 0.19.18: how many answers the new documents changed, and how many only got other counts
+                    "answers_changed": sum(d["changed"] == "answer" for d in done),
+                    "evidence_changed": sum(d["changed"] == "evidence" for d in done)}
 
         title = "Reading the new documents" + (f" for {len(hyp_ids)} hypotheses" if len(hyp_ids) > 1 else "")
         return self._job("read-new", title, name, run)

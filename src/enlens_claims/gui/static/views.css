@@ -1221,6 +1221,7 @@ html:has(.cb-savebar:not([hidden])) { scroll-padding-bottom: 6rem; }
 .hist-action { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; }
 .hist-action .muted { flex: 1 1 260px; }
 .tag-new-docs { color: var(--accent-text); font-weight: var(--fw-strong); }
+.hyp-meta .it-attention { color: var(--attention); }
 /* Shared projects. A colleague's version beside yours (sync clash), the other people's judgements of an excerpt,
    and the Work together card on the Projects page */
 .clash-notice { margin: 0 0 12px; }
