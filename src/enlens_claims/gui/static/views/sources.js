@@ -21,7 +21,7 @@ function cloudSub() {
   return othersSetUp() ? `Cloud AI may read them when it is the AI you use and their provider is ticked; ${local}` : `Claude may read them when Claude is the AI you use; ${local}`;
 }
 import { documentMarks, roleMenuItems, bulkRoleItems, roleLine, nonsciMenuItem, NONSCI_MEANS, suggestLine } from "./doc-role.js";   // 0.18.1 K2: theory documents; 0.18.6: non-scientific ones; 0.19.0 N3: working documents
-import { reader, newReaderFor, readingNote, READER_4_NEWS, READER_5_NEWS, READER_6_NEWS, renameDocument } from "./doc-shared.js";
+import { reader, newReaderFor, readingNote, READER_4_NEWS, READER_5_NEWS, READER_6_NEWS, READER_7_NEWS, renameDocument } from "./doc-shared.js";
 
 const ACCEPT = ".pdf,.docx,.html,.htm,.txt,.md,.zip";
 const OK_EXT = ["pdf", "docx", "html", "htm", "txt", "md", "zip"];
@@ -798,7 +798,8 @@ export async function renderSources(view) {
         h("p", {}, h("strong", {}, `${fmt.num(n)} ${n === 1 ? "document was" : "documents were"} read by an earlier reader of ENLENS.`),
           ` ${n === 1 ? "It keeps" : "They keep"} that reading, so your quotes and judgements stay where they are. `,
           older.some((d) => (d.reader || 1) < 3) ? "The new reader reads two columns in the right order, sets running heads, page numbers and the like aside, keeps tables as tables and repairs words broken over lines."
-            : older.some((d) => d.reader === 3) ? READER_4_NEWS : older.some((d) => d.reader === 4) ? READER_5_NEWS : READER_6_NEWS),
+            : older.some((d) => d.reader === 3) ? READER_4_NEWS : older.some((d) => d.reader === 4) ? READER_5_NEWS
+              : older.some((d) => d.reader === 5 && d.kind === "pdf") ? READER_6_NEWS : READER_7_NEWS),
         h("div", { class: "btn-row docs-nr-actions" },
           button({ kind: "main", sm: true, onClick: () => startNr(sel.length ? sel : older, !!sel.length) }, icon("layers", { size: 13 }),
             sel.length ? `Read the ${sel.length === 1 ? "selected one" : `${fmt.num(sel.length)} selected`} with the new reader` : n === 1 ? "Read it with the new reader" : `Read all ${fmt.num(n)} with the new reader`),

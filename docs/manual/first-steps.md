@@ -61,9 +61,9 @@ Choose files or a folder. ENLENS reads:
 | Kind | Notes |
 | --- | --- |
 | PDF | Text, columns and tables are read from the layout ([How documents are read](how-documents-are-read.md)). Scanned pages need [Tesseract](install.md#scanned-pdfs-optional). |
-| Word (.docx) | Keeps its paragraphs, headings and the pages Word marked. Older .doc files are not read: save them as .docx or PDF. |
-| Web pages (HTML), text (.txt), Markdown (.md) | Files that are not UTF-8 (a Hungarian text saved by Notepad, an old Latin-1 page) are read as they were written. |
-| Zip | Opened, and the files inside are added. |
+| Word (.docx) | Keeps its paragraphs, headings and the pages Word marked. Older .doc files are not read: save them as .docx or PDF. Such files, and slides or rich text (.pptx, .rtf, .odt), are named under the files that could not be read. |
+| Web pages (HTML), text (.txt), Markdown (.md) | Files that are not UTF-8 (a Hungarian text saved by Notepad, an old Latin-1 page, a Polish text saved as ISO-8859-2) are read as they were written. |
+| Zip | Opened, and the files inside are added. A zip that cannot be opened (cut off in a download) is named under the files that could not be read. |
 
 Then ENLENS asks **who may read these documents with AI**: Claude, only a local AI, or no AI
 ([Privacy](privacy.md#who-may-read-each-document-with-ai)).

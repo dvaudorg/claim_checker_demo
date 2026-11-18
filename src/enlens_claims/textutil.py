@@ -16,6 +16,14 @@ _CHAR_MAP = {
     "\u200b": "", "\u00ad": "", "\ufeff": "",  # zero-width space, soft hyphen, byte-order mark
     "ﬀ": "ff", "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi", "ﬄ": "ffl",
 }
+# Hunt phase 1 (READERS-7): the invisible marks that set the direction of right-to-left text (left-to-right and
+# right-to-left marks, embeddings, overrides and isolates). Word, web pages and PDFs of Arabic, Hebrew or mixed text
+# keep them in the stored text, NFKC keeps them, and nobody types or copies them: a quote of the visible words was not
+# found. They are dropped like the zero-width space. Not in 0.4's map (`_CHAR_MAP_V1`); joiners (U+200C, U+200D) stay,
+# as they change how a word is written.
+_DIRECTIONAL = ("‎", "‏", "‪", "‫", "‬", "‭", "‮",
+                "⁦", "⁧", "⁨", "⁩")
+_CHAR_MAP.update({c: "" for c in _DIRECTIONAL})
 _TRANSLATE = str.maketrans(_CHAR_MAP)
 
 STOPWORDS_V1 = frozenset(
@@ -490,8 +498,8 @@ def stem_v1(tok: str) -> str:
     return tok
 
 
-# 0.4's character map (without the soft hyphen and byte-order mark added in 0.5)
-_CHAR_MAP_V1 = {k: v for k, v in _CHAR_MAP.items() if k not in ("\u00ad", "\ufeff")}
+# 0.4's character map (without the soft hyphen and byte-order mark added in 0.5, nor the directional marks of 0.20)
+_CHAR_MAP_V1 = {k: v for k, v in _CHAR_MAP.items() if k not in ("\u00ad", "\ufeff", *_DIRECTIONAL)}
 
 
 class _V1Table(dict):

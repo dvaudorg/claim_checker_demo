@@ -292,12 +292,22 @@ def new_reader_changes(reader: int, langs: dict | None, kind: str | None = None,
     """Whether the newest reader would read a document otherwise than the reader that read it, so it is offered:
     every document a reader before 5 read (a plain text file of reader 4 aside: reader 5 reads it as reader 4 did),
     a PDF reader 5 read (reader6.py reads PDFs only), and any other document reader 5 read (or that text file) only
-    when one of its passages holds both of its languages (reader 6 changes nothing else)."""
+    when one of its passages holds both of its languages (reader 6 changes nothing else).
+
+    Reader 7 (`reader7.py`) reads text files, Word files and web pages otherwise and PDFs as reader 6 did: every
+    document of a reader before 6 is offered it, and of reader 6 every one but a PDF. Which of those reads otherwise
+    cannot be told without reading the file again (a Word file's text box, a file saved as ISO-8859-2, a line that
+    comes back in an interview): the preview of the move says what changes, and one that reads the same is moved
+    without a change to its text."""
     from .ingest import READER
 
     latest = READER if latest is None else latest
     if reader >= latest:
         return False
+    if latest >= 7 and reader == 6:
+        return kind != "pdf"
+    if latest >= 7:
+        return True
     if latest == 6 and (reader == 5 or (reader == 4 and kind == "text")):
         return (reader == 5 and kind == "pdf") or bool(langs and langs.get("mixed_passages"))
     return True

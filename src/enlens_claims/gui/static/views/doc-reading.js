@@ -2,7 +2,7 @@
 // builds the panels and hands each the page's `ctx`), and the page of the original PDF beside the text.
 import { App, api, h, icon, replace, clear, toast, showError, fmt, watchJob, session, plural, cap, TOKEN, button,
   link, notice } from "../lib.js";
-import { keep, newReaderFor, READER_4_NEWS, READER_5_NEWS, READER_6_NEWS, kindCount } from "./doc-shared.js";
+import { keep, newReaderFor, READER_4_NEWS, READER_5_NEWS, READER_6_NEWS, READER_7_NEWS, kindCount } from "./doc-shared.js";
 
 // 0.15 (A0): how many results a move to the new reader places (reread.move's counts, per kind of result)
 const movedCount = (r) => Object.values((r && r.counts) || {}).reduce((a, c) => a + (c.moved || 0), 0);
@@ -62,7 +62,9 @@ export function readingPanel(ctx) {
         : d.reader === 2 ? `Read by the reader of ENLENS 0.15.0. The reader of ENLENS ${App.state.version || ""} also sets running heads, page numbers, contents pages and indexes aside in text files and books, finds their headings and paragraphs, and puts apart words that ran together.`
         : d.reader === 3 ? `Read by the reader of ENLENS 0.15.1 to 0.17.1. ${READER_4_NEWS}`
         : d.reader === 4 ? `Read by the reader of ENLENS 0.17.2 to 0.18.0. ${READER_5_NEWS}`
-        : `Read by the reader of ENLENS 0.18.1 to 0.19.0rc1. ${READER_6_NEWS}`),
+        : d.reader === 5 && d.kind === "pdf" ? `Read by the reader of ENLENS 0.18.1 to 0.19.0rc1. ${READER_6_NEWS}`
+        : d.reader === 5 ? `Read by the reader of ENLENS 0.18.1 to 0.19.0rc1. ${READER_7_NEWS}`
+        : `Read by the reader of ENLENS 0.19.0rc2 to 0.20.3. ${READER_7_NEWS}`),
       h("p", { class: "small" }, "Documents already in a project keep their reading, so every quote and judgement in them stays where it is, until you move one over."))) : null,
     // a reading to check needs you: an attention notice; a good one is a quiet line with the tick (DESIGN 3.3, 4.12)
     !before15 && qual ? (rep.quality === "good" ? h("p", { class: "dv-quality small" }, icon("check", { size: 14 }), ` ${qual}`)
