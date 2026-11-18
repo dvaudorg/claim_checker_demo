@@ -26,7 +26,7 @@ from .retrieve import BM25
 from .review import csv_uncell
 from .textutil import tokens
 
-NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
+NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}\Z")  # (`$` also matches before a final newline)
 
 
 @dataclass(frozen=True)
