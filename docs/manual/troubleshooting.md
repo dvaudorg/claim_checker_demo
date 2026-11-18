@@ -46,7 +46,7 @@ Two files in the data folder (`~/enlens` unless you chose another) often say why
 | Claude Code answers with the wrong Claude account | The sidebar card (hover *Claude, on your plan*) and *Settings → AI* name the account it uses. To switch, type `claude auth logout` in Terminal or PowerShell, then press *Check again* and *Set up Claude* in *Settings → AI*: the sign-in window opens, and you sign in with the other account. |
 | Nothing happens after pressing an AI button | Work waits for the agent: press *Start Claude Code* ([Claude Code](claude-code.md#start-claude-code)), or *Start Codex* or *Start Antigravity* when you chose one of those. |
 | "No Claude API key" | Export `ANTHROPIC_API_KEY` or enter it in Settings, or use a local model or the file queue. |
-| "Cloud models are switched off" / "Allow cloud models first" | The Claude API sends the passages read to Anthropic, so the app asks you to allow it first (*Settings → AI*). |
+| "Cloud models are switched off" / "Allow cloud models first" | A key billed per use (the Claude API or another provider) sends the passages read off the computer, so the app asks you first: pick *API key* in *Settings → AI* and say yes. |
 | "The Claude API rejected the key" | Copy the key again from platform.claude.com (Settings › API keys), and check it has credit. |
 
 ## Codex and Antigravity

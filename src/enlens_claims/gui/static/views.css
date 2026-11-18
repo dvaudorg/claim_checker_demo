@@ -184,21 +184,28 @@ html:has(.bulk-stick:not([hidden])) { scroll-padding-bottom: 6rem; }
 .access-options { margin-top: 6px; }
 .access-banner, .access-ask { margin-bottom: 12px; }
 .access-ask h2 { display: flex; align-items: center; gap: 6px; margin: 0 0 4px; }
-/* Providers stage 2 (the owner's layout): two rows, Subscription and Local model half wide, then the three others a
-   third each; one column on a phone. A computer that keeps everything local shows only two cards, side by side. */
-.route-cards { grid-template-columns: repeat(6, minmax(0, 1fr)); margin: 8px 0 12px; }
-.route-cards > * { grid-column: span 2; }
-.route-cards > [data-value="subscription"], .route-cards > [data-value="local"] { grid-column: span 3; }
-.route-cards.route-cards-few > * { grid-column: span 3; }
-@media (max-width: 700px) {
-  .route-cards { grid-template-columns: minmax(0, 1fr); }
-  .route-cards > *, .route-cards > [data-value="subscription"], .route-cards > [data-value="local"], .route-cards.route-cards-few > * { grid-column: auto; }
-}
 /* whose plan: an inset right under the route picker, so it belongs to the Subscription card and is not a second picker */
 .agent-choice-box { margin: -4px 0 var(--space-3); }   /* an inset (lib inset()): it belongs to the Subscription card above */
 .agent-choice-box > .field-label { margin-bottom: 4px; }
 .agent-choice { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin: 4px 0 0; }
 .agent-choice .option-card-head .chip { white-space: nowrap; }
+/* Settings › AI (rework) */
+/* which AI: 2 × 2 (the owner's sketch), the cloud above and this computer below, each row with its small caption;
+   one column on a phone. A computer that keeps everything local shows only the second row. */
+.route-cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-3); margin: 8px 0 12px; }
+.route-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.route-row-cap { grid-column: 1 / -1; font-size: var(--fs-small); color: var(--muted); margin-bottom: -2px; }
+@media (max-width: 700px) { .route-row { grid-template-columns: minmax(0, 1fr); } }
+.set-route-detail { gap: var(--space-3); }
+.set-provider-choice > .field-label { margin-bottom: 4px; }
+.option-card-head .chip + .chip { margin-left: 4px; }
+.set-tech-link { margin: var(--space-2) 0 0; }
+.set-test .btn-row { margin: 0; }
+.set-test .test-result:not(:empty) { margin-top: var(--space-2); }
+.set-narrow { max-width: 32rem; width: 100%; }
+.set-num { max-width: 9rem; }
+.terms-bare p { margin: 4px 0; }
+.setting-head, .switch-field > .setting-head { display: flex; align-items: center; gap: 6px; }   /* setting() is the shell's: this keeps the help mark beside the label until its own rule lands */
 /* This page's own pieces, placed here and not in the JavaScript; placement only */
 .docs-file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .docs-access-note { margin: var(--space-2) 0 0; }
