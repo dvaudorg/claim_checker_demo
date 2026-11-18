@@ -246,10 +246,11 @@ export function codesPanel(ctx) {
   }
 
   // a label of one's own: for a passage (from a labelled passage) or for selected text
-  let codeList = null;
+  const codeLists = new Map();   // codebook -> Promise of its codes: the form offers those of the codebook now chosen
   async function codesOf() {
-    if (!codeList) codeList = api("GET", `${base}/frameworks/${P(ctx.framework)}`).then((r) => ((r.framework && r.framework.items) || [])).catch(() => []);
-    return codeList;
+    const fw = ctx.framework;
+    if (!codeLists.has(fw)) codeLists.set(fw, api("GET", `${base}/frameworks/${P(fw)}`).then((r) => ((r.framework && r.framework.items) || [])).catch(() => []));
+    return codeLists.get(fw);
   }
   async function addForm({ passage_id, quote, where }) {
     const label = (prof && prof.code_label) || "code";

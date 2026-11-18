@@ -69,6 +69,32 @@ await scenario("JS-3 look then edit", async (t) => {
   return { run, text: t.text(), prep: t.view.querySelectorAll(".prep-card").filter((x) => !t.hidden(x)).length };
 });
 
+// ---- JS-4: the codes panel's list of codes follows the codebook ----------------------------------------------------
+await scenario("JS-4 codes list follows codebook", async (t) => {
+  const item = { passage_id: "p1", source: "model", label_id: "l1", relevance: "main", confidence: 0.8, quote: "a quote", reason: "why", location: "page 1", provisional: false };
+  const prof = (fw) => ({ framework_title: fw, code_label: "code", pass1: { done: true }, passages: 5, n_pages: 2, read_by_model: 1,
+    codes: [{ code: "X1", description: "Same code", share: 0.5, passages: 1, main: 1, pages: [1], positions: [10], items: [item] }] });
+  t.answer("GET /api/projects/Study/documents/d1/profile?*", (b, path) => prof(decodeURIComponent(path.split("framework=")[1])));
+  t.answer("GET /api/projects/Study/frameworks", { frameworks: [{ name: "alpha", title: "Alpha" }, { name: "beta", title: "Beta" }] });
+  t.answer("GET /api/projects/Study/frameworks/alpha", { framework: { items: [{ code: "A1", description: "Alpha one" }] } });
+  t.answer("GET /api/projects/Study/frameworks/beta", { framework: { items: [{ code: "B1", description: "Beta one" }] } });
+  t.answer("GET /api/projects/Study/profile/plan?*", { passages: 5, with_candidates: 5, already_read: 5, to_read: 0, run: {} });
+  const m = await t.module("views/doc-codes.js");
+  const ctx = { query: { code: "X1" }, docBase: "/api/projects/Study/documents/d1", base: "/api/projects/Study", keepUrl() {}, project: "Study",
+    watchers: [], docId: "d1", jumpTo() {}, paint() {}, framework: "alpha", tab: "codes" };
+  const panel = m.codesPanel(ctx);
+  document.getElementById("view").appendChild(panel.el);
+  await t.settle(50);
+  await t.click("Another code here");
+  await t.click("Cancel");
+  await t.type(document.getElementById("dv-fw"), "beta");
+  await t.settle(50);
+  await t.click(document.querySelector(".dv-code-head"));
+  await t.click("Another code here");
+  const opts = [...document.querySelectorAll("#dv-code-list option")].map((o) => o.value);
+  const place = document.getElementById("dv-add-code").getAttribute("placeholder");
+  return { opts, place, gets: t.calls.filter((c) => c.path.includes("/frameworks/")).map((c) => c.path.split("/").pop()) };
+});
 """
 
 
@@ -96,3 +122,9 @@ def test_js3_a_look_taken_before_an_edit_is_not_shown_as_what_will_be_checked(pa
     assert not any("parts" in x for x in r["run"]), r["run"]
     assert r["prep"] == 0 and "among neighbours" not in r["text"]
 
+
+@needs_node
+def test_js4_the_codes_to_pick_from_are_the_chosen_codebooks(page):
+    r = page["JS-4 codes list follows codebook"]
+    assert "beta" in r["gets"]
+    assert r["opts"] == ["B1"] and r["place"] == "e.g. B1"
