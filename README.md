@@ -58,11 +58,13 @@ Windows from 0.15.4 on). Your projects and settings (the `enlens` folder in your
   impact claims tagged with UN SDG targets and compared with an expert Value Chain Assessment.
 
 <!-- new-in:start (written by `python tools/release.py prepare`: change the changelog entry, not this) -->
-## New in 0.19.19: Other cloud providers, with your consent per provider
+## New in 0.20.0: Codex and Antigravity, set up like Claude Code
 
-- **Another cloud provider, with an API key.** *Settings → AI* has a new main choice, *Another cloud provider (API key)*: OpenAI, Google Gemini, Mistral, Azure OpenAI or OpenRouter, each through its OpenAI-compatible chat API over HTTPS.
-- **Consent per document and per provider.** A document marked *Claude may read it* now lists which cloud providers may read it, **by default only Anthropic**, so every existing project means what it did.
-- **A model server on another computer no longer reads *Claude may read it* documents until you allow it.** It counts as a cloud provider now (a known one by its address, otherwise *a server on another computer*).
+- **Codex and Antigravity answer the queue on your own plan, as Claude Code does.** *Settings → AI → Subscription* now offers three agents: Claude Code (your Claude plan, still the recommendation).
+- **Every set-up of something outside ENLENS works the same way.** The API keys (OpenAI, Google Gemini, Mistral, Azure OpenAI, OpenRouter and the Claude API) and the three agents are set up step by step in a dialog, like the storage space: one thing at a time.
+- **Work a provider may not read says so, and goes on once you allow it.** With Codex (or another provider) as the AI and documents that allow Anthropic only, a check no longer waits silently: it says "Codex reads only documents that allow OpenAI: 0 of 3 do".
+- **Recommended models, applied by themselves.** Every provider now gets ENLENS's three tiers (small tasks such as labels and links; judging excerpts; second opinions and hard cases) from its own current line-up: for example GPT-6 Luna.
+- **Another cloud provider no longer uses one model for everything.** Labels and links go to the provider's smaller model, second opinions and hard cases to its strongest, as on Claude. Can change results.
 <!-- new-in:end -->
 
 How it works, in the manual: [Explore your documents](docs/manual/explore.md) (working documents, the concept map),
