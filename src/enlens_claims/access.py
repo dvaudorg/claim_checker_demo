@@ -847,6 +847,10 @@ def settle_own_providers(ws: Workspace) -> int:
         cx = ws._conn()
         if cx.execute("SELECT 1 FROM meta WHERE key=?", (OWN_PROVIDERS_DONE,)).fetchone():
             return 0
+        if not cx.execute("SELECT 1 FROM documents LIMIT 1").fetchone():
+            # no document yet: nothing came from a colleague before this version (since, their lists never travel).
+            # No mark either, so the empty database every new project is copied from holds no row of its own
+            return 0
         lists = cx.execute("SELECT doc_id, ai_providers FROM documents WHERE ai_providers IS NOT NULL").fetchall()
         cleared: list[str] = []
         if lists and is_shared(cx, ws):
