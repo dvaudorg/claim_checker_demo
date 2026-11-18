@@ -17,7 +17,7 @@ inside its tasks go to its company.
 
 | Agent | Whose | Your plan | Where the passages go |
 | --- | --- | --- | --- |
-| [Claude Code](claude-code.md) | Anthropic | A Claude plan (Pro, Max, Team) | Anthropic |
+| [Claude Code](claude-code.md) | Anthropic | A Claude plan (Pro, Max, Ultra, Team or Enterprise) | Anthropic |
 | **Codex** | OpenAI | A ChatGPT plan (Plus, Pro, Business, Edu or Enterprise) | OpenAI |
 | **Antigravity** | Google | A personal Google account, free or paid | Google |
 
@@ -29,7 +29,7 @@ provider](settings.md#another-cloud-provider-with-an-api-key).
 > [!NOTE]
 > Codex and Antigravity are built against stand-in programs that follow their documentation. They are **not yet tried
 > with real accounts**, and **not yet measured with ENLENS**: its models and settings were measured with Claude only.
-> Settings says so beside each.
+> Settings says so beside each, and so does the question ENLENS asks before you use one.
 
 ## Set it up once
 
@@ -43,11 +43,15 @@ guided steps opens at the first step not done yet:
    moves on by itself once the program is found.
 2. **Sign in.** The button opens the sign-in. Codex opens your browser by itself, with no terminal
    ([its sign-in page](https://learn.chatgpt.com/docs/auth)). Antigravity opens one terminal window, as Claude Code
-   does: sign in there and in the browser page it opens. The step moves on by itself when it sees you are signed in;
-   *I have signed in* checks now. ENLENS never sees your login: the agent keeps it.
+   does: sign in there and in the browser page it opens. Before you close that window, switch off **Enable
+   Telemetry** in Antigravity's settings (under *AI credits and feedback*): while it is on, Google may use what
+   Antigravity reads to improve its products. The step moves on by itself when it sees you are signed in; *I have
+   signed in* checks now. While it waits, *Open the sign-in* stays pressed; after 30 seconds *Open it again* offers a
+   new one, for a window closed too soon. ENLENS never sees your login: the agent keeps it.
 3. **Add ENLENS.** The button adds the ENLENS connector (with its three queue tools), the skill and the helpers.
-   For Antigravity it also adds one permission line, `mcp(enlens/*)`, and ENLENS's own empty work folder as a trusted
-   place. Nothing else in the agent is changed.
+   For Antigravity it also adds one permission line, `mcp(enlens/*)`, and ENLENS's own empty work folder, marked as
+   trusted, where it starts Antigravity. Nothing else in the agent is changed. When the project has documents the
+   agent's company may not read yet, the last step says how many and offers to allow it for the project.
 
 The last step says *Start Codex wherever work waits*. A new ENLENS, or a moved one, writes these again by itself. The
 card in *Settings → AI* shows the same three ticks (found, signed in, ENLENS added) and the models in use, which you
@@ -58,8 +62,9 @@ may change per tier.
 Press an AI button, and the page says what waits, with **Start Codex** or **Start Antigravity**. It works exactly as
 [Start Claude Code](claude-code.md#start-claude-code) does: ENLENS starts the agent's helpers in the background, each on
 its own model, checks every quote, and stops them with *Stop* or when you quit. *How much thought* and *Helpers at once*
-work the same, and so do the choices at a plan's limit
-([Which model does what](models.md#how-much-thought)). Nothing runs until you press it.
+work the same, and so do the choices at a plan's limit (*At your plan's usage limit*, beside the agent in *Settings →
+AI*; with a local model also *The mix of local and …*) ([Which model does what](models.md#how-much-thought)). On a
+free Google account every task uses Gemini 3.8 Flash, so a second opinion comes from the same model; Settings says so. Nothing runs until you press it.
 
 You can also type the run yourself in the agent, opened anywhere:
 

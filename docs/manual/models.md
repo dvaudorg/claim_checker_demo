@@ -46,7 +46,7 @@ comes first. Checked on the makers' pages on 18 November 2026.
 | --- | --- | --- | --- |
 | OpenAI (API key), Azure OpenAI (deploy these) | GPT-6 Luna | GPT-6.2 Sol (else GPT-6.1 Sol) | GPT-6.2 Astra (else GPT-6 Astra) |
 | Google Gemini (API key) | Gemini 3.5 Flash-Lite | Gemini 4 Hydrogen (else Gemini 3.8 Flash) | Gemini 4 Carbon (else Argon, else Hydrogen) |
-| Mistral (API key) | Ministral 8B (else Mistral Small) | Mistral Small | Mistral Large |
+| Mistral (API key) | Mistral Small (else Ministral 8B) | Mistral Small | Mistral Large |
 | OpenRouter | Gemini 3.5 Flash-Lite (else GPT-6 Luna) | GPT-6.2 Sol (else Gemini 4 Hydrogen) | GPT-6.2 Astra (else Gemini 4 Carbon) |
 | **Codex** (ChatGPT plan) | GPT-6 Luna | GPT-6.2 Sol (else GPT-6.1 Sol) | GPT-6.2 Astra (else GPT-6 Astra) |
 | **Antigravity** (Google account) | Gemini 3.8 Flash | Gemini 4 Hydrogen (else Gemini 3.8 Flash) | Gemini 4 Carbon (else Argon, Hydrogen, Gemini 3.8 Flash) |

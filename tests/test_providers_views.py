@@ -129,6 +129,7 @@ async function settingsPage(t, settings, providers) {
   t.answer("GET /api/claude-setup", {});
   t.answer("GET /api/local-status", {});
   t.answer("GET /api/projects/Study/queue", { kinds: [], waiting: 0 });
+  t.answer("GET /api/projects/Study", { ai_access: { providers_default: ["anthropic"] } });
   t.answer("GET /api/projects/Study/agreement/plan?*", { kinds: [], problem: null, kept: [], plan: null });
   t.answer("GET /api/settings/provider-models?*", (b, path) => (path.includes("openai")
     ? { models: ["gpt-a", "gpt-b", "gpt-6-luna"], lists: true, recommended: { small: "gpt-6-luna", middle: "gpt-a", strong: "gpt-a" } }
@@ -305,7 +306,7 @@ def test_settings_offers_another_cloud_provider_with_a_key_kept_out_of_the_page(
     assert "OpenAI is set up" in r["done"] and "OpenAI accepted it" in r["done"]
     assert "gpt-6-luna for labels and links, gpt-a for judging excerpts and gpt-a for second opinions" in r["done"]
     assert r["button"] == "Allow cloud models and use OpenAI" and r["quiet"] == "Not now" and "Left to do" not in r["done"]
-    assert "Key stored on this computer" in r["after"] and "Key stored" in r["after"] and "sk-secret" not in r["after"]
+    assert "Key stored in this computer’s keychain" in r["after"] and "Key stored" in r["after"] and "sk-secret" not in r["after"]
     assert "Recommended models, applied automatically" in r["after"] and "In use" not in r["after"]
     assert r["models"][:4] == ["", "gpt-a", "gpt-b", "gpt-6-luna"] and r["models"][-1] == "__other"
     assert "Your choice" in r["state"] and "In use" not in r["state"]
