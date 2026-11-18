@@ -5,7 +5,8 @@
 // pointer is replaced, a running spinner does not restart and the page does not flicker. The pieces (the sides, the
 // split bar, the start row) are in lib.js.
 import { App, api, h, icon, replace, clear, fmt, cancelJob, showError, memoryRefused, watchJob, TERMINAL, P, button, card, fold, link, notice, stopButton,
-  setBusy, plural, inStep, aiSide, aiSides, placeSide, redrawSide, sideFigures, setHalf, sidePct, modelFigures, readsLine, aiWhere, aiLead, isAgent, agentTitle } from "../lib.js";
+  setBusy, plural, inStep, aiSide, aiSides, placeSide, redrawSide, sideFigures, setHalf, sidePct, modelFigures, readsLine, aiWhere, aiLead, isAgent, agentTitle, cloudName } from "../lib.js";
+import { providerAllowLine } from "./ai-access.js";
 
 const STEP_ICON = { pending: "circle", running: "loader", done: "check", waiting: "clock" };
 // 0.19.4: the backends of Settings that are a model on this computer
@@ -156,7 +157,7 @@ export class AiRun {
         : `${t} reads it once you press Start ${t} (or type the command in ${t}). You can move around the app, or close it: the work waits in the queue, and its answer appears where you started it.`;
     }
     if (has("local") && waits(L)) {
-      return C === "run" ? "Claude reads its part meanwhile. The work ends only once your local model has read its part too: press its Start, or stop the work."
+      return C === "run" ? `${cloudName()} reads its part meanwhile. The work ends only once your local model has read its part too: press its Start, or stop the work.`
         : "The work goes on once your local model has read what waits for it: press its Start, or stop the work. You can move around the app meanwhile.";
     }
     if (L === "run") return "A model on this computer can take a few minutes. You can move around the app meanwhile; the work keeps running.";
@@ -312,10 +313,12 @@ export class AiRun {
     // 0.19.14: "queue_end" is the end of the wait (taskqueue.end_report), not words of what waits
     const pq = p.queue && p.queue.phase !== "queue_end" && !(m && m.phase !== "queue" && (m.at || 0) > (p.queue.at || 0)) ? p.queue : null;
     const wq = running ? ((m && m.phase === "queue" && m.queue) || pq || null) : null;
+    // stage 2: the agent may not read the project's documents yet (its company not allowed): the side says so
+    const held = running && m && m.phase === "held" ? m : null;
     const localNow = running && !!(m && m.phase && !["queue", "done", "refused", "ready"].includes(m.phase) && (m.who === "local" || (mainLocal && m.who !== "cloud")));
     if (!this.fixed) {
       if (L || localNow || job.local_model || job.error_kind === "memory" || (m && (m.who === "local" || m.phase === "refused")) || (mainLocal && !job.queue && job.where !== "cloud") || (job.kind === "read-local")) this.engines.add("local");
-      if (wq || job.where === "cloud" || (job.where !== "here" && (job.queue || (s.backend === "anthropic" && job.where == null && !job.local_model)))) this.engines.add("cloud");
+      if (wq || held || job.where === "cloud" || (job.where !== "here" && (job.queue || (s.backend === "anthropic" && job.where == null && !job.local_model)))) this.engines.add("cloud");
     }
     this.block.hidden = !this.engines.size;
     if (!this.engines.size) return;
@@ -398,7 +401,18 @@ export class AiRun {
       // never outvote the project's queue: once Claude Code has answered, its "1 waits" asked for Claude Code again
       // while the local model read, and each run found nothing to do
       const jqNow = wq || (this.lastQ && { ...this.lastQ, stale: true }) || null;
-      if (App.project && (wq || (running && job.queue && this.lastQ))) {
+      if (held) {
+        const key = `held:${held.provider}:${held.excerpts}`;
+        if (this.sideKey.cloud !== key || !side) {
+          this.sideKey.cloud = key;
+          const n = held.excerpts || 0;
+          const o = { state: "need", what: `${plural(n, "excerpt")} ${n === 1 ? "waits" : "wait"} for ${held.agent_title || agentTitle(s)}`,
+            muted: `It may read only documents that allow ${held.company || "its company"}`,
+            line: providerAllowLine(App.project, null, () => {}), onState: onState("cloud") };
+          if (side && !side.arSetQueue) redrawSide(side, o);
+          else { side = this.sides.cloud = aiSide({ where: "cloud", ...o }); placeSide(this.block, "cloud", side); }
+        }
+      } else if (App.project && (wq || (running && job.queue && this.lastQ))) {
         const key = "live";
         if (this.sideKey.cloud !== key || !side) {
           this.sideKey.cloud = key;
@@ -413,9 +427,9 @@ export class AiRun {
         }
       } else {
         let o;
-        if (!running) o = job.state === "done" ? { state: "done", what: this.active.cloud ? "Claude has answered its part" : "Nothing was sent to Claude" } : { state: "stopped" };
+        if (!running) o = job.state === "done" ? { state: "done", what: this.active.cloud ? `${cloudName()} has answered its part` : `Nothing was sent to ${cloudName()}` } : { state: "stopped" };
         else if (s.backend === "anthropic" && !localNow) o = { state: "run", what: "Claude reads the excerpts", line: compact ? null : readsLine("the excerpts it needs"), pct };
-        else if (this.active.cloud) o = { state: "done", what: "Claude has answered its part" };
+        else if (this.active.cloud) o = { state: "done", what: `${cloudName()} has answered its part` };
         else o = { state: "later", what: isAgent(s) ? `Nothing waits for ${agentTitle(s)} yet` : "Its part comes after the steps above" };
         const key = JSON.stringify({ ...o, line: !!o.line, pct: null });
         if (!side || this.sideKey.cloud !== key) {

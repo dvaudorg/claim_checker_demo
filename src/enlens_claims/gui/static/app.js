@@ -345,10 +345,12 @@ async function drawStatus() {
   let w = null;
   // 0.19.13: a job whose part for the local model waits for its Start (job.local.gate "wait")
   const localWait = active.find((j) => j.local && j.local.gate === "wait" && (j.local.waiting || 0) > 0 && !j.local.problem);
-  const cloudStalled = !runner && (hold.length || (q && waiting && !answering && isAgent(s)));
+  // stage 2: only tasks really in the queue count, and only when something can start them: a job on hold whose work
+  // its agent may not read (its company not allowed for the project) is no task waiting, and Start would start nothing
+  const cloudStalled = !runner && !!(q && waiting && !answering && (isAgent(s) || hold.length));
   const t = agentTitle(s);
   if (localWait && cloudStalled) {   // both wait: two starts do not fit the row; it opens the job's page, where both are
-    const v = jobRow(localWait), n = Math.max(waiting, hold.length);
+    const v = jobRow(localWait), n = waiting;
     w = { kind: "stalled", icon: "pause", main: "Not running", sub: `${fmt.num(localWait.local.waiting)} here · ${fmt.num(n)} for ${cloudWho()}`, href: v.href || "#/settings/queue",
       tip: `Two parts wait for you: one for the model on this computer, one for ${t}. Open the work to start them.`, act: "open-job", local: "need", cloudHalf: "need", job: localWait.id };
   } else if (localWait && !cloudStalled && !going.some((j) => j !== localWait && !j.local)) {
@@ -359,7 +361,7 @@ async function drawStatus() {
       tip: `Nothing reads this yet: it waits for you to start ${L.model || "your local model"}.`, act: L.memory && L.memory.short ? "open-job" : "start-local", local: "need", job: localWait.id,
       cloudHalf: cloudToo ? (runner || answering ? "run" : "done") : undefined };
   } else if (cloudStalled) {
-    const n = Math.max(waiting, hold.length);
+    const n = waiting;
     w = { kind: "stalled", icon: "pause", main: q && q.paused ? "Paused" : "Not running", sub: `${tasksWord(n)} waiting`,
       href: "#/settings/queue", tip: `Nothing answers this work yet: ${tasksWord(n)} ${n === 1 ? "waits" : "wait"} for ${t}. Start it and the work runs.`,
       act: q && q.can_start && !q.paused ? "start" : "open", cloudHalf: "need" };

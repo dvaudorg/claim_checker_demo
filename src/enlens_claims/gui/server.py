@@ -1104,6 +1104,9 @@ class App(LibraryMixin, QueueMixin):
                 self._show_stages(ws, hyp_ids, tracker, shown)
             if not left:
                 return
+            if not job.cancel.is_set() and self._held_now(ws, left, tracker, t0):
+                time.sleep(poll)
+                continue
             look = job.cancel.is_set() or readers.memory_short or (gate is not None and gate.involved)
             only_local = [hid for hid in left if claimcheck.only_local_waits(ws, hid)] if look else []
             if job.cancel.is_set():
@@ -1127,8 +1130,45 @@ class App(LibraryMixin, QueueMixin):
                                       **taskqueue.queue_info(ws, kind)})
             time.sleep(poll)
 
+    def _held_now(self, ws, left: list[str], tracker: Tracker, t0: float) -> bool:
+        """Stage 2: whether these checks wait only because the agent's company may not read their documents (the
+        project allows Anthropic only, and Codex answers): the job then says so, in plain words, instead of waiting
+        silently for an agent that is never handed the excerpts; once the person allows the company, the excerpts go
+        to the queue (claimcheck.advance_queued) and the job goes on. Where allowing is not possible (a shared
+        project allows Anthropic only, or a document's own setting keeps them from every cloud AI), the excerpts wait
+        for the person's judgement instead and the check finishes. True while it waits for the person to allow."""
+        held = claimcheck.held_parts(ws, left)
+        if not held:
+            return False
+        from .. import providers
+
+        route = taskqueue.queue_route()
+        prov = taskqueue.route_provider(route)
+        title, company = taskqueue.route_title(route), providers.company(prov)
+        shared = access.is_shared(ws._conn(), ws) and prov != access.ANTHROPIC
+        for h in held:
+            if h["why"] != "provider" or shared:
+                claimcheck.hand_to_person(ws, h["task_id"])
+                tracker.step("note", (f"{title} may not read this shared project's documents (only Anthropic may): "
+                                      if shared and h["why"] == "provider" else
+                                      "A document's AI setting keeps these excerpts from every cloud AI now: ") +
+                             f"the {h['passages']} {'excerpt waits' if h['passages'] == 1 else 'excerpts wait'} for "
+                             "your judgement", {"keep": True})
+        waiting = [h for h in held if h["why"] == "provider" and not shared]
+        if not waiting:
+            return False
+        n = sum(h["passages"] for h in waiting)
+        text = (f"{title} reads only documents that allow {company}, and this project's do not: allow {company} for "
+                f"this project and the check goes on by itself")
+        tracker.model_report({"phase": "held", "seconds": time.time() - t0, "text": text, "agent": route,
+                              "agent_title": title, "provider": prov, "company": company, "excerpts": n})
+        tracker.say(f"{n} {'excerpt waits' if n == 1 else 'excerpts wait'}: {title} may not read them yet", step="grade")
+        return True
+
     def _show_stages(self, ws, hyp_ids: list[str], tracker: Tracker, shown: dict) -> None:
-        """The steps of checks by queue, as far as they have come (said once per change)."""
+        """The steps of checks by queue, as far as they have come (said once per change). Stage 2: named after the
+        agent that answers the queue (Claude Code, Codex, Antigravity)."""
+        who = taskqueue.route_title(taskqueue.queue_route())
         for i, hid in enumerate(hyp_ids, 1):
             st = claimcheck.queue_stage(ws, hid)
             info = {"index": i, "total": len(hyp_ids)} if len(hyp_ids) > 1 else {}
@@ -1140,17 +1180,17 @@ class App(LibraryMixin, QueueMixin):
                 tracker.step("item", f"Hypothesis {i} of {len(hyp_ids)}",
                              {**info, "text": ws.scalar("SELECT text FROM hypotheses WHERE hyp_id=?", (hid,))})
             if st.get("step") == "decompose":
-                tracker.step("decompose", "Waiting for Claude Code to split the hypothesis into parts", info)
+                tracker.step("decompose", f"Waiting for {who} to split the hypothesis into parts", info)
             for n, (stage, text) in enumerate(zip(st.get("stages") or [], st.get("texts") or [])):
                 pinfo = {**info, **({"part": n + 1, "parts": len(st["stages"]), "claim": text}
                                     if len(st["stages"]) > 1 else {})}
                 if stage == "terms":
-                    tracker.step("terms", "Waiting for Claude Code to propose other words", pinfo)
+                    tracker.step("terms", f"Waiting for {who} to propose other words", pinfo)
                 elif stage in ("judge", "done"):
                     tracker.step("terms_done", "Search words ready", pinfo)
                     tracker.step("rank_done", "Excerpts chosen in your documents", pinfo)
                     if stage == "judge":
-                        tracker.step("grade", "Waiting for Claude Code to read the excerpts", pinfo)
+                        tracker.step("grade", f"Waiting for {who} to read the excerpts", pinfo)
                     else:
                         tracker.step("grade_done", "Read; every quote was checked against the document", pinfo)
 
@@ -1677,6 +1717,7 @@ ROUTES: list[tuple[str, re.Pattern, str]] = [(m, re.compile("^" + p + "$"), h) f
     ("GET", rf"/api/projects/{P}/documents", "get_documents"),
     ("DELETE", rf"/api/projects/{P}/documents", "delete_documents"),
     ("PUT", rf"/api/projects/{P}/documents/ai-access", "put_documents_access"),
+    ("GET", rf"/api/projects/{P}/ai-access", "get_project_access"),   # stage 2: providerAllowLine's counts
     ("PUT", rf"/api/projects/{P}/ai-access", "put_project_access"),
     ("GET", rf"/api/projects/{P}/ai-sent\.csv", "get_ai_sent_csv"),
     ("GET", rf"/api/projects/{P}/documents/{P}/ai-sent", "get_document_sent"),
