@@ -207,7 +207,7 @@ def test_antigravity_signs_in_in_a_window(clis, monkeypatch):
 
     monkeypatch.setattr(clis, "_open_window", window)
     r = clis.open_sign_in("antigravity")
-    assert r["opened"] and r["window"] == "Terminal (stand-in)" and r["command"].endswith("agy")
+    assert r["opened"] and r["window"] == "Terminal (stand-in)" and r["command"].rstrip('"').endswith("agy")   # Windows: in a child PowerShell
     assert "antigravity-sign-in" in opened[0] and "Google account" in opened[0]
     assert clis.status("antigravity", refresh=True)["signed_in"] is True
 
