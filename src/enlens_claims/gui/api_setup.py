@@ -76,8 +76,10 @@ class SetupApi:
         return {"providers": self.app.providers_state()}
 
     def get_provider_models(self, q):
-        """The models a provider offers to the stored key → {"models": [...], "lists": bool}. Azure lists none (its
-        deployment's name is typed). Nothing is sent but the key."""
+        """The models a provider offers to the stored key → {"models": [...], "lists": bool, "recommended": {tier: id}}.
+        `recommended` is the provider's line-up resolved against that list (providers.recommended): what an empty
+        choice in Settings uses, shown as "Applied automatically" by the key's set-up. Azure lists none (its
+        deployments' names are typed): its `recommended` says which models to deploy. Nothing is sent but the key."""
         from .. import providers
         from ..llm import BackendError, CloudBackend
 
@@ -85,14 +87,16 @@ class SetupApi:
             raise ApiError(403, "Cloud models are switched off on this computer by whoever installed ENLENS.")
         pid = self._provider(_str(q, "provider"))
         if not providers.TABLE[pid].lists_models:
-            return {"models": [], "lists": False}
+            return {"models": [], "lists": False, "recommended": providers.recommended(pid)}
         key = home.cloud_key(pid)
         if not key:
-            return {"models": [], "lists": True, "problem": f"No key for {providers.title(pid)} is stored yet."}
+            return {"models": [], "lists": True, "problem": f"No key for {providers.title(pid)} is stored yet.",
+                    "recommended": providers.recommended(pid)}
         try:
-            return {"models": CloudBackend(pid, key).models(timeout=15), "lists": True}
+            models = CloudBackend(pid, key).models(timeout=15)
         except BackendError as e:
-            return {"models": [], "lists": True, "problem": str(e)}
+            return {"models": [], "lists": True, "problem": str(e), "recommended": providers.recommended(pid)}
+        return {"models": models, "lists": True, "recommended": providers.recommended(pid, models)}
 
     def post_quit(self, q):
         """Stop the app ("Quit ENLENS"). Running jobs stop with it; a stopped check leaves nothing behind."""

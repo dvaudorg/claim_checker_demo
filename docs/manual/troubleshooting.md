@@ -47,7 +47,7 @@ Two files in the data folder (`~/enlens` unless you chose another) often say why
 | Nothing happens after pressing an AI button | Work waits for Claude Code: press *Start Claude Code* ([Claude Code](claude-code.md#start-claude-code)). |
 | "No Claude API key" | Export `ANTHROPIC_API_KEY` or enter it in Settings, or use a local model or the file queue. |
 | "Cloud models are switched off" / "Allow cloud models first" | The Claude API sends the passages read to Anthropic, so the app asks you to allow it first (*Settings → AI*). |
-| "The Claude API rejected the key" | Copy the key again from console.anthropic.com, and check it has credit. |
+| "The Claude API rejected the key" | Copy the key again from platform.claude.com (Settings › API keys), and check it has credit. |
 
 ## Local models
 
