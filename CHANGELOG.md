@@ -76,6 +76,9 @@ with your team, and the map zooms.
 
 ### Fixed
 
+- **On Windows, *Read the theory* could answer "not allowed".** The draft of a codebook from theory was put in place
+  while its reading looked at it, which Windows refuses; it is now written as the settings are, trying again for a
+  moment.
 - **A check could miss Codex or Antigravity when you allowed their company.** Allowing OpenAI or Google for a
   project while a check by queue looked again could take its excerpts for ones a document's setting keeps from every
   cloud AI and hand them to you for judgement for good, instead of to the agent. They now go to the queue.
