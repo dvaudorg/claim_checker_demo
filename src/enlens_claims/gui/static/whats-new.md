@@ -1,5 +1,5 @@
 # 0.20.3: Antigravity in a home of its own, and what new documents changed
-*What changed since the last release.*
+*Antigravity now runs for ENLENS in a home folder of its own.*
 - A file name cannot add headers to the app's answers
 - Reading the new documents says what it changed
 - A re-read excerpt names its model

@@ -2,6 +2,12 @@
 
 ## 0.20.3 (November 2026): Antigravity in a home of its own, and what new documents changed
 
+Antigravity now runs for ENLENS in a home folder of its own. The permissions, connectors and credits of your own
+Antigravity never reach ENLENS's runs, and ENLENS offers to take back what 0.20.0–0.20.1 wrote into your settings.
+Reading the documents added since a check now says what that changed, answer by answer; the AI run panel and the
+sidebar show only the engine at work; and a task the local model was answering when the app closed is no longer held
+for good. Nothing about how checks are graded changes: this release cannot change results.
+
 ### Safer
 
 - **A file name cannot add headers to the app's answers.** A source whose file name held a line break (possible in a
