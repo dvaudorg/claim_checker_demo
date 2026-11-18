@@ -842,7 +842,18 @@ def _own_provider_choices(cx) -> dict[str, list | None]:
 
 def settle_own_providers(ws: Workspace) -> int:
     """Once per project (meta `OWN_PROVIDERS_DONE`): in a shared project, clear the documents' provider lists this
-    person did not set (see above). Returns how many were cleared. Never raises: opening the project goes on."""
+    person did not set (see above). Returns how many were cleared. Never raises: opening the project goes on. It runs
+    as the project is opened (`Workspace._setup`), so it closes the connection it opened: one left open keeps the
+    database file open (on Windows a project folder then cannot be moved, and closing a copy waited on it)."""
+    had = getattr(ws._local, "cx", None) is not None
+    try:
+        return _settle_own_providers(ws)
+    finally:
+        if not had:
+            ws.close()
+
+
+def _settle_own_providers(ws: Workspace) -> int:
     try:
         cx = ws._conn()
         if cx.execute("SELECT 1 FROM meta WHERE key=?", (OWN_PROVIDERS_DONE,)).fetchone():

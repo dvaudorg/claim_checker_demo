@@ -538,3 +538,17 @@ def test_the_owner_turns_the_limit_on_and_saves_it_and_a_member_reads_it(views):
     assert r["put"] == [{"providers": ["anthropic"]}]
     assert "The team uses Anthropic only." in r["member"] and "Set by Anna." in r["member"]
     assert r["noTeam"] is True
+
+
+def test_opening_a_project_leaves_no_connection_of_the_provider_check_open(tmp_path):
+    """Integration of 0.20.1 (CI on Windows and Linux): the once-only provider check runs as a project is opened and
+    left its connection open, so the database file stayed open: on Windows a project folder could not be moved, and
+    closing a project's copy waited on it."""
+    from enlens_claims.store import Workspace
+
+    ws = Workspace.create(tmp_path / "p")
+    assert getattr(ws._local, "cx", None) is None
+    again = Workspace.open(ws.root)
+    assert getattr(again._local, "cx", None) is None
+    with again.connect() as cx:   # a thread that uses it afterwards opens its own, as before
+        assert cx.execute("SELECT 1").fetchone()
