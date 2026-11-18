@@ -1,5 +1,5 @@
 # 0.20.1: Local models that suggest, your own cloud provider in a team, and the concept map's names for everyone
-*What changed since the last release.*
+*A model on your computer now suggests, and you decide.*
 - The concept map's group names go to your team
 - Zoom on the concept map
 - The local model is chosen for your computer

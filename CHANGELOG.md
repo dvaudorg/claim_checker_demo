@@ -2,6 +2,13 @@
 
 ## 0.20.1 (November 2026): Local models that suggest, your own cloud provider in a team, and the concept map's names for everyone
 
+A model on your computer now suggests, and you decide. ENLENS chooses the local model that fits your computer and
+downloads it when you set it up; what it reads waits for your judgement with its suggestion beside it, instead of
+counting by itself, and it starts only with its own *Start*, also when all the work is its own. In a shared project
+each person reads with their own cloud provider (Claude Code, Codex, Antigravity or an API key), the owner may limit
+the providers the team uses, and a new AI log says who ran which AI work. The concept map's group names now travel
+with your team, and the map zooms.
+
 ### New
 
 - **The concept map's group names go to your team.** Names you give the groups (and the AI's drafts and the names
