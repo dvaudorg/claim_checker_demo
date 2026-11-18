@@ -341,6 +341,7 @@ export async function renderProfile(view, params, query) {
     const team = App.state && App.state.profile_framework_team;
     sel.addEventListener("change", async () => {
       framework = sel.value;
+      ai = null;   // the AI card is built for one codebook: the next draw builds it for this one
       // the codebook of document profiles is a setting: new documents get its codes when they are added
       if (!team) { try { await api("PUT", "/api/settings", { profile_framework: framework }); await App.refresh(); } catch (_) { /* the page still works */ } }
       keepUrl();

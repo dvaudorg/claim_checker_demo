@@ -15,7 +15,11 @@ import { App, api, h, toast, showError, P, plural, field, button, link, input, s
 
 const S = (project) => `/api/projects/${P(project)}/space`;
 let LINKS = null;
-const links = async () => (LINKS = LINKS || await api("GET", "/api/space/links").catch(() => ({})));
+// the set-up help links: kept once read; a failed read gives no links this time and is asked again the next
+const links = async () => {
+  if (!LINKS) { try { LINKS = await api("GET", "/api/space/links"); } catch (_) { return {}; } }
+  return LINKS;
+};
 const when = (iso) => (iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "long" }) : "");
 export const SERVICE_NAME = { b2: "Backblaze", r2: "Cloudflare", webdav: "Your institution’s drive" };
 // a member's part of their row on the Team page: "keeps the space’s keys · since 12 November"

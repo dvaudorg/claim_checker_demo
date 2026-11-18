@@ -398,7 +398,11 @@ export async function renderHypotheses(view, params, query) {
       const job = await prepareWatcher.promise;
       prepareWatcher = null;
       looking = false;
-      if (job.state === "done" && job.result) {
+      const now = options.values();
+      if (job.state === "done" && job.result && (ta.value.trim() !== text || now.decompose !== o.decompose || now.expand !== o.expand)) {
+        // the wording or the options changed while the AI looked: its parts are of the old ones
+        discardPrepared("The hypothesis changed while the AI looked, so its parts and words do not apply: look again, or check it as it is now.");
+      } else if (job.state === "done" && job.result) {
         prepared = { text, parts: (job.result.parts || []).map((p) => (typeof p === "string" ? { text: p, role: null } : { text: p.text, role: p.role || null })), terms: (job.result.terms || []).map((t) => [...(t || [])]), split: !!job.result.split, editedParts: false, editedTerms: false, expand: o.expand, decompose: o.decompose };
         if (!prepared.parts.length) prepared.parts = [{ text, role: null }];
         while (prepared.terms.length < prepared.parts.length) prepared.terms.push([]);

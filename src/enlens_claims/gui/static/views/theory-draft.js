@@ -114,8 +114,8 @@ export async function renderTheoryDraft(view) {
         // the draft changed since this page loaded it (a reading ended, another tab): it is loaded again, and the
         // concepts changed here since the last save are put into it, so nothing typed is lost
         const mine = running() ? [] : draft.concepts.filter((c) => kept.get(c.key) !== JSON.stringify(c));
-        saving = null;
-        await reload();
+        saving = reload();   // a save waiting behind this one waits for the reload too: it must send the new revision
+        await saving;
         if (mine.length && !gone && !running()) {
           for (const c of mine) { const i = draft.concepts.findIndex((x) => x.key === c.key); if (i >= 0) draft.concepts[i] = c; else draft.concepts.push(c); }
           drawAll();

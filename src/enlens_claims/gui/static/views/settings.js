@@ -173,18 +173,23 @@ function basicsSection(s) {
     } catch (e) { showError(e); }
   }
   // strictness saves when the slider is let go, and reports what changed
+  // one save at a time; a change made meanwhile is remembered and saved when the running one ends (the newest wins)
   let savingStrict = false;
+  let wantedT = null;
   async function saveStrict(newT) {
+    wantedT = newT;
     if (savingStrict) return;
     savingStrict = true;
-    const oldT = App.settings().threshold ?? 0.6;
     try {
-      if (Math.abs(oldT - newT) > 1e-9) {
-        await save({ threshold: newT });
-        await reportChanges(oldT, newT);
+      while (wantedT !== null && Math.abs((App.settings().threshold ?? 0.6) - wantedT) > 1e-9) {
+        const oldT = App.settings().threshold ?? 0.6;
+        const t = wantedT;
+        await save({ threshold: t });
+        await reportChanges(oldT, t);
         loadCalibration();
       }
     } catch (_) { /* shown */ }
+    wantedT = null;
     savingStrict = false;
   }
   thr.input.addEventListener("change", () => saveStrict(thr.input.valueAsNumber));
