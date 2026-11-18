@@ -244,10 +244,13 @@ def test_adding_enlens_to_codex(clis, monkeypatch):
     checker = (clis.codex_home() / "agents" / "enlens-checker.toml").read_text()
     assert 'model = "gpt-6.2-sol"' in checker and "developer_instructions" in checker
     assert 'model = "gpt-6-luna"' in (clis.codex_home() / "agents" / "enlens-labeller.toml").read_text()
-    import tomllib
-
-    parsed = tomllib.loads(checker)
-    assert parsed["name"] == "enlens-checker" and "submit_answers" in parsed["developer_instructions"]
+    try:   # tomllib is Python 3.11+; ENLENS supports 3.10, where the words above are checked instead
+        import tomllib
+    except ModuleNotFoundError:
+        tomllib = None
+    if tomllib is not None:
+        parsed = tomllib.loads(checker)
+        assert parsed["name"] == "enlens-checker" and "submit_answers" in parsed["developer_instructions"]
     # an earlier ENLENS's connector of the same name is replaced
     monkeypatch.setenv("FAKE_CODEX_MCP_DUPLICATE", "1")
     r = clis.set_up("codex")
