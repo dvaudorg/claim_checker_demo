@@ -7,7 +7,7 @@
 // settings.js on /api/claude-setup. Settings → AI shows each one's checklist card (settings.js) with a button that
 // opens this dialog.
 import { api, h, toast, notice, fold, copyLine, workState, watchJob, replace, rememberAgent } from "../lib.js";
-import { outsideSetup, stepButton } from "./outside-setup.js";
+import { outsideSetup, stepButton, allowLine } from "./outside-setup.js";
 import { appliedLine } from "./provider-setup.js";
 
 // the done step's line of the models applied: the adapter's own (Claude's ladder), else the CLI's line-up in use
@@ -42,15 +42,16 @@ export function cliAdapter(route) {
       ? h("div", {}, h("p", {}, `${route === "codex" ? "Codex could not open its sign-in" : "No window could be opened"} from here. Open a terminal (Terminal on a Mac, PowerShell on Windows), type the line below and follow the steps:`),
         copyLine(opened.command || (route === "codex" ? "codex login" : "agy"), "Copy", "a terminal"))
       : h("p", {}, route === "codex" ? "Codex opens its sign-in page in your browser. Sign in there with your ChatGPT account; this step moves on by itself."
-        : `A ${opened.window || "terminal"} window opened with Antigravity, which opens Google’s sign-in page in your browser. Sign in, then close that window; this step moves on by itself.`)),
+        : `A ${opened.window || "terminal"} window opened with Antigravity, which opens Google’s sign-in page in your browser. Sign in, then switch off Enable Telemetry in Antigravity’s settings (under AI credits and feedback) and close that window; this step moves on by itself.`)),
     // the first line is what the button does; a second, muted, is what to do in the window that opens
     signInIntro: route === "codex" ? "Press the button: Codex opens its sign-in page in your browser."
       : ["Press the button: a window opens with Antigravity, in an empty folder of ENLENS, and it opens Google’s sign-in page in your browser.",
-        "Sign in in the window that opens; close it when it shows its prompt."],
+        "Sign in in the window that opens. Before you close it, switch off Enable Telemetry in Antigravity’s settings, under AI credits and feedback: while it is on, Google may use what Antigravity reads."],
     adds: route === "codex"
       ? ["the ENLENS connector, through which Codex takes the tasks and sends back its answers", ["its skill ", h("code", {}, "$enlens-run")], "its helpers, one for each kind of task"]
       : ["the ENLENS connector, through which Antigravity takes the tasks and sends back its answers", "its skill enlens-run and its helpers, as one plugin",
-        "one permission line, so Antigravity may use the ENLENS connector without asking each time"],
+        "one permission line, so Antigravity may use the ENLENS connector without asking each time",
+        "ENLENS’s own empty work folder, marked as trusted, where it starts Antigravity"],
     addsNote: route === "antigravity"
       ? notice({ kind: "info", role: "note" }, h("p", {}, "Antigravity’s own tools cannot be switched off from outside, so ENLENS starts it in an empty folder of its own, in its sandbox: it sees only the passages in ENLENS’s tasks."))
       : null,
@@ -123,11 +124,19 @@ export async function agentSetupDialog(ad, info = {}, opts = {}) {
   const signNow = h("div", { class: "agent-step-now", "aria-live": "polite" });
   const signedAs = h("p", { class: "agent-found" });
   const showSigned = () => (st().signed_in === true ? replace(signNow) : null, replace(signedAs, st().signed_in === true ? workState("done", `Signed in${st().account ? ` with ${st().account}` : ""}.`) : ""));
+  // while it waits, Open the sign-in stays pressed (a second press would start a second sign-in); after 30 s a quiet
+  // "Open it again" offers a new one, for a window closed too soon
+  let againTimer = null;
   async function openSignIn() {
+    clearTimeout(againTimer);
+    signBtn.disabled = true;
     let opened = { opened: false };
     try { opened = await ad.signIn(); } catch (e) { opened = { opened: false, error: e.message }; }
     signIntro.hidden = true;   // what the button does is done; the words of what to do now take its place
-    replace(signNow, h("div", {}, ad.signInWords(opened), h("p", {}, workState("waiting", "Waiting for you to sign in…"))));
+    const again = h("span", { class: "agent-again", hidden: true }, " ", stepButton("Open it again", () => openSignIn(), { kind: "quiet", id: `agent-sign-in-again-${ad.route}` }));
+    replace(signNow, h("div", {}, ad.signInWords(opened), h("p", {}, workState("waiting", "Waiting for you to sign in…"), again)));
+    if (opened.opened === false) { signBtn.disabled = false; return; }   // nothing started: the button may try again
+    againTimer = setTimeout(() => { again.hidden = false; }, 30000);
   }
   async function checkSigned(now) {
     try {
@@ -150,10 +159,11 @@ export async function agentSetupDialog(ad, info = {}, opts = {}) {
     };
     timer = setTimeout(tick, 4000);
   };
+  const signBtn = stepButton("Open the sign-in", () => openSignIn(), { id: `agent-sign-in-${ad.route}`, icon: "external-link" });
   const signIntro = h("div", {}, [].concat(ad.signInIntro).map((t, i) => h("p", { class: i ? "muted small" : null }, t)));
   const stepSign = { title: "Sign in", next: false, body: [
     signIntro,
-    h("div", { class: "btn-row" }, stepButton("Open the sign-in", openSignIn, { id: `agent-sign-in-${ad.route}`, icon: "external-link" }),
+    h("div", { class: "btn-row" }, signBtn,
       stepButton("I have signed in", () => checkSigned(true), { id: `agent-signed-${ad.route}` })),
     signNow, signedAs,
     h("p", { class: "muted small" }, `ENLENS never sees your login: ${ad.title} keeps it.`)] };
@@ -170,7 +180,7 @@ export async function agentSetupDialog(ad, info = {}, opts = {}) {
     start: firstToDo(st()), ask: false,
     mainText: `Add ENLENS to ${ad.title}`,
     onStep: (i, u) => { ui = u; if (i === 1) poll(i); else stopPoll(); },
-    onClose: stopPoll,
+    onClose: () => { stopPoll(); clearTimeout(againTimer); },
     async submit(_body, u) {
       u.progress(`Adding ENLENS to ${ad.title}…`);
       const r = await ad.addEnlens();
@@ -187,7 +197,8 @@ export async function agentSetupDialog(ad, info = {}, opts = {}) {
     after: (r) => ({ title: `${ad.title} is ready`, body: [
       notice({ kind: "done", role: "note" }, h("p", {}, `ENLENS is added to ${ad.title}.`)),
       ...[].concat(ad.afterWords(opts.project)),
-      appliedLineup(r, ad) ] }),
+      appliedLineup(r, ad),
+      allowLine(opts.project) ] }),
     doneWords: `${ad.title} is set up.`,
   });
 }
