@@ -103,20 +103,15 @@ export async function renderSettings(view, [section]) {
     items: TABS.map(([id, label, ic]) => [id, label, `#/settings/${id}`, id === "model" ? App.privacy().icon || ic : ic]) }));
   const main = h("div", { class: "stack set-main" });
   view.appendChild(main);
-  if (tab === "model") {
-    main.append(modelSection(s, servers, watchers, info));
-    // 0.11: who reads the documents marked Only a local AI, and what happens to the text Claude reads
-    if (!(App.state && App.state.local_only)) main.append(restrictedModelCard(s, servers, save, info));
-    if (s.backend === "anthropic") main.append(sectionCard("terms", "Your Claude account and your documents", "", termsPanel({ account: "commercial" })));
-    main.append(queueSection());   // 0.17.0: what waits for Claude Code (the sidebar's status area links here)
-  }
+  if (tab === "model") main.append(...aiTab(s, { servers, info, watchers }));
   else if (tab === "basics") main.append(basicsSection(s), notifySection(s));
   else if (tab === "explore") main.append(exploreSection(s), frameworksSection());
   else if (tab === "documents") main.append(sectionCard("ocr", "Reading scanned PDFs", "", ocrBlock(s)), embedSection(s, servers, info));
   else {
     // a local model's own settings (second model, context length) only when a local model answers
     const local = ["auto", "ollama", "openai"].includes(s.backend || "auto");
-    main.append(...[local ? localTierSection(s, info) : null, routingSection(s, servers), local ? secondModelSection(s, servers) : null, local ? contextSection(s) : null, reproSection(s), testSection(s, watchers), ledgerSection(), updatesSection(), linkSection(), dataSection()].filter(Boolean));
+    const ai = aiTechnical(s, { servers, info, watchers });   // the AI region's parts of this tab: { local, models, measuring }
+    main.append(...[techCard(ai.local), techCard(ai.models), routingSection(s, servers), techCard(ai.measuring), local ? secondModelSection(s, servers) : null, local ? contextSection(s) : null, reproSection(s), testSection(s, watchers), ledgerSection(), updatesSection(), linkSection(), dataSection()].filter(Boolean));
     if (!local) main.appendChild(h("p", { class: "muted small" }, icon("info", { size: 13 }), " The settings of a model on this computer (the model for second opinions, the context length) show here when a local model is chosen under AI."));
   }
   // a link to one setting (#/settings/speed): it comes into view clear of the top bar, and its control takes the focus
@@ -312,6 +307,19 @@ function sectionCard(id, title, lead, ...children) {
     h("h2", { id: `s-${id}-h`, tabindex: "-1" }, title), lead ? h("p", { class: "lead" }, lead) : null, ...children);
 }
 
+// A card of the Technical tab from its description { id, title, lead, summary, body: [nodes] } (aiTechnical() gives
+// the AI region's parts this way, so this tab decides how its cards look)
+const techCard = (d) => (d ? sectionCard(d.id, d.title, d.lead || "", ...(d.body || [])) : null);
+
+// One setting, the same on every tab: its label, beside it a help mark for the longer explanation (`about`: [title,
+// text]), the control, and at most one short line of help under it. `id`: the row's own id (a link's target).
+function setting(label, control, { help, about, id } = {}) {
+  const lab = control && control.id ? h("label", { class: "field-label", for: control.id }, label) : h("div", { class: "field-label" }, label);
+  const row = h("div", { class: "field setting" }, about ? h("div", { class: "setting-head" }, lab, helpMark(about[0], about[1])) : lab, control, help ? h("div", { class: "field-help" }, help) : null);
+  if (id) row.id = id;
+  return row;
+}
+
 async function save(changes, stateEl) {
   if (stateEl) stateEl.textContent = "Saving…";
   try {
@@ -330,6 +338,24 @@ async function save(changes, stateEl) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// The AI tab's cards, in order (renderSettings appends them)
+function aiTab(s, { servers, info, watchers }) {
+  const out = [modelSection(s, servers, watchers, info)];
+  // 0.11: who reads the documents marked Only a local AI, and what happens to the text Claude reads
+  if (!(App.state && App.state.local_only)) out.push(restrictedModelCard(s, servers, save, info));
+  if (s.backend === "anthropic") out.push(sectionCard("terms", "Your Claude account and your documents", "", termsPanel({ account: "commercial" })));
+  out.push(queueSection());   // 0.17.0: what waits for Claude Code (the sidebar's status area links here)
+  return out;
+}
+
+// The AI region's parts of the Technical tab, each a description { id, title, lead, summary, body: [nodes] } or null
+// (techCard() makes the card): `local` the local model, `models` the models of a provider or an agent, `measuring`
+// the tools that measure a model
+function aiTechnical(s, { servers, info, watchers }) {
+  const local = ["auto", "ollama", "openai"].includes(s.backend || "auto");
+  return { local: local ? localTierSection(s, info) : null, models: null, measuring: null };
+}
+
 function modelSection(s, servers, watchers, info = { servers }) {
   const localOnly = !!(App.state && App.state.local_only);
   let allowCC = !!s.allow_claude_code;
@@ -1123,8 +1149,8 @@ function localTierSection(s, info) {
       } catch (err) { showError(err); }
       setBusy(e.currentTarget, false);
     } }, icon("download", { size: 13 }), `Download ${older.offer}`))) : null;
-  return sectionCard("localmodel", "The local model", "ENLENS picks the local model from this computer's memory and graphics card, and sets its context length, reasoning and seed. Change the model under AI → Technical: the server and the model.",
-    rows, offer, area);
+  return { id: "localmodel", title: "The local model", lead: "ENLENS picks the local model from this computer's memory and graphics card, and sets its context length, reasoning and seed. Change the model under AI → Technical: the server and the model.",
+    summary: "", body: [rows, offer, area] };
 }
 
 // ---------------------------------------------------------------------------------------------
