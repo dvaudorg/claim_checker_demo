@@ -58,13 +58,13 @@ Windows from 0.15.4 on). Your projects and settings (the `enlens` folder in your
   impact claims tagged with UN SDG targets and compared with an expert Value Chain Assessment.
 
 <!-- new-in:start (written by `python tools/release.py prepare`: change the changelog entry, not this) -->
-## New in 0.20.0: Codex and Antigravity, set up like Claude Code
+## New in 0.20.1: Local models that suggest, your own cloud provider in a team, and the concept map's names for everyone
 
-- **Codex and Antigravity answer the queue on your own plan, as Claude Code does.** *Settings → AI → Subscription* now offers three agents: Claude Code (your Claude plan, still the recommendation).
-- **Every set-up of something outside ENLENS works the same way.** The API keys (OpenAI, Google Gemini, Mistral, Azure OpenAI, OpenRouter and the Claude API) and the three agents are set up step by step in a dialog, like the storage space: one thing at a time.
-- **Work a provider may not read says so, and goes on once you allow it.** With Codex (or another provider) as the AI and documents that allow Anthropic only, a check no longer waits silently: it says "Codex reads only documents that allow OpenAI: 0 of 3 do".
-- **Recommended models, applied by themselves.** Every provider now gets ENLENS's three tiers (small tasks such as labels and links; judging excerpts; second opinions and hard cases) from its own current line-up: for example GPT-6 Luna.
-- **Another cloud provider no longer uses one model for everything.** Labels and links go to the provider's smaller model, second opinions and hard cases to its strongest, as on Claude. Can change results.
+- **The concept map's group names go to your team.** Names you give the groups (and the AI's drafts and the names you used) now travel with the project, in a copy for a colleague, through the shared folder and a team's storage space.
+- **Zoom on the concept map.** *Zoom in*, *Zoom out* and *Whole map* over the map; Ctrl or ⌘ and the wheel, a trackpad's pinch, and the keys **+**, **−** and **0**.
+- **The local model is chosen for your computer.** ENLENS reads the computer's memory, graphics card and free disk space and picks one of three tiers: the small K2 Horizon model (about 8 GB, or no graphics card).
+- **A short answer form for the small model.** The small model could not finish a check (its quotes ran past the length limit).
+- **Each person chooses their own cloud provider in a shared project.** Until now a shared project let Anthropic read only.
 <!-- new-in:end -->
 
 How it works, in the manual: [Explore your documents](docs/manual/explore.md) (working documents, the concept map),
