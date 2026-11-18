@@ -12,6 +12,12 @@
 
 - **A file brought in by hand can no longer change your own notes or research-log entries by naming your other
   account as its sender.** Only your private sync between your own accounts may do that.
+- **A colleague's file can no longer reach files outside the project.** A share mark for a codebook that held a path
+  in place of the codebook's name could delete `.csv` and `.json` files elsewhere on your computer when you brought
+  the file in (as a zip, through a shared folder or a storage space), and a label naming a codebook by a path could
+  put a file from outside the codebook folder into a zip you send. Such keys are now ignored everywhere. Found by
+  CodeQL's path rule and a reading of the code around it.
+- **A codebook's name cannot end in a line break** (the name rule let one through).
 - **A Word file with a document type declaration is refused.** Such a file of a few hundred bytes could grow to
   gigabytes of text while it was read. Word never writes one, so your documents read as before.
 
@@ -46,7 +52,7 @@
 ### For developers
 
 - Model evaluation: a link pair no AI may read is no longer counted as a task (`evaluation.prepare`).
-- The first tool sweep of the bug hunt (ruff's bug rules, pyright, semgrep, eslint, `tsc --checkJs`, coverage): 22
+- The first tool sweep of the bug hunt (ruff's bug rules, pyright, semgrep, eslint, `tsc --checkJs`, CodeQL, coverage): 26
   faults, each fixed with a test that failed first.
 - CI lints the page's JavaScript (`tools/lint_js.py`: eslint's `no-undef` and `no-async-promise-executor`, both
   without a finding today).
