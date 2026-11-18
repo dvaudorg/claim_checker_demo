@@ -2,6 +2,11 @@
 
 ## 0.19.19 (November 2026): Other cloud providers, with your consent per provider
 
+You can now use OpenAI, Google Gemini, Mistral, Azure OpenAI or OpenRouter with your own API key instead of
+Claude. Each document says which cloud providers may read it, and by default that is still only Anthropic, so nothing
+you have reaches another provider until you tick it. A model server on another computer now counts as a cloud
+provider too: before, it could read every document that Claude may read.
+
 ### New
 
 - **Another cloud provider, with an API key.** *Settings → AI* has a new main choice, *Another cloud provider (API
