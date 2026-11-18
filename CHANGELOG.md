@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.20.2 (November 2026): Settings in one shape: five tabs, four cards for the AI, and every change saved as you make it
+
+Settings follows one shape now. Its tabs are *AI*, *Checking*, *Documents*, *General* and *Technical*; which AI reads
+your documents is four cards in two rows, the cloud above and this computer below, with one *API key* card for Claude
+and the other providers; and every change saves as you make it, so there is no Save button left. Each setting keeps at
+most one short line of help, with the rest behind the (?) beside its label, and what only an installer needs (model
+names, server addresses, measuring tools) sits under *Technical*, folded to one line a card. Nothing about how checks
+run changes.
+
+### New
+
+- **Settings › AI is four choices and only what the one you chose needs.** The picker is two rows: in the cloud,
+  *Subscription* (Claude Code, Codex or Antigravity on your plan) and *API key*; on this computer, *Local model* and
+  *No AI (demo)*. *API key* is one card for the Claude API and the other providers (OpenAI, Google Gemini, Mistral,
+  Azure OpenAI, OpenRouter), with Claude first and marked *Recommended*. Under the picker you see only the chosen
+  route's set-up, then *How the AI works* (how much thought, helpers at once, Fable), *Documents only a local AI may
+  read* (with *Sharing the work* and the usage limit once a local model is chosen there), *Your Claude account and your
+  documents*, and the work waiting, which now shows only with an agent on a plan or while work waits.
+- **Every AI setting saves as you change it.** *Save* and *Save and test* are gone. Picking an API key, or another
+  provider inside it, asks once, naming the company the excerpts go to and that the use is billed to the key; the yes
+  is the choice (the *Allow cloud models* switch is gone with it). A local model and *No AI* save at once. *Test the
+  connection* says in plain words whether the AI answers.
+- **The technical parts moved to Settings › Technical**: the local model's server, addresses, model and reasoning
+  (*The local model*), the models of a provider or an agent per kind of task and the Claude API's stronger model (*The
+  provider's models*), and *Agreement between routes*.
+
+### Settings
+
+- **Settings has a tab for everyday things: General.** Notifications, updates (your version, *Check for updates*,
+  *What's new*, which new versions to offer, *Quit ENLENS*), your data (the data folder, your projects, the list of
+  what was sent to Claude) and help (*Copy technical details*, *Report a problem*) moved there from *Checking* and
+  *Technical*. *Exploring* joined *Documents*. Old links to a section still open it.
+- **Every change saves as you make it, and the page says so once.** The Save buttons and the "Saved as soon as you
+  change something" lines are gone: a choice saves when you make it, a field when you leave it, and the right end of
+  the tabs says *Saving…*, then *Saved*.
+- **Shorter help.** Each setting has at most one short line under it; the longer explanation is behind the (?) beside
+  its label.
+- **Technical is a list of what is set.** Each card is one line, its name and its current value (*Seed 42*, *The
+  recommended models*), until you open it; *AI model per task* is a table again on a computer screen, and search by
+  meaning's server and model have their own card there, while *Documents* keeps its on/off switch and the download.
+  Nothing about how checks run changes.
+- **Which new versions to offer** is now *Stable* or *Early*.
+
+### For developers
+
+- `field()`, `switchControl()` and `rangeControl()` take `about: [title, text]`: a help mark beside the label
+  (`.setting-head`). A table of a few short columns can be `.table-responsive-sm` (stacks under 600 px of its frame).
+
 ## 0.20.1 (November 2026): Local models that suggest, your own cloud provider in a team, and the concept map's names for everyone
 
 A model on your computer now suggests, and you decide. ENLENS chooses the local model that fits your computer and

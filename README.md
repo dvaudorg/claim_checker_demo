@@ -58,13 +58,11 @@ Windows from 0.15.4 on). Your projects and settings (the `enlens` folder in your
   impact claims tagged with UN SDG targets and compared with an expert Value Chain Assessment.
 
 <!-- new-in:start (written by `python tools/release.py prepare`: change the changelog entry, not this) -->
-## New in 0.20.1: Local models that suggest, your own cloud provider in a team, and the concept map's names for everyone
+## New in 0.20.2: Settings in one shape: five tabs, four cards for the AI, and every change saved as you make it
 
-- **The concept map's group names go to your team.** Names you give the groups (and the AI's drafts and the names you used) now travel with the project, in a copy for a colleague, through the shared folder and a team's storage space.
-- **Zoom on the concept map.** *Zoom in*, *Zoom out* and *Whole map* over the map; Ctrl or ⌘ and the wheel, a trackpad's pinch, and the keys **+**, **−** and **0**.
-- **The local model is chosen for your computer.** ENLENS reads the computer's memory, graphics card and free disk space and picks one of three tiers: the small K2 Horizon model (about 8 GB, or no graphics card).
-- **A short answer form for the small model.** The small model could not finish a check (its quotes ran past the length limit).
-- **Each person chooses their own cloud provider in a shared project.** Until now a shared project let Anthropic read only.
+- **Settings › AI is four choices and only what the one you chose needs.** The picker is two rows: in the cloud, *Subscription* (Claude Code, Codex or Antigravity on your plan) and *API key*; on this computer, *Local model* and *No AI (demo)*.
+- **Every AI setting saves as you change it.** *Save* and *Save and test* are gone.
+- **The technical parts moved to Settings › Technical**: the local model's server, addresses, model and reasoning (*The local model*), the models of a provider or an agent per kind of task and the Claude API's stronger model (*The provider's models*).
 <!-- new-in:end -->
 
 How it works, in the manual: [Explore your documents](docs/manual/explore.md) (working documents, the concept map),
