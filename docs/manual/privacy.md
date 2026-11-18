@@ -136,7 +136,10 @@ flowchart LR
 - **Every other AI task** (a second opinion, reading an excerpt again, the AI pass of *Codes*, theme names, concept
   links, references) takes the setting of the most restricted document it touches. A theme whose passages are all
   restricted is named by the local model or keeps its key terms; two concepts found only in restricted documents are
-  linked by the local model or not at all.
+  linked by the local model or not at all. A concept's name and a document's title count as words of their documents:
+  *Name the groups* and *Other wordings* name only concepts found in documents the AI may read, a framework from theory
+  names only the titles of documents it may read, and a document you make stricter while such a task waits takes the
+  task away from the AI.
 - **A check started in a Claude chat** (the connector) shows Claude only the excerpts it may read; the result page then
   offers *Read them now on this computer* for the local ones. When the main model runs on this computer, it also
   reads the excerpts marked *Only a local AI*, so its summary and notes are left out of a Claude chat (the connector

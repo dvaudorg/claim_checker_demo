@@ -95,6 +95,37 @@ def test_a_jobs_waiting_line_counts_only_the_tasks_claude_code_will_take(mixed):
     assert st["for_local"] == 2 and st["waiting"] == 0
     info = taskqueue.queue_info(ws, "check")
     assert info["waiting"] == st["waiting"], info["text"]
+    assert "Claude Code: 2" not in info["text"], info["text"]   # it may say the local model's share is waiting
+
+
+def test_a_batch_says_still_waiting_only_for_what_claude_code_will_be_handed(mixed):  # noqa: F811
+    """Sibling of QUEUE-3: `next_tasks`' "still_waiting" (and the preview's, and the app's helper runs, which end a
+    helper as failed while it says tasks wait) counted the AI mix's local share (`_waiting_count`)."""
+    ws, _s = mixed
+    for _ in range(3):
+        _check_task(ws)
+    with ws.connect() as cx:   # one stepped up to Claude: Claude Code's to take
+        cx.execute("UPDATE tasks SET step=1 WHERE task_id=(SELECT MIN(task_id) FROM tasks WHERE kind='check')")
+    st = taskqueue.status(ws, "p")
+    assert (st["waiting"], st["for_local"]) == (1, 2)
+    got = taskqueue.next_tasks(ws, "check")
+    assert len(got["tasks"]) == 1
+    assert got["still_waiting"] == taskqueue.status(ws, "p")["waiting"] == 0
+
+
+def test_the_sidebar_counts_no_task_of_the_local_models_share(mixed, monkeypatch):  # noqa: F811
+    """Sibling of QUEUE-3: the sidebar's and the Overview's count (`/api/state` queue, server._queue_summary) counted
+    every task in the queue, also the AI mix's local share that Claude Code is never handed."""
+    from enlens_claims.gui import server
+
+    ws, _s = mixed
+    _check_task(ws)
+    _check_task(ws)
+    st = taskqueue.status(ws, "p")
+    assert st["for_local"] == 2
+    monkeypatch.setattr(server.home, "open_project", lambda name: ws)
+    got = server.App._queue_summary(server.App.__new__(server.App), "p")
+    assert got == {"waiting": st["waiting"] + st["being_answered"]} == {"waiting": 0}
 
 
 def test_the_connector_lists_no_project_whose_waiting_tasks_are_all_for_the_local_model(tmp_path, monkeypatch):
@@ -172,3 +203,77 @@ def test_answering_a_kind_here_leaves_the_tasks_claude_code_is_answering(loaded)
     answered_here = {r[0] for r in loaded.query(
         f"SELECT task_id FROM results WHERE task_id IN ({','.join('?' * len(held))})", list(held))}
     assert not answered_here, sorted(answered_here)
+
+
+def test_the_command_line_says_how_many_tasks_it_left_to_the_helper(loaded):
+    """QUEUE-5 and -6, what a person is told: `export-tasks` and `run` say how many tasks they left to the helper that
+    holds them, and the tasks of the kind no claim holds are still written and asked."""
+    from helpers_mixed_corpus import Local
+
+    pids = [r[0] for r in loaded.query("SELECT passage_id FROM passages WHERE section='body' ORDER BY passage_id "
+                                       "LIMIT 5")]
+    with tasks.queueing():
+        profile.make_label_tasks(loaded, "sdg", pids, "haiku")
+    held = {t["task_id"] for t in taskqueue.next_tasks(loaded, "label", n=2)["tasks"]}
+    free = {r[0] for r in loaded.query("SELECT task_id FROM tasks WHERE kind='label' AND status='pending'")} - held
+    assert len(held) == 2 and free
+    report: dict = {}
+    files = tasks.export(loaded, "label", report=report)
+    written = {json.loads(line)["task_id"] for f in files for line in f.read_text(encoding="utf-8").splitlines()}
+    assert report == {"held": len(held)} and written == free
+    with loaded.connect() as cx:   # the written ones back, to be asked here
+        cx.execute("UPDATE tasks SET status='pending' WHERE status='exported'")
+    stats = tasks.run(loaded, "label", Local(), model="m")
+    assert stats["left_to_the_helper_answering_them"] == len(held)
+    asked = {r[0] for r in loaded.query("SELECT DISTINCT task_id FROM results")}
+    assert free <= asked and not (held & asked)
+    assert not loaded.scalar("SELECT COUNT(*) FROM tasks WHERE claimed_by LIKE 'here-%'")   # this run let go of them
+
+
+def test_a_framework_task_keeps_no_title_of_an_evidence_document_marked_no_ai_since(tmp_path, monkeypatch):
+    """Sibling of QUEUE-2 (the hunter's suspicion, theoryframe._evidence_titles): the framework task names the titles
+    of the researcher's own documents with no id beside them, so marking one of them No AI after the task was made
+    never makes the task stricter: waiting in Claude Code's queue, it is still handed out with that title."""
+    import test_theory_framework as ttf
+
+    from enlens_claims import theoryframe
+
+    gen = ttf.project.__wrapped__(tmp_path, monkeypatch)
+    ws, meadows, practice, evidence = next(gen)
+    try:
+        ttf._started(ws, meadows, practice)
+        r = theoryframe.read(ws, ttf.FakeModel(), "claude-sonnet-5-5")
+        tid = r["frame_task"]
+        payload = json.loads(ws.scalar("SELECT payload_json FROM tasks WHERE task_id=?", (tid,)))
+        title = ws.scalar("SELECT title FROM documents WHERE doc_id=?", (evidence,))
+        assert title in payload["evidence_titles"]
+        with ws.connect() as cx:
+            assert access.label_payload(cx, payload, provider=access.ANTHROPIC) == "cloud"
+        access.set_documents(ws, [evidence], "none")
+        with ws.connect() as cx:   # the setting such a task gets now, waiting or asked again
+            assert access.label_payload(cx, payload, provider=access.ANTHROPIC) != "cloud"
+    finally:
+        next(gen, None)
+
+
+def test_a_task_made_before_the_update_leaves_the_queue_too(project):
+    """QUEUE-1 and -2 for data already on disk: an *Other wordings* task and a *Name the groups* task made by an
+    earlier version (no `words_of` in their payloads) wait in the queue; the documents their words come from are set
+    to No AI: neither is handed out any more."""
+    tid_term = terms.find_term(project, "battery")
+    grid = terms.find_term(project, "grid")
+    with project.connect() as cx, tasks.queueing(True):
+        tasks._insert_task(cx, "expand:concept:old:1", "expand", "sonnet",
+                           {"concept": tid_term, "claim": "the concept: battery"})
+        pid = cx.execute("SELECT passage_id FROM passages p JOIN documents d ON d.doc_id=p.doc_id "
+                         "WHERE d.title='Solar report' LIMIT 1").fetchone()[0]
+        tasks._insert_task(cx, "group_name:old", "group_name", "haiku",
+                           {"concepts": ["grid", "battery"], "concept_ids": [grid, tid_term],
+                            "labels": {grid: "grid", tid_term: "battery"}, "map_groups": [[grid, tid_term]],
+                            "group_index": 0, "passages": [{"n": 1, "passage_id": pid, "page": 1, "text": "x",
+                                                            "concepts": ["grid"]}]})
+    assert project.scalar("SELECT COUNT(*) FROM tasks WHERE queued=1 AND access='cloud'") == 2
+    _no_ai_storage(project)
+    for kind in ("expand", "group_name"):
+        got = taskqueue.next_tasks(project, kind)
+        assert not got.get("tasks"), got

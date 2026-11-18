@@ -222,8 +222,24 @@ def mix_kinds() -> frozenset[str]:
 
 
 def _lent(t, lent: frozenset[str]) -> bool:
-    """A waiting task the local model of the AI mix answers first (not Claude Code's yet)."""
+    """A waiting task the local model of the AI mix answers first (not Claude Code's yet). The same test as
+    `local_share` (in SQL), for rows already read."""
     return bool(lent) and routing.task_kind(t) in lent and not int(t["step"] or 0) and not t["forced_model"]
+
+
+def local_share(lent: frozenset[str] | None = None) -> tuple[str, list]:
+    """(SQL over `tasks t`, its arguments): a waiting task that is the AI mix's local model's share now, not Claude
+    Code's: of a kind (or role) the mix lends (`_lent`), not stepped up to Claude, no model forced, and not held by a
+    claim. Hunt phase 1 (QUEUE-3, -4): written once for every place that counts what waits for Claude Code (`status`,
+    `queue_info`, the connector's projects with work, `next_tasks`' "still_waiting", the sidebar), so none of them can
+    count the local model's share as Claude Code's again ("0" when no mix is chosen). `lent`: mix_kinds(), when the
+    caller has it."""
+    lent = mix_kinds() if lent is None else lent
+    if not lent:
+        return "0", []
+    ks = sorted(lent)
+    return (f"(COALESCE(NULLIF(t.role, ''), t.kind) IN ({','.join('?' * len(ks))}) AND COALESCE(t.step, 0)=0 AND "
+            f"COALESCE(t.forced_model, '')='' AND NOT {CLAIMED})", [*ks, _cutoff()])
 
 
 def effective_helper(t, r: routing.Router) -> str:
@@ -285,13 +301,21 @@ def _waiting_rows(ws: Workspace, kind: str | None = None, limit: int | None = No
 PAGE = 500  # the tasks that wait `next_tasks` reads first, in the queue's order: a batch takes 50 at most
 
 
-def _waiting_count(ws: Workspace, kind: str) -> int:
+def _waiting_count(ws: Workspace, kind: str, with_local: bool = False) -> int:
     """len(_waiting_rows(ws, kind)) without reading the rows: those of the kind that wait (the partial index alone),
-    less those a claim holds (not `_FREE`: held, or with no time; few, found by the index on claimed_by)."""
+    less those a claim holds (not `_FREE`: held, or with no time; few, found by the index on claimed_by). Hunt phase 1:
+    less the AI mix's local share too (`local_share`), as `status` counts what waits for Claude Code, unless
+    `with_local` (`run_here`, which answers those as well)."""
     n = ws.scalar(f"SELECT COUNT(*) FROM tasks t WHERE {WAITING} AND t.kind=?", (kind,)) or 0
     taken = ws.scalar(f"SELECT COUNT(*) FROM tasks t WHERE t.claimed_by IS NOT NULL AND (t.claimed_at >= ? OR "
                       f"t.claimed_at IS NULL) AND {WAITING} AND +t.kind=?", (_cutoff(), kind)) or 0
-    return int(n) - int(taken)
+    lent = 0
+    if not with_local:
+        share, args = local_share()
+        if share != "0":
+            lent = ws.scalar(f"SELECT COUNT(*) FROM tasks t WHERE {WAITING} AND +t.kind=? AND {_FREE} AND {share}",
+                             (kind, _cutoff(), *args)) or 0   # (free: not already less as `taken`)
+    return int(n) - int(taken) - int(lent)
 
 
 def estimate_seconds(ws: Workspace, kind: str, model: str, n: int, parallel: int = 2) -> float | None:
@@ -383,6 +407,7 @@ def status(ws: Workspace, project: str | None = None, parallel: int = PARALLEL, 
     o, held = order(ws)
     cutoff = _cutoff()
     lent = mix_kinds()
+    share, share_args = local_share(lent)
     per: dict[str, dict] = {}
     # every kind with a task in the queue, in the order its tasks were first made (the order of a kind the queue's
     # order does not name), with its answered and failed tasks
@@ -396,12 +421,13 @@ def status(ws: Workspace, project: str | None = None, parallel: int = PARALLEL, 
     groups: dict[tuple, dict] = {}
     # the tasks that wait, counted in SQL per what decides their model and helper (the router is asked once per
     # group, not twice per task), and whether a claim holds them now
-    for g0 in ws.query(f"SELECT t.kind, t.role, t.step, t.forced_model, t.model, {CLAIMED} AS claimed, COUNT(*) AS n, "
-                       f"MIN(t.queued_at) AS first FROM tasks t WHERE {WAITING} "
-                       "GROUP BY t.kind, t.role, t.step, t.forced_model, t.model, claimed", (cutoff,)):
+    for g0 in ws.query(f"SELECT t.kind, t.role, t.step, t.forced_model, t.model, {CLAIMED} AS claimed, "
+                       f"{share} AS lent, COUNT(*) AS n, MIN(t.queued_at) AS first FROM tasks t WHERE {WAITING} "
+                       "GROUP BY t.kind, t.role, t.step, t.forced_model, t.model, claimed, lent",
+                       (cutoff, *share_args)):
         k, n = g0["kind"], int(g0["n"])
         d = per[k]
-        if not g0["claimed"] and _lent(g0, lent):
+        if g0["lent"]:
             d["for_local"] += n  # 0.18.1 (I1): the local model of the AI mix answers these first
             continue
         if g0["claimed"]:
@@ -1210,12 +1236,20 @@ def _wait_for(ws: Workspace, task_id: str, backend, poll: float | None) -> tuple
 def queue_info(ws: Workspace, kind: str) -> dict:
     """The line a page shows while it waits: "Waiting for Claude Code: 120 passages to label · about 25 minutes".
     Asked every few seconds by each job that waits, so it counts only what the line says, from the two partial
-    indexes (the same numbers as `status`, which works out every kind's models and runs)."""
+    indexes (the same numbers as `status`, which works out every kind's models and runs). Hunt phase 1 (QUEUE-3): the
+    AI mix's local share is not Claude Code's (`local_share`, as `status` leaves it out of its waiting and being
+    answered); `waiting` is Claude Code's whole share of the kind (`status`' waiting and being answered), as before."""
     cutoff = _cutoff()
+    share, share_args = local_share()
     total: dict[str, int] = {}
     first: dict[str, str | None] = {}
-    for row in ws.query(f"SELECT kind, COUNT(*), MIN(queued_at) FROM tasks t WHERE {WAITING} GROUP BY kind"):
-        total[row[0]], first[row[0]] = int(row[1]), row[2]
+    lent: dict[str, int] = {}
+    for row in ws.query(f"SELECT kind, {share} AS lent, COUNT(*), MIN(queued_at) FROM tasks t WHERE {WAITING} "
+                        "GROUP BY kind, lent", share_args):
+        if row[1]:
+            lent[row[0]] = int(row[2])
+            continue
+        total[row[0]], first[row[0]] = int(row[2]), row[3]
     held: dict[str, int] = {}
     for (k,) in ws.query(f"SELECT t.kind FROM tasks t WHERE {_HELD} AND {WAITING}", (cutoff,)):
         held[k] = held.get(k, 0) + 1
@@ -1224,13 +1258,16 @@ def queue_info(ws: Workspace, kind: str) -> dict:
     title = route_title(route)
     command = run_command(route, ws.root.name)
     est = estimate = None
-    if n or ws.scalar("SELECT 1 FROM tasks WHERE COALESCE(queued, 0)=1 AND COALESCE(access, 'cloud')='cloud' AND "
-                      "kind=? AND (status='failed' OR (status='done' AND COALESCE(again, 0)=0)) LIMIT 1", (kind,)):
+    if n or lent.get(kind) or ws.scalar("SELECT 1 FROM tasks WHERE COALESCE(queued, 0)=1 AND COALESCE(access, "
+                                        "'cloud')='cloud' AND kind=? AND (status='failed' OR (status='done' AND "
+                                        "COALESCE(again, 0)=0)) LIMIT 1", (kind,)):
         # the kind is listed in the queue (as `status` lists it): its estimate, "" when nothing of it waits
         sec = estimate_seconds(ws, kind, router(ws, route).model(kind) or "", n, PARALLEL)
         est = round(sec) if sec is not None else None
         estimate = _estimate_text(kind, n, sec)
     text = f"Waiting for {title}: {noun(kind, n)}" if n else f"Waiting for {title}"
+    if not n and lent.get(kind):   # only the local model's share waits: the line says whose it is
+        text = f"Waiting for your local model: {noun(kind, lent[kind])}"
     if est:
         text += f" · {_duration(est)}"
     waiting = sum(total.values()) - sum(held.values())
@@ -1243,7 +1280,8 @@ def queue_info(ws: Workspace, kind: str) -> dict:
         if k:
             run_total, run_done = _run_counts(ws, k, first[k]) if first[k] else (0, 0)
             paused_text = _paused_text(k, run_done, run_total, command, route)
-    return {"text": text, "waiting": n, "being_answered": being, "paused": paused, "paused_text": paused_text,
+    return {"text": text, "waiting": n, "being_answered": being, "for_local": lent.get(kind, 0),
+            "paused": paused, "paused_text": paused_text,
             "command": command, "estimate": estimate, "privacy": privacy_line(route), "kind": kind,
             "agent_route": route, "agent_title": title}
 
@@ -1263,7 +1301,7 @@ def run_here(ws: Workspace, backend, kinds: list[str] | None = None, limit: int 
     may = access.backend_levels(backend)
     prov = access.provider_of(backend)
     dflt = access.default(ws)
-    total = sum(_waiting_count(ws, k) for k in todo_kinds)
+    total = sum(_waiting_count(ws, k, with_local=True) for k in todo_kinds)
     i = 0
     for k in todo_kinds:
         ids = [t["task_id"] for t in _waiting_rows(ws, k)]

@@ -761,7 +761,7 @@ def payloads(ws: Workspace, f, n: int, which: str, allowed: set[str], settings: 
     groups with no passage the reader may read, "person": groups named by the researcher (never asked)}. `which`:
     "unnamed" (the groups still named by their concepts, and those the AI could not name) or "again" (every group
     but those named by the researcher, each for a new draft)."""
-    from . import access
+    from . import access, terms
     from .conceptmap import concept_map
     from .conceptpaths import _Graph
 
@@ -783,11 +783,23 @@ def payloads(ws: Workspace, f, n: int, which: str, allowed: set[str], settings: 
         ms = gr["concepts"]
         nodes = [g.node(t) for t in ms]
         ps = _passages_of(ws, f, nodes, g, allowed, lv, dflt)
-        if not ps:
+        # hunt phase 1 (QUEUE-1): a concept's name is words of the documents it is found in, so the prompt names only
+        # the concepts found in a document its reader may read, as its passages are chosen: Claude's (cloud) when
+        # every passage is, else the local model's (cloud and local). The names sent are named for the guard too
+        # (`access.words_floor`), which looks again while the task waits. "concept_ids" and "labels" stay whole
+        # (`apply` and `match` need the group as it is; neither is sent)
+        shown: list[str] = []
+        if ps:
+            ok = {"cloud"} if access.most(lv.get(p["doc_id"]) or dflt for p in ps) == "cloud" else {"cloud", "local"}
+            named = terms.terms_in_docs(ws, ms, {d for d, x in lv.items() if (x or dflt) in ok})
+            shown = [t for t in ms if t in named][:MAX_CONCEPTS]
+        if not ps or not shown:
             out["skipped"] += 1
             continue
-        payload = {"concepts": [lab[t] for t in ms[:MAX_CONCEPTS]], "concept_ids": ms,
+        in_ps = [[ms[i] for i in p["nodes"] if i < len(ms) and ms[i] in named][:8] for p in ps]
+        payload = {"concepts": [lab[t] for t in shown], "concept_ids": ms,
                    "labels": {t: lab[t] for t in ms},
+                   access.WORDS_KEY: {"terms": sorted(set(shown) | {t for x in in_ps for t in x})},
                    "docs": sorted({p["doc_id"] for p in ps}), "filters": m["filters"], "n": m["n"],
                    "name_id": gr["name_id"],
                    "before": gr["name"] if gr["name_source"] in ("ai", "ai_draft") else None,
@@ -795,7 +807,7 @@ def payloads(ws: Workspace, f, n: int, which: str, allowed: set[str], settings: 
                    # the map, never one another group holds (a name whose concepts span two groups)
                    "map_groups": [x["concepts"] for x in m["groups"]], "group_index": m["groups"].index(gr),
                    "passages": [{"n": k, "passage_id": p["passage_id"], "page": p["page"], "text": p["text"],
-                                 "concepts": [lab[ms[i]] for i in p["nodes"] if i < len(ms)][:8]}
+                                 "concepts": [lab[t] for t in in_ps[k - 1]]}
                                 for k, p in enumerate(ps, 1)]}
         out["tasks"].append((gr, payload))
     return out

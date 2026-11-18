@@ -1734,14 +1734,19 @@ def propose_wordings(ws: Workspace, term: str, backend, model: str) -> list[dict
                                                             provider=access.provider_of(backend))))
     if not ids:
         raise ValueError("This concept occurs only in documents this model may not read, so its wordings are not sent.")
-    labels = [r[0] for r in ws.query(f"SELECT label FROM terms WHERE term_id IN ({','.join('?' * len(ids))}) "
-                                     "ORDER BY tf DESC", ids)]
+    rows = ws.query(f"SELECT term_id, label FROM terms WHERE term_id IN ({','.join('?' * len(ids))}) ORDER BY tf DESC",
+                    ids)[:6]
+    labels = [r[1] for r in rows]
     n = int(ws.scalar("SELECT COUNT(*) FROM tasks WHERE kind='expand' AND task_id LIKE ?", (f"expand:concept:{term}:%",))
             or 0) + 1
     tid = f"expand:concept:{term}:{n}"
     with ws.connect() as cx:
-        tasks._insert_task(cx, tid, "expand", model, {"concept": term, "claim": f"the concept: {labels[0]}"
-                                                       + (f" (also written: {', '.join(labels[1:6])})" if labels[1:] else "")})
+        # hunt phase 1 (QUEUE-2): the wordings sent are named for the guard (`access.words_floor`), so a document
+        # made stricter while the task waits for Claude Code takes them out of its reach (the payload names no
+        # passage, so before this the task stayed `cloud` whatever happened to its documents)
+        claim = f"the concept: {labels[0]}" + (f" (also written: {', '.join(labels[1:6])})" if labels[1:] else "")
+        tasks._insert_task(cx, tid, "expand", model, {"concept": term, "claim": claim,
+                                                       access.WORDS_KEY: {"terms": [r[0] for r in rows]}})
         # worked out again as it leaves, as in the runs of several tasks (an add-on's floor may hold it back)
         if access.recheck(cx, tid, provider=access.provider_of(backend)) not in access.backend_levels(backend):
             raise ValueError("This concept's wordings may not be sent to this model.")

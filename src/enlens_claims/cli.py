@@ -686,8 +686,16 @@ def _main(argv: list[str] | None = None) -> int:
         if a.kind in tasks.CORPUS_KINDS:
             print(f"Note: {a.kind} tasks hold passages of your documents. Whoever answers these files (for example "
                   "Claude workers) reads those passages: they leave this computer.", file=sys.stderr)
-        files = tasks.export(ws, a.kind, a.batch_size, a.limit)
-        _print({"files": [str(f) for f in files], "instructions": str(ws.root / "tasks" / a.kind / "WORKER_GUIDE.md")})
+        left: dict = {}   # (not `report`: the module of that name is used below)
+        files = tasks.export(ws, a.kind, a.batch_size, a.limit, report=left)
+        out = {"files": [str(f) for f in files], "instructions": str(ws.root / "tasks" / a.kind / "WORKER_GUIDE.md")}
+        if left.get("held"):   # hunt phase 1 (QUEUE-5): tasks a helper of the queue is answering now
+            n = left["held"]
+            out["left_to_the_helper_answering_them"] = n
+            out["note"] = (f"{n} task{'s' if n != 1 else ''} left out: a helper of the queue (Claude Code) is "
+                           f"answering {'them' if n != 1 else 'it'} now. Run export-tasks again later for any it gives "
+                           "back.")
+        _print(out)
     elif a.cmd == "import-results":
         _print(tasks.import_results(ws, a.paths, a.model))
     elif a.cmd == "check-results":

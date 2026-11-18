@@ -666,11 +666,13 @@ def build_server():
             out: list[dict] = []
             bad: list[str] = []
 
+            share, share_args = taskqueue.local_share()   # the settings, read once for every project
+
             def waiting(name, ws):
                 # what queue_status of that project calls waiting: tasks Claude Code may take now (not those a
-                # claim holds, nor any it is never handed)
-                n = ws.scalar(f"SELECT COUNT(*) FROM tasks t WHERE {taskqueue.WAITING} AND NOT {taskqueue.CLAIMED}",
-                              (taskqueue._cutoff(),)) or 0
+                # claim holds, nor any it is never handed, nor the AI mix's local share: hunt phase 1, QUEUE-4)
+                n = ws.scalar(f"SELECT COUNT(*) FROM tasks t WHERE {taskqueue.WAITING} AND NOT {taskqueue.CLAIMED} "
+                              f"AND NOT {share}", (taskqueue._cutoff(), *share_args)) or 0
                 if n:
                     out.append({"project": name, "waiting": n})
 
