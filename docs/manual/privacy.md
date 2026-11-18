@@ -156,7 +156,7 @@ the connector) or for another cloud provider, with the provider that received it
 
 - A document's details on the Documents page (the arrow at the end of its line) show the share of its text under
   *Sent to Claude*; *See what it read* lists the passages, when, and for which feature.
-- *Settings → Technical → What was sent to Claude* downloads the whole list (CSV), for example for a data management
+- *Settings → General → Your data → What was sent to Claude* downloads the whole list (CSV), for example for a data management
   plan. For a project made before 0.11 the list starts with the results ENLENS recorded then.
 - Changing a document to *Only a local AI* applies to everything not yet answered; what Claude already read stays in
   the results and the list. Removing a document takes its passages out of everything still waiting for Claude Code.
