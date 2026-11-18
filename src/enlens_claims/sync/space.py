@@ -2171,7 +2171,10 @@ def _drive_status(desc: dict, roster: dict | None = None) -> dict:
 
 def _edit_state(ws: Workspace, change: Callable[[dict], bool]) -> None:
     """Change the copy of the space's state on this computer outside a round (`change` returns whether it did)."""
-    path = mirror_of(ws) / ".space-state.json"
+    mirror = mirror_of(ws)
+    if mirror is None:
+        raise SpaceProblem("This project has no storage space.", "no_space")
+    path = mirror / ".space-state.json"
     try:
         st = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -2201,8 +2204,6 @@ def _dismiss_unlocked(ws: Workspace, notice: str) -> dict:
 def _retry_drive_unlocked(ws: Workspace) -> dict:
     """*Try again* after the drive refused the app password: the next round asks the drive once more (a refusal
     stops the rounds again). Returns `status`."""
-    if configured(ws) is None:
-        raise SpaceProblem("This project has no storage space.", "no_space")
     _edit_state(ws, lambda st: st.pop("refused", None) is not None)
     return status(ws)
 
