@@ -75,12 +75,30 @@ export async function agentConsent(key, { stay = "Keep the AI on this computer" 
   }));
 }
 
-// 0.9: Settings as five flat tabs (no section folded inside another). Old links to a section (#/settings/second,
-// #/settings/calibration…) open its tab and scroll to it.
+// Settings as five tabs: AI · Checking · Documents · General · Technical. Old links to a section (#/settings/second,
+// #/settings/calibration, #/settings/explore…) open its tab and scroll to it; a folded Technical card it names opens.
 // the AI tab wears the icon of the sidebar's AI line (where text goes): the chip is the AI mark's only (DESIGN.md 3.3)
-const TABS = [["model", "AI", "cloud"], ["basics", "Checking", "flask"], ["explore", "Exploring", "network"], ["documents", "Documents", "book-open"], ["advanced", "Technical", "sliders"]];
-const TAB_OF = { model: "model", ai: "model", speed: "model", queue: "model", basics: "basics", calibration: "basics", notify: "basics", explore: "explore", frameworks: "explore", documents: "documents", ocr: "documents", embeddings: "documents",
-  advanced: "advanced", localmodel: "advanced", routing: "advanced", second: "advanced", context: "advanced", repeatable: "advanced", test: "advanced", updates: "advanced", data: "advanced", link: "advanced" };
+const TABS = [["model", "AI", "cloud"], ["basics", "Checking", "flask"], ["documents", "Documents", "book-open"], ["general", "General", "monitor"], ["advanced", "Technical", "sliders"]];
+const TAB_OF = {
+  model: "model", ai: "model", work: "model", terms: "model", restricted: "model", mix: "model", speed: "model", thought: "model", queue: "model",
+  basics: "basics", calibration: "basics", newchecks: "basics",
+  documents: "documents", explore: "documents", frameworks: "documents", embeddings: "documents", ocr: "documents",
+  general: "general", notify: "general", updates: "general", data: "general", ledger: "general", help: "general",
+  advanced: "advanced", link: "advanced", localmodel: "advanced", tiermodels: "advanced", routing: "advanced", second: "advanced", context: "advanced",
+  embedmodel: "advanced", repeatable: "advanced", test: "advanced", agreement: "advanced", installation: "advanced",
+};
+
+// One saving state for the whole page (DESIGN rule: everything saves when it is changed), at the right end of the tab
+// row: at rest it says that changes save by themselves; save() shows Saving…, then Saved for a moment.
+const AT_REST = "Changes save as you make them";
+let PAGE_SAVE = null;   // { now, timer, n }: the state of the page on screen
+function saveState() {
+  const now = h("span", { class: "set-save-now", "aria-live": "polite" });
+  PAGE_SAVE = { now, timer: 0, n: 0 };
+  // the words at rest come after the live part and hide while it says something (a CSS rule): only Saving… and Saved
+  // are announced
+  return h("div", { class: "set-save" }, now, h("span", { class: "set-save-rest" }, AT_REST));
+}
 
 export async function renderSettings(view, [section]) {
   const s = { ...App.settings() };
@@ -93,41 +111,46 @@ export async function renderSettings(view, [section]) {
   // the version is a link (to Updates): it sits in the line under the title, since a page head's right holds only
   // actions (docs/DESIGN.md 4.14)
   view.appendChild(pageHead("Settings", { sub: [{
-    model: "Which AI reads your documents: an AI on a plan you already have (Claude Code, Codex or Antigravity), a model on this computer, or none.",
-    basics: "How strict a check is, how new checks start, and when you hear that work has finished.",
-    explore: "The defaults of the Profile and Themes pages, and your codebooks.",
-    documents: "Reading scanned PDFs, and search by meaning.",
+    model: "Which AI reads your documents, and how it works.",
+    basics: "How strict a check is, and how new checks start.",
+    documents: "Scanned PDFs, search by meaning, and the defaults for exploring.",
+    general: "Notifications, updates, your data, and help.",
     advanced: "For whoever installs the app. Most people never change anything here.",
   }[tab], " ", versionTag()] }));
-  view.appendChild(tabs({ label: "Settings", current: tab,
-    items: TABS.map(([id, label, ic]) => [id, label, `#/settings/${id}`, id === "model" ? App.privacy().icon || ic : ic]) }));
-  const main = h("div", { class: "stack set-main" });
+  view.appendChild(h("div", { class: "set-tabbar" },
+    tabs({ label: "Settings", current: tab, items: TABS.map(([id, label, ic]) => [id, label, `#/settings/${id}`, id === "model" ? App.privacy().icon || ic : ic]) }),
+    saveState()));
+  const main = h("div", { class: "stack set-main" + (tab === "advanced" ? " set-main-tech" : "") });
   view.appendChild(main);
   if (tab === "model") main.append(...aiTab(s, { servers, info, watchers }));
-  else if (tab === "basics") main.append(basicsSection(s), notifySection(s));
-  else if (tab === "explore") main.append(exploreSection(s), frameworksSection());
-  else if (tab === "documents") main.append(sectionCard("ocr", "Reading scanned PDFs", "", ocrBlock(s)), embedSection(s, servers, info));
+  else if (tab === "basics") main.append(...basicsSection(s));
+  else if (tab === "documents") main.append(sectionCard("ocr", "Reading scanned PDFs", "", ocrBlock(s)), embedSection(s, servers, info), exploreSection(s));
+  else if (tab === "general") main.append(notifySection(s), updatesSection(), dataSection(), helpSection());
   else {
     // a local model's own settings (second model, context length) only when a local model answers
     const local = ["auto", "ollama", "openai"].includes(s.backend || "auto");
     const ai = aiTechnical(s, { servers, info, watchers });   // the AI region's parts of this tab: { local, models, measuring }
-    main.append(...[techCard(ai.local), techCard(ai.models), routingSection(s, servers), techCard(ai.measuring), local ? secondModelSection(s, servers) : null, local ? contextSection(s) : null, reproSection(s), testSection(s, watchers), ledgerSection(), updatesSection(), linkSection(), dataSection()].filter(Boolean));
-    if (!local) main.appendChild(h("p", { class: "muted small" }, icon("info", { size: 13 }), " The settings of a model on this computer (the model for second opinions, the context length) show here when a local model is chosen under AI."));
+    main.append(...[ai.local, ai.models, routingSection(s, servers), local ? secondModelSection(s, servers) : null, local ? contextSection(s) : null,
+      embedModelSection(s, servers), reproSection(s), testSection(s, watchers), ai.measuring, linkSection(), installationSection()]
+      .filter(Boolean).map((d) => (d instanceof Node ? d : techCard(d, section))));
   }
-  // a link to one setting (#/settings/speed): it comes into view clear of the top bar, and its control takes the focus
+  // a link to one setting (#/settings/speed): it comes into view clear of the top bar, and its control takes the focus;
+  // a folded card it is in opens
   if (section && section !== tab) setTimeout(() => {
     const t = document.getElementById(`s-${section}`); if (!t) return;
+    const fold = t.closest("details"); if (fold && !fold.open) fold.open = true;
     t.scrollIntoView({ block: "start" });
-    const c = t.querySelector('[aria-checked="true"]') || t.querySelector("input, select, textarea, button"); if (c) c.focus({ preventScroll: true });
+    const c = t.querySelector('[aria-checked="true"]') || t.querySelector(".settings-body input, .settings-body select, .settings-body textarea, input, select, textarea, button"); if (c) c.focus({ preventScroll: true });
   }, 80);
   return () => watchers.forEach((w) => w.stop());
 }
 
 // ---------------------------------------------------------------------------------------------
+// Checking: two cards, Strictness and How new checks start
 function basicsSection(s) {
-  const state = h("span", { class: "save-state", "aria-live": "polite" });
-  const strictState = h("span", { class: "save-state", "aria-live": "polite" });
-  const thr = rangeControl("How sure the AI must be before a judgement counts", { min: 0.3, max: 0.95, step: 0.05, value: s.threshold ?? 0.6, format: (v) => `${strictness(v)} (${Math.round(Number(v) * 100)}%)`, ends: ["relaxed", "strict"], help: "The AI says how sure it is of each judgement; 60% means it said it was at least 60% sure. Judgements below this are shown but not counted. Your own judgements always count. Changing this updates all results, old and new." });
+  const thr = rangeControl("How sure the AI must be before a judgement counts", { min: 0.3, max: 0.95, step: 0.05, value: s.threshold ?? 0.6, format: (v) => `${strictness(v)} (${Math.round(Number(v) * 100)}%)`, ends: ["relaxed", "strict"],
+    help: "Judgements below it are shown but not counted. Your own judgements always count.",
+    about: ["How sure the AI must be", "The AI says how sure it is of each judgement; 60% means it said it was at least 60% sure. Judgements below this are shown but not counted. Your own judgements always count. Changing this updates all results, old and new."] });
   const changes = h("div", { "aria-live": "polite" });
   async function reportChanges(oldT, newT) {
     if (!App.project) return;
@@ -141,14 +164,14 @@ function basicsSection(s) {
       const item = (x, withStatus) => h("li", {}, link({ kind: "title", serif: true, href: `#/h/${encodeURIComponent(x.hyp_id)}` }, x.text || x.claim), " ",
         withStatus ? [statusBadge(before.get(x.hyp_id).status, { short: true }), " → ", statusBadge(x.status, { short: true }), " "] : null,
         h("span", { class: "muted small" }, `(${counts(before.get(x.hyp_id))} → ${counts(x)})`));
-      const bits = [];
+      const bits = [h("p", { class: "small" }, `All results now count judgements the AI was at least ${Math.round(newT * 100)}% sure of.`)];
       if (answerDiff.length) bits.push(h("p", {}, h("strong", {}, `${answerDiff.length} ${answerDiff.length === 1 ? "answer" : "answers"} changed:`)), h("ul", { class: "changes-list" }, answerDiff.map((x) => item(x, true))));
       else bits.push(h("p", {}, h("strong", {}, "No answer changed"), countDiff.length ? `, but in ${countDiff.length} ${countDiff.length === 1 ? "result" : "results"} a different number of excerpts counts now:` : "."));
       if (countDiff.length) bits.push(answerDiff.length ? h("p", { class: "set-count-diff" }, `In ${countDiff.length} more ${countDiff.length === 1 ? "result" : "results"} the answer stayed, but a different number of excerpts counts now:`) : null, h("ul", { class: "changes-list" }, countDiff.map((x) => item(x, false))));
       replace(changes, notice({ kind: answerDiff.length ? "info" : "done", class: "set-changes-notice" }, bits));
     } catch (e) { showError(e); }
   }
-  // strictness saves on release and reports what changed
+  // strictness saves when the slider is let go, and reports what changed
   let savingStrict = false;
   async function saveStrict(newT) {
     if (savingStrict) return;
@@ -156,28 +179,17 @@ function basicsSection(s) {
     const oldT = App.settings().threshold ?? 0.6;
     try {
       if (Math.abs(oldT - newT) > 1e-9) {
-        await save({ threshold: newT }, strictState);
-        strictState.textContent = `Saved: all results now count judgements the AI was at least ${Math.round(newT * 100)}% sure of.`;
+        await save({ threshold: newT });
         await reportChanges(oldT, newT);
         loadCalibration();
-      } else strictState.textContent = "Saved.";
+      }
     } catch (_) { /* shown */ }
     savingStrict = false;
   }
   thr.input.addEventListener("change", () => saveStrict(thr.input.valueAsNumber));
   const backBtn = button({ sm: true, onClick: () => { thr.input.value = 0.6; thr.input.dispatchEvent(new Event("input", { bubbles: true })); saveStrict(0.6); } }, "Back to normal (60%)");
-  const k = rangeControl("How many excerpts the AI reads per check", { min: 1, max: 20, step: 1, value: s.k ?? 8, help: "More finds more evidence but takes longer." });
-  const perDoc = rangeControl("At most this many from one document", { min: 1, max: 10, step: 1, value: s.per_doc ?? 2 });
-  const expand = switchControl("Also search for other words (synonyms)", !!s.expand, { help: "The AI suggests other words your documents might use." });
-  const decompose = switchControl("Check each part of a hypothesis separately", !!s.decompose, { help: "For hypotheses with several claims in one sentence." });
   const calibration = h("div", { class: "calibration", id: "s-calibration", "aria-live": "polite" });
   const useSuggestion = (t) => { thr.input.value = t; thr.input.dispatchEvent(new Event("input", { bubbles: true })); saveStrict(t); };
-  const strictForm = h("div", {},
-    thr,
-    notice({ kind: "attention", class: "set-certainty-note" }, "The AI's certainty is its own estimate, not a check of whether it is right. A stricter setting counts fewer judgements, but can still count wrong ones. Reading the excerpts and judging them yourself is the reliable check."),
-    h("div", { class: "save-row" }, backBtn, h("span", { class: "muted small" }, "Saved as soon as you let go of the slider."), strictState),
-    changes,
-    calibration);
   const loadCalibration = async () => {
     if (!App.project) { clear(calibration); return; }
     try { replace(calibration, calibrationBlock(await api("GET", `/api/projects/${P(App.project)}/calibration`), useSuggestion)); }
@@ -186,25 +198,30 @@ function basicsSection(s) {
     if (/#\/settings\/calibration$/.test(location.hash)) { calibration.scrollIntoView({ block: "start" }); const t = calibration.querySelector(".cal-title"); if (t) { t.setAttribute("tabindex", "-1"); t.focus(); } }
   };
   loadCalibration();
-  const saveDefaults = async () => { try { await save({ k: k.input.valueAsNumber, per_doc: perDoc.input.valueAsNumber, expand: expand.input.checked, decompose: decompose.input.checked }, state); } catch (_) { /* shown */ } };
+  const strict = sectionCard("basics", "Strictness", "",
+    thr,
+    notice({ kind: "attention", class: "set-certainty-note" }, "The AI's certainty is its own estimate, not a check of whether it is right. Reading the excerpts yourself is the reliable check."),
+    h("div", { class: "btn-row" }, backBtn),
+    changes,
+    calibration);
+
+  const k = rangeControl("How many excerpts the AI reads per check", { min: 1, max: 20, step: 1, value: s.k ?? 8, help: "More finds more evidence but takes longer." });
+  const perDoc = rangeControl("At most this many from one document", { min: 1, max: 10, step: 1, value: s.per_doc ?? 2 });
+  const expand = switchControl("Also search for other words (synonyms)", !!s.expand, { help: "The AI suggests other words your documents might use." });
+  const decompose = switchControl("Check each part of a hypothesis separately", !!s.decompose, { help: "For hypotheses with several claims in one sentence." });
+  const saveDefaults = async () => { try { await save({ k: k.input.valueAsNumber, per_doc: perDoc.input.valueAsNumber, expand: expand.input.checked, decompose: decompose.input.checked }); } catch (_) { /* shown */ } };
   for (const c of [k.input, perDoc.input, expand.input, decompose.input]) c.addEventListener("change", saveDefaults);
-  const form = h("div", {},
-    h("div", { class: "fields-2" }, h("div", {}, expand, decompose), h("div", {}, k, perDoc)),
-    h("div", { class: "save-row" }, h("span", { class: "muted small" }, "Saved as soon as you change something. New checks start with these; each check can still change them under More options."), state));
-  return sectionCard("basics", "Checking hypotheses", "",
-    h("h3", { class: "set-strict-title" }, "Strictness"),
-    strictForm,
-    h("h3", { class: "set-start-title" }, "How new checks start"),
-    form);
+  const start = sectionCard("newchecks", "How new checks start", "New checks start with these; each check can still change them under More options.",
+    h("div", { class: "fields-2" }, h("div", {}, expand, decompose), h("div", {}, k, perDoc)));
+  return [strict, start];
 }
 
 // After 0.19.7: a notification from the computer when work the person started has finished (gui/notify.py), so the
 // browser can be closed while a local model works. Saved when picked; a test sends one now.
 function notifySection(s) {
   const name = appName();
-  const st = h("span", { class: "save-state", "aria-live": "polite" });
-  const pick = async (v) => { try { await save({ notify: v }, st); s.notify = v; } catch (_) { /* shown */ } };
-  const when = choice({ sm: true, label: "When to tell you", value: s.notify || "away",
+  const pick = async (v) => { try { await save({ notify: v }); s.notify = v; } catch (_) { /* shown */ } };
+  const when = choice({ sm: true, label: "Tell me", value: s.notify || "away",
     options: [["away", `When ${name} is not in front`], ["always", "Always"], ["off", "Never"]], onPick: pick });
   const out = h("div", { "aria-live": "polite" });
   const test = button({ sm: true, icon: "bell" }, "Send a test notification");
@@ -220,10 +237,9 @@ function notifySection(s) {
     } catch (e) { clear(out); showError(e); }
     test.disabled = false;
   });
-  return sectionCard("notify", "When work has finished", `Work you started that took more than 20 seconds (a check, documents being added, your local model answering the queue) can tell you when it has finished, or stopped with a problem, in your computer's own notifications. So you can close the browser while it runs: ${name} keeps working, and a click on the notification opens it again.`,
-    h("div", { class: "field" }, h("div", { class: "field-label" }, "Tell me"), h("div", { class: "row" }, when, st),
-      h("div", { class: "field-help" }, `When ${name} is not in front: only when no ${name} tab is the one you are looking at (the browser closed, or another window in front). Work ${name} does by itself, such as looking in a shared folder, never sends one.`)),
-    h("div", { class: "save-row" }, test), out);
+  return sectionCard("notify", "Notifications", `Your computer's own notifications can tell you when work you started has finished, so you can close the browser while it runs.`,
+    setting("Tell me", when, { about: ["When to tell you", `Work you started that took more than 20 seconds (a check, documents being added, your local model answering the queue) tells you when it has finished, or stopped with a problem; ${name} keeps working with the browser closed, and a click on the notification opens it again. When ${name} is not in front: only when no ${name} tab is the one you are looking at (the browser closed, or another window in front). Work ${name} does by itself, such as looking in a shared folder, never sends one.`] }),
+    h("div", { class: "btn-row" }, test), out);
 }
 
 // Calibration: how often the person agreed with the AI, by the AI's certainty, as a small bar chart with a text
@@ -272,22 +288,22 @@ function calibrationBlock(c, useSuggestion) {
 // Reading scanned PDFs: on/off and the languages, with what the computer can do.
 function ocrBlock(s) {
   const st = (App.state && App.state.ocr) || {};
-  const state = h("span", { class: "save-state", "aria-live": "polite" });
-  const on = switchControl("Read scanned PDF pages (text recognition)", (s.ocr || "auto") !== "off", { help: "A scanned PDF is a picture of the pages. With text recognition (OCR) the app reads the text on them, on this computer, slowly and with some errors; the Documents page says which documents were read this way." });
+  const on = switchControl("Read scanned PDF pages (text recognition)", (s.ocr || "auto") !== "off", { help: "Reads the text of scanned pages on this computer. Applies to documents added from now on.",
+    about: ["Text recognition", "A scanned PDF is a picture of the pages. With text recognition (OCR) the app reads the text on them, on this computer, slowly and with some errors; the Documents page says which documents were read this way."] });
   const lang = fieldInput({ type: "text", value: s.ocr_lang || "eng", placeholder: "eng", maxlength: 60, class: "set-lang" });
   const installed = st.languages && st.languages.length ? st.languages : [];
-  const langField = field("Languages of the scanned documents", lang, { help: `Three-letter codes, joined with +, for example eng+nld for English and Dutch.${installed.length ? ` Installed on this computer: ${installed.join(", ")}.` : ""}` });
-  const saveOcr = async () => { try { await save({ ocr: on.input.checked ? "auto" : "off", ocr_lang: lang.value.trim() || "eng" }, state); } catch (_) { /* shown */ } };
+  const langField = field("Languages of the scanned documents", lang, { help: `Three-letter codes joined with +, such as eng+nld.${installed.length ? ` Installed: ${installed.join(", ")}.` : ""}` });
+  const saveOcr = async () => { try { await save({ ocr: on.input.checked ? "auto" : "off", ocr_lang: lang.value.trim() || "eng" }); } catch (_) { /* shown */ } };
   on.input.addEventListener("change", saveOcr);
   lang.addEventListener("change", saveOcr);
   const box = h("div", {});
   if (st.available === false) {
     box.appendChild(notice({ kind: "attention", class: "set-ocr-notice" }, h("p", {}, h("strong", {}, "To read scanned PDFs, install Tesseract."), " Until then, scanned pages stay without text and a wholly scanned PDF cannot be added."),
-      st.install ? tesseractHelp(st) : h("p", { class: "small" }, "What is missing is listed under Settings → Technical.")));
+      st.install ? tesseractHelp(st) : h("p", { class: "small" }, link({ kind: "next", href: "#/settings/installation" }, "What is missing: Settings › Technical"))));
   } else if (st.available) {
     box.appendChild(h("p", { class: "muted small set-ocr-ok" }, icon("check", { size: 13 }), " Text recognition is installed on this computer."));
   }
-  box.append(on, langField, h("div", { class: "save-row" }, h("span", { class: "muted small" }, "Saved as soon as you change something. Applies to documents added from now on."), state));
+  box.append(on, langField);
   return box;
 }
 
@@ -302,14 +318,31 @@ export function plainTestResult(r) {
       fold({}, "Technical details", testResult(r))));
 }
 
+// One card, one topic: an h2 title, at most one sentence of lead, then its settings.
 function sectionCard(id, title, lead, ...children) {
   return card({ class: "settings-section", id: `s-${id}`, "aria-labelledby": `s-${id}-h` },
     h("h2", { id: `s-${id}-h`, tabindex: "-1" }, title), lead ? h("p", { class: "lead" }, lead) : null, ...children);
 }
 
 // A card of the Technical tab from its description { id, title, lead, summary, body: [nodes] } (aiTechnical() gives
-// the AI region's parts this way, so this tab decides how its cards look)
-const techCard = (d) => (d ? sectionCard(d.id, d.title, d.lead || "", ...(d.body || [])) : null);
+// the AI region's parts this way, so this tab decides how its cards look). It is folded to one line, its title and
+// `summary` (the current value, "Seed 42"), until opened (a card that folds, DESIGN.md 4.11); the card a link names
+// opens, and the cards a person opened stay open for the session. `summary` may be a node that the card changes later.
+const OPEN_KEY = "enlens.settings-open";
+const openCards = () => { try { return new Set(JSON.parse(sessionStorage.getItem(OPEN_KEY) || "[]")); } catch (_) { return new Set(); } };
+function techCard(d, section) {
+  if (!d) return null;
+  const open = openCards().has(d.id) || section === d.id;
+  const el = card({ as: "details", class: "settings-section set-tech", id: `s-${d.id}`, open },
+    h("summary", {}, h("h2", { id: `s-${d.id}-h`, class: "set-tech-title" }, d.title), d.summary ? h("span", { class: "muted small set-tech-sum" }, d.summary) : null),
+    h("div", { class: "settings-body" }, d.lead ? h("p", { class: "lead" }, d.lead) : null, ...(d.body || [])));
+  el.addEventListener("toggle", () => {
+    const set = openCards();
+    if (el.open) set.add(d.id); else set.delete(d.id);
+    try { sessionStorage.setItem(OPEN_KEY, JSON.stringify([...set])); } catch (_) { /* this session only */ }
+  });
+  return el;
+}
 
 // One setting, the same on every tab: its label, beside it a help mark for the longer explanation (`about`: [title,
 // text]), the control, and at most one short line of help under it. `id`: the row's own id (a link's target).
@@ -320,7 +353,13 @@ function setting(label, control, { help, about, id } = {}) {
   return row;
 }
 
+// Saves settings, and shows it in the page's one saving state (Saving…, then Saved for a moment; on an error the state
+// goes back to rest and the error is shown as everywhere). `stateEl`: a caller's own state as well (kept for callers
+// that still pass one).
 async function save(changes, stateEl) {
+  const page = PAGE_SAVE && PAGE_SAVE.now.isConnected ? PAGE_SAVE : null;
+  const my = page ? ++page.n : 0;
+  if (page) { clearTimeout(page.timer); replace(page.now, "Saving…"); }
   if (stateEl) stateEl.textContent = "Saving…";
   try {
     const r = await api("PUT", "/api/settings", changes);
@@ -328,9 +367,14 @@ async function save(changes, stateEl) {
     App.state.backend_label = r.backend_label;
     if (r.providers) App.state.providers = r.providers;   // which cloud providers are set up (the Documents page's words)
     for (const fn of App.listeners) fn(App.state);
+    if (page && page.n === my) {
+      replace(page.now, icon("check", { size: 13 }), " Saved");
+      page.timer = setTimeout(() => { if (page.n === my) clear(page.now); }, 2500);
+    }
     if (stateEl) stateEl.textContent = "Saved.";
     return r;
   } catch (e) {
+    if (page && page.n === my) clear(page.now);
     if (stateEl) stateEl.textContent = "";
     showError(e);
     throw e;
@@ -1042,20 +1086,35 @@ export function testResult(r) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// 0.8: the model of each kind of task, and when a task goes up to a stronger one.
+// 0.8: the model of each kind of task, and when a task goes up to a stronger one. Each choice saves by itself.
 function routingSection(s, servers) {
-  const state = h("span", { class: "save-state", "aria-live": "polite" });
   const body = h("div", {}, h("p", { class: "muted small" }, "Loading…"));
   const chat = [...new Set(servers.flatMap((x) => x.chat_models || []))];
+  // the one line while folded: whose models answer (from the settings; drawn again after each change)
+  const sum = h("span", {});
+  const sayWhose = (claude, routing = true) => {
+    const mine = Object.keys(((App.settings().task_models || {})[claude ? "claude" : "local"]) || {}).length;
+    sum.textContent = !routing ? "One model for every task" : mine ? `Your own model for ${mine} ${mine === 1 ? "task" : "tasks"}` : "The recommended models";
+  };
+  sayWhose(["claude_code", "anthropic"].includes(s.backend), s.routing !== false);
   async function draw() {
     let r;
     try { r = await api("GET", "/api/routing"); } catch (e) { replace(body, h("p", { class: "muted small" }, e.message)); return; }
     const claude = r.route === "claude_code" || r.route === "anthropic";
-    const chosen = ((App.settings().task_models || {})[claude ? "claude" : "local"]) || {};
+    const key = claude ? "claude" : "local";
+    const chosen = ((App.settings().task_models || {})[key]) || {};
     const selects = {};
+    // every change saves the whole set of choices of this route
+    const saveChoices = async () => {
+      const mine = {};
+      for (const [k, el] of Object.entries(selects)) if (el.value && el.value.trim()) mine[k] = el.value.trim();
+      const all = { ...(App.settings().task_models || {}) };
+      if (Object.keys(mine).length) all[key] = mine; else delete all[key];
+      try { await save({ task_models: all }); sayWhose(claude, r.routing); } catch (_) { /* shown */ }
+    };
     const rows = r.rows.map((row) => {
       let ctl;
-      if (row.row === "second" && !claude) ctl = h("span", { class: "muted small" }, "Set under “Model for second opinions” below.");
+      if (row.row === "second" && !claude) ctl = h("span", { class: "muted small" }, "Set under “Model for second opinions”.");
       else if (claude) {
         ctl = selectField({ sm: true, "aria-label": `Model for ${row.title}` }, h("option", { value: "" }, `${row.recommended} (recommended)`),
           r.aliases.map((a) => h("option", { value: a, selected: chosen[row.row] === a }, a)));
@@ -1064,57 +1123,53 @@ function routingSection(s, servers) {
         ctl = fieldInput({ sm: true, mono: true, type: "text", list: "routing-models", value: chosen[row.row] || "", placeholder: row.recommended === "small" ? "the small model" : "the main model", "aria-label": `Model for ${row.title}` });
         selects[row.row] = ctl;
       }
+      if (selects[row.row]) selects[row.row].addEventListener("change", saveChoices);
       const up = !row.step_up ? "none" : (r.route === "claude_code" && ["check", "split", "verify"].includes(row.row) ? `${row.step_up} (auditor)` : row.step_up);
-      return h("tr", {}, h("td", {}, h("strong", {}, row.title)), h("td", { class: "mono small fact", "data-label": "Model" }, row.model || "the main model"), h("td", { class: "mono small fact", "data-label": "Steps up to" }, up),
-        r.route === "claude_code" ? h("td", { class: "mono small fact", "data-label": "Helper" }, row.helper || "") : null, h("td", { "data-label": "Your choice" }, ctl));
+      // the helper's name, small under the task (no column of its own)
+      return h("tr", {}, h("td", { class: "routing-task" }, h("strong", {}, row.title), r.route === "claude_code" && row.helper ? h("div", { class: "mono small muted" }, row.helper) : null),
+        h("td", { class: "mono small fact", "data-label": "Model" }, row.model || "the main model"), h("td", { class: "mono small fact", "data-label": "Steps up to" }, up),
+        h("td", { "data-label": "Your choice" }, ctl));
     });
     const small = fieldInput({ mono: true, type: "text", list: "routing-models", value: r.local_small_model || "", placeholder: "none: the main model does everything" });
-    const one = switchControl("Use the model of each task (recommended)", r.routing, { help: "Off: one model for everything, as in ENLENS 0.7." });
-    const saveBtn = button({ kind: "main", sm: true, onClick: async () => {
-      const mine = {};
-      for (const [k, el] of Object.entries(selects)) if (el.value && el.value.trim()) mine[k] = el.value.trim();
-      const all = { ...(App.settings().task_models || {}) };
-      if (Object.keys(mine).length) all[claude ? "claude" : "local"] = mine; else delete all[claude ? "claude" : "local"];
-      const changes = { task_models: all, routing: one.input.checked };
-      if (!claude) changes.local_small_model = small.value.trim();
-      try { await save(changes, state); draw(); } catch (_) { /* shown */ }
-    } }, icon("check", { size: 13 }), "Save");
+    small.addEventListener("change", async () => { try { await save({ local_small_model: small.value.trim() }); } catch (_) { /* shown */ } });
+    const one = switchControl("Use the model of each task (recommended)", r.routing, { help: "Off: one model does every task." });
+    one.input.addEventListener("change", async () => { try { await save({ routing: one.input.checked }); sayWhose(claude, one.input.checked); } catch (_) { /* shown */ } });
     const resetBtn = button({ sm: true, onClick: async () => {
       const all = { ...(App.settings().task_models || {}) };
-      delete all[claude ? "claude" : "local"];
-      try { await save({ task_models: all, routing: true }, state); draw(); toast("The recommended models are used again.", "ok"); } catch (_) { /* shown */ }
+      delete all[key];
+      try { await save({ task_models: all, routing: true }); sayWhose(claude, true); draw(); toast("The recommended models are used again.", "ok"); } catch (_) { /* shown */ }
     } }, icon("refresh", { size: 13 }), "Use the recommended models");
+    const pct = Math.round(r.step_up_below * 100);
     replace(body,
-      h("p", { class: "small" }, `Route now: ${r.route_name}. ${claude ? (r.route === "claude_code" ? "Each kind of task starts on the model recommended for your Claude plan and goes up one step on its own when it is hard." : "Each kind of task starts on the cheapest model that is good enough and goes up one step on its own when it is hard.") : "With a small model chosen, labels and links start on it and go up to the main model when they are hard; without one the main model does everything, as in 0.7."}`),
+      h("p", { class: "small" }, `Route now: ${r.route_name}. ${claude ? (r.route === "claude_code" ? "Each kind of task starts on the model recommended for your Claude plan." : "Each kind of task starts on the cheapest model that is good enough.") : "With a small model chosen, labels and links start on it; without one the main model does everything."}`),
       r.route === "claude_code" ? planField(r.plan || {}) : null,
-      h("div", { class: "table-wrap" }, h("table", { class: "table table-responsive routing-table" },
-        h("thead", {}, h("tr", {}, h("th", { scope: "col" }, "Task"), h("th", { scope: "col" }, "Model"), h("th", { scope: "col" }, "Steps up to"), r.route === "claude_code" ? h("th", { scope: "col" }, "Helper") : null, h("th", { scope: "col" }, "Your choice"))),
+      h("div", { class: "table-wrap" }, h("table", { class: "table table-responsive-sm routing-table" },
+        h("thead", {}, h("tr", {}, h("th", { scope: "col" }, "Task"), h("th", { scope: "col" }, "Model"), h("th", { scope: "col" }, "Steps up to"), h("th", { scope: "col" }, "Your choice"))),
         h("tbody", {}, rows))),
       h("datalist", { id: "routing-models" }, chat.map((m) => h("option", { value: m }))),
-      claude ? null : field("Small model (labels and links)", small, { help: "A smaller local model for the many label and link tasks. Leave it empty to use the main model for everything." }),
-      h("p", { class: "muted small" }, icon("info", { size: 13 }), ` A task goes up to the stronger model once: when its answer's certainty is under ${Math.round(r.step_up_below * 100)}%, when two answers in a row were rejected (a quote not found), or when you press “Ask a stronger model” on a result. Both answers are kept; the stronger model's counts, and the answer shows a small mark with what it was at first. A second opinion is different: it is only shown beside the first reading and never changes the answer.`),
+      h("p", { class: "muted small set-step-up" }, `A hard task goes up one step to the stronger model by itself.`, " ",
+        helpMark("When a task steps up", `A task goes up to the stronger model once: when its answer's certainty is under ${pct}%, when two answers in a row were rejected (a quote not found), or when you press “Ask a stronger model” on a result. Both answers are kept; the stronger model's counts, and the answer shows a small mark with what it was at first. A second opinion is different: it is only shown beside the first reading and never changes the answer. The recommended models come from the team's runs on the pilot set.`)),
+      claude ? null : field("Small model (labels and links)", small, { help: "Empty: the main model does everything." }),
       r.route === "claude_code" ? null : one,
-      h("p", { class: "muted small" }, r.route === "claude_code" ? "On a Pro plan the recommended models are the starting points of ENLENS 0.8, which the team's runs on the pilot set (" : "The recommended models are the starting points of ENLENS 0.8; the team's runs on the pilot set them (", h("code", {}, "enlens acceptance score --apply"), ")."),
-      h("div", { class: "save-row" }, saveBtn, resetBtn, state));
+      h("div", { class: "btn-row" }, resetBtn));
   }
   // 0.13.10: the Claude plan the recommendations follow: found in the background, or set here by hand
   function planField(plan) {
     const titles = plan.titles || { free: "Free", pro: "Pro", max: "Max, Team or Enterprise" };
     const found = plan.detected ? titles[plan.detected] : "";
-    const sel = selectField({ sm: true, id: "routing-plan" },
+    const sel = selectField({ id: "routing-plan" },
       h("option", { value: "auto", selected: (plan.chosen || "auto") === "auto" }, found ? `Your plan, as Claude Code says: ${found}` : "Your plan, as Claude Code says (not known yet)"),
       ["free", "pro", "max"].map((t) => h("option", { value: t, selected: plan.chosen === t }, titles[t])));
-    sel.addEventListener("change", async () => { try { await save({ claude_plan: sel.value }, state); draw(); } catch (_) { /* shown */ } });
+    sel.addEventListener("change", async () => { try { await save({ claude_plan: sel.value }); draw(); } catch (_) { /* shown */ } });
     const what = {
       free: "No Opus or Fable: Haiku for most tasks, Sonnet for judging excerpts.",
       pro: "Sonnet for most tasks, Haiku for the many labels and links, Opus for second opinions and the hard cases.",
       max: "Opus for most tasks; Haiku and Sonnet only for the many labels, links and references, where speed matters.",
     }[plan.tier] || "Until Claude Code says which plan you have, the recommendations for Pro are used.";
-    return h("div", { class: "field" }, h("label", { class: "field-label", for: "routing-plan" }, "The recommendations follow"), sel,
-      h("div", { class: "field-help" }, `${what} ENLENS finds your plan by itself; the models you choose below come first.`));
+    return setting("The recommendations follow", sel, { help: what, about: ["Your Claude plan", "ENLENS finds your plan by itself, from Claude Code. Choose one here only when it guesses wrong. The models you choose in the table come first."] });
   }
   draw();
-  return sectionCard("routing", "AI model per task", "Which model answers each kind of task. Most people never change this.", body);
+  return { id: "routing", title: "AI model per task", lead: "Which model answers each kind of task. Most people never change this.", summary: sum, body: [body] };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1154,37 +1209,47 @@ function localTierSection(s, info) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// A second local chat model for "Get a second opinion" on results.
+// A second local chat model for "Get a second opinion" on results. Picking it, or typing a name and leaving the field,
+// saves it.
 function secondModelSection(s, servers) {
-  const state = h("span", { class: "save-state", "aria-live": "polite" });
   const main = (s.backend === "openai" ? s.openai_model : s.ollama_model) || "";
   const models = [...new Set(servers.flatMap((x) => x.chat_models || []))].filter((m) => m !== main);
   const current = s.second_model || "";
+  const sum = h("span", {}, current || "None");
   const sel = selectField({ id: "second-model" }, h("option", { value: "" }, "None (no second opinions)"),
     models.map((m) => h("option", { value: m, selected: m === current }, m)),
     current && !models.includes(current) ? h("option", { value: current, selected: true }, `${current} (not installed now)`) : null);
   const txt = fieldInput({ mono: true, type: "text", placeholder: "or type a model name", value: "", "aria-label": "Model for second opinions, typed" });
-  const saveBtn = button({ kind: "main", sm: true, onClick: async () => {
-    const v = txt.value.trim() || sel.value;
-    if (v && v === main) { toast("That is the main model. Choose a different one for second opinions.", "warn"); return; }
-    try { await save({ second_model: v }, state); txt.value = ""; toast(v ? `Model for second opinions: ${v}` : "Model for second opinions: none", "ok", { ttl: 2500 }); } catch (_) { /* shown */ }
-  } }, icon("check", { size: 13 }), "Save");
-  return sectionCard("second", "Model for second opinions", "For “Get a second opinion” on a result: another chat model on the same server reads the same excerpts, and its judgements are shown beside the main model's, for comparison only. Where the two differ, the excerpt deserves a careful read. A second opinion never changes an answer (a stronger model, asked for with “Ask a stronger model”, does).",
-    h("div", { class: "fields-2" }, field("Model for second opinions", sel, { help: models.length ? `Chat models on the server now, apart from the main one (${main || "none chosen"}).` : "No server answered just now, so the installed models could not be listed." }), field("Not listed?", txt, { help: "Type its name as the server knows it, e.g. llama3.1:8b." })),
-    h("p", { class: "muted small" }, icon("info", { size: 13 }), " Only one model is kept in memory at a time: the main model is unloaded before the second one reads, and the second one is unloaded when it is done. So a second opinion takes a while, and is best asked for several results at once (on the Hypotheses page, under its answers)."),
-    h("div", { class: "save-row" }, saveBtn, state));
+  const keep = async (v) => {
+    if (v && v === main) { toast("That is the main model. Choose a different one for second opinions.", "warn"); return false; }
+    try { await save({ second_model: v }); sum.textContent = v || "None"; return true; } catch (_) { return false; }
+  };
+  sel.addEventListener("change", () => keep(sel.value));
+  txt.addEventListener("change", async () => {
+    const v = txt.value.trim();
+    if (!v) return;
+    if (await keep(v)) {
+      if (![...sel.options].some((o) => o.value === v)) sel.appendChild(h("option", { value: v }, v));
+      sel.value = v; txt.value = "";
+    }
+  });
+  return { id: "second", title: "Model for second opinions", summary: sum,
+    lead: "For “Get a second opinion” on a result: another chat model on the same server reads the same excerpts; its judgements are shown beside the main model's and never change an answer.",
+    body: [setting("Model for second opinions", sel, { help: models.length ? `Chat models on the server now, apart from the main one (${main || "none chosen"}).` : "No server answered just now, so the installed models could not be listed.",
+      about: ["One model at a time", "Only one model is kept in memory at a time: the main model is unloaded before the second one reads, and the second one is unloaded when it is done. So a second opinion takes a while, and is best asked for several results at once (on the Hypotheses page, under its answers). Where the two differ, the excerpt deserves a careful read."] }),
+      setting("Not listed?", txt, { help: "Its name as the server knows it, such as llama3.1:8b." })] };
 }
 
 // The context length the model is given, and the second sorting pass: for whoever installs the app.
 function contextSection(s) {
-  const st = App.state || {};
-  const state = h("span", { class: "save-state", "aria-live": "polite" });
   const ctxLine = h("div", { class: "set-context-line" });
+  const sum = h("span", {});
   const drawCtx = () => {
     const c = (App.state && App.state.context) || {};
     const n = c.num_ctx ? fmt.num(c.num_ctx) : "?";
     const k = App.settings().k ?? 8;
     const auto = String(c.setting ?? App.settings().num_ctx ?? "auto").toLowerCase() === "auto";
+    sum.textContent = `${auto ? "Automatic" : "Fixed"}: ${n} tokens${App.settings().second_pass ? ", sorted again by wording" : ""}`;
     replace(ctxLine, notice({ kind: c.too_small ? "attention" : "done", icon: c.too_small ? undefined : "info" },
       h("p", {}, h("strong", {}, auto ? "Automatic: " : "Fixed: "), `${n} tokens, ${c.too_small ? "which is " : ""}${c.too_small ? "too small for" : "enough for"} ${k} excerpts per check${c.needed ? ` (the largest task needs about ${fmt.num(c.needed)} tokens${c.thinking_allowance ? ", including room for reasoning" : ""})` : ""}.`),
       c.too_small ? h("p", { class: "small" }, "Part of the prompt would be cut off. Choose Automatic, a larger number, or fewer excerpts per check.") : null));
@@ -1192,57 +1257,86 @@ function contextSection(s) {
   drawCtx();
   const isAuto = String(s.num_ctx ?? "auto").toLowerCase() === "auto";
   const mode = selectField({ id: "ctx-mode" }, h("option", { value: "auto", selected: isAuto }, "Automatic (recommended)"), h("option", { value: "number", selected: !isAuto }, "A fixed number of tokens"));
-  const num = fieldInput({ type: "number", id: "ctx-num", min: 2048, max: 262144, step: 1024, value: isAuto ? 16384 : Number(s.num_ctx), hidden: isAuto });
-  const numLabel = h("label", { class: "field-label", for: "ctx-num", hidden: isAuto }, "Tokens");
+  const num = fieldInput({ type: "number", id: "ctx-num", min: 2048, max: 262144, step: 1024, value: isAuto ? 16384 : Number(s.num_ctx) });
+  const numRow = setting("Tokens", num);
+  numRow.hidden = isAuto;
   const saveCtx = async () => {
     const v = mode.value === "auto" ? "auto" : Math.max(2048, Number(num.value) || 16384);
-    try { await save({ num_ctx: v }, state); await App.refresh(); drawCtx(); } catch (_) { /* shown */ }
+    try { await save({ num_ctx: v }); await App.refresh(); drawCtx(); } catch (_) { /* shown */ }
   };
-  mode.addEventListener("change", () => { num.hidden = numLabel.hidden = mode.value !== "number"; if (mode.value === "auto") saveCtx(); else num.focus(); });
+  mode.addEventListener("change", () => { numRow.hidden = mode.value !== "number"; if (mode.value === "auto") saveCtx(); else num.focus(); });
   num.addEventListener("change", saveCtx);
-  const secondPass = switchControl("Sort the best excerpts again by wording", !!s.second_pass, { help: "After the search, the best candidates are sorted once more by how closely they word the hypothesis (no AI involved). Off by default: on the pilot it did slightly worse, bringing a few fewer excerpts from the cited sources into the top 8 (147 against 154 of 178)." });
-  secondPass.input.addEventListener("change", async () => { try { await save({ second_pass: secondPass.input.checked }, state); } catch (_) { /* shown */ } });
-  return sectionCard("context", "Context length and search order", "How much text the local model is given at once, and an optional extra sorting step. The defaults suit most computers.",
-    ctxLine,
-    h("div", { class: "fields-2" }, field("Context length", mode, { help: "Ollama reloads the model when this changes, so it is kept the same between requests. Automatic leaves the most memory to the model: 8,192, 12,288, 16,384 or 32,768 tokens, whichever is the smallest that fits." }), h("div", { class: "field" }, numLabel, num)),
-    secondPass,
-    h("div", { class: "save-row" }, h("span", { class: "muted small" }, "Saved as soon as you change something."), state));
+  const secondPass = switchControl("Sort the best excerpts again by wording", !!s.second_pass, { help: "Sorts the best candidates once more by how closely they word the hypothesis, without AI.",
+    about: ["Sorting again by wording", "After the search, the best candidates are sorted once more by how closely they word the hypothesis (no AI involved). Off by default: on the pilot it did slightly worse, bringing a few fewer excerpts from the cited sources into the top 8 (147 against 154 of 178)."] });
+  secondPass.input.addEventListener("change", async () => { try { await save({ second_pass: secondPass.input.checked }); drawCtx(); } catch (_) { /* shown */ } });
+  return { id: "context", title: "Context length and search order", summary: sum,
+    lead: "How much text the local model is given at once, and an optional extra sorting step. The defaults suit most computers.",
+    body: [ctxLine,
+      setting("Context length", mode, { about: ["Context length", "Ollama reloads the model when this changes, so it is kept the same between requests. Automatic leaves the most memory to the model: 8,192, 12,288, 16,384 or 32,768 tokens, whichever is the smallest that fits."] }),
+      numRow, secondPass] };
 }
 
 // ---------------------------------------------------------------------------------------------
+// Search by meaning, in plain words (Documents): on or off, whether a model is set up, the one-button download. Its
+// server kind, model and address are a Technical card (embedModelSection).
+const EMBED_KIND_KEY = "settings-embed-kind";   // the server kind it had, for switching it back on
 function embedSection(s, servers, info = { servers }) {
-  const state = h("span", { class: "save-state", "aria-live": "polite" });
-  const kind = selectField({}, [["ollama", "Ollama"], ["openai", "OpenAI-compatible server"], ["off", "Off (keywords only)"]].map(([v, t]) => h("option", { value: v, selected: (s.embed_backend || "ollama") === v }, t)));
-  const all = [...new Set(servers.flatMap((x) => x.embedding_models || []))];
-  const model = fieldInput({ mono: true, type: "text", value: s.embed_model || "", placeholder: "e.g. nomic-embed-text", list: "embed-models" });
-  const datalist = h("datalist", { id: "embed-models" }, all.map((m) => h("option", { value: m })));
-  const url = fieldInput({ mono: true, type: "url", value: s.embed_url || "", placeholder: "optional" });
-  const row = h("div", { class: "fields-3" }, field("Server kind", kind), field("Embedding model", model, { help: all.length ? `Installed: ${all.join(", ")}` : "None installed yet." }), field("Address (optional)", url, { help: "Leave empty to use the chat server's address." }));
+  const words = h("p", { class: "small set-embed-state" });
+  const drawWords = () => {
+    const st = App.settings();
+    const off = (st.embed_backend || "ollama") === "off";
+    replace(words, off ? "Off: documents are searched by their words only."
+      : st.embed_model ? [icon("check", { size: 13 }), " On, with a model on this computer."]
+      : "On, but no model is set up yet: documents are searched by their words only.");
+  };
+  drawWords();
+  const on = switchControl("Find excerpts by meaning as well as by shared words", (s.embed_backend || "ollama") !== "off");
+  on.input.addEventListener("change", async () => {
+    const was = App.settings().embed_backend || "ollama";
+    if (!on.input.checked && was !== "off") store(EMBED_KIND_KEY, was);
+    const kind = on.input.checked ? (store(EMBED_KIND_KEY) || (App.settings().backend === "openai" ? "openai" : "ollama")) : "off";
+    try { await save({ embed_backend: kind }); drawWords(); } catch (_) { on.input.checked = !on.input.checked; }
+  });
   // 0.13.7: Ollama without an embedding model: one button downloads one, and it is chosen here
   const pull = localModelHelp(info, { only: "embed", use: "embed", onReady: async (r) => {
     try { await App.refresh(); } catch (_) { /* shown on the page */ }
     toast(r.chosen ? `${r.embed} is chosen for search by meaning. Set it up per project under Documents.` : `${r.embed} is downloaded.`, "ok");
     rerender();
   } });
-  const toggle = () => { row.querySelectorAll(".field")[1].hidden = row.querySelectorAll(".field")[2].hidden = kind.value === "off"; };
-  kind.addEventListener("change", toggle); toggle();
-  const form = h("form", { onSubmit: async (e) => { e.preventDefault(); try { await save({ embed_backend: kind.value, embed_model: model.value.trim(), embed_url: url.value.trim() }, state); toast("Saved. If needed, set up search by meaning on the project’s Documents page.", "ok"); } catch (_) { /* shown */ } } },
-    row, datalist, pull, h("div", { class: "save-row" }, button({ kind: "main", type: "submit" }, icon("check", { size: 14 }), "Save"), state));
-  return sectionCard("embeddings", "Search by meaning (embeddings)", "With an embedding model, excerpts are found by meaning as well as by shared words. It is set up per project, on the project’s Documents page.", form);
+  return sectionCard("embeddings", "Search by meaning", "Excerpts are found by what they mean, not only by the words they share. It is set up per project, on the project’s Documents page.",
+    words, on, pull,
+    h("p", { class: "small" }, link({ kind: "next", href: "#/settings/embedmodel" }, "The model and its server: Settings › Technical")));
+}
+
+// Technical: the server kind, the model and the address of search by meaning; each saves when changed.
+function embedModelSection(s, servers) {
+  const KINDS = [["ollama", "Ollama"], ["openai", "OpenAI-compatible server"], ["off", "Off (keywords only)"]];
+  const kind = selectField({ id: "embed-kind" }, KINDS.map(([v, t]) => h("option", { value: v, selected: (s.embed_backend || "ollama") === v }, t)));
+  const all = [...new Set(servers.flatMap((x) => x.embedding_models || []))];
+  const model = fieldInput({ mono: true, type: "text", id: "embed-model", value: s.embed_model || "", placeholder: "e.g. nomic-embed-text", list: "embed-models" });
+  const url = fieldInput({ mono: true, type: "url", id: "embed-url", value: s.embed_url || "", placeholder: "optional" });
+  const sum = h("span", {});
+  const say = () => {
+    const st = App.settings();
+    const k = st.embed_backend || "ollama";
+    sum.textContent = k === "off" ? "Off" : `${st.embed_model || "No model chosen"} on ${k === "openai" ? "an OpenAI-compatible server" : "Ollama"}`;
+  };
+  say();
+  const modelRow = setting("Embedding model", model, { help: all.length ? null : "None installed yet." });
+  const urlRow = setting("Address (optional)", url, { help: "Empty: the chat server's address." });
+  const toggle = () => { modelRow.hidden = urlRow.hidden = kind.value === "off"; };
+  toggle();
+  kind.addEventListener("change", async () => { toggle(); try { await save({ embed_backend: kind.value }); say(); } catch (_) { /* shown */ } });
+  model.addEventListener("change", async () => { try { await save({ embed_model: model.value.trim() }); say(); } catch (_) { /* shown */ } });
+  url.addEventListener("change", async () => { try { await save({ embed_url: url.value.trim() }); } catch (_) { /* shown */ } });
+  return { id: "embedmodel", title: "Search by meaning: the model", summary: sum,
+    lead: "The embedding model that finds excerpts by meaning, and the server it runs on.",
+    body: [setting("Server kind", kind), modelRow, h("datalist", { id: "embed-models" }, all.map((m) => h("option", { value: m }))), urlRow] };
 }
 
 // ---------------------------------------------------------------------------------------------
-// ---------------------------------------------------------------------------------------------
-// 0.16 (K1): codebooks have a page of their own (Codebooks, in the sidebar): made, changed, copied and removed there
-function frameworksSection() {
-  return sectionCard("frameworks", "Codebooks", "Your own codebooks, and the SDG targets that ship with ENLENS, are on a page of their own: make one fresh or from the themes found, change its codes, try it without AI, and go back to an earlier version.",
-    link({ kind: "next", href: "#/codebooks" }, "Open Codebooks"));
-}
-
-// ---------------------------------------------------------------------------------------------
-// 0.7: the defaults of document profiles and themes
+// 0.7: the defaults of document profiles and themes, and the way to the codebooks (Codebooks has its own page)
 function exploreSection(s) {
-  const state = h("span", { class: "save-state", "aria-live": "polite" });
   const shortFw = (f) => (f.title && /\(\d+ \w+\)/.test(f.title) ? f.title : `${f.title || f.name} (${f.codes} codes)`);
   const fwSel = selectField({ id: "set-profile-fw" }, h("option", { value: s.profile_framework || "sdg", selected: true }, s.profile_framework || "sdg"));
   // team codebooks (teamcodebooks.py): the open project's owner chose a default codebook for every copy of it
@@ -1256,26 +1350,25 @@ function exploreSection(s) {
       replace(fwSel, ...fws.map((f) => h("option", { value: f.name, selected: f.name === mine }, shortFw(f))));
     } catch (_) { /* keep the saved name */ }
   })();
-  fwSel.addEventListener("change", async () => { try { await save({ profile_framework: fwSel.value }, state); } catch (_) { /* shown */ } });
-  const k = rangeControl("Themes per set", { min: 2, max: 60, step: 1, value: s.themes_k ?? 20 });
-  k.input.addEventListener("change", async () => { try { await save({ themes_k: k.input.valueAsNumber }, state); } catch (_) { /* shown */ } });
-  return sectionCard("explore", "Exploring the documents", "The defaults of the Profile and Themes pages. You can change both on those pages too.",
-    h("div", { class: "stack set-context-form" },
-      field("Codebook of the profiles", fwSel, { help: team
-        ? `This project uses the team’s default: “${team.title}” (set by the owner). This setting still applies to your other projects.`
-        : "Which codes the Profile page and the Codes panel of a document look for, and which codes new documents get when they are added." }),
-      h("div", {}, k, h("p", { class: "field-help" }, "How many themes a new set looks for. A small project gets fewer: about three passages a theme at least."))),
-    h("div", { class: "save-row" }, h("span", { class: "muted small" }, "Saved as soon as you change something."), state));
+  fwSel.addEventListener("change", async () => { try { await save({ profile_framework: fwSel.value }); } catch (_) { /* shown */ } });
+  const k = rangeControl("Themes per set", { min: 2, max: 60, step: 1, value: s.themes_k ?? 20, help: "How many themes a new set looks for. A small project gets fewer." });
+  k.input.addEventListener("change", async () => { try { await save({ themes_k: k.input.valueAsNumber }); } catch (_) { /* shown */ } });
+  return sectionCard("explore", "Exploring", "The defaults of the Profile and Themes pages. You can change both on those pages too.",
+    setting("Codebook of the profiles", fwSel, { help: team
+      ? `This project uses the team’s default: “${team.title}” (set by the owner). This setting still applies to your other projects.`
+      : "Which codes the Profile page and a document’s Codes panel look for, and new documents get." }),
+    k,
+    h("p", { class: "small", id: "s-frameworks" }, link({ kind: "next", href: "#/codebooks" }, "Open Codebooks"), " ", h("span", { class: "muted" }, "to make, change or copy a codebook.")));
 }
 
 // the seed that keeps model answers repeatable, and a test of whether the server honours it
 function reproSection(s) {
-  const state = h("span", { class: "save-state", "aria-live": "polite" });
   const seed = fieldInput({ mono: true, type: "number", id: "set-seed", min: 0, max: 2147483647, step: 1, value: s.seed ?? 42 });
+  const sum = h("span", {}, `Seed ${s.seed ?? 42}`);
   seed.addEventListener("change", async () => {
     const v = Math.round(Number(seed.value));
     if (!Number.isFinite(v) || v < 0 || v > 2147483647) { toast("The seed is a whole number from 0 to 2,147,483,647.", "warn"); return; }
-    try { await save({ seed: v }, state); } catch (_) { /* shown */ }
+    try { await save({ seed: v }); sum.textContent = `Seed ${v}`; } catch (_) { /* shown */ }
   });
   const out = h("div", { "aria-live": "polite" });
   const test = aiButton({ sm: true }, "Test whether answers repeat");
@@ -1296,12 +1389,13 @@ function reproSection(s) {
     } catch (e) { replace(out); showError(e); }
     setBusy(test, false);
   });
-  return sectionCard("repeatable", "Repeatable results", "Every model request is sent with a fixed seed and temperature 0, and every result records the model and, when the server reports it, its exact version (the digest), so the same documents and settings give the same answers. Whether a server honours the seed differs: test it here.",
-    h("div", { class: "fields-2" },
-      field("Seed", seed, { help: "Any whole number. Changing it can change the answers; it is shown in “How these results were made”." })),
-    h("div", { class: "save-row" }, withAI(test), state),
+  return { id: "repeatable", title: "Repeatable results", summary: sum,
+    lead: "Every model request is sent with a fixed seed and temperature 0, and every result records the model and its exact version.",
+    body: [setting("Seed", seed, { help: "Any whole number. Changing it can change the answers.",
+      about: ["The seed", "With the same seed, documents and settings, a model gives the same answers, when its server honours the seed (test it below). The seed is shown in “How these results were made” in every Excel download."] }),
+    h("div", { class: "btn-row" }, withAI(test)),
     readsLine("a short test question, twice"),
-    out);
+    out] };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1355,16 +1449,18 @@ function testSection(s, watchers) {
         saveBlob(blob, `benchmark_${(r.model || "model").replace(/[^A-Za-z0-9_-]/g, "_")}.json`);
       } }, "Download the full result")));
   }
-  return sectionCard("test", "Test a model before trusting it", "For technical users. It compares the AI model of Settings › AI with reference answers saved in a project (for the pilot, those were made earlier with Claude Opus 5.5). Nothing is stored, and the test tasks go only where that model reads: a model on this computer keeps them here; the Claude API is sent one call per task, and billed for it. This measures agreement with the reference, not correctness.",
-    field("Reference workspace folder", ref, { help: "For example the pilot folder that ships with the package." }),
+  return { id: "test", title: "Test a model before trusting it", summary: "Against reference answers saved in a project",
+    lead: "Compares the AI model chosen under AI with reference answers saved in a project. It measures agreement with the reference, not correctness.",
+    body: [setting("Reference workspace folder", ref, { help: "For example the pilot folder that ships with the package.",
+      about: ["What the test sends", "Nothing is stored, and the test tasks go only where the model reads: a model on this computer keeps them here; the Claude API is sent one call per task, and billed for it. For the pilot, the reference answers were made earlier with Claude Opus 5.5."] }),
     h("div", { class: "fields-2" }, n, h("div", { class: "field" }, h("span", { class: "field-label" }, "Tasks"), h("label", { class: "it", for: "k-verify" }, kVerify, " Checking claims"), h("label", { class: "it", for: "k-extract" }, kExtract, " Extracting claims"), h("label", { class: "it", for: "k-label" }, kLabel, " Labelling with codes"))),
-    h("div", { class: "save-row" }, withAI(run)),
+    h("div", { class: "btn-row" }, withAI(run)),
     readsLine("the test tasks"),
-    out);
+    out] };
 }
 
-// 0.10.1: the version, on every Settings tab; it opens Technical → Where your data is, which says how this copy was
-// installed and how to update it
+// 0.10.1: the version, on every Settings tab; it opens General › Updates, which says how this copy was installed.
+// The link is one piece that never breaks mid-phrase.
 function versionTag() {
   const st = App.state || {};
   const v = st.version || VERSION;
@@ -1375,18 +1471,19 @@ function versionTag() {
   // needs you (an attention tag)
   // After 0.17.2: then What's new, always here (a note in the corner no longer shows it by itself)
   return h("span", { class: "version-tag" },
-    link({ href: "#/settings/updates", title: now ? `ENLENS ${now} is installed: restart ENLENS to use it` : "Check for updates, and how ENLENS was installed (Technical)" },
+    link({ href: "#/settings/updates", title: now ? `ENLENS ${now} is installed: restart ENLENS to use it` : "Check for updates (General)" },
       "Version ", v),
     whatsNewLink(),
     now ? tag({ kind: "attention" }, `${now} installed: restart to use it`) : null);
 }
 
-// 0.10: how this copy was installed, and how it is updated
-function installedWith(inst) {
-  if (!inst || !inst.kind) return null;
-  const how = { git: ["from a git copy", "Update: enlens update"], script: ["with the one-line install", "Update: run the install line again (or enlens update)"],
-    package: ["from the download for this system", "Update: download the newest version"], pip: ["with pip", "Update: pip install --upgrade, or switch to the one-line install"] }[inst.kind];
-  return h("div", { class: "muted small" }, `Installed ${how[0]}. ${how[1]}.`);
+// 0.10: how this copy was installed, in plain words; `update`: also how it is updated (Technical)
+const INSTALLED = { git: ["from a git copy", "Update: enlens update"], script: ["with the one-line install", "Update: run the install line again (or enlens update)"],
+  package: ["from the download for this system", "Update: download the newest version"], pip: ["with pip", "Update: pip install --upgrade, or switch to the one-line install"] };
+function installedWith(inst, { update = true } = {}) {
+  if (!inst || !inst.kind || !INSTALLED[inst.kind]) return null;
+  const how = INSTALLED[inst.kind];
+  return h("div", { class: "muted small" }, `Installed ${how[0]}.${update ? ` ${how[1]}.` : ""}`);
 }
 
 // 0.13.6: Check for updates. The sidebar's Update button shows only when there is one (the page looks every two
@@ -1394,8 +1491,9 @@ function installedWith(inst) {
 function updatesSection() {
   const st = App.state || {};
   const name = appName();
-  const out = h("div", { "aria-live": "polite" });
-  const btn = button({}, icon("refresh", { size: 14 }), "Check for updates");
+  const v = st.version || VERSION;
+  const out = h("div", { class: "set-update-out", "aria-live": "polite" });
+  const btn = button({ sm: true }, icon("refresh", { size: 14 }), "Check for updates");
   const at = (t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const show = (info, err, when) => {
     if (err) {
@@ -1430,12 +1528,15 @@ function updatesSection() {
   loadWhatsNew().then(() => {
     if (WhatsNew.changes) replace(changes, button({ kind: "quiet", sm: true, icon: "sparkles", "aria-haspopup": "dialog", onClick: () => showWhatsNew() }, `What's new in ${WhatsNew.changes.version}`));
   });
+  const how = st.installation && INSTALLED[st.installation.kind];
   return sectionCard("updates", "Updates", st.can_restart
-    ? `${name} looks for a new version when it opens and every two minutes after. When there is one, it says so in a pop-up, and an Update button appears at the bottom of the sidebar until you install it. Your projects and results are kept.`
-    : `Look for a new version of ${name}. Your projects and results are kept when you update.`,
-    channelField(st), h("div", { class: "save-row" }, btn, changes), out, problemRow(),
+    ? `${name} looks for a new version when it opens and every two minutes after, and offers it at the foot of the sidebar. Your projects and results are kept.`
+    : `Your projects and results are kept when you update.`,
+    h("p", { class: "set-version-line" }, `You have ${name} ${v}`, how ? `, installed ${how[0]}` : "", "."),
+    h("div", { class: "btn-row" }, btn, changes), out,
+    channelField(st),
     // 0.17.0: while an update waits, its button takes Quit's place at the foot of the sidebar: Quit is here too
-    st.can_quit && Updates.quit ? h("div", { class: "save-row" }, button({ onClick: () => Updates.quit() }, icon("power", { size: 14 }), `Quit ${name}`),
+    st.can_quit && Updates.quit ? h("div", { class: "btn-row" }, button({ sm: true, onClick: () => Updates.quit() }, icon("power", { size: 14 }), `Quit ${name}`),
       h("span", { class: "muted small" }, "Stops the app on this computer; your projects and results are kept.")) : null);
 }
 
@@ -1443,36 +1544,36 @@ function updatesSection() {
 // this run's key, so it works until ENLENS stops, and it opens ENLENS for whoever has it.
 function linkSection() {
   const name = appName();
-  const btn = button({}, icon("link", { size: 14 }), "Copy my link");
+  const btn = button({ sm: true }, icon("link", { size: 14 }), "Copy my link");
   const box = h("div", {});
   btn.addEventListener("click", async () => {
     const url = myLink();
     try { await navigator.clipboard.writeText(url); toast("Copied. Keep it to yourself.", "ok", { ttl: 2500 }); }
     catch (_) { replace(box, h("code", { class: "copy-code" }, url)); toast("Select the link and copy it with Ctrl+C (or Cmd+C).", "info"); }
   });
-  return sectionCard("link", `Your link to ${name}`, `${name} opens with a key in its link, so no one else on this computer can use it. Its icon (or enlens-gui) opens that link for you; the address alone shows how to open ${name}.`,
-    notice({ kind: "attention" }, h("p", {}, h("strong", {}, `The link opens ${name} for whoever has it`), `, with all your projects, while ${name} runs. Do not share it or post it.`)),
-    h("div", { class: "save-row" }, btn, h("span", { class: "muted small" }, `For a bookmark. It works until ${name} stops; after it starts again, copy it again.`)), box);
+  return { id: "link", title: `Your link to ${name}`, summary: `Works until ${name} stops`,
+    lead: `${name} opens with a key in its link, so no one else on this computer can use it. Its icon (or enlens-gui) opens that link for you.`,
+    body: [notice({ kind: "attention" }, h("p", {}, h("strong", {}, `The link opens ${name} for whoever has it`), `, with all your projects, while ${name} runs. Do not share it or post it.`)),
+      h("div", { class: "btn-row" }, btn, h("span", { class: "muted small" }, `For a bookmark. After ${name} starts again, copy it again.`)), box] };
 }
 
-// 0.15: which versions the update check offers. A git copy follows main and has no choice.
+// 0.15: which versions the update check offers, Stable or Early. A git copy follows main and has no choice.
 function channelField(st) {
   if (st.installation && st.installation.kind === "git")
-    return h("p", { class: "muted small" }, icon("info", { size: 13 }), ` This copy of ${appName()} is a git copy: it follows the main branch, so there is no choice of versions here.`);
-  const state = h("span", { class: "save-state", "aria-live": "polite" });
-  const sel = selectField({ id: "update-channel" },
-    [["stable", "Stable (recommended)"], ["early", "Try new versions early"]].map(([v, t]) => h("option", { value: v, selected: ((st.settings || {}).update_channel || "stable") === v }, t)));
-  sel.addEventListener("change", async () => {
-    try { await save({ update_channel: sel.value }, state); checkUpdate(true).catch(() => {}); } catch (_) { /* shown */ }
-  });
-  return h("div", {}, field("Which new versions to offer", sel, { help: "From 0.16 on, a release candidate (a try-out of the next version) comes out at least a week before each new version, so you can try it on your own projects. Try it on a project you do not share with colleagues: going back to the stable version can show sync clashes (nothing is lost)." }), state);
+    return h("p", { class: "muted small" }, `This copy of ${appName()} is a git copy: it follows the main branch, so there is no choice of versions here.`);
+  const pick = choice({ sm: true, id: "update-channel", label: "Which new versions to offer", value: (st.settings || {}).update_channel || "stable",
+    options: [["stable", "Stable"], ["early", "Early"]],
+    onPick: async (v) => { try { await save({ update_channel: v }); checkUpdate(true).catch(() => {}); } catch (_) { /* shown */ } } });
+  return setting("Which new versions to offer", pick, { help: "Early also offers release candidates, try-outs of the next version.",
+    about: ["Trying new versions early", "A release candidate (a try-out of the next version) comes out at least a week before each new version, so you can try it on your own projects. Try it on a project you do not share with colleagues: going back to the stable version can show sync clashes (nothing is lost)."] });
 }
 
 // 0.15: a problem report without knowing GitHub: the technical details to paste, and the form to paste them in.
 // After 0.18.0rc2: the repository itself too, for the code, the releases and the roadmap.
 const REPO_URL = "https://github.com/dvaud/claim_checker_demo";
-function problemRow() {
-  const btn = button({}, icon("copy", { size: 14 }), "Copy technical details");
+function helpSection() {
+  const btn = button({ sm: true }, icon("copy", { size: 14 }), "Copy technical details");
+  const box = h("div", {});
   btn.addEventListener("click", async () => {
     try {
       const r = await api("GET", "/api/technical-details");
@@ -1480,34 +1581,46 @@ function problemRow() {
       catch (_) { replace(box, h("pre", { class: "mono small tech-details" }, r.text)); toast("Select the text and copy it with Ctrl+C (or Cmd+C).", "info"); }
     } catch (e) { showError(e); }
   });
-  const box = h("div", {});
-  return h("div", {}, h("p", { class: "muted small set-problem-help" }, "Something does not work? Copy the technical details (the version, the system and the AI route: no file names, project names or keys) and paste them in a report."),
-    h("div", { class: "save-row" }, btn,
+  return sectionCard("help", "Help", "Something does not work? The technical details to paste in a report hold the version, the system and the AI route: no file names, project names or keys.",
+    h("div", { class: "btn-row" }, btn,
       link({ kind: "external", href: `${REPO_URL}/issues/new?template=problem.yml` }, "Report a problem (on GitHub)"),
       link({ kind: "external", href: REPO_URL }, "Source code (on GitHub)")), box);
 }
 
-// 0.11: every passage sent to Claude, as a table for records such as a data management plan
+// 0.11: every passage sent to Claude, as a table for records such as a data management plan (a row of Your data)
 function ledgerSection() {
   const project = App.project;
-  return sectionCard("ledger", "What was sent to Claude", "ENLENS writes down every passage it sends to Claude (Claude Code, the Claude API, or a Claude chat through the connector) at the moment it leaves: when, by which route, for which feature. The Documents page shows the share of each document; here is the whole list as a spreadsheet file.",
-    project ? downloadButton({ onClick: () => download(`/api/projects/${P(project)}/ai-sent.csv`).catch(showError) }, `Download the list for “${project}” (CSV)`)
-      : h("p", { class: "muted small" }, "Open a project first."));
+  return setting("What was sent to Claude", project ? downloadButton({ onClick: () => download(`/api/projects/${P(project)}/ai-sent.csv`).catch(showError) }, `Download the list for “${project}” (CSV)`)
+    : h("p", { class: "muted small" }, "Open a project first."), { id: "s-ledger",
+    help: "Every passage sent to Claude, with when, by which route and for which feature.",
+    about: ["What was sent to Claude", "ENLENS writes down every passage it sends to Claude (Claude Code, the Claude API, or a Claude chat through the connector) at the moment it leaves. The Documents page shows the share of each document; this is the whole list as a spreadsheet file."] });
 }
 
 // ---------------------------------------------------------------------------------------------
+// General › Your data: the folder, the projects, and the list of what was sent to Claude
 function dataSection() {
   const st = App.state || {};
+  const n = (st.projects || []).length;
+  return sectionCard("data", "Your data", "Everything the app keeps lives in one folder on this computer.",
+    setting("Data folder", h("code", { class: "path set-path", title: st.home || "" }, ...String(st.home || "").split(/(?<=[\/\\])/).flatMap((seg) => [seg, h("wbr")])),
+      { about: ["The data folder", "Each project is a folder with a database, the added files and the settings. Removed projects go to a trash folder inside the data folder."] }),
+    setting("Projects", h("p", { class: "set-projects" }, `${n} ${n === 1 ? "project" : "projects"} · `, link({ href: "#/projects" }, "Manage projects"))),
+    ledgerSection());
+}
+
+// Technical › This installation: the version and how it was installed and is updated, the network, the text
+// recognition parts and what is missing
+function installationSection() {
+  const st = App.state || {};
   const ocr = st.ocr || {};
-  return sectionCard("data", "Where your data is", "Everything the app keeps lives in one folder on this computer.",
-    h("dl", { class: "kv-grid" },
-      h("div", { class: "kv" }, h("dt", {}, "Data folder"), h("dd", {}, h("code", { class: "path", title: st.home || "" }, ...String(st.home || "").split(/(?<=[\/\\])/).flatMap((seg) => [seg, h("wbr")])))),
-      h("div", { class: "kv" }, h("dt", {}, "Projects"), h("dd", {}, `${(st.projects || []).length}`, " · ", h("a", { href: "#/projects" }, "manage"))),
-      h("div", { class: "kv" }, h("dt", {}, "Version"), h("dd", {}, `ENLENS ${st.version || VERSION}`, installedWith(st.installation))),
+  const v = st.version || VERSION;
+  const how = st.installation && INSTALLED[st.installation.kind];
+  return { id: "installation", title: "This installation", summary: `${appName()} ${v}${how ? `, installed ${how[0]}` : ""}`,
+    body: [h("dl", { class: "kv-grid" },
+      h("div", { class: "kv" }, h("dt", {}, "Version"), h("dd", {}, `ENLENS ${v}`, installedWith(st.installation))),
       h("div", { class: "kv" }, h("dt", {}, "Network"), h("dd", {}, "This computer only · nothing is loaded from the internet")),
       h("div", { class: "kv" }, h("dt", {}, "Text recognition (OCR) for scanned PDFs"), h("dd", {}, ocr.available ? `installed (Tesseract${ocr.languages && ocr.languages.length ? `, languages: ${ocr.languages.join(", ")}` : ""})`
-        : ["not available", ocr.missing && ocr.missing.length ? h("div", { class: "muted small" }, `Missing: ${ocr.missing.map((m) => ({ tesseract: "the Tesseract program (tesseract-ocr)", pypdfium2: "the Python package pypdfium2", pillow: "the Python package pillow" }[m] || m)).join("; ")}.${ocr.missing.includes("tesseract") ? " How to get Tesseract: Settings → Documents." : ""}${ocr.missing.some((m) => m !== "tesseract") ? " The Python parts: pip install 'enlens-claims[ocr]', then restart the app." : ""}`) : null]))),
-    h("p", { class: "muted small set-data-note" }, "Each project is a folder with a database, the added files and the settings. Removed projects go to a trash folder inside the data folder."));
+        : ["not available", ocr.missing && ocr.missing.length ? h("div", { class: "muted small" }, `Missing: ${ocr.missing.map((m) => ({ tesseract: "the Tesseract program (tesseract-ocr)", pypdfium2: "the Python package pypdfium2", pillow: "the Python package pillow" }[m] || m)).join("; ")}.${ocr.missing.includes("tesseract") ? " How to get Tesseract: Settings › Documents." : ""}${ocr.missing.some((m) => m !== "tesseract") ? " The Python parts: pip install 'enlens-claims[ocr]', then restart the app." : ""}`) : null])))] };
 }
 
 // ---------------------------------------------------------------------------------------------

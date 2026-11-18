@@ -37,7 +37,7 @@ free or paid) or a model on this computer. Used ENLENS on another computer? Choo
 
 1. Type `enlens update` in Terminal or PowerShell, or run the install line or file again (on Windows, quit ENLENS
    and close Claude Code first).
-2. Quit ENLENS (*Quit* at the bottom of the sidebar, or *Settings* › *Technical*) and open it again from its icon.
+2. Quit ENLENS (*Quit* at the bottom of the sidebar, or *Settings* › *General*) and open it again from its icon.
 
 ENLENS also tells you when a new version is ready; *Update and restart* in its pop-up does both steps for you (on
 Windows from 0.15.4 on). Your projects and settings (the `enlens` folder in your home folder) are never touched.
