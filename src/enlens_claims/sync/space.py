@@ -481,9 +481,7 @@ def _setup_r2_unlocked(ws: Workspace, token: str, account_id: str | None = None,
             if not accts:
                 raise SpaceProblem("The token reaches no Cloudflare account. Make it again from ENLENS's link.",
                                    "no_account")
-            out = status(ws)
-            out["accounts"] = accts
-            return out
+            return {**(status(ws) or {}), "accounts": accts}   # (no space yet when it is the first set-up)
         account_id = accts[0]["id"]
     say("bucket", "Making a private storage space in the EU", {})
     name = "enlens-" + uuid.uuid4().hex[:12]
@@ -1623,8 +1621,13 @@ def _move_unlocked(ws: Workspace, start: Callable[[Workspace, Identity], dict]) 
         pass
     members = {p: m for p, m in _active(octx.roster).items() if p != octx.desc["part"]
                and isinstance(m.get("box"), str) and isinstance(m.get("sign"), str)}
-    start(ws, octx.ident)   # (connects the project to the new space)
+    got = start(ws, octx.ident)   # (connects the project to the new space)
     new = configured(ws)
+    if new is None or new["id"] == old["id"]:
+        # (the set-up needs an answer first, e.g. which Cloudflare account: nothing was set up, nothing moves)
+        if isinstance(got, dict) and got.get("accounts"):
+            return {**(status(ws) or {}), "accounts": got["accounts"]}
+        raise SpaceProblem("The new storage space was not set up, so nothing was moved.", "bad_answer")
     keeper = _get_secret(new["id"], "keeper")
     made: list[list[str]] = []
     to_drive = new.get("service") == "webdav"
