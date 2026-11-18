@@ -57,9 +57,11 @@ Windows from 0.15.4 on). Your projects and settings (the `enlens` folder in your
   impact claims tagged with UN SDG targets and compared with an expert Value Chain Assessment.
 
 <!-- new-in:start (written by `python tools/release.py prepare`: change the changelog entry, not this) -->
-## New in 0.19.18: See what is sent while Claude Code works
+## New in 0.19.19: Other cloud providers, with your consent per provider
 
-- **See what is sent no longer says nothing is sent while Claude Code is working.** Once Claude Code had taken every task that waited, the window said *Nothing waits for Claude Code now, so nothing is about to be sent*, which read as if Claude Code had nothing to do.
+- **Another cloud provider, with an API key.** *Settings → AI* has a new main choice, *Another cloud provider (API key)*: OpenAI, Google Gemini, Mistral, Azure OpenAI or OpenRouter, each through its OpenAI-compatible chat API over HTTPS.
+- **Consent per document and per provider.** A document marked *Claude may read it* now lists which cloud providers may read it, **by default only Anthropic**, so every existing project means what it did.
+- **A model server on another computer no longer reads *Claude may read it* documents until you allow it.** It counts as a cloud provider now (a known one by its address, otherwise *a server on another computer*).
 <!-- new-in:end -->
 
 How it works, in the manual: [Explore your documents](docs/manual/explore.md) (working documents, the concept map),
