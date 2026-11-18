@@ -343,6 +343,43 @@ await scenario("S4 profile run kept on codebook change", async (t) => {
   await t.settle(100);
   return { before: before.starts, beforeShows: before.shows, after: t.buttons().filter((b) => /^Label \d+ passages/.test(b.label)).length, shows: /The AI labels passages/.test(t.text()) };
 });
+// ---- S5: a failed fetch of a codebook's codes is not remembered ---------------------------------------------------
+await scenario("S5 failed codes fetch not cached", async (t) => {
+  const item = { passage_id: "p1", source: "model", label_id: "l1", relevance: "main", confidence: 0.8, quote: "a quote", reason: "why", location: "page 1", provisional: false };
+  let n = 0;
+  t.answer("GET /api/projects/Study/documents/d1/profile?*", { framework_title: "B", code_label: "code", pass1: { done: true }, passages: 5, n_pages: 2, read_by_model: 1,
+    codes: [{ code: "X1", description: "Same code", share: 0.5, passages: 1, main: 1, pages: [1], positions: [10], items: [item] }] });
+  t.answer("GET /api/projects/Study/frameworks", { frameworks: [{ name: "B", title: "B" }] });
+  t.answer("GET /api/projects/Study/frameworks/B", () => (++n === 1 ? t.fail(500, "not now") : { framework: { items: [{ code: "B1", description: "Beta one" }] } }));
+  t.answer("GET /api/projects/Study/profile/plan?*", { passages: 5, with_candidates: 5, already_read: 5, to_read: 0, run: {} });
+  const m = await t.module("views/doc-codes.js");
+  const ctx = { query: { code: "X1" }, docBase: "/api/projects/Study/documents/d1", base: "/api/projects/Study", keepUrl() {}, project: "Study",
+    watchers: [], docId: "d1", jumpTo() {}, paint() {}, framework: "B", tab: "codes" };
+  const panel = m.codesPanel(ctx);
+  document.getElementById("view").appendChild(panel.el);
+  await t.settle(50);
+  await t.click("Another code here");
+  await t.click("Cancel");
+  await t.click("Another code here");
+  return { opts: [...document.querySelectorAll("#dv-code-list option")].map((o) => o.value), gets: n };
+});
+// ... and a newer cached entry of the options' codebooks is not removed by an older request failing
+await scenario("S5 older failure keeps newer framework entry", async (t) => {
+  let n = 0;
+  t.answer("GET /api/projects/Study/frameworks/x", async () => {
+    const i = ++n;
+    if (i === 1) { await new Promise((r) => setTimeout(r, 300)); return t.fail(500, "late failure"); }
+    return { framework: { items: [{ code: "N" + i, description: "new" }] } };
+  });
+  const m = await t.module("views/options.js");
+  const first = m.loadFramework("Study", "x").catch(() => null);
+  m.forgetFrameworks();
+  const second = await m.loadFramework("Study", "x");
+  await t.settle(500);
+  await first;
+  const third = await m.loadFramework("Study", "x");
+  return { n, second: second.items[0].code, third: third.items[0].code };
+});
 """
 
 
@@ -465,3 +502,15 @@ def test_s4_the_profile_card_still_shows_the_run_after_the_codebook_changes(page
     r = page["S4 profile run kept on codebook change"]
     assert r["before"] == 0 and r["beforeShows"], r        # the run is shown at first
     assert r["after"] == 0 and r["shows"], r
+
+
+@needs_node
+def test_s5_a_failed_fetch_of_a_codebooks_codes_is_asked_for_again(page):
+    r = page["S5 failed codes fetch not cached"]
+    assert r["opts"] == ["B1"] and r["gets"] == 2, r
+
+
+@needs_node
+def test_s5_an_older_failing_request_does_not_remove_a_newer_cached_codebook(page):
+    r = page["S5 older failure keeps newer framework entry"]
+    assert r["n"] == 2 and r["third"] == "N2", r

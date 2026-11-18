@@ -249,7 +249,11 @@ export function codesPanel(ctx) {
   const codeLists = new Map();   // codebook -> Promise of its codes: the form offers those of the codebook now chosen
   async function codesOf() {
     const fw = ctx.framework;
-    if (!codeLists.has(fw)) codeLists.set(fw, api("GET", `${base}/frameworks/${P(fw)}`).then((r) => ((r.framework && r.framework.items) || [])).catch(() => []));
+    if (!codeLists.has(fw)) {
+      // a failed fetch gives no codes now, but is not remembered: the next form asks again
+      const p = api("GET", `${base}/frameworks/${P(fw)}`).then((r) => ((r.framework && r.framework.items) || [])).catch(() => { if (codeLists.get(fw) === p) codeLists.delete(fw); return []; });
+      codeLists.set(fw, p);
+    }
     return codeLists.get(fw);
   }
   async function addForm({ passage_id, quote, where }) {
