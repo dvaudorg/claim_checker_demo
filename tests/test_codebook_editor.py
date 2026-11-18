@@ -580,3 +580,10 @@ def test_a_name_used_again_is_followed_right_by_a_colleagues_labels(tmp_path, mo
     anna.bring_in(ben.send())
     with anna:
         assert _counts(anna.ws) == {"Travel": 3, "Commuting": 3, "Productivity": 3}
+
+
+def test_a_copy_with_no_codebook_named_says_so(demo):
+    """18 November 2026 (hunt P1-6): `frameworks.get("")` is None, and `of.name` was an AttributeError."""
+    for source in (None, {}, {"of": ""}):
+        with pytest.raises(ValueError, match="Choose the codebook to copy"):
+            codebooks.create(demo, "my_copy", "", "project", "copy", source)
