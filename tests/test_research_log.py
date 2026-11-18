@@ -264,3 +264,21 @@ def test_the_log_through_the_app(api, tmp_path):  # noqa: F811
         other = researchlog.record(cx, "entry", "A colleague's", person_id="p0123456789ab")
     st, r = api("PUT", f"/api/projects/Demo/log/{other}", {"text": "mine"})
     assert st == 403 and "colleague" in r["error"]
+
+
+def test_a_file_brought_in_by_hand_naming_your_pair_changes_none_of_your_entries(demo, monkeypatch):
+    """18 November 2026 (hunt P2-1): `merge`'s `first_hand` flag was shadowed by an import of the same name, so a zip
+    that only named your paired account as sender overwrote your own entries."""
+    from enlens_claims import sharing
+
+    e = researchlog.add(demo, "Mine, as I wrote it.")
+    monkeypatch.setattr(sharing, "_partner", lambda cx, me: "PAIRED")
+    with demo.connect() as cx:
+        row = dict(cx.execute("SELECT * FROM research_log WHERE entry_id=?", (e["entry_id"],)).fetchone())
+        theirs = {**row, "text": "Overwritten.", "edited_at": "9999-01-01T00:00:00Z"}
+        assert researchlog.merge(cx, [theirs], lambda r: r, sender="PAIRED", first_hand=False) == 0
+        assert cx.execute("SELECT text FROM research_log WHERE entry_id=?", (e["entry_id"],)).fetchone()[0] == \
+            "Mine, as I wrote it."
+        assert researchlog.merge(cx, [theirs], lambda r: r, sender="PAIRED", first_hand=True) == 1
+        assert cx.execute("SELECT text FROM research_log WHERE entry_id=?", (e["entry_id"],)).fetchone()[0] == \
+            "Overwritten."

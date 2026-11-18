@@ -314,7 +314,7 @@ def merge(cx: sqlite3.Connection, rows: list[dict], fix, sender: str | None = No
     cols = [r[1] for r in cx.execute("PRAGMA table_info(research_log)")]
     via_here: set[str] = set()
     if sender:
-        from .people import first_hand, note_via, relayed
+        from .people import first_hand as _first_hand, note_via, relayed
 
         via_here = relayed(cx, "log")
     from .sharing import _partner
@@ -353,7 +353,7 @@ def merge(cx: sqlite3.Connection, rows: list[dict], fix, sender: str | None = No
             if third and r["entry_id"] not in via_here:
                 continue  # relayed: never in place of the author's own row
             if sender and not third and r["entry_id"] in via_here:
-                first_hand(cx, "log", [r["entry_id"]])
+                _first_hand(cx, "log", [r["entry_id"]])
             elif third:
                 note_via(cx, "log", r["entry_id"], r["person_id"], sender)
             sets = [c for c in use if c != "entry_id"]
