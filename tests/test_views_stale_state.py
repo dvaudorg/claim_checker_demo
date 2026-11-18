@@ -127,7 +127,20 @@ await scenario("P-1 log page text typed while adding", async (t) => {
   const ta = t.field("A new entry");
   ta.value = "First entry";
   await t.click("Add to the log");
-  ta.value = "First entry, and a second thought";   // typed while the request runs
+  ta.value = "First entry and a second thought";   // typed after it, while the request runs
+  await t.settle(1000);
+  return { left: ta.value };
+});
+
+await scenario("P-1 log page box rewritten while adding", async (t) => {
+  t.answer("GET /api/projects/Study/log?*", { entries: [], total: 0, groups: {}, group_names: {} });
+  t.answer("GET /api/projects/Study/sharing?*", { items: [] });
+  t.answer("POST /api/projects/Study/log", async () => { await new Promise((r) => setTimeout(r, 300)); return {}; });
+  await t.render("views/log.js", "renderLog", [], {});
+  const ta = t.field("A new entry");
+  ta.value = "First entry";
+  await t.click("Add to the log");
+  ta.value = "Something else entirely";   // not a continuation: left alone
   await t.settle(1000);
   return { left: ta.value };
 });
@@ -162,7 +175,7 @@ await scenario("P-1 drawer text typed while adding", async (t) => {
   const ta = document.querySelector(".logdrawer-text");
   ta.value = "First entry";
   await t.click("Add to the log");
-  ta.value = "First entry, and a second thought";
+  ta.value = "First entry and a second thought";
   await t.settle(1000);
   return { left: ta.value };
 });
@@ -215,6 +228,158 @@ await scenario("P-6 space links after a failure", async (t) => {
   }
   return { second: out[1], first: out[0], asks: n };
 });
+// ---- M1: a move to Cloudflare R2 after the account is chosen -------------------------------------------------------
+async function r2Setup(t, move) {
+  const ACCOUNTS = [{ id: "a1", name: "One" }, { id: "a2", name: "Two" }];
+  let n = 0;
+  const msgs = [];
+  t.answer("GET /api/space/links", {});
+  t.answer("GET /api/projects/Study/log?*", { entries: [], total: 0, groups: {}, group_names: {} });
+  t.answer("POST /api/projects/Study/shared-folder/sync", {});
+  t.answer("GET /api/projects/Study/owner", { owner: null, people: [] });
+  t.answer("GET /api/projects/Study/space/name", {});
+  t.answer("PUT /api/space/name", {});
+  t.answer(/^(POST|PUT) .*\/space\/(move|r2)$/, () => ({ job: { id: `j${++n}` } }));
+  t.answer("GET /api/jobs/j1", () => ({ id: "j1", state: "done", progress: { message: "Step one" }, result: { accounts: ACCOUNTS } }));
+  t.answer("GET /api/jobs/j2", () => ({ id: "j2", state: "done", progress: { message: "Step two" }, result: { moved: {} } }));
+  const m = await t.module("views/team-space.js");
+  const ctx = { project: "Study", refresh: async () => {}, startRound() {} };
+  const done = move ? m.setupDialog(ctx, "r2", { move: true }) : m.setupDialog(ctx, "r2");
+  await t.settle(100);
+  const d = t.dialog();
+  if (!move) await t.click("Next step", { within: d });   // past "Your name"
+  await t.click("I have an account", { within: d });
+  await t.click("R2 is switched on", { within: d });
+  await t.type("Token", "tok123");
+  await t.click(move ? "Move the team" : "Set up the storage space", { within: d });
+  await t.settle(3000);
+  const pick = t.dialogs().filter((x) => /Which Cloudflare account/.test(t.allText(x)))[0];
+  if (pick) { document.getElementById("space-r2-account").value = "a2"; await t.click("Use it", { within: pick }); }
+  await t.settle(3000);
+  const posts = t.calls.filter((c) => c.method === "POST" && /\/space\//.test(c.path)).map((c) => ({ path: c.path.split("/space/")[1], body: c.body }));
+  return { posts, picked: !!pick, errors: t.text(t.dialog() || undefined) };
+}
+await scenario("M1 move to r2 with several accounts", async (t) => r2Setup(t, true));
+await scenario("M1 first set-up to r2 with several accounts", async (t) => r2Setup(t, false));
+// ---- S1: Look before checking, an option toggled while it runs ----------------------------------------------------
+await scenario("S1 look then toggle option", async (t) => {
+  const A = "Repair cafés build community among neighbours";
+  t.state({ settings: { backend: "claude_code", threshold: 0.6 } });
+  let job = { id: "p1", state: "running", progress: {} };
+  t.answer("GET /api/projects/Study", { frameworks: [], passages: 40 });
+  t.answer("GET /api/projects/Study/documents", { documents: [] });
+  t.answer("GET /api/projects/Study/hypotheses?*", { hypotheses: [] });
+  t.answer("GET /api/projects/Study/log?*", { entries: [], total: 0, groups: {}, group_names: {} });
+  t.answer("POST /api/projects/Study/hypotheses/similar", {});
+  t.answer("POST /api/projects/Study/prepare", { job: { id: "p1" } });
+  t.answer("GET /api/jobs/p1", () => job);
+  await t.render("views/hypotheses.js", "renderHypotheses", [], {});
+  await t.type("Your hypothesis", A);
+  await t.settle(1000);
+  await t.click("Look before checking");
+  const sw = [...document.querySelectorAll("input.switch-input")].find((i) => /Check each part separately/.test(i.parentNode.textContent));
+  sw.checked = !sw.checked; sw.dispatchEvent(new Event("change", { bubbles: true }));   // the switch is in the folded options
+  await t.settle(1000);
+  job = { id: "p1", state: "done", result: { parts: ["Repair cafés build community", "among neighbours"], terms: [[], []], split: true } };
+  await t.settle(2000);
+  return { text: t.text(), prep: t.view.querySelectorAll(".prep-card").filter((x) => !t.hidden(x)).length };
+});
+// ---- S2: the codebook editor's example and "Why?" boxes, typed in while a request runs ---------------------------
+const CBK = "/api/projects/Study/codebooks";
+const CODE1 = { uid: "u1", code: "Mending", description: "Fixing things together", group: "1", include: "", exclude: "", keywords: [],
+  examples: [{ quote: "we mend chairs", doc_id: "d1", start: 1 }] };
+const CBBODY = { codebook: { name: "repair", title: "Repair", label: "code", where: "project", editable: true, directional: false,
+  used: { labels: 0, checks: 0 }, groups: [{ group: "1", group_name: "Practice" }], codes: [CODE1] } };
+async function editorFor(t) {
+  t.state({ settings: { backend: "claude_code" } });
+  t.answer(`GET ${CBK}/repair`, CBBODY);
+  t.answer(`GET ${CBK}/repair/offer`, { offer: null });
+  t.answer(`POST ${CBK}/repair/define/offer`, { offered: false, passages: 0, reader: "claude" });
+  t.answer("GET /api/projects/Study/sharing/codebook/repair", { shared: false });
+  t.answer("GET /api/projects/Study/shared-folder", { folder: null });
+  t.answer("GET /api/projects/Study/sync-poller", t.fail(404, "none"));
+  await t.render("views/codebooks.js", "renderCodebook", ["repair"]);
+  await t.click(/^Mending/);
+}
+await scenario("S2 example typed while adding", async (t) => {
+  t.answer(`POST ${CBK}/example`, async () => { await new Promise((r) => setTimeout(r, 300)); return { example: { quote: "we mend chairs", doc_id: "d1", start: 1 } }; });
+  await editorFor(t);
+  const ex = document.querySelector("textarea[placeholder^='Paste words']");
+  ex.value = "we mend chairs";
+  await t.click("Add the example");
+  ex.value = "we mend chairs and tables";   // typed after it, while the request runs
+  await t.settle(1000);
+  const ex2 = document.querySelector("textarea[placeholder^='Paste words']");
+  return { left: ex.value, same: ex === ex2 };
+});
+await scenario("S2 why typed while saving", async (t) => {
+  t.answer(`PUT ${CBK}/repair`, async () => { await new Promise((r) => setTimeout(r, 300)); return { ...CBBODY, changes: ["renamed"] }; });
+  await editorFor(t);
+  await t.type("Name", "Mending 2");
+  await t.settle(300);
+  const why = document.querySelector("input.cb-why");
+  why.value = "Clearer name";
+  await t.click("Save");
+  why.value = "Clearer name for the group";
+  await t.settle(1000);
+  return { left: why.value };
+});
+// ---- S4: the profile's AI card, a codebook changed while the AI labels ---------------------------------------------
+await scenario("S4 profile run kept on codebook change", async (t) => {
+  const FWS = [{ name: "alpha", title: "Alpha (3 codes)", codes: 3, label: "code", groups: 0 },
+               { name: "beta", title: "Beta (4 codes)", codes: 4, label: "code", groups: 0 }];
+  t.answer("GET /api/projects/Study/documents", { documents: [{ doc_id: "d1", title: "One" }] });
+  t.answer("GET /api/projects/Study/profile?*", () => ({ frameworks: FWS, pass1: { done: true, passages: 5 }, stats: {}, grid: { codes: [], documents: [], cells: {} } }));
+  t.answer("GET /api/projects/Study/profile/plan?*", () => ({ passages: 5, with_candidates: 5, already_read: 0, to_read: 5, run: {} }));
+  t.answer("GET /api/projects/Study/profile/calibration?*", { total: 0, bins: [] });
+  t.answer("PUT /api/settings", {});
+  t.answer("GET /api/projects/Study/log?*", { entries: [], total: 0, groups: {}, group_names: {} });
+  t.answer("GET /api/jobs", { jobs: [{ id: "j1", project: "Study", kind: "label", state: "running" }] });
+  t.answer("GET /api/jobs/j1", { id: "j1", state: "running", progress: { done: 1, total: 5 } });
+  await t.render("views/profile.js", "renderProfile", [], { framework: "alpha" });
+  await t.settle(50);
+  const before = { starts: t.buttons().filter((b) => /^Label \d+ passages/.test(b.label)).length, shows: /The AI labels passages/.test(t.text()) };
+  await t.type(document.getElementById("pf-fw"), "beta");
+  await t.settle(100);
+  return { before: before.starts, beforeShows: before.shows, after: t.buttons().filter((b) => /^Label \d+ passages/.test(b.label)).length, shows: /The AI labels passages/.test(t.text()) };
+});
+// ---- S5: a failed fetch of a codebook's codes is not remembered ---------------------------------------------------
+await scenario("S5 failed codes fetch not cached", async (t) => {
+  const item = { passage_id: "p1", source: "model", label_id: "l1", relevance: "main", confidence: 0.8, quote: "a quote", reason: "why", location: "page 1", provisional: false };
+  let n = 0;
+  t.answer("GET /api/projects/Study/documents/d1/profile?*", { framework_title: "B", code_label: "code", pass1: { done: true }, passages: 5, n_pages: 2, read_by_model: 1,
+    codes: [{ code: "X1", description: "Same code", share: 0.5, passages: 1, main: 1, pages: [1], positions: [10], items: [item] }] });
+  t.answer("GET /api/projects/Study/frameworks", { frameworks: [{ name: "B", title: "B" }] });
+  t.answer("GET /api/projects/Study/frameworks/B", () => (++n === 1 ? t.fail(500, "not now") : { framework: { items: [{ code: "B1", description: "Beta one" }] } }));
+  t.answer("GET /api/projects/Study/profile/plan?*", { passages: 5, with_candidates: 5, already_read: 5, to_read: 0, run: {} });
+  const m = await t.module("views/doc-codes.js");
+  const ctx = { query: { code: "X1" }, docBase: "/api/projects/Study/documents/d1", base: "/api/projects/Study", keepUrl() {}, project: "Study",
+    watchers: [], docId: "d1", jumpTo() {}, paint() {}, framework: "B", tab: "codes" };
+  const panel = m.codesPanel(ctx);
+  document.getElementById("view").appendChild(panel.el);
+  await t.settle(50);
+  await t.click("Another code here");
+  await t.click("Cancel");
+  await t.click("Another code here");
+  return { opts: [...document.querySelectorAll("#dv-code-list option")].map((o) => o.value), gets: n };
+});
+// ... and a newer cached entry of the options' codebooks is not removed by an older request failing
+await scenario("S5 older failure keeps newer framework entry", async (t) => {
+  let n = 0;
+  t.answer("GET /api/projects/Study/frameworks/x", async () => {
+    const i = ++n;
+    if (i === 1) { await new Promise((r) => setTimeout(r, 300)); return t.fail(500, "late failure"); }
+    return { framework: { items: [{ code: "N" + i, description: "new" }] } };
+  });
+  const m = await t.module("views/options.js");
+  const first = m.loadFramework("Study", "x").catch(() => null);
+  m.forgetFrameworks();
+  const second = await m.loadFramework("Study", "x");
+  await t.settle(500);
+  await first;
+  const third = await m.loadFramework("Study", "x");
+  return { n, second: second.items[0].code, third: third.items[0].code };
+});
 """
 
 
@@ -264,7 +429,12 @@ def test_p1_ctrl_enter_twice_adds_one_entry_on_the_log_page(page):
 
 @needs_node
 def test_p1_text_typed_while_an_entry_is_added_is_kept_on_the_log_page(page):
-    assert page["P-1 log page text typed while adding"]["left"] == "First entry, and a second thought"
+    assert page["P-1 log page text typed while adding"]["left"] == "and a second thought"
+
+
+@needs_node
+def test_p1_a_box_rewritten_while_an_entry_is_added_is_left_alone(page):
+    assert page["P-1 log page box rewritten while adding"]["left"] == "Something else entirely"
 
 
 @needs_node
@@ -274,7 +444,7 @@ def test_p1_ctrl_enter_twice_adds_one_entry_in_the_drawer(page):
 
 @needs_node
 def test_p1_text_typed_while_an_entry_is_added_is_kept_in_the_drawer(page):
-    assert page["P-1 drawer text typed while adding"]["left"] == "First entry, and a second thought"
+    assert page["P-1 drawer text typed while adding"]["left"] == "and a second thought"
 
 
 @needs_node
@@ -290,3 +460,57 @@ def test_p6_the_help_links_are_asked_for_again_after_a_failure(page):
     r = page["P-6 space links after a failure"]
     assert r["first"] is not None and r["second"] is not None
     assert r["asks"] == 2, r          # the failed answer was not kept for the session
+
+
+@needs_node
+def test_m1_a_move_to_r2_goes_on_as_a_move_after_the_account_is_chosen(page):
+    r = page["M1 move to r2 with several accounts"]
+    assert r["picked"], r
+    assert [p["path"] for p in r["posts"]] == ["move", "move"], r
+    last = r["posts"][-1]["body"]
+    assert last["service"] == "r2" and last["token"] == "tok123" and last["account_id"] == "a2", last
+
+
+@needs_node
+def test_m1_a_first_set_up_of_r2_goes_on_to_r2_after_the_account_is_chosen(page):
+    r = page["M1 first set-up to r2 with several accounts"]
+    assert r["picked"], r
+    assert [p["path"] for p in r["posts"]] == ["r2", "r2"], r
+    assert r["posts"][-1]["body"]["account_id"] == "a2", r
+
+
+@needs_node
+def test_s1_a_look_discarded_for_an_option_speaks_of_the_option(page):
+    r = page["S1 look then toggle option"]
+    assert r["prep"] == 0 and "among neighbours" not in r["text"], r
+    assert "Check each part separately" in r["text"] and "hypothesis changed" not in r["text"], r["text"]
+
+
+@needs_node
+def test_s2_words_typed_while_an_example_is_added_are_kept(page):
+    r = page["S2 example typed while adding"]
+    assert r["left"] == "and tables", r
+
+
+@needs_node
+def test_s2_words_typed_while_the_codebook_is_saved_stay_in_why(page):
+    assert page["S2 why typed while saving"]["left"] == "for the group"
+
+
+@needs_node
+def test_s4_the_profile_card_still_shows_the_run_after_the_codebook_changes(page):
+    r = page["S4 profile run kept on codebook change"]
+    assert r["before"] == 0 and r["beforeShows"], r        # the run is shown at first
+    assert r["after"] == 0 and r["shows"], r
+
+
+@needs_node
+def test_s5_a_failed_fetch_of_a_codebooks_codes_is_asked_for_again(page):
+    r = page["S5 failed codes fetch not cached"]
+    assert r["opts"] == ["B1"] and r["gets"] == 2, r
+
+
+@needs_node
+def test_s5_an_older_failing_request_does_not_remove_a_newer_cached_codebook(page):
+    r = page["S5 older failure keeps newer framework entry"]
+    assert r["n"] == 2 and r["third"] == "N2", r

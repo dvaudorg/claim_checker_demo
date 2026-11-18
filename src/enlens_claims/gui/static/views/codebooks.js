@@ -13,7 +13,7 @@ import { forgetFrameworks } from "./options.js";
 import { MiniJob, isStopped } from "./progress.js";
 import { showHistory, askWhy } from "./versions.js";
 import { shareBar } from "./share.js";   // 0.18 (L1)
-import { decisionCard } from "../lib.js";   // roles (H8)
+import { decisionCard, leftAfterSending } from "../lib.js";   // roles (H8)
 import { OWNER_API, codebookOfferText } from "./owner-state.js";   // roles (H8)
 
 const WHERE = { project: ["This project", "folder"], home: ["All projects", "layers"], bundled: ["Ships with ENLENS", "library"] };
@@ -713,7 +713,7 @@ export async function renderCodebook(view, [name]) {
       try {
         const r = await api("POST", `/api/projects/${P(project)}/codebooks/example`, { quote: q });
         c.examples = (c.examples || []).concat([r.example]);
-        exInput.value = "";
+        exInput.value = leftAfterSending(exInput.value, q);   // words typed meanwhile stay
         touch(); drawExamples();
       } catch (e) { showError(e); } finally { exBtn.disabled = false; }
     } }, icon("quote", { size: 13 }), "Add the example");
@@ -955,7 +955,7 @@ export async function renderCodebook(view, [name]) {
       const pend = [...pendingDraft], busy = [...definingNow];
       fresh();
       keepPendingThroughSave(pend, busy);
-      whyInput.value = "";
+      whyInput.value = leftAfterSending(whyInput.value, why || "");   // words typed meanwhile stay
       setAside = false;
       forgetFrameworks();
       toast(r.changes.length ? `Saved: ${r.changes.slice(0, 3).join("; ")}${r.changes.length > 3 ? ` and ${r.changes.length - 3} more` : ""}. The earlier version is in History.` : "Nothing had changed.", "ok");

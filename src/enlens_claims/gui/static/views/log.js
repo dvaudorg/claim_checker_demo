@@ -4,6 +4,7 @@
 import { featureEyebrow } from "../features.js";
 import { App, api, h, icon, clear, toast, showError, failedLoad, fmt, pageHead, P, confirmDialog, download, downloadLinks,
   debounce, session, dialog, button, searchField, select, textarea, menu, link, personMark, emptyState, latest, plural } from "../lib.js";
+import { leftAfterSending } from "../lib.js";
 import { compareVersion } from "./versions.js";
 import { shareTag, shareItem, unshareItem, sharingOf } from "./share.js";   // 0.18 (L1)
 
@@ -79,7 +80,7 @@ export async function renderLog(view) {
     if (!text) { ta.focus(); return; }
     addBtn.disabled = true;
     // words typed while it was being added are the next entry's: only what was sent is cleared
-    try { await api("POST", base, { text }); if (ta.value.trim() === text) ta.value = ""; toast("Added to the research log.", "ok"); sharesStale = true; await load(); }
+    try { await api("POST", base, { text }); ta.value = leftAfterSending(ta.value, text); toast("Added to the research log.", "ok"); sharesStale = true; await load(); }
     catch (e) { showError(e); } finally { addBtn.disabled = false; }
   }
 

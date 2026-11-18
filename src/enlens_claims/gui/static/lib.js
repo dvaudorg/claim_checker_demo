@@ -935,6 +935,13 @@ export function parseQuery(qs) {
   return out;
 }
 
+// What a text box keeps once `sent` (what it held when a request began) has been sent: the words typed after it. A box
+// that no longer starts with what was sent (the person rewrote it) is left as it is.
+export function leftAfterSending(current, sent) {
+  const t = current.trimStart();
+  return t.startsWith(sent) ? t.slice(sent.length).trimStart() : current;
+}
+
 export function debounce(fn, ms) {
   let t;
   const run = (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };

@@ -77,7 +77,9 @@ export async function loadFramework(project, name) {
   const key = `${project}/${name}`;
   if (!fwCache.has(key)) {
     // a codebook that could not be loaded is asked for again next time, not remembered as failed
-    fwCache.set(key, api("GET", `/api/projects/${P(project)}/frameworks/${P(name)}`).then((r) => r.framework, (e) => { fwCache.delete(key); throw e; }));
+    // (only while the entry is still this request's: a newer one, made after forgetFrameworks(), stays)
+    const p = api("GET", `/api/projects/${P(project)}/frameworks/${P(name)}`).then((r) => r.framework, (e) => { if (fwCache.get(key) === p) fwCache.delete(key); throw e; });
+    fwCache.set(key, p);
   }
   return fwCache.get(key);
 }

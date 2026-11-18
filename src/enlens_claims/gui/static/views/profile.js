@@ -346,6 +346,9 @@ export async function renderProfile(view, params, query) {
       if (!team) { try { await api("PUT", "/api/settings", { profile_framework: framework }); await App.refresh(); } catch (_) { /* the page still works */ } }
       keepUrl();
       await reload();
+      // the card just built does not know of a labelling run under way: follow it, as the first draw does
+      const run = await runningJob(project, ["label"]);
+      if (run && ai) ai.follow(run.id);
       const again = document.getElementById("pf-fw"); if (again) again.focus();
     });
     // how to count: a choice of two values (docs/DESIGN.md 4.6)

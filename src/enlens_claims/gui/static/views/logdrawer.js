@@ -199,7 +199,10 @@ export function initLogDrawer() {
         else if (ctx.subject_kind === "document") { const t = await titleOf(ctx); if (t && t !== ctx.label) payload.title = t; }
       }
       await api("POST", `/api/projects/${P(App.project)}/log`, payload);
-      if (ta.value.trim() === text) ta.value = "";   // words typed meanwhile are the next entry's
+      // words typed meanwhile are the next entry's: what follows the sent words stays; a rewritten box is left alone
+      // (not lib.js's leftAfterSending: tests/test_log_drawer.py stubs lib.js with a fixed list of names)
+      const typed = ta.value.trimStart();
+      if (typed.startsWith(text)) ta.value = typed.slice(text.length).trimStart();
       shown = PAGE;
       toast("Added to the research log.", "ok");
       await refresh();

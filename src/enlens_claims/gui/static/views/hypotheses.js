@@ -366,6 +366,10 @@ export async function renderHypotheses(view, params, query) {
     else { clear(prepBox); prepBox.hidden = true; }
     drawButtons();
   }
+  // which option differs from the one a look was taken with, in words
+  const optionChange = (now, then) => (now.decompose !== then.decompose
+    ? (now.decompose ? "“Check each part separately” is now on" : "“Check each part separately” is now off")
+    : (now.expand ? "“Also search for other words” is now on" : "“Also search for other words” is now off"));
   // the split / other-wordings options changed: the AI mark of "Look before checking" follows them, and a look taken
   // before is out of date
   options.addEventListener("change", () => {
@@ -373,7 +377,7 @@ export async function renderHypotheses(view, params, query) {
     if (!prepared) return;
     const o = options.values();
     if (o.decompose === prepared.decompose && o.expand === prepared.expand) return;
-    const changed = o.decompose !== prepared.decompose ? (o.decompose ? "“Check each part separately” is now on" : "“Check each part separately” is now off") : (o.expand ? "“Also search for other words” is now on" : "“Also search for other words” is now off");
+    const changed = optionChange(o, prepared);
     const again = aiButton({ sm: true, onClick: () => lookBtn.click() }, "Look again");
     prepared = null;
     replace(prepBox, notice({ kind: "attention", live: "status" }, h("p", {}, `${changed}, so the parts and words you looked at no longer apply. Look again to see the new ones, or check it as usual with the new options.`), h("div", { class: "hyp-prepared-again" }, withAI(again)), readsLine("the hypothesis, to split it and to propose words")));
@@ -399,9 +403,11 @@ export async function renderHypotheses(view, params, query) {
       prepareWatcher = null;
       looking = false;
       const now = options.values();
-      if (job.state === "done" && job.result && (ta.value.trim() !== text || now.decompose !== o.decompose || now.expand !== o.expand)) {
+      const textChanged = ta.value.trim() !== text;
+      if (job.state === "done" && job.result && (textChanged || now.decompose !== o.decompose || now.expand !== o.expand)) {
         // the wording or the options changed while the AI looked: its parts are of the old ones
-        discardPrepared("The hypothesis changed while the AI looked, so its parts and words do not apply: look again, or check it as it is now.");
+        discardPrepared(textChanged ? "The hypothesis changed while the AI looked, so its parts and words do not apply: look again, or check it as it is now."
+          : `${optionChange(now, o)}, so the parts and words the AI looked at no longer apply. Look again, or check it as usual with the new options.`);
       } else if (job.state === "done" && job.result) {
         prepared = { text, parts: (job.result.parts || []).map((p) => (typeof p === "string" ? { text: p, role: null } : { text: p.text, role: p.role || null })), terms: (job.result.terms || []).map((t) => [...(t || [])]), split: !!job.result.split, editedParts: false, editedTerms: false, expand: o.expand, decompose: o.decompose };
         if (!prepared.parts.length) prepared.parts = [{ text, role: null }];

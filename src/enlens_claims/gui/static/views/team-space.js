@@ -182,8 +182,12 @@ export async function setupDialog(ctx, service, { move = false } = {}) {
         btn.disabled = true; lock.on = true;
         try {
           await who.save();
-          let job = (await api("POST", move ? `${S(ctx.project)}/move` : `${S(ctx.project)}/${service}`, move ? { service, ...body } : body)).job;
-          job = await watchJob(job.id, (j) => { progress.textContent = (j.progress && j.progress.message) ? `${j.progress.message}…` : "Working…"; }).promise;
+          // a move asks `…/move` every time (also once the Cloudflare account is chosen: `…/r2` refuses a project that
+          // has a space already); a first set-up asks `…/<service>`
+          const start = (extra) => api("POST", move ? `${S(ctx.project)}/move` : `${S(ctx.project)}/${service}`, move ? { service, ...body, ...extra } : { ...body, ...extra });
+          const showProgress = (j) => { progress.textContent = (j.progress && j.progress.message) ? `${j.progress.message}…` : "Working…"; };
+          let job = (await start({})).job;
+          job = await watchJob(job.id, showProgress).promise;
           if (job.state !== "done") { progress.textContent = ""; err.textContent = job.error || "The set-up did not finish."; return false; }
           const r = job.result || {};
           if (r.accounts && r.accounts.length) {   // a token that reaches several Cloudflare accounts: one is chosen
@@ -191,8 +195,8 @@ export async function setupDialog(ctx, service, { move = false } = {}) {
             const chosen = await dialog({ title: "Which Cloudflare account?", body: field("Account", sel),
               actions: [{ text: "Cancel", value: null }, { text: "Use it", value: true, primary: true }] });
             if (!chosen) { progress.textContent = ""; return false; }
-            job = (await api("POST", `${S(ctx.project)}/r2`, { ...body, account_id: sel.value })).job;
-            job = await watchJob(job.id).promise;
+            job = (await start({ account_id: sel.value })).job;
+            job = await watchJob(job.id, showProgress).promise;
             if (job.state !== "done") { progress.textContent = ""; err.textContent = job.error || "The set-up did not finish."; return false; }
           }
           const warnings = (job.result && job.result.warnings) || [];
