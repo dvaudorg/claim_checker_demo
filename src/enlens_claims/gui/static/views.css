@@ -195,7 +195,7 @@ html:has(.bulk-stick:not([hidden])) { scroll-padding-bottom: 6rem; }
   .route-cards > *, .route-cards > [data-value="subscription"], .route-cards > [data-value="local"], .route-cards.route-cards-few > * { grid-column: auto; }
 }
 /* whose plan: an inset right under the route picker, so it belongs to the Subscription card and is not a second picker */
-.agent-choice-box { margin: -4px 0 var(--space-3); border-left: 3px solid var(--accent); }
+.agent-choice-box { margin: -4px 0 var(--space-3); }   /* an inset (lib inset()): it belongs to the Subscription card above */
 .agent-choice-box > .field-label { margin-bottom: 4px; }
 .agent-choice { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin: 4px 0 0; }
 .agent-choice .option-card-head .chip { white-space: nowrap; }
