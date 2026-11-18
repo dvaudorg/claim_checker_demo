@@ -1926,7 +1926,7 @@ def _apply_bundle(scx: sqlite3.Connection, scratch: Workspace, unpacked: Path, m
     fw = Path(scratch.root) / "frameworks"
     for it in meta.get("items") or []:
         kind, key = (it.get("kind"), it.get("key")) if isinstance(it, dict) else (None, None)
-        if kind in sharing.KINDS and isinstance(key, str) and key:
+        if kind in sharing.KINDS and isinstance(key, str) and key and sharing.plain_key(kind, key):  # (a path is no key)
             sharing.drop(scx, kind, [key])
             scx.execute("DELETE FROM shares WHERE kind=? AND key=?", (kind, key))
             if kind == "codebook":

@@ -418,3 +418,35 @@ def test_a_codebook_key_must_be_a_plain_file_name():
     for good in ("my-book", "Own Book 2", "a.b", "über"):
         assert sharing.plain_key("codebook", good), good
     assert sharing.plain_key("check", "../anything")
+
+
+def test_a_bundles_item_key_that_climbs_out_of_the_folder_deletes_nothing(tmp_path):
+    from enlens_claims.sync import folder
+
+    scratch = Workspace.create(tmp_path / "work", scratch=True)
+    (Path(scratch.root) / "frameworks").mkdir(exist_ok=True)
+    victims = tmp_path / "victims"
+    victims.mkdir()
+    for ext in ("csv", "json"):
+        (victims / f"victim.{ext}").write_text("precious")
+    unpacked = tmp_path / "unpacked"
+    unpacked.mkdir()
+    sqlite3.connect(unpacked / "rows.sqlite").close()
+    key = "../../victims/victim"
+    assert (Path(scratch.root) / "frameworks" / f"{key}.csv").resolve() == (victims / "victim.csv").resolve()
+    with scratch.connect() as scx:
+        folder._apply_bundle(scx, scratch, unpacked, {"items": [{"kind": "codebook", "key": key}]})
+    for ext in ("csv", "json"):
+        assert (victims / f"victim.{ext}").read_text() == "precious"
+
+
+def test_a_label_naming_a_codebook_by_a_path_sends_no_file_from_outside_the_codebook_folder(loaded, tmp_path, monkeypatch):
+    from enlens_claims.home import home
+
+    monkeypatch.setenv("ENLENS_HOME", str(tmp_path / "home-x"))
+    (home() / "frameworks").mkdir(parents=True, exist_ok=True)
+    (home() / "secret.csv").write_text("not a codebook")
+    _check(loaded, CLAIM)
+    with loaded.connect() as cx:
+        assert cx.execute("UPDATE hypotheses SET framework=?", ("../secret",)).rowcount
+    assert sync.home_codebooks(loaded) == []
