@@ -123,7 +123,7 @@ class AgentApi:
 
     def post_agent_tidy(self, q):
         """Remove what an earlier ENLENS wrote into the person's own Antigravity settings (they pressed Remove them)
-        → {removed, own_leftovers}. A copy of the file as it was is kept as settings.json.bak."""
+        → {removed, own_leftovers}. A copy of the file as it was is kept as settings.json.enlens-tidy.bak."""
         from .. import agentcli
 
         route = _route(self._body().get("route"))
