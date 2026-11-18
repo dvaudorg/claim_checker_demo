@@ -7,6 +7,8 @@ import { localModelHelp } from "./local-model.js";
 import { queueSection } from "./queue.js";
 import { providerSetup, claudeKeySetup, TIERS, plainProblem } from "./provider-setup.js";
 import { agentSetupDialog, cliAdapter, AGENTS } from "./agent-setup.js";
+import { allowLine, article } from "./outside-setup.js";
+import { storedWhere } from "./provider-setup.js";
 
 // Providers stage 2: ENLENS's three tiers of work, as Settings names them (providers.TIER_TITLES)
 const TIER_TITLE = { small: "Small tasks (labels, links, search words)", middle: "Judging excerpts", strong: "Second opinions and hard cases" };
@@ -23,6 +25,47 @@ const PROVIDER_TEXT = {
 };
 
 const rerender = () => window.dispatchEvent(new HashChangeEvent("hashchange"));
+
+// Providers stage 2: the agents on a person's own plan, as the Subscription card and the first run offer them. `box`:
+// the provider's name as the Documents page's tick boxes show it. Claude Code is the recommendation; Antigravity the
+// one for a person without a paid plan (Claude Code is not offered on Claude's free plan; Antigravity runs on a free
+// personal Google account, on Gemini 3.8 Flash only).
+export const AGENT_CHOICE = {
+  claude_code: { title: "Claude Code", plan: "Your Claude plan (Pro, Max, Ultra, Team or Enterprise)", company: "Anthropic", box: "Anthropic (Claude)", tag: "Recommended" },
+  codex: { title: "Codex", plan: "Your ChatGPT plan (Plus, Pro, Business)", company: "OpenAI", box: "OpenAI",
+    // what its maker does with the text on that kind of account (checked on its pages, 18 November 2026)
+    terms: "On ChatGPT Plus or Pro, OpenAI may use what Codex reads to improve its models unless Improve the model for everyone is off in ChatGPT’s Data controls; Business, Edu and Enterprise plans are not used for that by default.",
+    foot: "may train its models on Plus or Pro unless you switch that off" },
+  antigravity: { title: "Antigravity", plan: "Your Google account, free or paid. Free: every task on Gemini 3.8 Flash.", company: "Google", box: "Google Gemini", tag: "Recommended on a free plan",
+    terms: "On a personal Google account, Google may use what Antigravity reads to improve its products while the Enable Telemetry setting is on (in Antigravity’s settings). Switch it off before you use it for research documents: the set-up says where.",
+    foot: "may improve its products from it while Telemetry is on" },
+};
+// the honest state of the agent CLIs (docs/manual/other-agents.md says the same)
+const untried = (title) => `Built from ${title}’s documentation and not yet tried with real accounts, nor measured with ENLENS.`;
+
+// Whether the open project is shared with a team: only Anthropic may read a shared project's documents (privacy.md)
+async function projectShared() {
+  if (!App.project) return false;
+  try { const r = await api("GET", `/api/projects/${P(App.project)}`); return !!((r && r.ai_access) || {}).shared; } catch (_) { return false; }
+}
+const sharedLine = (who) => h("p", { class: "small", id: "consent-shared" }, `This project is shared with a team: only Anthropic may read its documents, so ${who} reads none of them here.`);
+
+// The yes-first dialog of Codex or Antigravity (as Claude Code's): what is sent where, the maker's terms, which
+// documents, the honest state. `stay`: the words of the way out. Resolves true for yes. Used by Settings and the first run.
+export async function agentConsent(key, { stay = "Keep the AI on this computer" } = {}) {
+  const a = AGENTS[key], c = AGENT_CHOICE[key];
+  const shared = await projectShared();
+  return !!(await dialog({
+    title: `Let ${a.title} read the excerpts, on ${a.plan}?`,
+    body: h("div", {}, h("p", {}, `The AI buttons of ENLENS then prepare tasks; ${a.title} answers them, started by ENLENS when you press Start ${a.title}.`),
+      h("p", {}, h("strong", {}, `The passages inside the tasks ${a.title} takes are sent to ${a.company}.`), " Your documents, results and reviews stay on this computer, and every answer is checked here against the text."),
+      h("p", {}, h("strong", {}, c.terms)),
+      h("p", {}, h("strong", {}, `Only documents that allow ${c.box} are sent.`), ` Every document allows Anthropic only until you tick ${c.box} for it on the Documents page; the others wait for another AI, or for you.`),
+      shared ? sharedLine(a.title) : null,
+      h("p", { class: "muted small" }, `ENLENS never sees your login and never runs on anyone else’s plan. ${untried(a.title)}`)),
+    actions: [{ text: stay, value: false, id: "dlg-safe" }, { text: `Use ${a.title}`, value: true, primary: true }],
+  }));
+}
 
 // 0.9: Settings as five flat tabs (no section folded inside another). Old links to a section (#/settings/second,
 // #/settings/calibration…) open its tab and scroll to it.
@@ -294,18 +337,6 @@ function modelSection(s, servers, watchers, info = { servers }) {
   // "Local model" half wide, then the three others. "Subscription" holds the agents on the person's own plan (Claude
   // Code, Codex, Antigravity), chosen inside its detail; the saved backend stays the agent's route.
   const AGENT_ROUTES = ["claude_code", "codex", "antigravity"];
-  const AGENT_CHOICE = {
-    // Claude Code is the recommendation; Antigravity the one for a person without a paid plan (Claude Code is not
-    // offered on Claude's free plan; Antigravity runs on a free personal Google account, on Gemini 3.8 Flash only)
-    claude_code: { title: "Claude Code", plan: "Your Claude plan (Pro, Max, Team)", company: "Anthropic", tag: "Recommended" },
-    codex: { title: "Codex", plan: "Your ChatGPT plan (Plus, Pro, Business)", company: "OpenAI",
-      // what its maker does with the text on that kind of account (checked on its pages, 18 November 2026)
-      terms: "On ChatGPT Plus or Pro, OpenAI may use what Codex reads to improve its models unless Improve the model for everyone is off in ChatGPT’s Data controls; Business, Edu and Enterprise plans are not used for that by default.",
-      foot: "may train its models on Plus or Pro unless you switch that off" },
-    antigravity: { title: "Antigravity", plan: "Your Google account, free or paid. Free: every task on Gemini 3.8 Flash.", company: "Google", tag: "Recommended on a free plan",
-      terms: "On a personal Google account, Google may use what Antigravity reads to improve its products while Antigravity’s Enable Telemetry setting is on (Settings › Account in Antigravity). Switch it off before you use it for research documents.",
-      foot: "may improve its products from it while Telemetry is on" },
-  };
   // the agent the Subscription card stands for: the saved one, else the one last chosen here, else Claude Code
   let agent = AGENT_ROUTES.includes(backend) ? backend : (AGENT_ROUTES.includes(store("settings-agent")) ? store("settings-agent") : "claude_code");
   const ROUTES = [
@@ -338,17 +369,7 @@ function modelSection(s, servers, watchers, info = { servers }) {
     }
     // Providers stage 2: Codex and Antigravity ask first, as Claude Code does (allow_codex, allow_antigravity)
     if (AGENTS[key] && !allowAgent[key]) {
-      const a = AGENTS[key];
-      const ok = await dialog({
-        title: `Let ${a.title} read the excerpts, on ${a.plan}?`,
-        body: h("div", {}, h("p", {}, `The AI buttons of ENLENS then prepare tasks; ${a.title} answers them, started by ENLENS when you press Start ${a.title}.`),
-          h("p", {}, h("strong", {}, `The passages inside the tasks ${a.title} takes are sent to ${a.company}.`), " Your documents, results and reviews stay on this computer, and every answer is checked here against the text."),
-          h("p", {}, h("strong", {}, AGENT_CHOICE[key].terms)),
-          h("p", {}, h("strong", {}, `Only documents that allow ${a.company} are sent.`), ` Every document allows Anthropic only until you tick ${a.company} for it on the Documents page; the others wait for another AI, or for you.`),
-          h("p", { class: "muted small" }, `ENLENS never sees your login and never runs on anyone else’s plan. ${a.title} is not yet measured with ENLENS: check its answers before you rely on them.`)),
-        actions: [safe, { text: `Use ${a.title}`, value: true, primary: true }],
-      });
-      if (!ok) return false;
+      if (!(await agentConsent(key, { stay: safe.text }))) return false;
       allowAgent[key] = true;
     }
     return true;
@@ -369,7 +390,7 @@ function modelSection(s, servers, watchers, info = { servers }) {
     if (key === "subscription") {
       if (!(await askAgent(agent))) { select(prev); return; }
       if (!(await useAgent(agent))) { select(prev); return; }
-      drawDetail();
+      rerender();   // the whole page: the queue's section and every word below follow the saved agent
       return;
     }
     if (key === "anthropic" && prev !== "anthropic") {
@@ -383,10 +404,12 @@ function modelSection(s, servers, watchers, info = { servers }) {
       if (!ok) { select(prev); return; }
     }
     if (key === "cloud_api" && prev !== "cloud_api") {
+      const shared = await projectShared();
       const ok = await dialog({
         title: "Use another cloud provider with your API key?",
         body: h("div", {}, h("p", {}, "The hypothesis and the excerpts the AI reads are then sent to the provider you choose below (OpenAI, Google, Mistral, Microsoft or OpenRouter), and the use is billed to your key."),
           h("p", {}, h("strong", {}, "Only documents that allow that provider are sent."), " Every document allows Anthropic only until you tick another provider for it on the Documents page; the others are read by your local model, or wait for you."),
+          shared ? sharedLine("that provider") : null,
           h("p", { class: "muted small" }, "Nothing is sent before you also switch on “Allow cloud models”, store a key and save. ENLENS's models and settings were measured with Claude only.")),
         actions: [{ text: "Back", value: false, primary: true, id: "dlg-safe" }, { text: "Continue with another provider", value: true }],
         onOpen(dlg) { const b = dlg.querySelector("#dlg-safe"); if (b) b.focus(); },
@@ -507,7 +530,7 @@ function modelSection(s, servers, watchers, info = { servers }) {
       onPick: async (v) => {
         if (v === backend) return;
         if (!(await askAgent(v)) || !(await useAgent(v))) { cards.set(backend); return; }
-        drawDetail();
+        rerender();   // the whole page follows the saved agent: the queue section, its Start, /enlens-run
       } });
     // an inset under the route picker, so it reads as part of the Subscription card and not as a second picker
     return inset({ class: "set-agent-choice agent-choice-box" }, h("div", { class: "field-label" }, "Subscription: whose plan"), cards);
@@ -621,11 +644,14 @@ function modelSection(s, servers, watchers, info = { servers }) {
         return;
       }
       const avail = info.status.models_available || [];
+      const inUse = info.lineup_in_use || rec;
+      const one = TIERS.every((t) => inUse[t]) && new Set(TIERS.map((t) => inUse[t])).size === 1;
       fields.cliRows = modelRows({ id: `m-${route}`, recommended: rec, chosen: (s.cli_models || {})[route] || {}, models: avail.length ? avail : Object.values(rec) });
       fields.cliRoute = route;
       replace(modelsHolder, label,
         h("div", { class: "field-help" }, `From ${a.title}’s recommendations for your plan${avail.length ? ", among the models it lists" : ""}. A newer ENLENS brings newer ones by itself; choose another only if you need to. Saved with Save.`,
           route === "antigravity" ? " On a free Google account every task uses Gemini 3.8 Flash; Google AI Pro adds Gemini 4 Argon and Hydrogen, Ultra also Gemini 4 Carbon." : ""),
+        one ? h("p", { class: "small", id: "cli-models-one" }, "Every task uses ", h("code", {}, inUse.small), "; a second opinion then comes from the same model.") : null,
         fields.cliRows);
     };
     drawModels(null);
@@ -640,7 +666,9 @@ function modelSection(s, servers, watchers, info = { servers }) {
       thoughtField(`Which ${a.title} models answer each kind of task, and how hard they think. `, THOUGHT_ABOUT_OTHER),
       h("div", { class: "field", id: "s-speed" }, h("div", { class: "field-label" }, "Helpers at once"), h("div", { class: "row" }, speed, st),
         h("div", { class: "field-help" }, `How many helpers ENLENS starts at once when you press Start ${a.title}. More is done sooner and uses your plan’s limits faster.`)),
-      h("p", { class: "muted small" }, `${a.title} is not yet measured with ENLENS: its models and settings were measured with Claude only. Check its answers before you rely on them.`));
+      mixBox(a.title),
+      allowLine(App.project),
+      h("p", { class: "muted small", id: "agent-untried" }, untried(a.title)));
   }
 
   // 0.18.1 (I5): the local model and Claude answer the same sample of this project's tasks of one kind, and Cohen's
@@ -745,21 +773,24 @@ function modelSection(s, servers, watchers, info = { servers }) {
 
   // 0.18.1 (I1, I2, I4): which route answers each kind of task when Claude and a local model are both set, and what
   // happens at the plan's usage limit. Saved when picked.
-  function mixBox() {
+  // `who`: the agent on the plan (Claude Code's words when none is given: "Claude"); the mix is shown only beside a local
+  // model for an agent CLI, the usage limit always.
+  function mixBox(who) {
     const local = !!(s.restricted_server && s.restricted_model);
+    const W = who || "Claude", prog = who || "Claude Code";
     const st = h("span", { class: "save-state", "aria-live": "polite" });
     const pick = (key) => async (v) => { st.textContent = "Saving…"; try { await save({ [key]: v }, st); s[key] = v; } catch (e) { st.textContent = ""; throw e; } };
-    const mix = choice({ sm: true, label: "The mix of local and Claude", value: s.ai_mix || "best",
+    const mix = choice({ sm: true, label: `The mix of local and ${W}`, value: s.ai_mix || "best",
       options: [["mostly_local", "Mostly local"], ["balanced", "Balanced"], ["best", "Best quality"]], onPick: pick("ai_mix") });
     const limit = choice({ sm: true, label: "At your plan's usage limit", value: s.at_limit || "wait",
       options: [["wait", "Wait and continue later"], ["local", "Carry on with the local model"]], onPick: pick("at_limit") });
-    return h("div", { class: "stack", id: "s-mix" },
-      h("div", { class: "field" }, h("div", { class: "field-label" }, "The mix of local and Claude"), h("div", { class: "row" }, mix, st),
-        h("div", { class: "field-help" }, local ? "Mostly local: your local model answers every kind of task but second opinions. Balanced: it answers labels, links, search words, theme names and references; Claude judges excerpts. Best quality: Claude answers everything (your local model reads only documents marked Only a local AI). An answer your local model is unsure of, that fails the quote check, or that judges an excerpt as contradicting goes to Claude, only for documents Claude may read. Can change results. "
-          : "Choose a local model for documents marked Only a local AI (under AI model) to share the work between it and Claude. ",
-          helpMark("About the mix", "The local model answers first, on this computer; its answer counts unless it goes up to Claude, who then reads the task again. Each answer records which model gave it (Technical details, and the Excel file's How these results were made). Settings › AI › Agreement between routes shows, on your own documents, how often the two agree."))),
-      h("div", { class: "field" }, h("div", { class: "field-label" }, "At your plan's usage limit"), h("div", { class: "row" }, limit),
-        h("div", { class: "field-help" }, "When Claude Code stops because your plan's usage limit is reached: wait (the queue keeps the work; start Claude Code again when the limit resets), or let your local model answer what waits, where it may.")));
+    const mixField = who && !local ? null : h("div", { class: "field" }, h("div", { class: "field-label" }, `The mix of local and ${W}`), h("div", { class: "row" }, mix, st),
+        h("div", { class: "field-help" }, local ? `Mostly local: your local model answers every kind of task but second opinions. Balanced: it answers labels, links, search words, theme names and references; ${W} judges excerpts. Best quality: ${W} answers everything (your local model reads only documents marked Only a local AI). An answer your local model is unsure of, that fails the quote check, or that judges an excerpt as contradicting goes to ${W}, only for documents ${W} may read. Can change results. `
+          : `Choose a local model for documents marked Only a local AI (under AI model) to share the work between it and ${W}. `,
+          helpMark("About the mix", `The local model answers first, on this computer; its answer counts unless it goes up to ${W}, which then reads the task again. Each answer records which model gave it (Technical details, and the Excel file's How these results were made).${who ? "" : " Settings › AI › Agreement between routes shows, on your own documents, how often the two agree."}`)));
+    return h("div", { class: "stack", id: "s-mix" }, mixField,
+      h("div", { class: "field" }, h("div", { class: "field-label" }, "At your plan's usage limit"), h("div", { class: "row" }, limit, who && !local ? st : null),
+        h("div", { class: "field-help" }, `When ${prog} stops because your plan's usage limit is reached: wait (the queue keeps the work; start ${prog} again when the limit resets), or let your local model answer what waits, where it may.`)));
   }
 
   // Another cloud provider (stage 1; stage 2, B3): the providers as option cards (the storage spaces' way, team-setup.js),
@@ -824,8 +855,8 @@ function modelSection(s, servers, watchers, info = { servers }) {
         h("div", { class: "field-label" }, `${p.title} API key`),
         ok ? (refused[p.id]
             ? notice({ kind: "attention", class: "set-key-notice", id: "cloud-key-refused" }, h("p", {}, `${p.title} refused the stored key. Copy it again from the keys page, or make a new one.`))
-            : notice({ kind: "done", class: "set-key-notice" }, h("p", {}, "Key stored on this computer, in its keychain.")))
-          : h("p", { class: "muted small" }, `Not set up yet. The set-up shows you, step by step, where to get a ${p.title} key, and keeps it in this computer’s keychain.`),
+            : notice({ kind: "done", class: "set-key-notice" }, h("p", {}, `Key stored ${storedWhere()}.`)))
+          : h("p", { class: "muted small" }, `Not set up yet. The set-up shows you, step by step, where to get ${article(p.title)} ${p.title} key, and keeps it ${storedWhere()}.`),
         h("div", { class: "btn-row" }, ok
           ? [button({ sm: true, icon: "key", id: "cloud-key-change", onClick: () => setUp("paste") }, "Change the key…"), button({ kind: "quiet", sm: true, id: "cloud-key-forget", onClick: forget }, "Forget the key")]
           : button({ icon: "key", id: "cloud-key-setup", onClick: () => setUp() }, `Set up ${p.title}…`))));
@@ -865,6 +896,7 @@ function modelSection(s, servers, watchers, info = { servers }) {
       h("div", { class: "field" }, h("div", { class: "field-label", id: "cloud-provider-label" }, "Cloud provider"), cardsHolder),
       statusHolder, azure, modelsHolder,
       thoughtField("Which of the three models answers each kind of task, and how hard it thinks. ", THOUGHT_ABOUT_OTHER),
+      s.backend === "cloud_api" ? allowLine(App.project) : null,
       measured);
   }
 
@@ -1480,7 +1512,7 @@ function cliCardWords(st, ad) {
       [st.signed_in === true ? true : st.signed_in === false ? false : null, `Signed in with ${ad.account}`,
         st.signed_in === true ? (st.account || "") : st.signed_in === false ? "Not yet. The set-up opens the sign-in for you." : `${ad.title} asks you to sign in once; the set-up opens the sign-in for you.`],
       [st.connector === true ? true : st.found ? false : null, `ENLENS added to ${ad.title}`,
-        st.connector === true ? "Its connector, its skill and its helpers." : `The set-up adds them (nothing else in ${ad.title} is changed).`],
+        st.connector === true ? "Its connector, its skill and its helpers." : `The set-up adds ENLENS’s connector, skill and helpers (nothing else in ${ad.title} is changed).`],
     ],
   };
 }

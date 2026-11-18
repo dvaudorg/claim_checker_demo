@@ -99,6 +99,88 @@ await scenario("each provider's steps", async (t) => {
   return out;
 });
 
+await scenario("the fixes of the final review", async (t) => {
+  // keys kept in ENLENS's own file where there is no keychain: the words say so
+  t.state({ settings: {}, providers: { ...NONE, keychain: "file" } });
+  const ps = await t.module("views/provider-setup.js");
+  const os = await t.module("views/outside-setup.js");
+  const steps = ps.providerSteps(LIST[3]);   // Mistral
+  const box = document.createElement("div");
+  steps.steps.forEach((x) => box.append(...[].concat(x.body)));
+  const out = { kept: t.text(box.querySelector("#key-mistral").closest(".field")), mistralBilling: t.text(box.querySelector("#key-mistral-billing")),
+    articles: [os.article("OpenAI"), os.article("Mistral"), os.article("Azure OpenAI")] };
+  out.one = t.text(ps.appliedLine({ small: "gemini-3.8-flash", middle: "gemini-3.8-flash", strong: "gemini-3.8-flash" }, "Applied: "));
+  out.noAllow = os.allowLine("Study");   // ai-access.js without providerAllowLine (before builder A's merge): nothing
+  return out;
+});
+
+await scenario("a shared project in the consent", async (t) => {
+  await settingsPage(t, { backend: "claude_code", allow_claude_code: true }, { shared: true });
+  await t.click(t.view.querySelector('#agent-choice [data-value="antigravity"]'));
+  await t.settle(50);
+  const d = t.dialog();
+  const out = { says: t.text(d.querySelector(".dialog-body")) };
+  await t.click(d.querySelector("#dlg-safe"));
+  return out;
+});
+
+await scenario("Antigravity's sign-in and what is added", async (t) => {
+  t.state({ settings: {}, providers: NONE });
+  const m = await t.module("views/agent-setup.js");
+  const ad = m.cliAdapter("antigravity");
+  let st = { found: true, signed_in: false, connector: false, ready: false };
+  ad.read = async () => ({ status: st, installer: ad.installer, docs: ad.docs });
+  let opened = 0;
+  ad.signIn = async () => { opened += 1; return { opened: true, window: "Terminal", command: "agy" }; };
+  const done = m.agentSetupDialog(ad, { status: st }, { project: "Study" });
+  await t.settle(10);
+  const d = t.dialog();
+  const out = { intro: t.text(d.querySelector(".guided-step[data-state=current]")) };
+  const btn = d.querySelector("#agent-sign-in-antigravity");
+  await t.click(btn);
+  await t.settle(10);
+  out.disabled = !!btn.disabled;
+  out.words = t.text(d.querySelector(".guided-step[data-state=current]"));
+  out.againEarly = t.hidden(d.querySelector("#agent-sign-in-again-antigravity").parentNode);
+  await t.settle(3000);
+  st = { ...st, signed_in: true };
+  await t.settle(28000);
+  out.adds = t.text(d.querySelector(".agent-adds"));
+  out.opened = opened;
+  await t.click("Cancel", { within: d.querySelector(".dialog-actions") });
+  await done;
+  return out;
+});
+
+await scenario("the first run offers Codex and Antigravity", async (t) => {
+  t.state({ settings: { backend: "claude_code", allow_claude_code: true }, providers: NONE, projects: [] });
+  t.answer("GET /api/claude-setup", { status: { found: false } });
+  t.answer("GET /api/projects/Study", { ai_access: {} });
+  t.answer("GET /api/agent-setup?*", { route: "codex", status: { found: false }, recommended: REC });
+  await t.render("views/setup.js", "renderSetup", []);
+  await t.settle(100);
+  const out = { others: t.view.querySelectorAll(".su-others-body [data-agent]").map((x) => x.dataset.agent), text: "" };
+  await t.click(t.view.querySelector("summary"));
+  out.text = t.text(t.view.querySelector(".su-others-body"));
+  let put = null;
+  t.answer("PUT /api/settings", (b) => { put = b; return { settings: { backend: "codex", allow_codex: true }, backend_label: "Codex", providers: NONE }; });
+  t.answer("GET /api/state", { settings: { backend: "codex", allow_codex: true }, providers: NONE, projects: [] });
+  await t.click(t.view.querySelector("#setup-use-codex"));
+  await t.settle(50);
+  const d = t.dialog();
+  out.asked = d ? t.text(d.querySelector("h2")) : "";
+  if (d) await t.click("Use Codex", { within: d });
+  await t.settle(100);
+  out.put = put;
+  // an unready Codex gets the agent's step, not the local model's
+  t.state({ settings: { backend: "codex", allow_codex: true }, providers: NONE, projects: [] });
+  document.getElementById("view").replaceChildren();
+  await t.render("views/setup.js", "renderSetup", []);
+  await t.settle(100);
+  out.codexStep = t.text(t.view.querySelector(".card"));
+  return out;
+});
+
 const CODEX = (status) => ({ route: "codex", title: "Codex", company: "OpenAI", installer: { line: "curl -fsSL https://chatgpt.com/codex/install.sh | sh", docs: "https://learn.chatgpt.com/docs/auth" },
   status, recommended: REC, lineup_in_use: { ...REC, middle: "gpt-6.1-sol" }, manual: ["codex login"] });
 
@@ -109,6 +191,7 @@ async function settingsPage(t, settings, extra = {}) {
   t.answer("GET /api/local-status", {});
   t.answer("GET /api/projects/Study/queue", { kinds: [], waiting: 0 });
   t.answer("GET /api/projects/Study/agreement/plan?*", { kinds: [], problem: null, kept: [], plan: null });
+  t.answer("GET /api/projects/Study", { ai_access: { shared: !!extra.shared } });
   t.answer("PUT /api/settings", (b) => ({ settings: { ...settings, ...b }, backend_label: "x", providers: NONE }));
   await t.render("views/settings.js", "renderSettings", ["model"]);
   await t.settle(200);
@@ -132,8 +215,15 @@ await scenario("Subscription: Claude Code, Codex or Antigravity", async (t) => {
   await t.settle(50);
   out.back = t.view.querySelector("#agent-choice [aria-checked=true]").dataset.value;
   await t.click(t.view.querySelector('#agent-choice [data-value="codex"]'));
+  let redrawn = 0;
+  window.addEventListener("hashchange", () => { redrawn += 1; });
   await t.click("Use Codex", { within: t.dialog() });
   await t.settle(100);
+  out.redrawn = redrawn;   // the whole page is drawn again once the route is saved (the app's router does it)
+  document.getElementById("view").replaceChildren();
+  await t.render("views/settings.js", "renderSettings", ["model"]);
+  await t.settle(200);
+  out.queueWords = t.text(t.view);
   // the consent is the decision: the route and its allow are saved at once
   out.putAtOnce = t.calls.filter((c) => c.method === "PUT" && c.path === "/api/settings").map((c) => c.body);
   const box = t.view.querySelector(".set-agent-box");
@@ -213,7 +303,7 @@ def test_each_provider_has_its_own_checked_steps(page):
     assert "Dashboard › API Keys" in r["gemini"]["text"] and "Create API key" in r["gemini"]["text"]
     assert "except in the EEA, Switzerland and the UK" in r["gemini"]["text"]
     assert "a plan that includes API access and add a payment method" in r["mistral"]["text"] and "New key" in r["mistral"]["text"]
-    assert "Build › Catalog › Model catalog" in r["azure"]["text"] and "Keep the model’s name as the deployment’s name" in r["azure"]["text"]
+    assert "open the Model catalog" in r["azure"]["text"] and "Build ›" not in r["azure"]["text"] and "Keep the model’s name as the deployment’s name" in r["azure"]["text"]
     # the endpoint and the key only; the deployments' names are a closed fold at the deploying step
     assert [f[0] for f in r["azure"]["fields"]] == ["key-azure-address", "key-azure"]
     assert "I gave a deployment another name" in r["azure"]["text"] and r["azure"]["dep_placeholders"] == ["gpt-6-luna", "gpt-6.2-sol", "gpt-6.2-astra"]
@@ -244,6 +334,11 @@ def test_subscription_holds_the_agents_and_codex_is_set_up_in_steps(page):
     assert "On ChatGPT Plus or Pro, OpenAI may use what Codex reads to improve its models unless Improve the model for everyone is off in ChatGPT’s Data controls; Business, Edu and Enterprise plans are not used for that by default." in r["says"]
     assert r["refusal"] == "Stay with Claude Code" and r["back"] == "claude_code"
     assert r["putAtOnce"] == [{"backend": "codex", "allow_codex": True}]
+    assert r["redrawn"] == 1
+    assert "Built from Codex’s documentation and not yet tried with real accounts, nor measured with ENLENS." in r["says"]
+    assert "Built from Codex’s documentation and not yet tried with real accounts, nor measured with ENLENS." in r["queueWords"]
+    assert "At your plan's usage limit" in r["queueWords"] and "When Codex stops because your plan's usage limit is reached" in r["queueWords"]
+    assert "The mix of local and" not in r["queueWords"]   # only beside a local model
     assert "Set up Codex (once)" in r["card"] and "Not on this computer yet" in r["card"]
     # until Codex is signed in, one line instead of the rows; the models come first, then thought, then helpers
     assert "Recommended models, applied automatically" in r["models"] and "ENLENS picks them once Codex is signed in." in r["models"]
@@ -267,3 +362,31 @@ def test_without_the_agent_setup_api_the_card_says_so(page):
     r = page["the agent-setup API is not there"]
     assert r["sub"] is True
     assert "could not be read" in r["card"] and [b["label"] for b in r["buttons"]] == ["Try again"]
+
+
+@needs_node
+def test_the_fixes_of_the_final_review(page):
+    r = page["the fixes of the final review"]
+    assert "Kept in a file in ENLENS’s folder that only you can read" in r["kept"] and "keychain" not in r["kept"]
+    assert r["mistralBilling"].startswith("mistral.example/billing")
+    assert r["articles"] == ["an", "a", "an"]
+    assert "every task uses gemini-3.8-flash; a second opinion then comes from the same model." in r["one"].replace(" ;", ";")
+    assert r["noAllow"] is None
+    r = page["a shared project in the consent"]
+    assert "This project is shared with a team: only Anthropic may read its documents, so Antigravity reads none of them here." in r["says"]
+    assert "the Enable Telemetry setting is on (in Antigravity’s settings)" in r["says"] and "Only documents that allow Google Gemini are sent" in r["says"]
+    r = page["Antigravity's sign-in and what is added"]
+    assert "switch off Enable Telemetry in Antigravity’s settings, under AI credits and feedback" in r["intro"]
+    assert r["disabled"] is True and r["againEarly"] is True and r["opened"] == 1
+    assert "under AI credits and feedback" in r["words"]
+    assert "ENLENS’s own empty work folder, marked as trusted, where it starts Antigravity" in r["adds"]
+
+
+@needs_node
+def test_the_first_run_offers_codex_and_antigravity(page):
+    r = page["the first run offers Codex and Antigravity"]
+    assert r["others"] == ["codex", "antigravity"]
+    assert "Codex (a ChatGPT plan)" in r["text"] and "Antigravity (a free Google account)" in r["text"]
+    assert r["asked"] == "Let Codex read the excerpts, on your ChatGPT plan?"
+    assert r["put"] == {"backend": "codex", "allow_codex": True}
+    assert "The AI: Codex, on your ChatGPT plan" in r["codexStep"] and "Set up Codex" in r["codexStep"]
