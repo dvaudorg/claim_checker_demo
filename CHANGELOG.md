@@ -1,5 +1,157 @@
 # Changelog
 
+## 0.20.1 (November 2026): Local models that suggest, your own cloud provider in a team, and the concept map's names for everyone
+
+A model on your computer now suggests, and you decide. ENLENS chooses the local model that fits your computer and
+downloads it when you set it up; what it reads waits for your judgement with its suggestion beside it, instead of
+counting by itself, and it starts only with its own *Start*, also when all the work is its own. In a shared project
+each person reads with their own cloud provider (Claude Code, Codex, Antigravity or an API key), the owner may limit
+the providers the team uses, and a new AI log says who ran which AI work. The concept map's group names now travel
+with your team, and the map zooms.
+
+### New
+
+- **The concept map's group names go to your team.** Names you give the groups (and the AI's drafts and the names
+  you used) now travel with the project, in a copy for a colleague, through the shared folder and a team's storage
+  space, like the rest of its work. Each copy still finds its groups from its own counts, so a name goes to the group
+  there that holds most of its concepts; one that fits no group is kept under *names kept for groups that are not on
+  this map*. When two people name the same group, every copy shows the later name, and the group says *Also named “…”
+  by …, date*, with *Use this one* in *Rename* and *Remove* beside it. A rename made after seeing a colleague's name
+  replaces it; two changes made at the same time on two copies keep the later, and the other stays as a name of its
+  own, so nothing a person typed is lost. Between two names for one group a person's comes before an AI draft. A name
+  removed on one copy is removed on the others, unless someone changed it afterwards. A group named by a colleague says
+  *named by* and their name; *Keep the name* keeps it theirs. A wrong clock cannot win for ever: a change made after
+  seeing another is always dated after it, and a name dated more than ten minutes ahead waits.
+- **Zoom on the concept map.** *Zoom in*, *Zoom out* and *Whole map* over the map; Ctrl or ⌘ and the wheel, a
+  trackpad's pinch, and the keys **+**, **−** and **0**. Zoomed in, drag the map (or use the arrow keys) to move
+  around it. Words grow more slowly than the map, and from twice the size on every concept's name shows. A downloaded
+  picture is still the whole map.
+- **The local model is chosen for your computer.** ENLENS reads the computer's memory, graphics card and free disk
+  space and picks one of three tiers: the small K2 Horizon model (about 8 GB, or no graphics card), Qwen 3.5 4B (16 GB)
+  or Qwen 3.5 9B (about 24 GB or more). One button, *Set up the local model*, downloads it; nothing is downloaded or
+  started before. ENLENS sets its context length, switches reasoning off for checks and sends a fixed seed. The names
+  show only under *Settings → Technical → The local model*, which also offers the tier's model to whoever set up an
+  older one (that one keeps working; nothing is downloaded unasked).
+- **A short answer form for the small model.** The small model could not finish a check (its quotes ran past the
+  length limit). It now names the sentence of each excerpt that bears on the hypothesis, and ENLENS cuts the quote
+  itself, so it is always in the excerpt.
+- **Each person chooses their own cloud provider in a shared project.** Until now a shared project let Anthropic read
+  only. Now a member's own Codex, Antigravity or API key reads the project's documents marked for cloud AI on their
+  copy, for the providers they tick there. Those ticks are their own consent: they stay in their copy and never reach a
+  colleague's (a colleague's new document or project file arrives without them). Which documents may go to cloud AI
+  at all stays the team's, as before; the research log tells the team which providers a person allowed.
+- **The owner may limit the providers the team may use.** Team › People and settings › *AI providers*: off by default;
+  on, the owner ticks the providers (Anthropic only, say). The limit travels with the owner's other settings; a
+  provider outside it reads none of the project's documents in anyone's copy, and work waiting for it says *The team
+  uses Anthropic only (set by Anna): OpenAI reads none of this project's documents.* The app offers it to the owner
+  alone; it is not signed yet, so a change in the owner's name that came in someone else's file is named as such in
+  the research log.
+- **The AI log.** From the research log's line under its title: one row each time AI work sent excerpts to a cloud
+  provider, saying who sent them, to which provider, through which route and on which model, what kind of task, when,
+  how many excerpts from how many documents, and what it was about (a link to the hypothesis, codebook, themes or
+  document). Filter by person and provider. A colleague's rows arrive with the sync.
+
+### Changes that can alter your results
+
+- **The AI's link tasks propose *needs*, *shapes* and *clashes with*** (prompt `link-v2`), the kinds the text
+  patterns and you could already give, each with a quote from both terms' passages, marked as the AI's and yours to
+  accept, change or reject. Pairs judged again may get one of these kinds where they had *related* before; links
+  judged earlier are not asked again.
+- **Two names for one map group: the later is shown.** Before, the name that fitted the group best was shown; now a
+  person's name comes before an AI draft, then the later one, so every copy of a shared project shows the same name.
+- **A local model only suggests.** Every excerpt a model on this computer reads waits under *Awaiting manual review*,
+  with the sentence it marked and the judgement it suggests (no certainty shown); only your judgements, and Claude's
+  for documents Claude may read, set an answer. A check read only by a local model says *Waiting for your judgement*
+  until you judge its excerpts; *Agree* takes a suggestion in one press. The checks list, the evidence map and the
+  Excel rows agree. Checks made before keep their answers; the result says how many of the local model's judgements
+  still count unreviewed. Under the AI mix *Mostly local*, Claude now reads every check of documents it may read after
+  the local model, whose reading stays a suggestion. Can change results, for new checks with a local model.
+- **Long local runs no longer fill the memory.** On a Mac, Ollama's MLX engine grew the 4B model from about 5 GB to
+  12.7 GB over a long run. ENLENS now frees the model's memory when it has grown by about 1.6 GB, or when less than a
+  fifth of the memory is free (it reloads in about 3 seconds), and lets go of an MLX model when the work ends.
+- **Provider ticks a shared project brought from colleagues are cleared once.** In 0.19.19 and 0.20.0 a member's copy
+  kept the ticks of whoever sent the project; they now count as consent, so on the first opening after the update
+  ENLENS clears, once, the ticks in a shared project that you did not set yourself, and the Documents page says so:
+  tick again what you allow. A colleague still on an older ENLENS allows Anthropic only in a shared project.
+
+### Fixed
+
+- **On Windows, *Read the theory* could answer "not allowed".** The draft of a codebook from theory was put in place
+  while its reading looked at it, which Windows refuses; it is now written as the settings are, trying again for a
+  moment.
+- **A check could miss Codex or Antigravity when you allowed their company.** Allowing OpenAI or Google for a
+  project while a check by queue looked again could take its excerpts for ones a document's setting keeps from every
+  cloud AI and hand them to you for judgement for good, instead of to the agent. They now go to the queue.
+- The search-word answer is bounded (at most 20 words of at most 60 characters), so a small model cannot write until
+  its answer is cut off.
+- The memory ENLENS reckons for a local model counts the memory it needs beyond its file and, on a Mac, what it grows
+  by over a long run, so the advice no longer offers a model the computer cannot hold.
+- **The connector chose excerpts for Anthropic whatever agent asked.** When Codex or Antigravity used ENLENS's
+  connector in a chat (`open_check`, `more_passages`), the excerpts were chosen for Anthropic, so a document that
+  allows Anthropic only could reach OpenAI or Google that way. They are now chosen for the agent's own company, and the
+  ledger names it.
+- **The local model no longer starts on a button that is not its own.** *Name the themes*, when every theme came from
+  documents marked *Only a local AI*, started the local model at once; so did any other work only the local model may
+  do (labels, links, group names of such documents) when another button asked for it. That work now waits for the
+  local model's own *Start*, as it already did beside Claude's work, and nothing is loaded before. Work started by the
+  local model's own button (*Read them now on this computer*, or *Start* in the Profile page's local panel) still needs
+  no second click.
+- **The Themes page says which AI names the themes.** It said "Claude, on your plan, reads the passages of each
+  theme" even when their documents may only be read on this computer. It now names the local model when it is the one
+  that reads them, and counts the themes each AI names, and those no AI may read, when they differ. The lines of the
+  codebook from theory, a code's AI definition and the concept map's group names say the local model starts with its
+  own *Start* too.
+
+### Privacy
+
+- **The ledger of what was sent now names who sent it and on which model**, so a team can trace AI results. A row a
+  colleague's file says you sent, which your copy does not hold, is kept as read but names nobody. A colleague's work
+  they have not shared shows only as *work not shared with the team*.
+
+### For developers
+
+- `concept_group_names` and `concept_group_quotes` left `sync.common.LOCAL_ONLY` for `OWN_RULES`, merged by
+  `groupnames.merge` (new columns `person_id`, `changed_by`, `history_json`; removals as `sync_removed` rows of kind
+  `group_name`; incoming rows checked by `groupnames.valid_row`; local changes dated by `groupnames.clock`).
+- `evaluation` compares two runs' link answers pair by pair, a pair turned round read from its smaller term. The AI's
+  `group_name` tasks stay local (`sharing.LOCAL_TASK_KINDS`).
+- `pointing.py`, task kind `point` (prompt `point-v1`, local only: `tasks.answer_form` answers a check in it for the
+  small tier); `schema.output_schema(kind, payload)`; `verifications.suggestion_json` (`verdicts.is_suggestion`,
+  `tasks.mark_suggestions`); `OllamaBackend._guard`, `details`, `engine_version`, `p_yes`; `llm.let_go(runner=)`;
+  provenance `runner`, `quantization`, `ollama`; `runs.engine_text`, the *Engine* column; `modeladvice.SMALL_MODEL`,
+  `MEDIUM_MODEL`, `LARGE_MODEL`, `answer_form`, `older_model`.
+- `teamproviders.py` (the owner's limit, key `team_providers` in `team_settings`), `ailog.py` (the AI log), new
+  columns `ai_sent.person_id` and `ai_sent.model`; `GET/PUT …/owner/providers` and `GET …/ai-log` (docs/API.md).
+  `access._Allow` applies the owner's limit where it applied the shared-project rule.
+
+### Tests
+
+- `tests/test_provider_allow.py`: allowing the company between two looks of the queue never hands the excerpts to
+  the person.
+- `tests/test_local_tiers.py` (no model loaded): the pointer form, K2's real answers from the bench replayed
+  (`tests/data/k2_pointer_replay.json`), suggestions only in the result, the list and Excel, old checks, the memory
+  guard on made-up `/api/ps` readings, the engine in provenance, and the result card in Node.
+  `tests/test_model_advice.py` covers the tiers on made-up computers.
+- `tests/test_local_gate.py`: an all-local gate waits for its Start; labels of local documents and theme naming wait
+  until it is pressed; `themes.readers` counts who names the themes. `tests/test_views_codebooks_and_themes.py`: the
+  Themes page's AI line for each case. The Profile page's local panel starts its job as the local model's own Start.
+
+### Not yet done
+
+- Group names' sync is tested with the same merge a project file goes through, not end to end through a real shared
+  folder or storage space. A colleague's file may carry a third person's names (as it may carry their reviews), but it
+  never changes a name you changed last.
+- A downloaded picture of the map is always light, and the links found in the text are English only.
+- A colleague on an older version of ENLENS counts the local model's readings in a shared project until they update
+  (their copy does not know the mark that makes them suggestions).
+- The lean the small model may suggest (from its probability of "yes") stays off until it is measured with opposites
+  it writes itself; the GGUF builds of Qwen 3.5 are not benched yet; the AI run panel still names the local model.
+- Not tried with a real team on two providers, nor through a real storage space or shared folder: only with two copies
+  exchanging files on one computer.
+- The sidebar offers the local model's *Start* only while no other job runs; otherwise it is on the job's own page.
+- Work that asks the local model one request at a time (comparing the routes, following references) says "1 task
+  waits" before its *Start*, whatever the number.
+
 ## 0.20.0 (November 2026): Codex and Antigravity, set up like Claude Code
 
 You can now use Codex on a ChatGPT plan, or Antigravity on a Google account (free or paid), the way you use Claude
