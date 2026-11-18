@@ -248,6 +248,29 @@ async function r2Setup(t, move) {
 }
 await scenario("M1 move to r2 with several accounts", async (t) => r2Setup(t, true));
 await scenario("M1 first set-up to r2 with several accounts", async (t) => r2Setup(t, false));
+// ---- S1: Look before checking, an option toggled while it runs ----------------------------------------------------
+await scenario("S1 look then toggle option", async (t) => {
+  const A = "Repair cafés build community among neighbours";
+  t.state({ settings: { backend: "claude_code", threshold: 0.6 } });
+  let job = { id: "p1", state: "running", progress: {} };
+  t.answer("GET /api/projects/Study", { frameworks: [], passages: 40 });
+  t.answer("GET /api/projects/Study/documents", { documents: [] });
+  t.answer("GET /api/projects/Study/hypotheses?*", { hypotheses: [] });
+  t.answer("GET /api/projects/Study/log?*", { entries: [], total: 0, groups: {}, group_names: {} });
+  t.answer("POST /api/projects/Study/hypotheses/similar", {});
+  t.answer("POST /api/projects/Study/prepare", { job: { id: "p1" } });
+  t.answer("GET /api/jobs/p1", () => job);
+  await t.render("views/hypotheses.js", "renderHypotheses", [], {});
+  await t.type("Your hypothesis", A);
+  await t.settle(1000);
+  await t.click("Look before checking");
+  const sw = [...document.querySelectorAll("input.switch-input")].find((i) => /Check each part separately/.test(i.parentNode.textContent));
+  sw.checked = !sw.checked; sw.dispatchEvent(new Event("change", { bubbles: true }));   // the switch is in the folded options
+  await t.settle(1000);
+  job = { id: "p1", state: "done", result: { parts: ["Repair cafés build community", "among neighbours"], terms: [[], []], split: true } };
+  await t.settle(2000);
+  return { text: t.text(), prep: t.view.querySelectorAll(".prep-card").filter((x) => !t.hidden(x)).length };
+});
 """
 
 
@@ -340,3 +363,10 @@ def test_m1_a_first_set_up_of_r2_goes_on_to_r2_after_the_account_is_chosen(page)
     assert r["picked"], r
     assert [p["path"] for p in r["posts"]] == ["r2", "r2"], r
     assert r["posts"][-1]["body"]["account_id"] == "a2", r
+
+
+@needs_node
+def test_s1_a_look_discarded_for_an_option_speaks_of_the_option(page):
+    r = page["S1 look then toggle option"]
+    assert r["prep"] == 0 and "among neighbours" not in r["text"], r
+    assert "Check each part separately" in r["text"] and "hypothesis changed" not in r["text"], r["text"]
