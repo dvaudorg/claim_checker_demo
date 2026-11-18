@@ -878,7 +878,7 @@ def check_hypothesis(ws: Workspace, text: str, backend, model: str, framework: s
             stop()
             say("decompose", "Splitting your hypothesis into parts that can be checked one by one", {})
             got = _decompose(ws, hid, text, words_by[0], words_by[1], _used(*words_by))
-            if len(got) > 1:
+            if got and len(got) > 1:   # (None when the answers failed: then it is checked as written)
                 plan = [{"text": p["text"], "role": p.get("role"), "part": i} for i, p in enumerate(got, 1)]
                 say("decompose_done", f"Split into {len(plan)} parts", {"parts": [p["text"] for p in plan]})
             else:
