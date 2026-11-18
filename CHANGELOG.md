@@ -1,5 +1,73 @@
 # Changelog
 
+## 0.20.3 (November 2026): Antigravity in a home of its own, and what new documents changed
+
+Antigravity now runs for ENLENS in a home folder of its own. The permissions, connectors and credits of your own
+Antigravity never reach ENLENS's runs, and ENLENS offers to take back what 0.20.0–0.20.1 wrote into your settings.
+Reading the documents added since a check now says what that changed, answer by answer; the AI run panel and the
+sidebar show only the engine at work; and a task the local model was answering when the app closed is no longer held
+for good. Nothing about how checks are graded changes: this release cannot change results.
+
+### Safer
+
+- **A file name cannot add headers to the app's answers.** A source whose file name held a line break (possible in a
+  zip someone hands you) could, when you opened its original, add headers of its own to the app's answer, such as one
+  that shows a "PDF" as a page of the app. Line breaks and other control characters are now left out of every header.
+
+### Changed
+
+- **Reading the new documents says what it changed.** When the documents added since a check are read, the progress
+  line ends with what that did (*1 answer changed, 1 with new evidence*, or *nothing changed*), and each hypothesis it
+  changed gets a small *answer changed* or *new evidence* mark; its tooltip gives the answer and the counts before and
+  after.
+- **A re-read excerpt names its model.** The note on an excerpt the AI read again says which model read it again and
+  which read it first, in one line; the reminder that a re-read is still an AI's reading is in its tooltip.
+- **The second opinion's mark is shorter.** It reads *2nd opinion differs: N*; its tooltip says how many excerpts.
+- **Only the AI that works in a job shows.** The sidebar's work box and the AI run panel showed both the house (this
+  computer) and the cloud (Claude) for every AI job, the one with no work in it as a dashed empty tile; it read as if
+  both were at work. Now only the engine at work shows, and its half of the bar takes the whole width; a job for both
+  still shows both, this computer on the left and Claude on the right.
+
+### Fixed
+
+- **A task the local model was answering when the app closed is answered after all.** It stayed held for good: neither
+  the local model nor Claude Code took it again. Now its hold lapses after 30 minutes, as any other does. A failure of
+  the local model's run other than Stop (a locked database, say) also lets its task go at once.
+- **Stop and Remove in the queue panel leave alone a task a helper has just taken.** The tasks to remove were chosen
+  before the removal began, so one that Claude Code took in between could be deleted under it.
+- **A click on the sidebar's work box opens the work again.** *Reading excerpts with the local model* had no place of
+  its own, so its box linked to the Overview: from the Overview, the click did nothing. It now opens the result it
+  reads for. The same was true of a stronger model's second reading (now its result), *Answering the queue here*
+  (Settings › AI), the comparison of the local model with Claude (Settings › AI), *Trying the codebook* (Codebooks),
+  *Checking for retractions* (Bibliography) and the new reader's check of documents (Documents). A test now asks
+  every kind of job the app starts for a place of its own.
+
+### Privacy
+
+- **Antigravity runs with a home folder and settings of its own.** ENLENS starts Antigravity with its own settings, in
+  its data folder, never with yours: a permission you gave your own Antigravity, "run every tool without asking", your
+  connectors and your AI credits no longer reach ENLENS's runs, and ENLENS no longer writes into your own Antigravity
+  settings. Its settings allow only ENLENS's connector, and your telemetry choice is carried over. The set-up lists
+  the permission line and work folder ENLENS 0.20.0–0.20.1 wrote into your own settings and offers **Remove them**
+  (a copy is kept). On a Mac the sign-in is found where it is; where Antigravity keeps it in the home folder, it asks
+  for one sign-in for ENLENS. Cannot change results.
+- **ENLENS refuses to start an Antigravity without its sandbox switch** (or whose options it cannot read), rather than
+  start it less closed in, and says so.
+- **A tool Antigravity refused a helper is written in the run's report.** A helper only needs ENLENS's own tools, so
+  an attempt to read a file or run a command suggests that text in a passage told it to (prompt injection). It did not
+  run, and the run goes on.
+
+### For developers
+
+- Removed two functions nothing used (`tasks.mix_local_for`, `textrelations.as_json`) and a copy of
+  `verdicts._graded` in `analysis`. A failed COMMIT now rolls back, so the thread's connection is not left inside a
+  transaction. Invisible characters in `reader.py` and `textutil.py` are written as escapes.
+
+### Not yet done
+
+- The separate Antigravity home is tried on Windows only; a whole run in it, macOS, Linux and an account with bought
+  AI credits are still to try.
+
 ## 0.20.2 (November 2026): Settings in one shape: five tabs, four cards for the AI, and every change saved as you make it
 
 Settings follows one shape now. Its tabs are *AI*, *Checking*, *Documents*, *General* and *Technical*; which AI reads
