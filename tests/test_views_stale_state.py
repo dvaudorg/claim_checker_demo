@@ -324,6 +324,25 @@ await scenario("S2 why typed while saving", async (t) => {
   await t.settle(1000);
   return { left: why.value };
 });
+// ---- S4: the profile's AI card, a codebook changed while the AI labels ---------------------------------------------
+await scenario("S4 profile run kept on codebook change", async (t) => {
+  const FWS = [{ name: "alpha", title: "Alpha (3 codes)", codes: 3, label: "code", groups: 0 },
+               { name: "beta", title: "Beta (4 codes)", codes: 4, label: "code", groups: 0 }];
+  t.answer("GET /api/projects/Study/documents", { documents: [{ doc_id: "d1", title: "One" }] });
+  t.answer("GET /api/projects/Study/profile?*", () => ({ frameworks: FWS, pass1: { done: true, passages: 5 }, stats: {}, grid: { codes: [], documents: [], cells: {} } }));
+  t.answer("GET /api/projects/Study/profile/plan?*", () => ({ passages: 5, with_candidates: 5, already_read: 0, to_read: 5, run: {} }));
+  t.answer("GET /api/projects/Study/profile/calibration?*", { total: 0, bins: [] });
+  t.answer("PUT /api/settings", {});
+  t.answer("GET /api/projects/Study/log?*", { entries: [], total: 0, groups: {}, group_names: {} });
+  t.answer("GET /api/jobs", { jobs: [{ id: "j1", project: "Study", kind: "label", state: "running" }] });
+  t.answer("GET /api/jobs/j1", { id: "j1", state: "running", progress: { done: 1, total: 5 } });
+  await t.render("views/profile.js", "renderProfile", [], { framework: "alpha" });
+  await t.settle(50);
+  const before = { starts: t.buttons().filter((b) => /^Label \d+ passages/.test(b.label)).length, shows: /The AI labels passages/.test(t.text()) };
+  await t.type(document.getElementById("pf-fw"), "beta");
+  await t.settle(100);
+  return { before: before.starts, beforeShows: before.shows, after: t.buttons().filter((b) => /^Label \d+ passages/.test(b.label)).length, shows: /The AI labels passages/.test(t.text()) };
+});
 """
 
 
@@ -439,3 +458,10 @@ def test_s2_words_typed_while_an_example_is_added_are_kept(page):
 @needs_node
 def test_s2_words_typed_while_the_codebook_is_saved_stay_in_why(page):
     assert page["S2 why typed while saving"]["left"] == "for the group"
+
+
+@needs_node
+def test_s4_the_profile_card_still_shows_the_run_after_the_codebook_changes(page):
+    r = page["S4 profile run kept on codebook change"]
+    assert r["before"] == 0 and r["beforeShows"], r        # the run is shown at first
+    assert r["after"] == 0 and r["shows"], r
