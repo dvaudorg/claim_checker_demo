@@ -958,7 +958,8 @@ def queue_check(ws: Workspace, text: str, router, framework: str | None = None, 
     given_terms = [clean_terms(t) if t is not None else None for t in terms] if terms is not None else None
     model = (router.model("check") if router is not None else None) or "opus"
     options = {"k": k, "per_doc": per_doc, "expand": expand, "decompose": decompose, "doc_ids": doc_ids or [],
-               "backend": "claude_code", "model": model, "queue": True,
+               "backend": router.route if router is not None and router.route in routing.AGENT_ROUTES
+               else "claude_code", "model": model, "queue": True,
                "search": "keywords+meaning" if embed_model else "keywords", "embed_model": embed_model,
                "second_pass": bool(second_pass)}
     if given is not None or given_terms is not None:
@@ -1039,7 +1040,10 @@ def _queue_router():
     try:
         from .home import load_settings
 
-        return from_settings(load_settings(), route="claude_code")
+        from .taskqueue import queue_route
+
+        s = load_settings()
+        return from_settings(s, route=queue_route(s))
     except Exception:  # noqa: BLE001
         return None
 
@@ -1531,7 +1535,7 @@ def second_opinion(ws: Workspace, hyp_ids: list[str], backend, main_model: str, 
     stop = _stopper(should_stop)
     if not second_model:
         raise ValueError("Choose a model for second opinions in Settings first.")
-    if second_model == main_model and getattr(backend, "name", "") not in routing.CLAUDE_ROUTES:
+    if second_model == main_model and getattr(backend, "name", "") not in routing.AUDITOR_ROUTES:
         # on Claude the auditor gives the second opinion; it may run on the same model as the checker (Opus)
         raise ValueError("The model for second opinions must be another model than the main one.")
     todo = []

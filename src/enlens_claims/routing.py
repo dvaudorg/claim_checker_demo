@@ -80,6 +80,10 @@ CLAUDE_ROUTES = frozenset({"claude_code", "anthropic"})
 # provider's own models where they are sent (Router.api_id)
 AGENT_ROUTES = frozenset(providers.AGENT_ROUTES)
 ALIAS_ROUTES = CLAUDE_ROUTES | AGENT_ROUTES | {providers.CLOUD_ROUTE}
+# stage 2: the routes whose second opinions and hard cases go to the auditor (the ladder's top: Opus, or the CLI's
+# strongest model), so a second opinion may run on the main model's family; another cloud provider's API and local
+# models take Settings' second model instead
+AUDITOR_ROUTES = CLAUDE_ROUTES | AGENT_ROUTES
 OFF_COMPUTER = CLAUDE_ROUTES | AGENT_ROUTES | {providers.CLOUD_ROUTE}
 
 

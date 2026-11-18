@@ -660,9 +660,10 @@ def relabel(cx, task_ids: Iterable[str] | None = None, provider=_LABELS) -> int:
     corrected here too. What the tasks share is looked up once per call instead (each document's setting, each
     passage's document): nothing a task's setting depends on changes while this runs. The settings are those for the
     provider the project's tasks are labelled for (`labels_provider`); given another one, the project's tasks are
-    labelled for it from now on (`sync_labels`). A task in the queue for Claude Code that Anthropic may not read leaves
-    it, whatever the labels are for."""
-    from .taskqueue import OPEN
+    labelled for it from now on (`sync_labels`). A task in the queue that the queue's provider may not read leaves
+    it, whatever the labels are for (stage 2: the queue is the main route's when that is an agent route, Codex's for
+    OpenAI, else Claude Code's, for Anthropic)."""
+    from .taskqueue import OPEN, queue_provider
 
     sql = f"SELECT task_id, payload_json, access FROM tasks WHERE {OPEN}"
     args: list = []
@@ -675,6 +676,10 @@ def relabel(cx, task_ids: Iterable[str] | None = None, provider=_LABELS) -> int:
     n = 0
     dflt = _default_from_cx(cx)  # once, not per task (0.11.1: a settings change on a big project took seconds)
     known = _Known(cx, dflt, provider)
+    try:
+        known.queue_provider = queue_provider()
+    except Exception:  # noqa: BLE001 - settings that cannot be read this moment: the queue as before stage 2
+        known.queue_provider = ANTHROPIC
     if provider is not _LABELS and task_ids is None:
         cx.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)", (LABELS_KEY, json.dumps(known.provider or "")))
     sql = sql.replace("SELECT task_id, payload_json, access", "SELECT task_id, payload_json, access, queued")
@@ -698,9 +703,10 @@ def _relabel_one(cx, r, known: _Known, payload: Any) -> int:
     except (ValueError, TypeError):
         lv = "none"
     queue_lv = lv
-    if lv == "cloud" and known.provider != ANTHROPIC and r["queued"]:   # the queue is Claude Code's: Anthropic's reading
+    qp = getattr(known, "queue_provider", ANTHROPIC)
+    if lv == "cloud" and known.provider != qp and r["queued"]:   # the queue's provider's reading (Claude Code: Anthropic)
         try:
-            queue_lv = label_payload(cx, payload, known.dflt, provider=ANTHROPIC)
+            queue_lv = label_payload(cx, payload, known.dflt, provider=qp)
         except (ValueError, TypeError):
             queue_lv = "none"
     if queue_lv != "cloud":

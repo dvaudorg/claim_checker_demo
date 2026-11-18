@@ -47,6 +47,7 @@ from .api_documents import DocumentsApi
 from .api_explore import ExploreApi
 from .api_record import RecordApi
 from .api_setup import SetupApi
+from .api_agents import AgentApi, agent_info  # stage 2 of other cloud providers: Codex, Antigravity
 from .api_folder import FolderApi
 from .api_space import SpaceApi
 from .api_poller import PollerApi  # 0.18 (L3)
@@ -177,8 +178,21 @@ class App(LibraryMixin, QueueMixin):
         return be, model
 
     def queue_mode(self) -> bool:
-        """0.8: Claude Code (the researcher's own plan) answers: the AI buttons prepare tasks and wait for them."""
-        return self.settings().get("backend") == "claude_code"
+        """0.8: Claude Code (the researcher's own plan) answers: the AI buttons prepare tasks and wait for them.
+        Stage 2: so does an agent CLI of another provider (Codex, Antigravity)."""
+        from .. import providers
+
+        return self.settings().get("backend") in providers.AGENT_ROUTES
+
+    def agent_runner(self, name: str) -> dict:
+        """The run started from the app for this project by the main route's agent (Claude Code's, or an agent
+        CLI's: agentcli.py), as claude_setup.run_state says it."""
+        from .. import agentcli, claude_setup, providers
+
+        b = self.settings().get("backend")
+        if b in providers.AGENT_CLIS:
+            return agentcli.run_state(b, name)
+        return claude_setup.run_state(name)
 
     # -- 0.13.6: the public interface for add-ons (docs/EXTENDING.md). The old private names keep working. -----------
     def start_job(self, kind: str, title: str, name: str | None, fn, uses_model: bool = True,
@@ -227,10 +241,11 @@ class App(LibraryMixin, QueueMixin):
     def queue_answering(self, name: str) -> bool:
         """0.12: whether something answers the project's queue now: Claude Code started from ENLENS, or a session
         typed in Claude Code. When that cannot be told, the work is not called on hold."""
-        from .. import claude_setup
+        from .. import agentcli, claude_setup
 
         try:
-            return bool(claude_setup.run_state(name).get("running")) or taskqueue.answering(home.open_project(name))
+            return bool(claude_setup.run_state(name).get("running")) or bool(agentcli.any_running(name)) \
+                or taskqueue.answering(home.open_project(name))
         except Exception:  # noqa: BLE001 - a project that cannot be opened: say nothing rather than "on hold"
             return True
 
@@ -272,6 +287,8 @@ class App(LibraryMixin, QueueMixin):
                "installation": _installation(),
                "key": {"session": bool(self.session_key), "env": bool(home.env_key()), "stored": bool(home.stored_key())},
                "providers": self.providers_state(s),   # stage 1 of other cloud providers
+               # stage 2: the main route's agent (Claude Code, Codex, Antigravity), and the agent CLIs ENLENS knows
+               "agent": agent_info(s.get("backend")), "clis": _clis_summary(),
                "statuses": [{"status": k, "text": v, "help": claimcheck.STATUS_HELP.get(k, ""),
                              "next": claimcheck.STATUS_NEXT.get(k, "")} for k, v in claimcheck.STATUS_TEXT.items()],
                "jobs": self.job_views(active_only=True),
@@ -458,6 +475,17 @@ class App(LibraryMixin, QueueMixin):
                               "yet: press Set up Claude Code.")
             if st.get("signed_in") is False:
                 out["warning"] = "Claude Code is not signed in: open a terminal, type claude and sign in once."
+        elif out["backend"] in ("codex", "antigravity"):
+            from .. import agentcli
+
+            title = agentcli.cli(out["backend"]).title
+            st = agentcli.status(out["backend"], refresh=True)
+            out["model_available"] = bool(st["ready"])
+            out["agent"] = st
+            out["message"] = (f"{title} is set up: {st.get('version') or 'found'}" + (
+                ", with ENLENS added" if st.get("connector") else "") + f". Press Start {title} where work waits."
+                if st["ready"] else f"{title} is not on this computer yet: set it up in Settings → AI."
+                if not st["found"] else f"{title} is found, but not signed in yet: sign in from Settings → AI.")
         elif out["backend"] == "anthropic":
             out["message"] = (f"Connected to the Claude API. {model} is available." if out["model_available"]
                               else f"Connected, but {model} is not in this key's model list.")
@@ -1483,6 +1511,12 @@ class App(LibraryMixin, QueueMixin):
 
 
 
+def _clis_summary() -> list[dict]:
+    from .. import providers
+
+    return providers.clis_summary()
+
+
 def _repair_plugin() -> None:
     """0.10: on start, when the Claude Code plugin names a Python that is not this one (ENLENS moved or was installed
     again), write it again and add it to Claude Code again, quietly, in the background."""
@@ -1492,6 +1526,12 @@ def _repair_plugin() -> None:
         r = claude_setup.repair()
         if r.get("repaired"):
             print(f"The Claude Code plugin was brought up to date ({r.get('reason')}).")
+        # stage 2: and what ENLENS added to Codex and Antigravity, when it no longer fits this installation
+        from .. import agentcli
+
+        for route, a in agentcli.repair().items():
+            if a.get("repaired"):
+                print(f"ENLENS in {agentcli.cli(route).title} was brought up to date ({a.get('reason')}).")
         # 0.13.10: which Claude plan Claude Code is signed in with, so the recommended models follow it from the start
         if home.load_settings().get("backend") == "claude_code" and not home.local_only():
             claude_setup.status(refresh=True)
@@ -1748,6 +1788,9 @@ ROUTES: list[tuple[str, re.Pattern, str]] = [(m, re.compile("^" + p + "$"), h) f
     ("POST", rf"/api/projects/{P}/queue/run", "post_queue_run"),
     ("POST", rf"/api/projects/{P}/queue/claude-code", "post_claude_code_start"),
     ("POST", rf"/api/projects/{P}/queue/claude-code/stop", "post_claude_code_stop"),
+    # stage 2: the same, for whichever agent the main route is (Claude Code, Codex, Antigravity)
+    ("POST", rf"/api/projects/{P}/queue/agent", "post_claude_code_start"),
+    ("POST", rf"/api/projects/{P}/queue/agent/stop", "post_claude_code_stop"),
     ("GET", rf"/api/projects/{P}/overview", "get_overview"),
     ("POST", rf"/api/projects/{P}/tasks/{P}/stronger", "post_stronger"),
     ("POST", rf"/api/projects/{P}/hypotheses/{P}/stronger", "post_stronger_all"),
@@ -1757,6 +1800,11 @@ ROUTES: list[tuple[str, re.Pattern, str]] = [(m, re.compile("^" + p + "$"), h) f
     # 0.10: set-up and moving
     ("POST", r"/api/claude-setup/claude-code", "post_install_claude_code"),
     ("POST", r"/api/claude-setup/sign-in", "post_claude_sign_in"),
+    # stage 2 of other cloud providers: one set-up for Claude Code, Codex and Antigravity (api_agents.py)
+    ("GET", r"/api/agent-setup", "get_agent_setup"),
+    ("POST", r"/api/agent-setup", "post_agent_setup"),
+    ("POST", r"/api/agent-setup/install", "post_agent_install"),
+    ("POST", r"/api/agent-setup/sign-in", "post_agent_sign_in"),
     ("GET", r"/api/move\.zip", "get_move_zip"),
     # 0.13: the bibliography (Zotero, read on this computer, or an exported file)
     ("GET", r"/api/zotero", "get_zotero"),
@@ -1879,7 +1927,7 @@ DOWNLOADS |= api_corpus.DOWNLOADS | api_checks_extra.DOWNLOADS
 
 
 class Handler(BaseHTTPRequestHandler, DocumentsApi, ExploreApi, ChecksApi, SetupApi, RecordApi, SharingApi,
-              FolderApi, SpaceApi, PollerApi, OwnerApi, CorpusApi, ChecksExtraApi):
+              FolderApi, SpaceApi, PollerApi, OwnerApi, CorpusApi, ChecksExtraApi, AgentApi):
     app: App
     server_version = f"enlens/{__version__}"
     protocol_version = "HTTP/1.1"
