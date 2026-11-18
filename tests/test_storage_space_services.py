@@ -232,3 +232,11 @@ def test_first_set_up_at_r2_with_two_accounts_offers_them(anna_and_ben, monkeypa
         out = space.setup_r2(anna.ws, "token")
         assert len(out["accounts"]) == 2
         assert space.configured(anna.ws) is None
+
+
+def test_try_again_on_a_project_with_no_storage_space_says_so(anna_and_ben):
+    """18 November 2026 (hunt P1-5): `mirror_of` is None without a space; `None / ".space-state.json"` was a TypeError."""
+    anna, _ben = anna_and_ben
+    with anna:
+        with pytest.raises(space.SpaceProblem, match="no storage space"):
+            space.retry_drive(anna.ws)

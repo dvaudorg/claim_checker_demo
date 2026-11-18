@@ -2201,6 +2201,8 @@ def _dismiss_unlocked(ws: Workspace, notice: str) -> dict:
 def _retry_drive_unlocked(ws: Workspace) -> dict:
     """*Try again* after the drive refused the app password: the next round asks the drive once more (a refusal
     stops the rounds again). Returns `status`."""
+    if configured(ws) is None:
+        raise SpaceProblem("This project has no storage space.", "no_space")
     _edit_state(ws, lambda st: st.pop("refused", None) is not None)
     return status(ws)
 
