@@ -71,8 +71,8 @@ STATUS_HELP = {
     "not_checked": "No excerpt has been judged yet: they wait for the AI, or for your own judgement where their "
                    "documents may not be read by any AI.",
     "no_passages": "No part of your documents uses words close to this hypothesis. Try other wording, or add documents.",
-    "failed": "The AI's answers could not be used, even after three tries. Try again, or choose another AI model in "
-              "Settings.",
+    "failed": "The AI's answers could not be used, even after three tries (or the app was closed before it could try "
+              "again). Try again, or choose another AI model in Settings.",
     "waiting": "The check is prepared and waits in the queue for Claude Code, which reads the excerpts on your own "
                "Claude plan. The answer appears here as soon as Claude Code has read them.",
 }
@@ -144,11 +144,19 @@ def effective(v) -> dict:
 
 def changed_by_person(v) -> bool:
     """Whether a person's judgement differs from the AI's (agreeing with the AI is a review, not a change). An
-    excerpt no model read (0.11, waiting for the person) has no AI judgement to change."""
+    excerpt no model read (0.11, waiting for the person) has no AI judgement to change, nor has one a small local
+    model only pointed at (I6, the `point` form: it marked a sentence and judged nothing). One rule for the result
+    page, the Results list and the Excel summary, so they cannot count "changed by you" apart."""
     v = dict(v)
     uv = v.get("user_verdict")
     if not uv or v.get("model") == PERSON:
         return False
+    if is_suggestion(v):
+        try:
+            if (json.loads(v.get("suggestion_json") or "{}").get("form") or "check") == "point":
+                return False
+        except (ValueError, AttributeError):
+            pass
     ai = v.get("verdict") if v.get("verdict") in ("supports", "partially_supports", "refutes") else "not_relevant"
     return uv != ai
 
@@ -334,4 +342,6 @@ def _status_of_rounds(round_statuses: list[str], vs, thr: float, stage: str | No
         return "no_passages"
     if "done" in round_statuses:
         return claim_status(vs, thr)
+    # "retry" reaches here only for a part the app itself was answering and that nobody will try again (the app was
+    # closed between two tries); a chat's or the queue's refused answer reads as pending (claimcheck._round_status)
     return "failed" if round_statuses[-1] in ("failed", "retry") else "not_checked"

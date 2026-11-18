@@ -33,7 +33,8 @@ Besides the answer and who says what, the card shows:
 - **At most one caution**, when the answer is fragile: *It rests on a single document and on two excerpts you have
   not reviewed* (for a hypothesis in parts, only the parts that decide the answer count).
 - **Documents added since the check**, with *Read them*: a further search for this result. The check is not run
-  again, so your reviews are kept.
+  again, so your reviews are kept. If the AI's answers for them cannot be used, the page says the reading did not
+  work, nothing of it is kept, and the documents stay listed: read them again later, or choose another AI model.
 - **Next to review**, in this order: the excerpts that count in the answer (first where a second opinion differs or
   the AI flagged another group), then the rest, then those you only commented on, then the excerpts the AI found not
   about the hypothesis.
@@ -134,7 +135,8 @@ when both are empty):
 
 - *3 documents with the search words were never read in this check*: an excerpt of each holds at least two different
   words of the hypothesis or its search words. *Read these* reads their best excerpts as a further search for this
-  result, as for documents added since; the check is not run again, so your reviews are kept.
+  result, as for documents added since; the check is not run again, so your reviews are kept. If the AI's answers
+  cannot be used, nothing of that reading is kept and the documents stay on the card.
 - *2 documents share no word with this hypothesis or its search words*: they may be off its topic, or say it in other
   words. *Search with other words* opens the box above. Documents that share a single word only are counted after
   it.

@@ -1021,6 +1021,11 @@ export async function renderResult(view, [hypId], query) {
           aboutN += newOnes.filter(about).length;
           if (newOnes.length && !newOnes.some(about)) openFolds.add(`rest:${rd.claim_id}`);
         }
+        if (me.failed) {   // hunt phase 1 (CHECKS-3): nothing of it was kept, and the documents are still unread
+          followNote = "Those documents could not be read: the AI's answers could not be used, even after three tries. They are still listed as not read. Read them again later, or choose another AI model in Settings.";
+          toast("The documents could not be read.", "error", { small: true, ttl: 6000 });
+          return;
+        }
         const n = me.passages || 0, dr = me.documents_read || 0, left = me.left || 0;
         const docsWord = (k) => `${k} ${k === 1 ? "document" : "documents"}`;
         const leftLine = left ? ` ${docsWord(left)} with the search words ${left === 1 ? "is" : "are"} still unread: press again to read further.` : "";
@@ -1202,6 +1207,11 @@ export async function renderResult(view, [hypId], query) {
           if (newOnes.length && !newOnes.some(about)) openFolds.add(`rest:${rd.claim_id}`);
         }
         const docs = me.documents || 0, match = me.matching || 0;
+        if (me.failed) {   // hunt phase 1 (CHECKS-3): nothing of it was kept, and the documents wait for Read it again
+          followNote = `The new ${match === 1 ? "document" : "documents"} could not be read: the AI's answers could not be used, even after three tries. ${match === 1 ? "It is" : "They are"} still listed as added since. Read ${match === 1 ? "it" : "them"} again later, or choose another AI model in Settings.`;
+          toast("The new documents could not be read.", "error", { small: true, ttl: 6000 });
+          return;
+        }
         followNote = !match ? `${docs} ${docs === 1 ? "document" : "documents"} marked as looked at: nothing in ${docs === 1 ? "it" : "them"} matched this hypothesis.`
           : n ? `${match === 1 ? "The new document" : `The ${match} new documents`} with matching excerpts ${match === 1 ? "was" : "were"} read: ${n} more ${n === 1 ? "excerpt" : "excerpts"}, ${aboutN} of them about ${fresh.decomposed ? "a part of this hypothesis" : "this hypothesis"} (marked new below). Your reviews are kept${docs > match ? `; the ${docs - match === 1 ? "other document" : "other documents"} matched nothing and ${docs - match === 1 ? "is" : "are"} marked as looked at` : ""}.`
           : "The new documents were looked at, but none of their excerpts could be read for this hypothesis.";

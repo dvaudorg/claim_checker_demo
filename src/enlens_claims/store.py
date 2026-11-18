@@ -1048,6 +1048,9 @@ class Workspace:
             out["results"] = cx.execute(f"DELETE FROM results WHERE kind IN {kinds}").rowcount
             out["tasks"] = cx.execute(f"DELETE FROM tasks WHERE kind IN {kinds}").rowcount
             out["user_claims"] = cx.execute("DELETE FROM user_claims").rowcount
+            # hunt phase 1 (CHECKS-7): every person's judgements of the checks' excerpts go with the checks, as when one
+            # check is removed (judgements.delete_claim); "how often you agreed" reads this table alone
+            out["judgements"] = cx.execute("DELETE FROM judgements").rowcount
             out["second_opinions"] = cx.execute("DELETE FROM second_opinions").rowcount
             out["hypotheses"] = cx.execute("DELETE FROM hypotheses").rowcount
             out["reviews"] = cx.execute("DELETE FROM reviews WHERE item_kind IN ('claim', 'label', 'theme', "

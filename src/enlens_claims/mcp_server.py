@@ -270,6 +270,40 @@ def _summary(ws, check_id: str) -> dict:
     return out
 
 
+def _check_summary(ws, check_id: str) -> dict:
+    """get_check: what list_checks lists under this check_id. Hunt phase 1 (CHECKS-1): a hypothesis the app checked in
+    several parts is listed by its first part's check_id with the combined status, and get_check answered for that
+    part alone (another status, a part of the evidence). The whole hypothesis is answered for here, as the result page
+    does (`hypothesis_result`): its combined status, each part with its own status and check_id (still the key for
+    more_passages and submit_grades), and every part's evidence marked with its part. A check of one claim (a chat's
+    own) is answered as before."""
+    hid = ws.scalar("SELECT hyp_id FROM user_claims WHERE claim_id=?", (check_id,))
+    ids = [r[0] for r in ws.query("SELECT claim_id FROM user_claims WHERE hyp_id=? ORDER BY part, rowid", (hid,))] \
+        if hid else []
+    if len(ids) < 2:
+        return _summary(ws, check_id)
+    h = claimcheck.hypothesis_result(ws, hid)
+    parts, evidence, notes = [], [], {}
+    for n, cid in enumerate(ids, 1):
+        p = _summary(ws, cid)
+        evidence += [{**e, "part": n} for e in p.pop("evidence")]
+        for key in ("restricted_note", "non_scientific_note"):
+            if p.get(key):
+                notes.setdefault(key, []).append(p[key])
+        parts.append({"part": n, **p})
+    out = {"check_id": check_id, "claim": h["text"], "status": h["status"],
+           "status_text": h.get("status_text") or claimcheck.STATUS_TEXT.get(h["status"], h["status"]),
+           "status_at_any_confidence": h["status_any"], "confidence_threshold": h["threshold"],
+           "passages_read": sum(p["passages_read"] for p in parts), "evidence": evidence, "target": h["code"],
+           "parts": parts,
+           "parts_note": (f"This hypothesis was checked in {len(parts)} parts, and its status combines theirs. Report "
+                          "each part's status and its evidence (marked with its part); use a part's own check_id for "
+                          "more_passages.")}
+    for key, said in notes.items():
+        out[key] = " ".join(dict.fromkeys(said))
+    return out
+
+
 def _find_claim(claim: str):
     """The project that handed out this batch."""
     bad: list[str] = []
@@ -483,11 +517,13 @@ def build_server():
             r["note"] = "No further passages match."
         return r
 
-    @s.tool(description="The current status and evidence of a check.")
+    @s.tool(description="The current status and evidence of a check. For a hypothesis checked in several parts (as "
+                        "list_checks lists it), the combined status, each part with its own status and check_id, and "
+                        "every part's evidence marked with its part.")
     @_friendly
     def get_check(check_id: str) -> dict:
         _, ws = _find_check(check_id)
-        return _summary(ws, check_id)
+        return _check_summary(ws, check_id)
 
     @s.tool(description="Recent checks in a project, newest first, with their status.")
     @_friendly

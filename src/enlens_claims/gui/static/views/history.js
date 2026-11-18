@@ -15,8 +15,10 @@ const waitingWords = (n, local) => (!local ? STATUS_SHORT.waiting : local >= n ?
 export function readNewAfter(r) {
   const a = (r && r.answers_changed) || 0, e = (r && r.evidence_changed) || 0;
   if (!r || !Array.isArray(r.hypotheses)) return "";
-  if (!a && !e) return " · nothing changed";
-  return " · " + [a ? `${a} ${a === 1 ? "answer" : "answers"} changed` : "", e ? `${e} with new evidence` : ""].filter(Boolean).join(", ");
+  const f = r.hypotheses.filter((x) => x && x.failed).length;   // hunt phase 1 (CHECKS-3): the AI's answers could not be used
+  const bad = f ? `${f} could not be read` : "";
+  if (!a && !e) return " · " + (bad || "nothing changed");
+  return " · " + [a ? `${a} ${a === 1 ? "answer" : "answers"} changed` : "", e ? `${e} with new evidence` : "", bad].filter(Boolean).join(", ");
 }
 const READ_NEW_WORDS = { doing: "reading for hypothesis", done: "hypotheses brought up to date", after: readNewAfter };
 // 0.20.3: the mark on a row the new documents changed (from the last time they were read, while the app runs)
@@ -112,8 +114,11 @@ export async function answersList(box, query, opts = {}) {
         if (job.kind === "read-new") {
           const hs = r.hypotheses || [];
           keepNewDocs(r);
-          const n = r.passages || 0;
-          toast(`The new documents were read for ${hs.length} ${hs.length === 1 ? "answer" : "answers"}: ${n} more ${n === 1 ? "excerpt" : "excerpts"} read. Reviews are kept.`, "ok", { ttl: 6000 });
+          // hunt phase 1 (CHECKS-3): where the AI's answers could not be used, nothing was kept and the documents wait
+          const bad = hs.filter((x) => x.failed).length, good = hs.length - bad;
+          const n = hs.filter((x) => !x.failed).reduce((s, x) => s + (x.passages || 0), 0);
+          const badLine = bad ? `For ${bad} ${bad === 1 ? "answer" : "answers"} the new documents could not be read: the AI's answers could not be used, even after three tries. They are still listed as added since; read them again later, or choose another AI model in Settings.` : "";
+          toast(good ? `The new documents were read for ${good} ${good === 1 ? "answer" : "answers"}: ${n} more ${n === 1 ? "excerpt" : "excerpts"} read. Reviews are kept.${badLine ? " " + badLine : ""}` : badLine, bad ? "warn" : "ok", { ttl: bad ? 12000 : 6000 });
         } else if (job.kind === "second-opinion") {
           toast(r.graded ? `The second opinion is in for ${r.hypotheses || 0} ${r.hypotheses === 1 ? "answer" : "answers"}. Where it differs from the first AI, the answer is tagged below; the answers are unchanged.` : "Every excerpt of these answers already has a second opinion: nothing new to read.", "ok", { ttl: 6000 });
         } else if (job.kind === "more" && r.hyp_id) {

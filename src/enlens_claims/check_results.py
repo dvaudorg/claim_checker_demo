@@ -751,6 +751,25 @@ def _shown_docs(rounds: list) -> set[str]:
     return {p["doc_id"] for r in rounds for p in json.loads(r["payload_json"])["passages"]}
 
 
+def evidence_added(ws: Workspace) -> tuple[list[str], list[dict]]:
+    """The evidence documents with the time each was added, oldest first, as (times, rows): what a check's documents
+    *added since* are picked from (`added_since`). 0.18.1 (K2): a theory or working document added since is no new
+    evidence. Read once and shared by the result page (`new_documents`) and the Results list (`history`), so the two
+    cannot count them apart (hunt phase 1, CHECKS-6: the list counted theory documents too)."""
+    from .docrole import evidence_sql
+
+    rows = [dict(d) for d in ws.query(f"SELECT doc_id, title, added_at FROM documents WHERE {evidence_sql()}")]
+    rows.sort(key=lambda d: (d["added_at"] or "", d["title"] or "", d["doc_id"]))
+    return [d["added_at"] or "" for d in rows], rows
+
+
+def added_since(added: tuple[list[str], list[dict]], cutoff: str, seen: set[str]) -> list[dict]:
+    """Of `evidence_added`, the documents added after `cutoff` (the check, or the last reading of its new documents)
+    that none of its rounds showed an excerpt of (`seen`)."""
+    times, rows = added
+    return [d for d in rows[bisect.bisect_right(times, cutoff):] if d["doc_id"] not in seen]
+
+
 def new_documents(ws: Workspace, hyp_id: str, matching: bool = True, _seen: set[str] | None = None) -> list[dict]:
     """Documents added to the project after a hypothesis was checked (or after its new documents were last read)
     that none of its rounds read from: [{doc_id, title, added_at, matching}]. `matching` says whether the document
@@ -766,10 +785,7 @@ def new_documents(ws: Workspace, hyp_id: str, matching: bool = True, _seen: set[
     # `_seen`: the documents its rounds read, when the caller has read them (hypothesis_result)
     seen_docs = _seen if _seen is not None else _shown_docs([t for c in claims
                                                              for t in _cc._check_tasks(ws, c["claim_id"])])
-    from .docrole import evidence_sql  # 0.18.1 (K2): a theory document added since is no new evidence
-
-    rows = [d for d in ws.query("SELECT doc_id, title, added_at FROM documents WHERE added_at > ? AND "
-                                f"{evidence_sql()} ORDER BY added_at, title", (cutoff,)) if d["doc_id"] not in seen_docs]
+    rows = added_since(evidence_added(ws), cutoff, seen_docs)
     hits: set[str] = set()
     if matching and rows:
         from .search import docs_matching

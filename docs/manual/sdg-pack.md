@@ -316,8 +316,8 @@ enlens --ws pilot gold-export gold.jsonl
 ```
 
 Rows with an invalid correction (also an unknown direction or influence) are reported and change nothing. The file may
-be saved by Excel (UTF-8 with or without byte-order mark, or Windows-1252). Reviewed items do not reappear in later
-queues. When a task is answered again (`refresh`), a reviewed claim with the same text keeps the decision; a claim
+be saved by Excel (UTF-8 with or without byte-order mark, or Windows-1252; commas, semicolons or tabs between cells).
+Reviewed items do not reappear in later queues. When a task is answered again (`refresh`), a reviewed claim with the same text keeps the decision; a claim
 whose text changed has its review marked superseded and comes back to the queue. `gold.jsonl` is the growing gold set:
 use it to compare prompts, models and thresholds.
 
