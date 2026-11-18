@@ -1870,6 +1870,7 @@ ROUTES: list[tuple[str, re.Pattern, str]] = [(m, re.compile("^" + p + "$"), h) f
     ("POST", r"/api/agent-setup", "post_agent_setup"),
     ("POST", r"/api/agent-setup/install", "post_agent_install"),
     ("POST", r"/api/agent-setup/sign-in", "post_agent_sign_in"),
+    ("POST", r"/api/agent-setup/tidy", "post_agent_tidy"),
     ("GET", r"/api/move\.zip", "get_move_zip"),
     # 0.13: the bibliography (Zotero, read on this computer, or an exported file)
     ("GET", r"/api/zotero", "get_zotero"),

@@ -5,7 +5,8 @@
 - finding, status, installing, signing in and adding ENLENS to each CLI, against the stand-ins (fake_codex_cli.py,
   fake_agy_cli.py), never the real programs;
 - the runner: one CLI process per helper on the provider's own model, a usage limit ends the run with the queue's
-  "limit" words, Stop ends it and leaves the work waiting; Antigravity set to run tools unasked is refused.
+  "limit" words, Stop ends it and leaves the work waiting; Antigravity runs with a home and settings of its own,
+  never the person's, is refused without its sandbox switch, and a tool it refused is reported.
 """
 from __future__ import annotations
 
@@ -258,35 +259,111 @@ def test_adding_enlens_to_codex(clis, monkeypatch):
     assert clis.stale("codex") == ""
 
 
-def test_adding_enlens_to_antigravity_keeps_its_settings(clis):
+def test_adding_enlens_to_antigravity_leaves_the_persons_settings_alone(clis):
+    """ENLENS's Antigravity has a home folder of its own: the set-up writes ENLENS's settings there and never touches
+    the person's own (an earlier ENLENS merged a permission line into them)."""
     from enlens_claims import home
 
     p = clis.agy_settings_path()
     p.parent.mkdir(parents=True)
-    before = {"theme": "dark", "permissions": {"allow": ["read(*)"], "deny": ["shell(rm *)"]},
-              "trustedWorkspaces": ["/somewhere/else"]}
-    p.write_text(json.dumps(before))
+    before = json.dumps({"theme": "dark", "permissions": {"allow": ["read(*)"], "deny": ["shell(rm *)"]},
+                         "trustedWorkspaces": ["/somewhere/else"]})
+    p.write_text(before)
     r = clis.set_up("antigravity")
     assert all(s["ok"] for s in r["steps"]), r["steps"]
-    after = json.loads(p.read_text())
-    assert after["theme"] == "dark" and after["permissions"]["deny"] == ["shell(rm *)"]
-    assert after["permissions"]["allow"] == ["read(*)", "mcp(enlens/*)"]
-    assert after["trustedWorkspaces"] == ["/somewhere/else", str(clis.agy_work_folder())]
-    assert json.loads(p.with_name("settings.json.bak").read_text()) == before
-    assert clis.merge_agy_settings() == {"changed": False, "added": []}   # nothing twice
+    assert p.read_text() == before and not p.with_name("settings.json.bak").exists()
+    own = json.loads(clis.enlens_agy_settings_path().read_text())
+    assert own["permissions"] == {"allow": ["mcp(enlens/*)"]}
+    assert own["trustedWorkspaces"] == [str(clis.agy_work_folder())]
+    assert clis.enlens_agy_settings_path().is_relative_to(home.home())
     plug = clis.agy_plugin_folder()
     assert json.loads((plug / "plugin.json").read_text())["name"] == "enlens-run"
     cfg = json.loads((plug / "mcp_config.json").read_text())["mcpServers"]["enlens"]
     assert cfg["env"]["ENLENS_ROUTE"] == "antigravity" and cfg["enabledTools"] == list(clis.QUEUE_TOOLS)
+    assert cfg["env"]["PYTHONUSERBASE"]   # the connector still finds an ENLENS installed in the person's user folder
     assert "model: flash" in (plug / "agents" / "enlens-labeller.md").read_text()
     assert "model: pro" in (plug / "agents" / "enlens-auditor.md").read_text()
     assert r["status"]["connector"] is True
     assert json.loads((home.home() / "fake-agy.json").read_text())["plugin"]["path"] == str(plug)
+
+
+def test_enlens_own_antigravity_settings_hold_only_what_is_safe(clis):
+    """Whatever the person's own settings or an earlier window put in ENLENS's settings, they allow only ENLENS's
+    connector, run nothing unasked and spend no AI credits; the person's telemetry choice is carried over."""
+    p = clis.agy_settings_path()
+    p.parent.mkdir(parents=True)
+    p.write_text(json.dumps({"toolPermission": "always-proceed", "permissions": {"allow": ["read_file(*)"]},
+                             "useG1Credits": True, "enableTelemetry": False, "theme": "dark"}))
+    mine = clis.enlens_agy_settings_path()
+    mine.parent.mkdir(parents=True)
+    mine.write_text(json.dumps({"toolPermission": "always-proceed", "useAiCredits": True,
+                                "permissions": {"allow": ["shell(*)"], "deny": ["mcp(enlens/*)"]},
+                                "trustedWorkspaces": ["/"], "editorFont": "mono"}))
+    clis.prepare_agy_home()
+    own = json.loads(mine.read_text())
+    assert own == {"editorFont": "mono", "enableTelemetry": False, "permissions": {"allow": ["mcp(enlens/*)"]},
+                   "trustedWorkspaces": [str(clis.agy_work_folder())]}
+    assert clis.always_proceeds() is False
+    env = clis.agy_env()
+    assert env["HOME"] == env["USERPROFILE"] == str(clis.agy_home()) and env["XDG_CONFIG_HOME"] is None
+    import sys
+
+    if sys.platform == "darwin":   # the login keychain is found through $HOME/Library/Keychains
+        link = clis.agy_home() / "Library" / "Keychains"
+        assert link.is_symlink() and Path(link.readlink()) == clis.user_home() / "Library" / "Keychains"
+
+
+def test_the_lines_an_earlier_enlens_wrote_are_offered_and_removed(clis, api):
+    from enlens_claims import home
+
+    p = clis.agy_settings_path()
+    p.parent.mkdir(parents=True)
+    work = str(home.home() / "claude-runs" / "agy-work")
+    p.write_text(json.dumps({"theme": "dark", "permissions": {"allow": ["read(*)", "mcp(enlens/*)"]},
+                             "trustedWorkspaces": ["/somewhere/else", work, "/tmp/enlens-dev-1/claude-runs/agy-work"]}))
+    st, body = api("GET", "/api/agent-setup?route=antigravity")
+    assert st == 200 and len(body["own_leftovers"]) == 3 and body["own_settings"] == str(p)
+    assert 'the permission line "mcp(enlens/*)"' in body["own_leftovers"]
+    st, body = api("POST", "/api/agent-setup/tidy", {"route": "antigravity"})
+    assert st == 200 and len(body["removed"]) == 3 and body["own_leftovers"] == []
+    assert json.loads(p.read_text()) == {"theme": "dark", "permissions": {"allow": ["read(*)"]},
+                                         "trustedWorkspaces": ["/somewhere/else"]}
+    assert "mcp(enlens/*)" in p.with_name("settings.json.bak").read_text()
+    # only ENLENS's lines: a file with only those loses the keys it then has no use for
+    p.write_text(json.dumps({"permissions": {"allow": ["mcp(enlens/*)"]}, "trustedWorkspaces": [work]}))
+    assert clis.tidy_own_agy_settings()["removed"] and json.loads(p.read_text()) == {}
+    assert clis.tidy_own_agy_settings() == {"removed": []}
+    st, body = api("POST", "/api/agent-setup/tidy", {"route": "codex"})
+    assert st == 400
     # settings that are not JSON are left alone, and said so
     p.write_text("{not json")
     with pytest.raises(ValueError, match="left them as they are"):
-        clis.merge_agy_settings()
+        clis.tidy_own_agy_settings()
     assert p.read_text() == "{not json"
+
+
+def test_a_sign_in_kept_in_the_home_folder_is_asked_for_enlens_own(clis, monkeypatch):
+    """Where Antigravity keeps its sign-in under the home folder, ENLENS's copy says it is signed out, and its sign-in
+    window runs with ENLENS's home, so the sign-in lands where ENLENS's runs look."""
+    import os
+    import subprocess
+    import sys
+
+    monkeypatch.setenv("FAKE_AGY_LOGIN_IN_HOME", "1")
+    monkeypatch.setenv("FAKE_AGY_LOGGED_OUT", "1")
+    assert clis.status("antigravity", refresh=True)["signed_in"] is False
+    scripts = []
+
+    def window(script):
+        scripts.append(script.read_text(encoding="utf-8"))
+        subprocess.run([sys.executable, AGY], capture_output=True, check=True,
+                       env={**os.environ, "HOME": str(clis.agy_home()), "USERPROFILE": str(clis.agy_home())})
+        return "Terminal (stand-in)"
+
+    monkeypatch.setattr(clis, "_open_window", window)
+    r = clis.open_sign_in("antigravity")
+    assert str(clis.agy_home()) in scripts[0] and str(clis.agy_home()) in r["command"]
+    assert clis.status("antigravity", refresh=True)["signed_in"] is True
 
 
 def test_repair_writes_again_when_enlens_changed(clis):
@@ -358,8 +435,10 @@ def test_start_antigravity_in_its_work_folder_on_the_plans_model(clis, corpus, m
     assert "--sandbox" in argv and "--disable-slash-commands" in argv and "--output-format" in argv
     assert Path(run["cwd"]) == clis.agy_work_folder()
     assert sorted(p.name for p in clis.agy_work_folder().iterdir()) == [".agents"]
-    # added on the first start: the plugin, the one permission line
-    assert "mcp(enlens/*)" in json.loads(clis.agy_settings_path().read_text())["permissions"]["allow"]
+    # its own home and settings: the one permission line, written on the first start; the person's never touched
+    assert run["home"] == str(clis.agy_home()) and run["xdg"] is None
+    assert run["settings"]["permissions"] == {"allow": ["mcp(enlens/*)"]}
+    assert not clis.agy_settings_path().exists()
 
 
 def test_the_model_slug_antigravity_lists(clis):
@@ -411,14 +490,52 @@ def test_stop_ends_the_helpers_and_the_work_waits(clis, corpus, monkeypatch):
     assert not any(clis._pid_is_helper(p) for p in rec["pids"])
 
 
-def test_antigravity_that_runs_tools_unasked_is_refused(clis, corpus):
-    _project(corpus, "antigravity")
+def test_the_persons_own_permissions_never_reach_enlens_runs(clis, corpus, monkeypatch):
+    """A person whose own Antigravity runs every tool unasked, allows reading files and spends credits: ENLENS's runs
+    see none of it (an earlier ENLENS refused to start instead), and the person's file stays as they set it."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", "/somewhere/the/persons/config")
+    from enlens_claims import home
+
+    ws = _project(corpus, "antigravity")
     p = clis.agy_settings_path()
     p.parent.mkdir(parents=True)
-    p.write_text(json.dumps({"toolPermission": "always-proceed"}))
-    with pytest.raises(ValueError, match="request-review"):
+    mine = {"toolPermission": "always-proceed", "permissions": {"allow": ["read_file(*)"]}, "useG1Credits": True}
+    p.write_text(json.dumps(mine))
+    clis.start_run("antigravity", "Q")
+    assert _wait_done(clis, "antigravity")["exit_code"] == 0
+    assert _waiting(ws) == 0
+    for run in json.loads((home.home() / "fake-agy.json").read_text())["runs"]:
+        if "-p" in run["argv"]:
+            assert run["settings"] == {"permissions": {"allow": ["mcp(enlens/*)"]},
+                                       "trustedWorkspaces": [str(clis.agy_work_folder())]}
+            assert run["xdg"] is None
+    assert json.loads(p.read_text()) == mine
+
+
+def test_an_antigravity_without_its_sandbox_is_refused(clis, corpus, monkeypatch):
+    _project(corpus, "antigravity")
+    monkeypatch.setenv("FAKE_AGY_OPTIONS", "-p --output-format --model --disable-slash-commands")
+    with pytest.raises(ValueError, match=r"--sandbox"):
         clis.start_run("antigravity", "Q")
-    assert json.loads(p.read_text()) == {"toolPermission": "always-proceed"}   # left as the person set it
+    clis._OPTIONS.clear()   # the help is read once per program file
+    monkeypatch.setenv("FAKE_AGY_OPTIONS", "none")   # its help says nothing ENLENS knows: not started either
+    with pytest.raises(ValueError, match="could not read the options"):
+        clis.start_run("antigravity", "Q")
+
+
+def test_a_tool_antigravity_refused_is_written_in_the_report(clis, corpus, monkeypatch):
+    """A helper only needs ENLENS's tools: one Antigravity refused (denied_actions) is said, as a possible prompt
+    injection, and the run goes on."""
+    monkeypatch.setenv("FAKE_AGY_DENY", "read_file")
+    ws = _project(corpus, "antigravity")
+    clis.start_run("antigravity", "Q")
+    st = _wait_done(clis, "antigravity")
+    assert st["exit_code"] == 0 and _waiting(ws) == 0
+    assert "tried to use ReadFile, and Antigravity refused it" in st["report"]
+    assert st["refused"] and st["refused"][0]["tools"] == ["ReadFile"]
+    o = clis.read_outcome("antigravity", json.dumps({"status": "SUCCESS", "response": "", "denied_actions": [
+        {"action": "read_file", "display_name": "ReadFile"}, {"action": "run_command"}]}), 0)
+    assert o["ok"] and o["refused"] == ["ReadFile", "run_command"]
 
 
 def test_a_codex_without_settings_on_its_command_line_is_refused(clis, corpus, monkeypatch):
@@ -431,7 +548,7 @@ def test_a_codex_without_settings_on_its_command_line_is_refused(clis, corpus, m
 def test_a_helper_that_never_takes_a_batch_ends_the_run(clis, corpus, monkeypatch):
     """A CLI that ignores the ENLENS tools (Antigravity soft-denies a tool it would have to ask about) ends the run
     after a few helpers in a row, with what it said, instead of starting helpers for ever."""
-    monkeypatch.setenv("FAKE_AGY_OPTIONS", "-p --output-format --model")
+    monkeypatch.setenv("FAKE_AGY_OPTIONS", "-p --output-format --model --sandbox")
     from enlens_claims import agentcli
 
     _project(corpus, "antigravity")

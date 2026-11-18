@@ -11,9 +11,9 @@ What each adapter does, behind one interface (the app's Settings → AI and its 
   background, no window); Antigravity signs in on its first interactive start, so a terminal window opens running `agy`
   in an empty folder of ENLENS (as Claude Code's sign-in window).
 - `set_up(route)`: adds ENLENS to the CLI: Codex gets the ENLENS connector (`codex mcp add enlens ...`), the skill
-  `$enlens-run` and the helpers as Codex subagents; Antigravity gets the ENLENS plugin (`agy plugin install`), one
-  permission line (`mcp(enlens/*)`) and ENLENS's own work folder as a trusted workspace. Nothing else of the person's
-  is changed. `repair()` writes them again when ENLENS's version, Python or data folder changed.
+  `$enlens-run` and the helpers as Codex subagents; Antigravity gets the ENLENS plugin (`agy plugin install`), so the
+  person can type /enlens-run in it, and ENLENS's own Antigravity home is prepared (below). Nothing else of the
+  person's is changed. `repair()` writes them again when ENLENS's version, Python or data folder changed.
 
 The runner (`start_run`): neither CLI's headless mode is documented to run skills or subagents, so ENLENS does what
 Claude Code's /enlens-run does itself: it asks the queue for the groups and how many helpers to start for each
@@ -27,7 +27,18 @@ Boxing each run in: Codex starts in an empty folder, with the person's own Codex
 (`--ignore-user-config`), read-only, without its shell, web search and image tools, with the ENLENS connector given on
 the command line (`-c mcp_servers.enlens...`) and only its three queue tools enabled. Antigravity has no switch for
 its own tools: it starts in ENLENS's own empty work folder, in its sandbox, without slash commands, and with its
-default "ask first" for every tool (ENLENS refuses to start it when the person set it to run tools without asking).
+default "ask first" for every tool, which nobody can answer in a background run, so every tool but ENLENS's is refused.
+
+Antigravity runs in a home folder of its own (`agy_home()`, HOME and USERPROFILE pointed there): the person's own
+Antigravity settings never reach ENLENS's runs (their allow rules, "always proceed", connectors, AI credits), and
+ENLENS writes the settings there before each run: the one allow rule `mcp(enlens/*)`, its work folder as trusted,
+nothing that spends AI credits (agy deletes `useG1Credits: false` on every start, so "off" can only be "absent").
+Tested with agy 1.5.11 on Windows (18 Nov 2026): the sign-in is kept outside the home folder there (Credential
+Manager), so none is needed again. On macOS the login keychain is found through $HOME/Library/Keychains, so ENLENS's
+home links that folder to the person's. Where a CLI keeps its sign-in in the home folder, ENLENS's Antigravity asks for
+its own sign-in once (the set-up's sign-in step runs in ENLENS's home too). A tool Antigravity refused (its JSON's
+`denied_actions`) is written in the run's log: a helper has no reason to use one, so text in a passage may have asked it
+to.
 
 Run records (process ids) are kept under <ENLENS_HOME>/claude-runs/ as `<route>-<project>.run.json`, so Stop, Quit
 and a restarted app find the helpers of a run an earlier app started, as for Claude Code.
@@ -105,7 +116,33 @@ def codex_home() -> Path:
 
 
 def agy_settings_path() -> Path:
+    """The person's own Antigravity settings (ENLENS no longer writes them: see own_agy_leftovers)."""
     return user_home() / ".gemini" / "antigravity-cli" / "settings.json"
+
+
+def agy_home() -> Path:
+    """ENLENS's own home folder for Antigravity: its runs, its status and its sign-in window start with HOME (and
+    USERPROFILE) pointed here, so they read ENLENS's settings, never the person's."""
+    return core.home() / "agy-home"
+
+
+def enlens_agy_settings_path() -> Path:
+    return agy_home() / ".gemini" / "antigravity-cli" / "settings.json"
+
+
+def agy_env() -> dict[str, str | None]:
+    """What changes in the environment of every Antigravity process ENLENS starts (None: left out): its home is
+    ENLENS's own, and a person's XDG folders, which would lead back to their own settings, are left out."""
+    h = str(agy_home())
+    env: dict[str, str | None] = {"HOME": h, "USERPROFILE": h}
+    for k in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):
+        env[k] = None
+    return env
+
+
+def _environ(env: dict | None) -> dict[str, str]:
+    merged = {**os.environ, **(env or {})}
+    return {k: v for k, v in merged.items() if v is not None}
 
 
 def runs_folder() -> Path:
@@ -143,12 +180,13 @@ def find(route: str) -> str:
 
 
 def _run(args: list[str], timeout: float = 60, cwd: Path | None = None, env: dict | None = None) -> tuple[int, str]:
-    """Run the CLI and return its exit code and what it wrote (UTF-8, without a window on Windows)."""
+    """Run the CLI and return its exit code and what it wrote (UTF-8, without a window on Windows). `env`: what
+    changes in the environment (a None value leaves that variable out)."""
     args = _cmd(args[0]) + list(args[1:])
     try:
         r = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
                            cwd=str(cwd or core.home()), stdin=subprocess.DEVNULL,
-                           env={**os.environ, **(env or {})}, **no_window())
+                           env=_environ(env), **no_window())
     except (OSError, subprocess.SubprocessError) as e:
         return 1, f"{type(e).__name__}: {e}"
     return r.returncode, _plain(((r.stdout or "") + (r.stderr or "")).strip())
@@ -273,7 +311,10 @@ def codex_connector(path: str) -> bool | None:
 
 
 def _agy_status(path: str, out: dict) -> None:
-    code, text = _run([path, "models"], timeout=30)
+    # signed in, and which models: asked in ENLENS's own home, where its runs start (its own sign-in where a CLI keeps
+    # it in the home folder); the plugin: in the person's own Antigravity, where they type /enlens-run
+    prepare_agy_home()
+    code, text = _run([path, "models"], timeout=30, env=agy_env())
     if code == 0:
         out["signed_in"] = True
         out["models_available"] = parse_models(text)
@@ -361,9 +402,11 @@ def _sign_in_script(route: str, path: str, work: Path) -> Path:
 
         q = lambda s: _ps_quote(str(s))  # noqa: E731 - a PowerShell string
         p = runs_folder() / f"{route}-sign-in.ps1"
+        home = str(agy_home())
         p.write_text(f"Write-Host 'ENLENS: sign in to {title} with your Google account.'\r\n"
                      "Write-Host 'Follow the steps below; when it shows its prompt, close this window.'\r\n"
-                     "Write-Host 'It runs in an empty folder of ENLENS.'\r\n"
+                     "Write-Host 'It runs in an empty folder of ENLENS, with ENLENS own Antigravity settings.'\r\n"
+                     f"$env:USERPROFILE = {q(home)}\r\n$env:HOME = {q(home)}\r\n"
                      f"Set-Location -LiteralPath {q(work)}\r\n"
                      f"& {' '.join(q(x) for x in _cmd(path))}\r\n", encoding="utf-8-sig", newline="")
         return p
@@ -373,10 +416,12 @@ def _sign_in_script(route: str, path: str, work: Path) -> Path:
     p.write_text("#!/bin/sh\n"
                  f"echo 'ENLENS: sign in to {title} with your Google account.'\n"
                  "echo 'Follow the steps below; when it shows its prompt, close this window.'\n"
-                 "echo 'It runs in an empty folder of ENLENS.'\n"
+                 "echo \"It runs in an empty folder of ENLENS, with ENLENS's own Antigravity settings.\"\n"
                  "echo\n"
                  f"cd {shlex.quote(str(work))} || exit 1\n"
-                 f"exec {' '.join(shlex.quote(x) for x in _cmd(path))}\n", encoding="utf-8")
+                 "unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME\n"
+                 f"HOME={shlex.quote(str(agy_home()))} exec {' '.join(shlex.quote(x) for x in _cmd(path))}\n",
+                 encoding="utf-8")
     p.chmod(0o755)
     return p
 
@@ -405,10 +450,13 @@ def open_sign_in(route: str) -> dict:
                 log.close()
         return {"opened": True, "window": "", "command": "codex login"}
     work = sign_in_folder(route)
+    prepare_agy_home()
     window = _open_window(_sign_in_script(route, path, work))
     import shlex
 
-    line = (f"cd {shlex.quote(str(work))} && agy" if os.name != "nt" else f'cd "{work}"; agy')
+    home = str(agy_home())
+    line = (f"cd {shlex.quote(str(work))} && HOME={shlex.quote(home)} agy" if os.name != "nt"
+            else f'cd "{work}"; $env:USERPROFILE="{home}"; $env:HOME="{home}"; agy')
     return {"opened": bool(window), "window": window, "command": line, "folder": str(work)}
 
 
@@ -511,8 +559,13 @@ def agy_work_folder() -> Path:
 
 
 def agy_mcp_config(route: str = "antigravity") -> dict:
+    """The connector as Antigravity loads it. Its runs start with ENLENS's own home (agy_env), so the person's Python
+    user folder is named (PYTHONUSERBASE): an ENLENS installed there is still found."""
+    import site
+
     cmd = connector_command()
-    return {"mcpServers": {SERVER: {"command": cmd[0], "args": cmd[1:], "env": connector_env(route),
+    env = {**connector_env(route), "PYTHONUSERBASE": site.getuserbase()}
+    return {"mcpServers": {SERVER: {"command": cmd[0], "args": cmd[1:], "env": env,
                                     "enabledTools": list(QUEUE_TOOLS), "timeoutSeconds": 600}}}
 
 
@@ -558,70 +611,128 @@ def prepare_agy_work_folder() -> Path:
     return d
 
 
-def agy_settings() -> dict:
-    """Antigravity's own settings ({} when there are none or they cannot be read)."""
+def _read_json(p: Path) -> dict:
     try:
-        data = json.loads(agy_settings_path().read_text(encoding="utf-8"))
+        data = json.loads(p.read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
 
 
-def merge_agy_settings() -> dict:
-    """Add the one allow rule `mcp(enlens/*)` to `permissions.allow` and ENLENS's work folder to `trustedWorkspaces`,
-    keeping every other key; a copy of the file as it was is kept as settings.json.bak first. Nothing is removed.
-    Returns {"changed": bool, "added": [...]}. Raises ValueError when the file is there but is not JSON (it is then
-    left as it is)."""
-    p = agy_settings_path()
-    data: dict = {}
-    if p.exists():
-        try:
-            data = json.loads(p.read_text(encoding="utf-8") or "{}")
-        except (OSError, ValueError) as e:
-            raise ValueError(f"Antigravity's settings ({p}) could not be read as JSON, so ENLENS left them as they "
-                             f"are: {e}") from e
-        if not isinstance(data, dict):
-            raise ValueError(f"Antigravity's settings ({p}) are not a JSON object, so ENLENS left them as they are.")
-    added = []
-    perms = data.get("permissions")
-    if not isinstance(perms, dict):
-        perms = {} if perms is None else None
-    if perms is not None:
-        allow = perms.get("allow")
-        if allow is None:
-            allow = []
-        if isinstance(allow, list) and PERMISSION not in allow:
-            allow.append(PERMISSION)
-            perms["allow"] = allow
-            data["permissions"] = perms
-            added.append(f'permissions.allow "{PERMISSION}"')
-    work = str(agy_work_folder())
-    trusted = data.get("trustedWorkspaces")
-    if trusted is None:
-        trusted = []
-    if isinstance(trusted, list) and work not in trusted:
-        trusted.append(work)
-        data["trustedWorkspaces"] = trusted
-        added.append(f'trustedWorkspaces "{work}"')
-    if added:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        if p.exists():
-            shutil.copyfile(p, p.with_name(p.name + ".bak"))
-        tmp = p.with_name(p.name + ".enlens-tmp")
-        tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        os.replace(tmp, p)
-    return {"changed": bool(added), "added": added}
+def _write_json(p: Path, data: dict) -> None:
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name(p.name + ".enlens-tmp")
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    os.replace(tmp, p)
+
+
+def agy_settings() -> dict:
+    """The person's own Antigravity settings ({} when there are none or they cannot be read)."""
+    return _read_json(agy_settings_path())
+
+
+# keys of the person's own settings carried into ENLENS's: what they chose about what Google may keep or use
+PRIVACY_KEY = re.compile(r"telemetry|usage.?stat|feedback|analytics|crash.?report|improve", re.I)
+# keys never carried over and never kept in ENLENS's settings: what lets a tool run unasked, or spends credits
+UNSAFE_KEYS = ("toolPermission", "useG1Credits", "useAiCredits")
+
+
+def prepare_agy_home() -> Path:
+    """ENLENS's own Antigravity home, written again before every run, sign-in and look: its settings allow only
+    ENLENS's connector (`permissions.allow` is exactly `mcp(enlens/*)`, no deny or ask rules are kept that could
+    hide it), trust only ENLENS's work folder, run nothing unasked (no toolPermission) and spend no AI credits (no
+    useG1Credits/useAiCredits). Every other key Antigravity keeps there is left (say, a telemetry switch the person
+    turned off in the sign-in window), and the person's own privacy choices (PRIVACY_KEY) are carried over. On macOS
+    Library/Keychains links to the person's, where the login keychain is."""
+    h = agy_home()
+    h.mkdir(parents=True, exist_ok=True)
+    if sys.platform == "darwin":
+        link = h / "Library" / "Keychains"
+        if not link.is_symlink() and not link.exists():
+            try:
+                link.parent.mkdir(parents=True, exist_ok=True)
+                link.symlink_to(user_home() / "Library" / "Keychains", target_is_directory=True)
+            except OSError:
+                pass
+    p = enlens_agy_settings_path()
+    data = _read_json(p)
+    for k, v in agy_settings().items():
+        if PRIVACY_KEY.search(k) and k not in UNSAFE_KEYS and k not in data:
+            data[k] = v
+    for k in UNSAFE_KEYS:
+        data.pop(k, None)
+    data["permissions"] = {"allow": [PERMISSION]}
+    data["trustedWorkspaces"] = [str(agy_work_folder())]
+    if _read_json(p) != data or not p.exists():
+        _write_json(p, data)
+    return h
 
 
 def always_proceeds() -> bool:
-    """Whether Antigravity is set to run every tool without asking (top-level toolPermission "always-proceed")."""
-    return str(agy_settings().get("toolPermission") or "").strip().lower() == "always-proceed"
+    """Whether ENLENS's own Antigravity is set to run every tool without asking (top-level toolPermission
+    "always-proceed"): never after prepare_agy_home; checked again just before a run starts."""
+    return str(_read_json(enlens_agy_settings_path()).get("toolPermission") or "").strip().lower() == "always-proceed"
 
 
-ALWAYS_PROCEED = ("Antigravity is set to run every tool without asking (toolPermission \"always-proceed\" in "
-                  "{path}). ENLENS starts it only when it asks first, so it cannot run commands or read files unasked: "
-                  "change that setting to \"request-review\" (Antigravity's default), then press Start Antigravity "
-                  "again.")
+ALWAYS_PROCEED = ("ENLENS's own Antigravity settings ({path}) say to run every tool without asking, and ENLENS could "
+                  "not write them back. Press Start Antigravity again; if it says this again, delete that file.")
+
+
+def _is_enlens_work(entry) -> bool:
+    """A trusted workspace an earlier ENLENS added to the person's own settings (any data folder's agy-work)."""
+    try:
+        parts = Path(str(entry)).parts
+    except (TypeError, ValueError):
+        return False
+    return len(parts) >= 2 and tuple(parts[-2:]) == ("claude-runs", "agy-work")
+
+
+def own_agy_leftovers() -> list[str]:
+    """What an earlier ENLENS (0.20.0–0.20.1) wrote into the person's own Antigravity settings and no longer needs: the
+    allow rule `mcp(enlens/*)` (which also let the person's own Antigravity use ENLENS's tools unasked) and ENLENS's
+    work folders as trusted workspaces. [] when there is nothing."""
+    data = agy_settings()
+    out = []
+    perms = data.get("permissions")
+    if isinstance(perms, dict) and isinstance(perms.get("allow"), list) and PERMISSION in perms["allow"]:
+        out.append(f'the permission line "{PERMISSION}"')
+    trusted = data.get("trustedWorkspaces")
+    if isinstance(trusted, list):
+        out += [f'the trusted workspace "{t}"' for t in trusted if _is_enlens_work(t)]
+    return out
+
+
+def tidy_own_agy_settings() -> dict:
+    """Take out of the person's own Antigravity settings what an earlier ENLENS added (own_agy_leftovers), keeping
+    every other key; a copy of the file as it was is kept as settings.json.bak first (the person pressed *Remove
+    them*). Returns {"removed": [...]}. Raises ValueError when the file is there but is not JSON (left as it is)."""
+    p = agy_settings_path()
+    if not p.exists():
+        return {"removed": []}
+    try:
+        data = json.loads(p.read_text(encoding="utf-8") or "{}")
+    except (OSError, ValueError) as e:
+        raise ValueError(f"Antigravity's settings ({p}) could not be read as JSON, so ENLENS left them as they "
+                         f"are: {e}") from e
+    if not isinstance(data, dict):
+        raise ValueError(f"Antigravity's settings ({p}) are not a JSON object, so ENLENS left them as they are.")
+    removed = own_agy_leftovers()
+    if not removed:
+        return {"removed": []}
+    perms = data.get("permissions")
+    if isinstance(perms, dict) and isinstance(perms.get("allow"), list):
+        perms["allow"] = [x for x in perms["allow"] if x != PERMISSION]
+        if not perms["allow"]:
+            del perms["allow"]
+        if not perms:
+            del data["permissions"]
+    if isinstance(data.get("trustedWorkspaces"), list):
+        data["trustedWorkspaces"] = [t for t in data["trustedWorkspaces"] if not _is_enlens_work(t)]
+        if not data["trustedWorkspaces"]:
+            del data["trustedWorkspaces"]
+    shutil.copyfile(p, p.with_name(p.name + ".bak"))
+    _write_json(p, data)
+    return {"removed": removed}
 
 
 def _record_setup(route: str) -> None:
@@ -685,12 +796,11 @@ def set_up(route: str) -> dict:
         steps.append({"step": "Add the plugin to Antigravity", "ok": code == 0,
                       "text": text[-600:] or ("Added." if code == 0 else "Antigravity did not say why.")})
         try:
-            r = merge_agy_settings()
-            steps.append({"step": "Allow the ENLENS tools", "ok": True,
-                          "text": ("Added " + " and ".join(r["added"]) + f" to {agy_settings_path()} (a copy of it as "
-                                   "it was: settings.json.bak).") if r["changed"] else "Already allowed."})
-        except (OSError, ValueError) as e:
-            steps.append({"step": "Allow the ENLENS tools", "ok": False, "text": str(e)})
+            steps.append({"step": "Prepare ENLENS's own Antigravity settings", "ok": True,
+                          "text": f"Written to {enlens_agy_settings_path()}; your own settings are not changed."})
+            prepare_agy_home()
+        except OSError as e:
+            steps[-1].update(ok=False, text=str(e))
     if all(s["ok"] for s in steps):
         _record_setup(route)
     forget_status(route)
@@ -849,6 +959,28 @@ def helper_prompt(route: str, project: str, kind: str, model: str, helper: str) 
             "how many still had problems.")
 
 
+# The switches without which a helper process is not closed in: ENLENS refuses to start the CLI rather than start it
+# without one (a CLI update that renamed one would otherwise quietly open the run up). Each entry: (any of these
+# names, what it does, in the refusal's words).
+REQUIRED = {
+    "antigravity": [(("-p", "--print"), "its headless mode (-p)"),
+                    (("--sandbox",), "its sandbox (--sandbox), which keeps its terminal closed")],
+}
+
+
+def missing_switches(route: str, opts: set[str]) -> str:
+    """Why this CLI cannot be started closed in ("" when it can): the switches its help does not list."""
+    title = cli(route).title
+    if not opts:
+        return (f"ENLENS could not read the options of this {title} (its --help said nothing ENLENS knows), so it "
+                f"cannot tell whether {title} would run closed in. Update {title}, then press Start {title} again.")
+    lacking = [words for names, words in REQUIRED.get(route, []) if not set(names) & opts]
+    if not lacking:
+        return ""
+    return (f"This {title} does not offer " + " or ".join(lacking) + f", without which ENLENS does not start it: "
+            f"update {title}, then press Start {title} again.")
+
+
 def run_args(route: str, path: str, prompt: str, model_id: str, effort: str | None, work: Path,
              options: set[str] | None = None, available: list[str] | None = None) -> list[str]:
     """The command of one helper process (only the options this CLI's help lists; never through a shell)."""
@@ -904,9 +1036,11 @@ def run_args(route: str, path: str, prompt: str, model_id: str, effort: str | No
 
 
 def read_outcome(route: str, text: str, code: int | None) -> dict:
-    """What a finished helper process said: {"ok", "limit" (the sentence, or ""), "signed_out", "message"}."""
+    """What a finished helper process said: {"ok", "limit" (the sentence, or ""), "signed_out", "message", "refused"
+    (the tools the CLI refused it, by name: a helper never needs one)}."""
     title = cli(route).title
     messages: list[str] = []
+    refused: list[str] = []
     failed = code not in (0, None)
     if route == "codex":
         for line in (text or "").splitlines():
@@ -937,6 +1071,10 @@ def read_outcome(route: str, text: str, code: int | None) -> dict:
                 messages.append(str((err.get("message") if isinstance(err, dict) else err) or env.get("message") or ""))
             else:
                 messages.append(str(env.get("result") or env.get("response") or ""))
+            for d in env.get("denied_actions") or []:
+                name = (d.get("display_name") or d.get("action")) if isinstance(d, dict) else d
+                if name and str(name) not in refused:
+                    refused.append(_said(str(name), 60))
     if not messages and failed:
         messages.append(_said(text or "", 400))
     said = " ".join(m for m in messages if m).strip()
@@ -945,7 +1083,8 @@ def read_outcome(route: str, text: str, code: int | None) -> dict:
         m = RESETS_WORDS.search(said)
         limit = f"{title} reached your plan's usage limit" + (f" (it resets {m.group(1).strip()})" if m else "") + "."
     signed_out = bool(failed and not limit and SIGNED_OUT_WORDS.search(said))
-    return {"ok": not failed, "limit": limit, "signed_out": signed_out, "message": _said(said, 400)}
+    return {"ok": not failed, "limit": limit, "signed_out": signed_out, "message": _said(said, 400),
+            "refused": refused}
 
 
 def _say(run: dict, line: str) -> None:
@@ -973,8 +1112,8 @@ def _spawn(run: dict, g: dict, path: str, opts: set[str], work: Path, ws) -> Non
     fh = open(out, "w", encoding="utf-8")
     try:
         proc = subprocess.Popen(args, cwd=str(work), stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                                env={**os.environ, **connector_env(route)}, start_new_session=os.name != "nt",
-                                **no_window())
+                                env=_environ({**connector_env(route), **(agy_env() if route == "antigravity" else {})}),
+                                start_new_session=os.name != "nt", **no_window())
     finally:
         fh.close()
     taken_by = f"{g['helper']} in {cli(route).title}"
@@ -1007,6 +1146,11 @@ def _reap(run: dict, ws) -> dict | None:
         o = read_outcome(run["route"], text, p["proc"].returncode)
         took = _claims_since(ws, p["taken_by"], p["since"])
         run["batches"] += took
+        if o["refused"]:
+            run["refused"].append({"helper": p["taken_by"], "tools": o["refused"], "at": now()})
+            _say(run, f"{p['taken_by']} tried to use {', '.join(o['refused'])}, and {cli(run['route']).title} refused "
+                      "it. A helper only needs ENLENS's own tools, so text in a passage it read may have told it to "
+                      "(look at that batch's passages). It did not run.")
         if o["limit"]:
             end = {"limit": o["limit"]}
             _say(run, o["limit"])
@@ -1130,6 +1274,8 @@ def run_state(route: str, project: str) -> dict:
            "route": route, "parallel": plan.get("parallel"),
            "helpers": {taskqueue.short_helper(h): n for h, n in (plan.get("helpers") or {}).items() if n} or None,
            "helpers_running": sum(1 for p in run["procs"] if p["proc"].poll() is None)}
+    if run.get("refused"):
+        out["refused"] = list(run["refused"])
     if run.get("limit") and not running:
         out["limit"] = run["limit"]
     return out
@@ -1162,24 +1308,26 @@ def start_run(route: str, project: str, parallel=None, helpers=None) -> dict:
             if info.get("signed_in") is False:
                 raise ValueError(f"{a.title} is not signed in yet: sign in once from Settings → AI, then press "
                                  f"Start {a.title} again.")
-        if route == "antigravity" and always_proceeds():
-            raise ValueError(ALWAYS_PROCEED.format(path=agy_settings_path()))
         if info.get("connector") is False or stale(route) or (route == "antigravity" and not agy_plugin_folder().exists()):
             set_up(route)   # ENLENS is added on the first start, as Claude Code's plugin is
+        if route == "antigravity":
+            prepare_agy_home()
+            if always_proceeds():
+                raise ValueError(ALWAYS_PROCEED.format(path=enlens_agy_settings_path()))
         opts = known_options(route, path)
         if route == "codex" and not ({"-c", "--config"} & opts):
             raise ValueError("This Codex does not take settings on its command line (-c), which ENLENS needs to give "
                              "it the ENLENS connector: update Codex, then press Start Codex again.")
-        if route == "antigravity" and not ({"-p", "--print"} & opts) and opts:
-            raise ValueError("This Antigravity has no headless mode (-p): update it, then press Start Antigravity "
-                             "again.")
+        missing = missing_switches(route, opts)
+        if missing:
+            raise ValueError(missing)
         log = _log_path(route, project)
         log.write_text("", encoding="utf-8")
         run = {"route": route, "project": project, "plan": plan, "path": path, "options": opts,
                "work": work_folder(route, project), "available": list(info.get("models_available") or []),
                "procs": [], "stop": threading.Event(), "log": log, "t0": time.time(), "started_at": now(),
                "exit_code": None, "stopped": False, "limit": None, "n": 0, "started": 0, "batches": 0,
-               "failed_in_row": 0, "router": None}
+               "failed_in_row": 0, "router": None, "refused": []}
         with _RUNS_LOCK:
             _RUNS[(route, project)] = run
         _write_record(run)

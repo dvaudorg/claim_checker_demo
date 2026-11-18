@@ -142,10 +142,12 @@ await scenario("Antigravity's sign-in and what is added", async (t) => {
   ad.read = async () => ({ status: st, installer: ad.installer, docs: ad.docs });
   let opened = 0;
   ad.signIn = async () => { opened += 1; return { opened: true, window: "Terminal", command: "agy" }; };
-  const done = m.agentSetupDialog(ad, { status: st }, { project: "Study" });
+  const done = m.agentSetupDialog(ad, { status: st, own_leftovers: ['the permission line "mcp(enlens/*)"'], own_settings: "~/.gemini/antigravity-cli/settings.json" }, { project: "Study" });
   await t.settle(10);
   const d = t.dialog();
   const out = { intro: t.text(d.querySelector(".guided-step[data-state=current]")) };
+  let tidied = null;
+  t.answer("POST /api/agent-setup/tidy", (b) => { tidied = b; return { removed: ["x"], own_leftovers: [] }; });
   const btn = d.querySelector("#agent-sign-in-antigravity");
   await t.click(btn);
   await t.settle(10);
@@ -157,6 +159,11 @@ await scenario("Antigravity's sign-in and what is added", async (t) => {
   await t.settle(28000);
   out.adds = t.text(d.querySelector(".agent-adds"));
   out.opened = opened;
+  out.leftovers = t.text(d.querySelector(".agent-leftovers"));
+  await t.click(d.querySelector("#agent-tidy-antigravity"));
+  await t.settle(10);
+  out.tidied = tidied;
+  out.afterTidy = t.text(d.querySelector(".agent-leftovers"));
   await t.click("Cancel", { within: d.querySelector(".dialog-actions") });
   await done;
   return out;
@@ -394,7 +401,10 @@ def test_the_fixes_of_the_final_review(page):
     assert "switch off Enable Telemetry in Antigravity’s settings, under AI credits and feedback" in r["intro"]
     assert r["disabled"] is True and r["againEarly"] is True and r["opened"] == 1
     assert "under AI credits and feedback" in r["words"]
-    assert "ENLENS’s own empty work folder, marked as trusted, where it starts Antigravity" in r["adds"]
+    assert "ENLENS’s own Antigravity settings, in a folder of ENLENS" in r["adds"] and "permission line" not in r["adds"]
+    # what an ENLENS before 0.20.2 wrote into the person's own settings is offered for removal, and removed
+    assert 'the permission line "mcp(enlens/*)"' in r["leftovers"] and "Remove them" in r["leftovers"]
+    assert r["tidied"] == {"route": "antigravity"} and "settings.json.bak" in r["afterTidy"]
 
 
 @needs_node
