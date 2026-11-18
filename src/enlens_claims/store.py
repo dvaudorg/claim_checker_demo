@@ -753,6 +753,7 @@ def _copy_empty_database(dest: Path, page_size: int | None = None) -> None:
                     finally:
                         cx.close()
                 made._setup()  # closes its connection: the log is written into the file and removed
+                made.close_all()  # and any a step of the setup opened after it (I7: settle_own_providers)
                 left = [f.name for f in tmp.iterdir() if f.name != made.db_path.name]
                 if left:
                     raise OSError(f"the empty database left {left}")  # not the whole file: set up the usual way

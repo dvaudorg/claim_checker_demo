@@ -862,7 +862,8 @@ def settle_own_providers(ws: Workspace) -> int:
             if cleared:
                 ws.set_meta(PROVIDERS_RESET, {"documents": len(cleared), "at": now()}, c)
                 relabel(c)
-            ws.set_meta(OWN_PROVIDERS_DONE, now(), c)
+            # a fixed value, not the time: every new project's database is the same copy of an empty one
+            ws.set_meta(OWN_PROVIDERS_DONE, 1, c)
         return len(cleared)
     except Exception:  # noqa: BLE001
         import traceback

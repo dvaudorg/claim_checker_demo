@@ -46,7 +46,7 @@ real account yet, nor measured them: its defaults were measured on Claude only. 
 
 In a shared project each person chooses their own route and provider, within the providers the owner allows (no limit
 unless the owner sets one). The **AI log** (from the research log's line under its title) says who ran which AI work,
-with which provider and model, when, about what, and how many excerpts were sent ([The AI log](privacy.md#the-ai-log)).
+with which provider and model, when, about what, and how many excerpts were sent ([below](#the-ai-log)).
 
 For a shared installation that runs unattended, use the **Claude API** with the team's key instead: the same queue and
 the same models per task (`enlens queue run --backend anthropic`).
@@ -78,6 +78,17 @@ thought each task gets and the mix of local and Claude models: [Which model does
   ([What every answer records](models.md#what-every-answer-records)).
 - **ENLENS redoes nothing by itself** when a new version comes: results stay as they were made
   ([Results across versions](models.md#results-across-versions)).
+
+## The AI log
+
+The research log's line under its title leads to the **AI log**: one row each time AI work sent excerpts of the
+project's documents to a cloud provider. A row says who sent them (you, or a colleague by name), to which provider,
+through which route (Claude Code, Codex, an API key…) and on which model, what kind of task it was (a check, the
+Profile's AI pass, theme names…), when, how many excerpts from how many documents, and what it was about: the
+hypothesis, codebook, themes or document, as a link when this copy holds it. Filter it by person and by provider.
+In a team, colleagues' rows arrive with the sync, for the documents your copy holds; a colleague's work they have not
+shared says only *work not shared with the team*. Rows written before the AI log existed name nobody in a team (*not recorded*);
+in a project you work on alone they are yours. Nothing on the page is a setting, and it never sends anything.
 
 ## What it cannot promise
 

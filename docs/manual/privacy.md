@@ -104,33 +104,14 @@ and nothing reaches OpenAI, Google, Mistral, Azure or OpenRouter, nor Codex or A
   was sent* records the company and the agent.
 - **A model server on another computer** (not `localhost`, `127.0.0.1` or `::1`) counts as a cloud provider too: an
   OpenAI address as OpenAI, any other as *a server on another computer*, which no document allows until you do.
-- **In a shared project each person chooses their own provider.** Your colleagues may use Claude Code, Codex,
-  Antigravity or an API key, each on their own computer, and so may you. The providers you tick are yours: they stay in
-  your copy, never travel to a colleague's, and a colleague's ticks never reach yours (a new document from them, or a
-  copy made from their file, starts with your own project choice). What the team decides is each document's AI
-  setting (*Cloud AI may read it*, *Only a local AI*, *No AI*), as before. Your colleagues see in the research log
-  which providers you allowed, and the [AI log](#the-ai-log) shows who ran which AI work with which provider.
-- **The owner may limit the providers the team may use** (Team › People and settings › *AI providers*; no limit by
-  default). With a limit, a provider outside it reads none of the project's documents in anyone's copy, whatever that
-  person ticked: its work waits, and the page says *The team uses Anthropic only (set by Anna): OpenAI reads none of
-  this project's documents.* The owner widens it (or you choose a route inside it). The limit travels with the
-  owner's other settings, and the app offers it to the owner alone; a colleague's older ENLENS (from before this
-  change) allows Anthropic only in a shared project. These settings are not signed yet: a changed app could send a
-  limit in the owner's name, which holds until the owner's next round; the research log then says whose file it came
-  in ([Roles](roles.md#on-the-activity-view)).
+- **In a shared project each person chooses their own provider.** The providers you tick stay in your copy: they
+  never travel to a colleague's, nor theirs to yours; the team shares each document's AI setting, as before. The owner
+  may limit the providers the team may use (no limit by default): a provider outside it reads none of the project's
+  documents in anyone's copy, and its work waits with a note naming the limit and who set it ([Roles](roles.md#on-the-activity-view),
+  which also says what is not signed yet). A colleague's older ENLENS allows Anthropic only. The
+  [AI log](how-the-ai-is-used.md#the-ai-log) shows who ran which AI work, with which provider.
 - **Your key** is kept in the system's keychain, never in a project, a log or a moving file. Each provider's terms
   decide what it keeps and whether it trains on it: check them first.
-
-### The AI log
-
-The research log's line under its title leads to the **AI log**: one row each time AI work sent excerpts of the
-project's documents to a cloud provider. A row says who sent them (you, or a colleague by name), to which provider,
-through which route (Claude Code, Codex, an API key…) and on which model, what kind of task it was (a check, the
-Profile's AI pass, theme names…), when, how many excerpts from how many documents, and what it was about: the
-hypothesis, codebook, themes or document, as a link when this copy holds it. Filter it by person and by provider.
-In a team, colleagues' rows arrive with the sync, for the documents your copy holds; a colleague's work they have not
-shared says only *work not shared with the team*. Rows written before the AI log existed name nobody in a team (*not recorded*);
-in a project you work on alone they are yours. Nothing on the page is a setting, and it never sends anything.
 
 ### What happens in each feature
 
@@ -359,10 +340,8 @@ them; an older Claude Code is only denied the file, shell and web tools by name.
 
 ### How each agent is closed in
 
-Claude Code, as above. **Codex** runs read-only in an empty folder, without its command, web and image tools and with
-only ENLENS's three queue tools. **Antigravity**'s own tools cannot be switched off from outside, so ENLENS starts it in
-an empty folder in its sandbox, adds one permission line after keeping a copy of its settings, and refuses to start it
-while it is set to run every tool without asking. The details: [Codex and Antigravity](other-agents.md#how-each-agent-is-closed-in).
+Codex and Antigravity are closed in as far as each allows, like Claude Code: [Codex and
+Antigravity](other-agents.md#how-each-agent-is-closed-in).
 
 ## Your Claude account and licences
 
