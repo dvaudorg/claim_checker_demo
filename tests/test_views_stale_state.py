@@ -28,6 +28,22 @@ await scenario("JS-1 profile card follows codebook", async (t) => {
     posts: t.calls.filter((c) => c.method === "POST" && c.path.endsWith("/profile/label")).map((c) => c.body.framework),
   };
 });
+
+// ---- JS-2: a second strictness change while a save is under way is not lost --------------------------------------
+await scenario("JS-2 strictness second change", async (t) => {
+  t.state({ settings: { threshold: 0.6 } }, { project: "Study" });
+  const put = [];
+  t.answer("PUT /api/settings", (body) => { put.push(body.threshold); return { settings: { threshold: body.threshold }, backend_label: "x" }; });
+  t.answer("GET /api/projects/Study/hypotheses?*", async () => { await new Promise((r) => setTimeout(r, 500)); return { hypotheses: [] }; });
+  t.answer("GET /api/projects/Study/calibration", { total: 0, bins: [] });
+  await t.render("views/settings.js", "renderSettings", ["basics"]);
+  const range = document.querySelector("input.range");
+  range.value = "0.65"; range.dispatchEvent(new Event("change", { bubbles: true }));
+  await t.settle(10);
+  range.value = "0.7"; range.dispatchEvent(new Event("change", { bubbles: true }));
+  await t.settle(5000);
+  return { put, stored: t.LIB.App.settings().threshold };
+});
 """
 
 
@@ -41,3 +57,9 @@ def test_js1_profile_ai_card_follows_the_codebook(page):
     r = page["JS-1 profile card follows codebook"]
     assert "beta" in r["plans"]
     assert r["posts"][-1] == "beta"
+
+
+@needs_node
+def test_js2_a_second_strictness_change_during_a_save_is_kept(page):
+    r = page["JS-2 strictness second change"]
+    assert r["put"][-1] == 0.7 and r["stored"] == 0.7

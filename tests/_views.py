@@ -163,6 +163,8 @@ class Element extends Node {
     if (this.tagName === "SELECT") { for (const o of this.querySelectorAll("option")) o.selected = o.value === String(v); return; }
     this._value = String(v); this._dirty = true;
   }
+  get valueAsNumber() { const v = this.value; return v === "" ? NaN : Number(v); }   // range and number inputs
+  set valueAsNumber(v) { this.value = String(v); }
   get checked() { return this._checked !== undefined ? this._checked : this.hasAttribute("checked"); }
   set checked(v) { this._checked = !!v; }
   get selectedIndex() { return this.querySelectorAll("option").findIndex((o) => o.selected); }
