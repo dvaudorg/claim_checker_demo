@@ -548,10 +548,19 @@ def _require_all(node):
     return node
 
 
-def output_schema(kind: str) -> dict:
-    """The JSON schema a model's answer for this task kind must follow."""
+EXPAND_MAX_TERMS = 20   # I6: the prompt says "at most 20"; the grammar now holds a small model to it
+EXPAND_MAX_CHARS = 60
+
+
+def output_schema(kind: str, payload: dict | None = None) -> dict:
+    """The JSON schema a model's answer for this task kind must follow. I6: `payload` bounds the `point` form's answer
+    by the task (its number of excerpts and sentences; pointing.schema)."""
     from .taxonomy import targets
 
+    if kind == "point":
+        from .pointing import schema
+
+        return schema(payload)
     if kind == "extract":
         claim = _inline(ImpactClaimOut.model_json_schema())
         claim["properties"]["targets"]["items"]["properties"]["target"] = {"type": "string", "enum": sorted(targets())}
@@ -571,6 +580,11 @@ def output_schema(kind: str) -> dict:
         s = _inline(CheckOut.model_json_schema())
     elif kind == "expand":
         s = _inline(ExpandOut.model_json_schema())
+        # I6: bounded, so a small model cannot add search words until the length limit cuts it off (llama.cpp's grammar
+        # honours both; whether Ollama's MLX runner does is not checked yet: roadmap I6, "Left to try")
+        s["properties"]["terms"]["maxItems"] = EXPAND_MAX_TERMS
+        s["properties"]["terms"]["items"] = {**s["properties"]["terms"].get("items", {}), "type": "string",
+                                             "maxLength": EXPAND_MAX_CHARS}
     elif kind == "decompose":
         s = _inline(DecomposeOut.model_json_schema())
     elif kind == "label":

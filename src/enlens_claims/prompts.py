@@ -37,6 +37,10 @@ def system_prompt(kind: str) -> str:
     k = taskkinds.get(kind)
     if k is not None and k.system is not None:  # 0.13.6: an add-on's kind builds its own
         return k.system()
+    if kind == "point":  # I6: the small local model's short answer form (pointing.py)
+        from .pointing import system_prompt as point_system
+
+        return point_system()
     if kind == "extract":
         return f"""You extract evidence-backed impact claims from scientific and policy texts about the green hydrogen value chain,
 for a Value Chain Assessment against the UN Sustainable Development Goals.
@@ -405,6 +409,10 @@ def user_prompt(kind: str, payload: dict, codes_once: bool = False) -> str:
     k = taskkinds.get(kind)
     if k is not None and k.user is not None:  # 0.13.6: an add-on's kind builds its own
         return k.user(payload)
+    if kind == "point":  # I6
+        from .pointing import user_prompt as point_user
+
+        return point_user(payload)
     if kind == "extract":
         parts = [f"DOCUMENT: {payload.get('title') or 'untitled'}"]
         if payload.get("doi"):

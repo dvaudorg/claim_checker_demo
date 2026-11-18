@@ -362,8 +362,13 @@ class App(LibraryMixin, QueueMixin):
             advice = modeladvice.advise(modeladvice.computer(str(home.home())))
         except Exception:  # noqa: BLE001 - the advice is a convenience: the card works without it
             advice = None
+        # I6: a person who set up an older model keeps it; Settings → Technical offers the tier's model beside it
+        older = None
+        if advice:
+            chosen = s.get("restricted_model") if s.get("restricted_server") == "ollama" else None
+            older = modeladvice.older_model(s.get("ollama_model") or chosen, advice)
         return {"servers": found, "suggested": modeladvice.suggested(advice) if advice else [dict(m) for m in llm.SUGGESTED_MODELS],
-                "advice": advice, "ollama_app": ollama_setup.status()}
+                "advice": advice, "older_model": older, "ollama_app": ollama_setup.status()}
 
     _OLLAMA_INSTALL = threading.Lock()   # two presses (two tabs) never start two downloads of 1.7 GB
 

@@ -36,31 +36,39 @@ by `--local-only`.
 - The AI's link tasks (`link`) do not yet propose the three kinds added in 0.19.16 (*needs*, *shapes*, *clashes
   with*); only the text patterns and a person do.
 
-**I6. Local model tiers, chosen for you** · planned (bench of 16 November 2026, below) · Level 2
-- A researcher should never have to pick a model. ENLENS already reads the computer's memory and disk
-  (`modeladvice.py`); it picks the tier itself, downloads its model, and sets the context length, reasoning (off for
-  local checks: on, one check took 114 s instead of 9 s) and seed without asking. Model names show only under
-  *Settings → Technical*.
-- The tiers, replacing today's ladder (qwen3:1.7b, 4b, 8b, 14b):
+**I6. Local model tiers, chosen for you** · built on `work/i6-local-tiers` (18 November 2026, unreleased; bench of
+16 November 2026, below) · Level 2
+- Built: ENLENS picks the tier from the computer's memory, graphics card and disk (`modeladvice.py`), downloads its
+  model on the person's *Set up the local model*, and sets the context length, reasoning (off for checks) and seed;
+  model names only under *Settings → Technical → The local model*, where an older model set up before keeps working
+  and the tier's model is offered beside it. The memory reckoning counts each model's load overhead, its tier's
+  context and, on Ollama's MLX runner, the growth the memory guard allows.
 
   | Computer | Model | What it does |
   | --- | --- | --- |
-  | Small (about 8 GB, or no graphics card) | `ifm/k2-horizon:0.9b` (2 GB) | Explorer only: points at passages, sorts the reading order, marks a possible lean, suggests search words |
-  | 16 GB laptop | `qwen3.5:4b` (4 GB file) | Suggestions only, better ones |
+  | Small (about 8 GB, or no graphics card) | `ifm/k2-horizon:0.9b` (1.1 GB) | Explorer only: points at sentences (`point` form), sorts the reading order |
+  | 16 GB laptop | `qwen3.5:4b` (3.7 GB file) | Suggestions only, better ones |
   | Larger (about 24 GB or more) | `qwen3.5:9b` | Suggestions only until measured; if it proves well calibrated, its surest answers may be trusted |
   | Documents Claude may read | Claude | Decides, as today |
 
-- **Suggestions only** means a local model never sets a status. Every claim it reads goes to the manual review card
-  (*Judge it myself*, *Awaiting manual review*, since 0.19.8), filled in with the model's passages, highlights and
-  lean; the researcher decides each passage. No local confidence number is shown. Open design point: whether the
-  suggestion shows before or after the researcher's own grade (a pre-filled card invites a quick *Agree*: the bench
-  saw a reviewer agree with 25 of 30 judgements, invented quotes included, when it was shown them).
-- The validation gold set (17 November 2026, `tools/validation/runs/`) agrees: Qwen 3.5 4B got 47% of verdicts right
-  (26 of 30 checks finished), K2 Horizon 0.9B finished none (its whole-sentence quotes for every passage ran past the
-  answer's length limit): a K2 tier needs its own, shorter answer form, or the length limit raised for it.
-- To handle when built: with Ollama's MLX runner, `qwen3.5:4b` grew from 5.2 GB to 12.7 GB of memory over a long run
-  (the advice reckons size plus context, so it needs more margin or a restart between batches); and temperature 0
-  with a fixed seed did not repeat answers word for word (62%), which the results' version note should say.
+- Built, **suggestions only**: a local model never sets a status. Every excerpt it reads goes to *Awaiting manual
+  review* with its marked sentence and lean, shown before the researcher's own grade (the owner's decision: the tool
+  speeds research up, it is not an exam); no local confidence number. Checks a local model judged before keep their
+  answer and say how many of its judgements still count unreviewed.
+- Built: K2's short answer form (`point`, `pointing.py`: numbered sentences, ENLENS cuts the quote, a grammar bounded by
+  the task, a cap of 24 + 14 tokens an excerpt); `maxItems`/`maxLength` on search words for every tier; the memory guard
+  of long runs (frees a grown MLX model, about 3 s to reload; an MLX model is let go of at the end of a job); the engine
+  (runner, quantisation, Ollama's version) with every local answer, the *Engine* column and a plain-words note in *How
+  these results were made*; *Repeatable results* says "not guaranteed" for MLX without asking the model.
+- Left to try (each needs a model loaded):
+  1. Bench `qwen3.5:4b-q4_K_M` (and `9b-q4_K_M`) against the nvfp4 numbers before pinning the GGUF tags
+     (`modeladvice.MEDIUM_MODEL`, `LARGE_MODEL`: one line each).
+  2. Run `tools/localbench/handhold_lp.py` with opposites written by K2 to set the lean's threshold (0.10 rests on 15
+     passages that matter); then turn the lean on (`pointing.LEAN`, with the small `opposite` step).
+  3. Check once on Ollama 0.40.16 that an unload frees the MLX runner's memory (Activity Monitor; ollama/ollama#17792).
+  4. Check whether `maxItems`/`maxLength` bound the answer on the MLX path, with one `expand` task.
+- Left to build: the AI run panel (progress) still names the local model (*Start/Stop qwen3.5:4b*, its *Model* row);
+  plain words there, with the name under Technical, is a follow-up.
 
 *The bench (16 November 2026).* 45 checks from the green hydrogen pilot (30 real VCA claims, 15 planted controls: a
 hidden supporting sentence, a claim turned into its opposite, unrelated passages), each answered 7 times by each

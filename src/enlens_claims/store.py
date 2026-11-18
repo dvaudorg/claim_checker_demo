@@ -476,6 +476,11 @@ MIGRATIONS = [("documents", "declared_ref", "TEXT"), ("vca_refs", "alias_of", "T
               # `cloud` allows (a JSON list of providers.ALLOWABLE; NULL: the project's `ai_providers_default`, absent:
               # Anthropic only), and who received each passage sent (NULL: Anthropic, as everything before)
               ("documents", "ai_providers", "TEXT"), ("ai_sent", "provider", "TEXT"),
+              # I6 (suggestions only): what a local model on this computer made of an excerpt of a check is a suggestion
+              # (a JSON object: {"by": "local", "form": "check" | "point", "rank", "order"}); it sets no status until
+              # the person judges the excerpt (verdicts.effective). NULL: a judgement that counts (Claude's, a person's,
+              # or a local model's from before I6, which keeps counting: check_results says so)
+              ("verifications", "suggestion_json", "TEXT"),
               ]
 
 

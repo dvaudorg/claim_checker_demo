@@ -1264,8 +1264,11 @@ def _run_check(ws, cid, backend, model, used, k, per_doc, expand, doc_ids, say, 
     graded = ws.scalar("SELECT COUNT(*) FROM verifications WHERE subject_kind='user_claim' AND subject_id=? "
                        "AND verdict != 'not_enough_info'", (cid,)) or 0
     attempts = ws.scalar("SELECT attempts FROM tasks WHERE task_id=?", (f"check:{cid}",)) or 1
+    # I6: with the local model's suggestions, which wait for the person's judgement too
     waiting = ws.scalar("SELECT COUNT(*) FROM verifications WHERE subject_kind='user_claim' AND subject_id=? AND "
-                        "model=? AND user_verdict IS NULL", (cid, PERSON)) or 0
+                        "(model=? OR suggestion_json IS NOT NULL) AND user_verdict IS NULL", (cid, PERSON)) or 0
+    graded -= ws.scalar("SELECT COUNT(*) FROM verifications WHERE subject_kind='user_claim' AND subject_id=? AND "
+                        "suggestion_json IS NOT NULL AND verdict != 'not_enough_info'", (cid,)) or 0
     say("grade_done", (f"{graded} of {len(picked)} excerpts are about the hypothesis; every quote was checked against "
                        "the document" if ok else "The AI's answers could not be used, even after three tries")
         + (f" ({attempts} tries)" if attempts > 1 and ok else "")
@@ -1688,7 +1691,7 @@ def history(ws: Workspace, threshold: float | None = None, limit: int | None = N
         if _checks is None:
             rounds.update(_light_checks(ws, cids))
         sql = ("SELECT subject_id, passage_id, verdict, confidence, doc_id, user_verdict, model, ai_history_json, "
-               "user_by FROM verifications WHERE subject_kind='user_claim'")
+               "user_by, suggestion_json FROM verifications WHERE subject_kind='user_claim'")
         if cids is None:
             vs = ws.query(sql)
         else:
