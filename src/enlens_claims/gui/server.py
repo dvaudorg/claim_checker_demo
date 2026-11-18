@@ -309,7 +309,11 @@ class App(LibraryMixin, QueueMixin):
         route = access.route_provider(s)
         others = sorted({p for p, have in keys.items() if have}
                         | ({route} if route not in (None, providers.ANTHROPIC) else set()))
+        from .. import keychain
+
         return {"list": providers.summary(), "keys": keys, "route": route, "set_up": others,
+                # where keys are kept ("file": ENLENS's own file, readable by this person only; else the keychain)
+                "keychain": keychain.backend(),
                 "other_set_up": bool(others) and not home.local_only(),
                 # a model server on another computer as the main route: its address, for the line that says it reads
                 # only the documents allowed to it

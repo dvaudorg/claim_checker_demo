@@ -7,6 +7,19 @@
 // something; "Stop the set-up?" once begun; and a last step, once it is done, that says what is left.
 // Used by provider-setup.js (the keys) and agent-setup.js (the agents).
 import { h, toast, field, input, button, dialog, confirmDialog, copyLine, guidedSteps, session } from "../lib.js";
+import * as access from "./ai-access.js";
+
+// The line that says how many of the project's documents the main route's provider may read, with a button to allow
+// it for the project (ai-access.js providerAllowLine; null when every document allows it, or in a copy of ENLENS
+// without it). Shown where a set-up ends and in Settings beside an agent or a provider.
+export function allowLine(project) {
+  const f = access.providerAllowLine;
+  if (!project || typeof f !== "function") return null;
+  try { return f(project, null, () => {}) || null; } catch (_) { return null; }
+}
+
+// "a" or "an" before a word ("an OpenAI key", "a Mistral key")
+export const article = (word) => (/^[aeiou]/i.test(String(word || "")) ? "an" : "a");
 
 // A web address to type or paste in a browser, with a Copy button (the storage space's typeAddress).
 export function typeAddress(href, id) {

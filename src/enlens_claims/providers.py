@@ -68,7 +68,7 @@ TABLE: dict[str, Provider] = {p.id: p for p in (
                      "formats": ("json_schema", "json_object", "none")},
              key_hint="console.mistral.ai → API keys",
              signup="https://console.mistral.ai", keys_url="https://console.mistral.ai/api-keys",
-             billing_url="https://console.mistral.ai"),
+             billing_url="https://admin.mistral.ai/organization/billing"),
     Provider("azure", "Azure OpenAI", "Microsoft", "https://{resource}.openai.azure.com/openai/v1", auth="api-key",
              keychain="provider-key:azure", lists_models=False, hosts=(".openai.azure.com",),
              quirks={"max_tokens": "max_completion_tokens", "seed": "seed",
@@ -79,7 +79,7 @@ TABLE: dict[str, Provider] = {p.id: p for p in (
              keychain="provider-key:openrouter", hosts=("openrouter.ai",),
              quirks={"max_tokens": "max_tokens", "seed": "seed", "formats": ("json_schema", "json_object", "none")},
              key_hint="openrouter.ai → Keys", placeholder="sk-or-…",
-             signup="https://openrouter.ai", keys_url="https://openrouter.ai/settings/keys",
+             signup="https://openrouter.ai", keys_url="https://openrouter.ai/keys",
              billing_url="https://openrouter.ai/settings/credits"),
 )}
 
@@ -120,7 +120,9 @@ LINEUP: dict[str, dict[str, tuple[str, ...]]] = {
     "gemini": {"small": ("gemini-3.5-flash-lite", "gemini-3.1-flash-lite"),
                "middle": ("gemini-4-hydrogen", "gemini-3.8-flash"),
                "strong": ("gemini-4-carbon", "gemini-4-argon", "gemini-4-hydrogen")},
-    "mistral": {"small": ("ministral-8b-latest", "mistral-small-latest"), "middle": ("mistral-small-latest",),
+    # (mistral-small-latest first for the small tier: Ministral is not on Mistral's models page, so an id that may not
+    # be listed is never the default; it stays the second candidate for a key that offers it)
+    "mistral": {"small": ("mistral-small-latest", "ministral-8b-latest"), "middle": ("mistral-small-latest",),
                 "strong": ("mistral-large-latest",)},
     # Azure: what to deploy (the names are the person's own deployments, typed in Settings)
     "azure": {"small": ("gpt-6-luna",), "middle": ("gpt-6.2-sol",), "strong": ("gpt-6.2-astra",)},

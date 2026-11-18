@@ -5,7 +5,8 @@
 // lists the models the key may use and shows, as the done step, the recommended models ENLENS applied from that list
 // (providers.recommended, resolved by GET /api/settings/provider-models). Used by Settings → AI (settings.js).
 import { App, api, h, notice, input, field, fold } from "../lib.js";
-import { outsideSetup, addressStep, typeAddress, pasteField } from "./outside-setup.js";
+import { outsideSetup, addressStep, typeAddress, pasteField, allowLine } from "./outside-setup.js";
+import { keptIn } from "./team-space.js";
 
 // the three tiers, in the words of a sentence ("gpt-6-luna for labels and links")
 export const TIER_WORDS = { small: "labels and links", middle: "judging excerpts", strong: "second opinions" };
@@ -13,7 +14,12 @@ export const TIERS = ["small", "middle", "strong"];
 // Claude's own ladder, as the routing table applies it on the Claude API
 const CLAUDE_LADDER = { small: "Claude Haiku", middle: "Claude Sonnet", strong: "Claude Opus" };
 
-const KEPT = "Kept in this computer’s keychain. Only whether a key is stored ever comes back to this page.";
+// where the keys are kept on this computer: its keychain, or (where it has none) ENLENS's own file, readable by this
+// person only (the storage space's words, team-space.js keptIn; the backend from the providers' state)
+const keychainKind = () => ((App.state && App.state.providers) || {}).keychain;
+export const keptWhere = () => keptIn(keychainKind());                              // "Kept in this computer’s keychain"
+export const storedWhere = () => keptWhere().replace(/^Kept /, "");                  // "in this computer’s keychain"
+const kept = () => `${keptWhere()}. Only whether a key is stored ever comes back to this page.`;
 const once = (who) => notice({ kind: "attention", role: "note" }, h("p", {}, `${who} shows the key only once. Copy it before you leave that page.`));
 const strong = (t) => h("strong", {}, t);
 
@@ -30,8 +36,13 @@ export async function putSettings(changes) {
 // A provider's problem said on a page that is not Settings → AI (its words point there)
 export const plainProblem = (t) => String(t || "").replace(/\s*Check (?:it|the address) in Settings → AI[^.]*\./g, "").trim();
 
-// "Applied automatically: a for labels and links, b for judging excerpts, c for second opinions."
+// "Applied automatically: a for labels and links, b for judging excerpts, c for second opinions." When every tier is
+// the same model (a free plan that offers one), it says so once, and that a second opinion is the same model again.
 export function appliedLine(lineup, lead = "Applied automatically: ") {
+  const ids = TIERS.map((t) => lineup[t]).filter(Boolean);
+  if (ids.length === TIERS.length && new Set(ids).size === 1) {
+    return h("p", { class: "provider-applied" }, lead, "every task uses ", h("code", {}, ids[0]), "; a second opinion then comes from the same model.");
+  }
   const parts = TIERS.filter((t) => lineup[t]).map((t) => [h("code", {}, lineup[t]), ` for ${TIER_WORDS[t]}`]);
   if (!parts.length) return null;
   const out = [lead];
@@ -43,7 +54,7 @@ export function appliedLine(lineup, lead = "Applied automatically: ") {
 // provider as providers.summary() gives it (its pages and its recommendations).
 export function providerSteps(p) {
   const rec = p.recommended || {};
-  const key = pasteField("API key", { id: `key-${p.id}`, placeholder: p.placeholder || "", help: KEPT });
+  const key = pasteField("API key", { id: `key-${p.id}`, placeholder: p.placeholder || "", help: kept() });
   const paste = (more = []) => ({ title: "Paste the key here", next: false, body: [key, ...more] });
   const readKey = () => ({ key: key.input.value.trim() });
   const needKey = (b) => (!b.key ? `Paste the key ${p.company === "Microsoft" ? "from the Azure portal" : `${p.title} showed`}.` : "");
@@ -84,7 +95,8 @@ export function providerSteps(p) {
       steps: [
         addressStep({ title: "Make a Mistral account", href: p.signup, id: "key-mistral-signup", next: "I have an account" }),
         { title: "Choose a plan with API access", next: "I have a plan", body: [
-          h("p", {}, "In Mistral’s console, choose a plan that includes API access and add a payment method. Without them, keys are refused.")] },
+          h("p", {}, "In Mistral’s console, choose a plan that includes API access and add a payment method. Without them, keys are refused. Billing is here:"),
+          typeAddress(p.billing_url, "key-mistral-billing")] },
         { title: "Make a key for ENLENS", next: "I have copied the key", body: [
           h("p", {}, "Open ", strong("API Keys"), " and press ", strong("New key"), ". Name it ENLENS and choose when it expires."),
           typeAddress(p.keys_url, "key-mistral-keys"),
@@ -107,7 +119,7 @@ export function providerSteps(p) {
         addressStep({ title: "Sign in to Microsoft Foundry", href: p.signup, id: "key-azure-signup", next: "I am signed in",
           more: h("p", { class: "muted small" }, "With your institution’s Microsoft account. It needs an Azure subscription with Azure OpenAI; your IT department may hold one.") }),
         { title: "Deploy the three recommended models", next: "They are deployed", body: [
-          h("p", {}, "In Foundry, open ", strong("Build › Catalog › Model catalog"), ", choose each model below and press ", strong("Deploy"), ". Keep the model’s name as the deployment’s name."),
+          h("p", {}, "In Foundry, open the ", strong("Model catalog"), ", choose each model below and press ", strong("Deploy"), ". Keep the model’s name as the deployment’s name."),
           h("ul", { class: "provider-models-list" }, TIERS.map((t) => h("li", {}, h("code", {}, rec[t] || ""), h("span", { class: "muted" }, ` for ${TIER_WORDS[t]}`)))),
           otherNames] },
         { title: "Find the key and the address", next: "I see them", body: [
@@ -152,13 +164,14 @@ function keyDone(p, r, { chosen = {}, offer } = {}) {
     quiet: offer ? "Not now" : null,
     body: [
       unchecked
-        ? notice({ kind: "attention", role: "note" }, h("p", {}, `The key is stored in this computer’s keychain, but ${p.title} could not be asked whether it works (${plainProblem(r.problem)}). If it is wrong, ${p.title} will refuse it when it is first used.`))
-        : notice({ kind: "done", role: "note" }, h("p", {}, r.listed ? `The key is stored in this computer’s keychain, and ${p.title} accepted it.` : "The key is stored in this computer’s keychain.")),
+        ? notice({ kind: "attention", role: "note" }, h("p", {}, `The key is stored ${storedWhere()}, but ${p.title} could not be asked whether it works (${plainProblem(r.problem)}). If it is wrong, ${p.title} will refuse it when it is first used.`))
+        : notice({ kind: "done", role: "note" }, h("p", {}, r.listed ? `The key is stored ${storedWhere()}, and ${p.title} accepted it.` : `The key is stored ${storedWhere()}.`)),
       p.id === "azure" ? appliedLine(r.deployments || lineup, "Your deployments: ")
         : appliedLine(lineup, r.listed ? `Applied automatically, from ${p.company}’s recommendations for the models your key may use: ` : "Applied automatically, from its recommendations: "),
       own.length ? h("p", { class: "muted small" }, `Your own choice for ${own.map((t) => TIER_WORDS[t]).join(" and ")} stays in place of the recommendation.`) : null,
       h("p", { class: "muted small" }, "You can change them under Recommended models, below the key."),
       offer && offer.line ? h("p", { class: "provider-left" }, offer.line) : null,
+      allowLine(App.project),
     ],
   };
 }
