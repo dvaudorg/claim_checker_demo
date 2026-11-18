@@ -38,11 +38,14 @@ export function pasteField(label, { id, help, placeholder, plain = false } = {})
 //     at which step (default the last)
 //   mainText: the main button's words ("Store the key"); submit(body, ui): does the task; returns a result (anything
 //     but false) when done, false to stay (ui.error said why), or throws (its message is shown)
-//   after: a step shown once done (no buttons), or (result) => step | null: what is left, what was applied
+//   after: a step shown once done (no buttons), or (result) => step | null: what is left, what was applied. The step
+//     may carry `main: { text, run(result) }` (the main button's words and what it does when pressed: "Allow cloud
+//     models and use OpenAI") and `quiet` (the words of a quiet button that just closes: "Not now"); without them the
+//     main button says Done
 //   start: the step to open at; rememberKey: the window remembers the step under this key (a set-up taken up again
 //     later opens where it was); start wins over it
 //   ask: false: no "Stop the set-up?" (nothing typed can be lost); stopMessage: its words
-//   doneWords: a toast once done (after the after step's Done, or at once without one)
+//   doneWords: a toast once done (after the after step's Done, or at once without one), or (result) => words
 //   onStep(i, ui): after every move (a step that waits for something outside starts watching for it here)
 //   onClose(): once the dialog has gone, however it went
 //   foot: lines under the steps (a note that stays)
@@ -57,9 +60,10 @@ export async function outsideSetup(opts) {
   const list = steps.filter(Boolean);
   const last = list.length - 1;              // the last step that asks for something
   let ready = false;                         // done: the after step says what is left
+  let afterStep = null;
   let result = null;
   const afterHolder = h("div", { class: "outside-after" });
-  const afterTitle = h("span", {}, "Done");
+  const afterTitle = h("span", {}, "What ENLENS applied");
   const all = after ? [...list, { title: afterTitle, next: false, back: false, body: [afterHolder] }] : list;
   const remembered = rememberKey ? Number(session(rememberKey)) || 0 : 0;
   const first = Math.min(Math.max(0, start ?? remembered), last);
@@ -89,11 +93,12 @@ export async function outsideSetup(opts) {
     const step = typeof after === "function" ? after(result) : after;
     if (!step) { if (!fromMain) closeNow(); return false; }
     ready = true;
+    afterStep = step;
     afterHolder.replaceChildren(...[].concat(step.body || []).filter(Boolean));
     if (step.title) afterTitle.textContent = step.title;
     way.go(all.length - 1);
-    const b = confirmBtn(); if (b) { b.textContent = "Done"; hold(b, false); }
-    const c = cancelBtn(); if (c) c.hidden = true;
+    const b = confirmBtn(); if (b) { b.textContent = (step.main && step.main.text) || "Done"; hold(b, false); }
+    const c = cancelBtn(); if (c) { c.hidden = !step.quiet; if (step.quiet) c.textContent = step.quiet; }
     return true;
   }
   const begun = () => !ready && ask && (way.at() > 0 || Object.values(read()).some(Boolean));
@@ -105,7 +110,14 @@ export async function outsideSetup(opts) {
     actions: [{ text: "Cancel", value: null, id: "dlg-cancel" }, {
       text: mainText, primary: true, id: "dlg-confirm",
       async onClick(dlg) {
-        if (ready) return true;   // the button says Done now
+        if (ready) {   // the button says Done now, or what it still does (afterStep.main)
+          const run = afterStep && afterStep.main && afterStep.main.run;
+          if (!run) return true;
+          const again = dlg.querySelector("#dlg-confirm");
+          again.disabled = true;
+          try { await run(result); return true; }
+          catch (e) { err.textContent = e.message || String(e); again.disabled = false; return false; }
+        }
         err.textContent = "";
         const body = read();
         const lacks = missing(body);
@@ -129,7 +141,8 @@ export async function outsideSetup(opts) {
   });
   const value = await shown;
   if (onClose) { try { onClose(); } catch (_) { /* gone anyway */ } }
-  if (result !== null && doneWords) toast(doneWords, "ok", { ttl: 9000 });
+  const words = result === null ? "" : typeof doneWords === "function" ? doneWords(result) : doneWords;
+  if (words) toast(words, "ok", { ttl: 9000 });
   void value;
   return result;
 }

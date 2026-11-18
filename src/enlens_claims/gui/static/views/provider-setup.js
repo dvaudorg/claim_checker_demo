@@ -4,7 +4,7 @@
 // The last step stores the key (it goes to this computer's keychain; only "stored: yes or no" ever comes back), then
 // lists the models the key may use and shows, as the done step, the recommended models ENLENS applied from that list
 // (providers.recommended, resolved by GET /api/settings/provider-models). Used by Settings → AI (settings.js).
-import { App, api, h, notice, input, field } from "../lib.js";
+import { App, api, h, notice, input, field, fold } from "../lib.js";
 import { outsideSetup, addressStep, typeAddress, pasteField } from "./outside-setup.js";
 
 // the three tiers, in the words of a sentence ("gpt-6-luna for labels and links")
@@ -16,6 +16,19 @@ const CLAUDE_LADDER = { small: "Claude Haiku", middle: "Claude Sonnet", strong: 
 const KEPT = "Kept in this computer’s keychain. Only whether a key is stored ever comes back to this page.";
 const once = (who) => notice({ kind: "attention", role: "note" }, h("p", {}, `${who} shows the key only once. Copy it before you leave that page.`));
 const strong = (t) => h("strong", {}, t);
+
+// Save settings from a dialog (as Settings' own save does: the app's copy and everything listening follow at once)
+export async function putSettings(changes) {
+  const r = await api("PUT", "/api/settings", changes);
+  App.state.settings = r.settings;
+  App.state.backend_label = r.backend_label;
+  if (r.providers) App.state.providers = r.providers;
+  for (const fn of App.listeners) fn(App.state);
+  return r;
+}
+
+// A provider's problem said on a page that is not Settings → AI (its words point there)
+export const plainProblem = (t) => String(t || "").replace(/\s*Check (?:it|the address) in Settings → AI[^.]*\./g, "").trim();
 
 // "Applied automatically: a for labels and links, b for judging excerpts, c for second opinions."
 export function appliedLine(lineup, lead = "Applied automatically: ") {
@@ -42,7 +55,7 @@ export function providerSteps(p) {
         { title: "Add credit", next: "I have added credit", body: [
           h("p", {}, "The API is billed per use, from credit you add in advance. Open the billing page and add some:"),
           typeAddress(p.billing_url, "key-openai-billing"),
-          notice({ kind: "info", role: "note" }, h("p", {}, "A ChatGPT plan does not pay for the API. To use your ChatGPT plan instead, with no key, choose ", strong("Codex"), " above."))] },
+          notice({ kind: "info", role: "note" }, h("p", {}, "A ChatGPT plan does not pay for the API. To use your ChatGPT plan instead, with no key, close this set-up and choose ", strong("Subscription"), ", then ", strong("Codex"), "."))] },
         { title: "Make a key for ENLENS", next: "I have copied the key", body: [
           h("p", {}, "Open the keys page and make a new secret key. Name it ENLENS, so you know later what it is for."),
           typeAddress(p.keys_url, "key-openai-keys"),
@@ -84,24 +97,25 @@ export function providerSteps(p) {
   if (p.id === "azure") {
     const address = pasteField("Endpoint (the resource’s address)", { id: "key-azure-address", plain: true, placeholder: "https://my-resource.openai.azure.com",
       help: "Copy it from Keys and Endpoint. ENLENS adds /openai/v1/ itself." });
-    const deps = Object.fromEntries(TIERS.map((t) => [t, input({ mono: true, id: `key-azure-dep-${t}`, autocomplete: "off", spellcheck: "false", value: rec[t] || "", placeholder: rec[t] || "" })]));
-    const depFields = h("div", { class: "provider-deployments" },
-      h("p", { class: "field-label" }, "Your deployments’ names"),
-      ...TIERS.map((t) => field(`For ${TIER_WORDS[t]}`, deps[t])),
-      h("p", { class: "field-help" }, "Filled in with the models’ own names; change one only if you named its deployment otherwise."));
+    // empty = the recommended name (the placeholder shows it)
+    const deps = Object.fromEntries(TIERS.map((t) => [t, input({ mono: true, id: `key-azure-dep-${t}`, autocomplete: "off", spellcheck: "false", value: "", placeholder: rec[t] || "" })]));
+    const otherNames = fold({ sm: true, id: "key-azure-other-names" }, "I gave a deployment another name",
+      h("p", { class: "field-help" }, "Type the name you gave it. Left empty, a deployment has the model’s own name."),
+      ...TIERS.map((t) => field(`For ${TIER_WORDS[t]}`, deps[t])));
     return {
       steps: [
         addressStep({ title: "Sign in to Microsoft Foundry", href: p.signup, id: "key-azure-signup", next: "I am signed in",
           more: h("p", { class: "muted small" }, "With your institution’s Microsoft account. It needs an Azure subscription with Azure OpenAI; your IT department may hold one.") }),
         { title: "Deploy the three recommended models", next: "They are deployed", body: [
           h("p", {}, "In Foundry, open ", strong("Build › Catalog › Model catalog"), ", choose each model below and press ", strong("Deploy"), ". Keep the model’s name as the deployment’s name."),
-          h("ul", { class: "provider-models-list" }, TIERS.map((t) => h("li", {}, h("code", {}, rec[t] || ""), h("span", { class: "muted" }, ` for ${TIER_WORDS[t]}`))))] },
+          h("ul", { class: "provider-models-list" }, TIERS.map((t) => h("li", {}, h("code", {}, rec[t] || ""), h("span", { class: "muted" }, ` for ${TIER_WORDS[t]}`)))),
+          otherNames] },
         { title: "Find the key and the address", next: "I see them", body: [
           h("p", {}, "In the Azure portal, open your Azure OpenAI resource, then ", strong("Keys and Endpoint"), "."),
           typeAddress(p.keys_url, "key-azure-portal")] },
-        { title: "Paste them here", next: false, body: [address, key, depFields] },
+        { title: "Paste them here", next: false, body: [address, key] },
       ],
-      read: () => ({ key: key.input.value.trim(), azure_url: address.input.value.trim(), deployments: Object.fromEntries(TIERS.map((t) => [t, deps[t].value.trim()])) }),
+      read: () => ({ key: key.input.value.trim(), azure_url: address.input.value.trim(), deployments: Object.fromEntries(TIERS.map((t) => [t, deps[t].value.trim() || rec[t] || ""])) }),
       missing: (b) => (!b.azure_url ? "Paste the endpoint from Keys and Endpoint." : !/^https:\/\//i.test(b.azure_url) ? "The endpoint starts with https://." : needKey(b)),
     };
   }
@@ -124,28 +138,34 @@ export function providerSteps(p) {
   return { steps: [paste()], read: readKey, missing: needKey };
 }
 
-// The done step of a key: stored, and the models applied (or why they could not be listed). `chosen`: the person's
-// own choices per tier (they stay in place of the recommendation); `left`: what is still to do in Settings (a line).
-function keyDone(p, r, { chosen = {}, left } = {}) {
+// The done step of a key: stored, and the models applied. `r.problem`: the provider could not be reached to check the
+// key (a refused key never gets here: the paste step says so and forgets it). `chosen`: the person's own choices per
+// tier (they stay in place of the recommendation). `offer`: what the main button still does ({ text, line, run }),
+// null when nothing is left.
+function keyDone(p, r, { chosen = {}, offer } = {}) {
   const lineup = r.recommended || p.recommended || {};
   const own = TIERS.filter((t) => chosen[t]);
+  const unchecked = !!r.problem;
   return {
-    title: `${p.title} is set up`,
+    title: unchecked ? "The key is stored, not checked yet" : `${p.title} is set up`,
+    main: offer ? { text: offer.text, run: async (res) => { await offer.run(); res.applied = true; } } : null,
+    quiet: offer ? "Not now" : null,
     body: [
-      notice({ kind: "done", role: "note" }, h("p", {}, r.listed ? `The key is stored in this computer’s keychain, and ${p.title} accepted it.` : "The key is stored in this computer’s keychain.")),
+      unchecked
+        ? notice({ kind: "attention", role: "note" }, h("p", {}, `The key is stored in this computer’s keychain, but ${p.title} could not be asked whether it works (${plainProblem(r.problem)}). If it is wrong, ${p.title} will refuse it when it is first used.`))
+        : notice({ kind: "done", role: "note" }, h("p", {}, r.listed ? `The key is stored in this computer’s keychain, and ${p.title} accepted it.` : "The key is stored in this computer’s keychain.")),
       p.id === "azure" ? appliedLine(r.deployments || lineup, "Your deployments: ")
         : appliedLine(lineup, r.listed ? `Applied automatically, from ${p.company}’s recommendations for the models your key may use: ` : "Applied automatically, from its recommendations: "),
-      r.problem ? h("p", { class: "muted small" }, `The models could not be listed just now (${r.problem}), so ENLENS uses the recommendations as they are.`) : null,
       own.length ? h("p", { class: "muted small" }, `Your own choice for ${own.map((t) => TIER_WORDS[t]).join(" and ")} stays in place of the recommendation.`) : null,
       h("p", { class: "muted small" }, "You can change them under Recommended models, below the key."),
-      left ? h("p", { class: "provider-left" }, left) : null,
+      offer && offer.line ? h("p", { class: "provider-left" }, offer.line) : null,
     ],
   };
 }
 
 // Set up a cloud provider's key in a dialog. opts: at ("paste": open at the last step, to change the key), chosen
-// (the person's own model choices), left (what is still to do, a line for the done step). Resolves with
-// { stored, recommended, models, problem, azure_url, deployments } or null.
+// (the person's own model choices), offer (a function: what the done step's main button still does, or null; see
+// keyDone). Resolves with { stored, recommended, models, problem, azure_url, deployments, applied } or null.
 export async function providerSetup(p, opts = {}) {
   const svc = providerSteps(p);
   return outsideSetup({
@@ -162,17 +182,29 @@ export async function providerSetup(p, opts = {}) {
       const r = await api("POST", "/api/settings/provider-key", { provider: p.id, key: body.key });
       App.state.providers = r.providers;
       const out = { stored: true, recommended: p.recommended || {}, models: [], listed: false, problem: "" };
-      if (p.id === "azure") return { ...out, azure_url: body.azure_url, deployments: body.deployments };
+      if (p.id === "azure") {
+        // nothing is lost without Settings' Save: the endpoint and the deployments' names are kept now
+        const d = body.deployments;
+        await putSettings({ azure_url: body.azure_url, cloud_small_model: d.small, cloud_model: d.middle, cloud_strong_model: d.strong });
+        return { ...out, azure_url: body.azure_url, deployments: d };
+      }
       ui.progress("Asking which models the key may use…");
       try {
         const m = await api("GET", `/api/settings/provider-models?provider=${encodeURIComponent(p.id)}`);
+        if (m.refused) {
+          // the provider answered that the key is wrong: it is forgotten, and the person pastes it again
+          try { App.state.providers = (await api("DELETE", "/api/settings/provider-key", { provider: p.id })).providers; } catch (_) { /* shown by the next look */ }
+          ui.progress("");
+          ui.error(`${p.title} refused this key. Copy it again from the keys page.`);
+          return false;
+        }
         Object.assign(out, { models: m.models || [], listed: !!(m.models || []).length, problem: m.problem || "" });
         if (m.recommended) out.recommended = m.recommended;
       } catch (e) { out.problem = e.message || String(e); }
       return out;
     },
-    after: (r) => keyDone(p, r, { chosen: opts.chosen, left: typeof opts.left === "function" ? opts.left() : opts.left }),
-    doneWords: `${p.title} is set up.`,
+    after: (r) => keyDone(p, r, { chosen: opts.chosen, offer: typeof opts.offer === "function" ? opts.offer() : opts.offer }),
+    doneWords: (r) => (r.problem ? `The ${p.title} key is stored.` : r.applied ? `${p.title} is set up and in use.` : `${p.title} is set up.`),
   });
 }
 
@@ -196,17 +228,19 @@ export async function claudeKeySetup(opts = {}) {
     steps, start: opts.at === "paste" ? steps.length - 1 : undefined, rememberKey: "provider-setup-step:anthropic",
     read: () => ({ key: key.input.value.trim() }),
     missing: (b) => (!b.key ? "Paste the key the Claude platform showed." : ""),
-    mainText: "Use this key",
+    mainText: "Store the key",
     async submit(body, ui) {
       ui.progress("Storing the key…");
       const r = await api("POST", "/api/settings/key", { key: body.key, remember: remember.checked });
       App.state.key = r.key;
       return { stored: true, remembered: remember.checked };
     },
-    after: (r) => ({ title: "The Claude API is set up", body: [
+    after: (r) => { const offer = typeof opts.offer === "function" ? opts.offer() : opts.offer; return { title: "The Claude API is set up", body: [
       notice({ kind: "done", role: "note" }, h("p", {}, r.remembered ? "The key is kept on this computer." : "The key is kept until you close ENLENS.")),
       h("p", { class: "provider-applied" }, `Applied automatically: ${CLAUDE_LADDER.small} for labels and links, ${CLAUDE_LADDER.middle} for judging excerpts and ${CLAUDE_LADDER.strong} for second opinions. How much thought, below, moves each one step lighter or stronger.`),
-      opts.left ? h("p", { class: "provider-left" }, typeof opts.left === "function" ? opts.left() : opts.left) : null] }),
-    doneWords: "The Claude API is set up.",
+      offer && offer.line ? h("p", { class: "provider-left" }, offer.line) : null],
+      main: offer ? { text: offer.text, run: async (res) => { await offer.run(); res.applied = true; } } : null, quiet: offer ? "Not now" : null };
+    },
+    doneWords: (r) => (r.applied ? "The Claude API is set up and in use." : "The Claude API is set up."),
   });
 }

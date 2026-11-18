@@ -82,7 +82,7 @@ def setup_view(route: str, refresh: bool = False) -> dict:
     else:
         st = agentcli.status(route, refresh=refresh)
         status = {k: st.get(k) for k in ("found", "path", "version", "signed_in", "account", "connector", "ready",
-                                         "models_available", "problem")}
+                                         "can_start", "models_available", "problem")}
     available = status.get("models_available") or None
     inst = agentcli.installer_command(route)
     return {"route": route, "title": a.title, "company": providers.company(a.provider), "program": a.program,

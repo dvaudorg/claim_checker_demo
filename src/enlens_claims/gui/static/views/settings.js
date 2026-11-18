@@ -5,7 +5,7 @@ import { aiRun } from "./progress.js";
 import { remoteServerLine, restrictedModelCard, termsPanel } from "./ai-access.js";
 import { localModelHelp } from "./local-model.js";
 import { queueSection } from "./queue.js";
-import { providerSetup, claudeKeySetup, TIERS } from "./provider-setup.js";
+import { providerSetup, claudeKeySetup, TIERS, plainProblem } from "./provider-setup.js";
 import { agentSetupDialog, cliAdapter, AGENTS } from "./agent-setup.js";
 
 // Providers stage 2: ENLENS's three tiers of work, as Settings names them (providers.TIER_TITLES)
@@ -298,13 +298,18 @@ function modelSection(s, servers, watchers, info = { servers }) {
     // Claude Code is the recommendation; Antigravity the one for a person without a paid plan (Claude Code is not
     // offered on Claude's free plan; Antigravity runs on a free personal Google account, on Gemini 3.8 Flash only)
     claude_code: { title: "Claude Code", plan: "Your Claude plan (Pro, Max, Team)", company: "Anthropic", tag: "Recommended" },
-    codex: { title: "Codex", plan: "Your ChatGPT plan (Plus, Pro, Business)", company: "OpenAI" },
-    antigravity: { title: "Antigravity", plan: "Your Google account, free or paid. Free: every task on Gemini 3.8 Flash.", company: "Google", tag: "Recommended on a free plan" },
+    codex: { title: "Codex", plan: "Your ChatGPT plan (Plus, Pro, Business)", company: "OpenAI",
+      // what its maker does with the text on that kind of account (checked on its pages, 18 November 2026)
+      terms: "On ChatGPT Plus or Pro, OpenAI may use what Codex reads to improve its models unless Improve the model for everyone is off in ChatGPT’s Data controls; Business, Edu and Enterprise plans are not used for that by default.",
+      foot: "may train its models on Plus or Pro unless you switch that off" },
+    antigravity: { title: "Antigravity", plan: "Your Google account, free or paid. Free: every task on Gemini 3.8 Flash.", company: "Google", tag: "Recommended on a free plan",
+      terms: "On a personal Google account, Google may use what Antigravity reads to improve its products while Antigravity’s Enable Telemetry setting is on (Settings › Account in Antigravity). Switch it off before you use it for research documents.",
+      foot: "may improve its products from it while Telemetry is on" },
   };
   // the agent the Subscription card stands for: the saved one, else the one last chosen here, else Claude Code
   let agent = AGENT_ROUTES.includes(backend) ? backend : (AGENT_ROUTES.includes(store("settings-agent")) ? store("settings-agent") : "claude_code");
   const ROUTES = [
-    ["subscription", "Subscription", "cloud", "Recommended", "An AI on a plan you already pay for: Claude Code, Codex or Antigravity. ENLENS prepares the work, starts it for you and checks every quote.", "Only the passages inside the tasks go to the company of the plan you choose"],
+    ["subscription", "Subscription", "cloud", "Recommended", "An AI on a plan you already have: Claude Code, Codex or Antigravity. ENLENS prepares the work, starts it for you and checks every quote.", "Only the passages inside the tasks go to the company of the plan you choose"],
     ["local", "Local model", "house", "", "Ollama, LM Studio, llama.cpp, Jan or vLLM. Free and fully private; needs a capable computer and judges less well than Claude.", "Nothing leaves this computer"],
     ["baseline", "No AI (demo)", "eye-off", "", "A word-overlap stand-in, to see how the app works. Search, keyword profiles, the glossary and themes work fully without AI.", "Nothing leaves this computer"],
     ["anthropic", "Claude API (team key)", "key", "", "For a shared installation: the Claude API with the team's key, billed per use.", "The excerpts read go to Anthropic"],
@@ -318,13 +323,15 @@ function modelSection(s, servers, watchers, info = { servers }) {
   const select = (key) => radiosWrap.set(key);
   // an agent on the person's plan asks first, once (allow_claude_code, allow_codex, allow_antigravity): true when it may
   async function askAgent(key) {
+    // the way out says where the AI stays: with the agent in use, if another one is, else on this computer
+    const safe = { text: AGENT_ROUTES.includes(backend) && backend !== key ? `Stay with ${AGENT_CHOICE[backend].title}` : "Keep the AI on this computer", value: false, id: "dlg-safe" };
     if (key === "claude_code" && !allowCC) {
       const ok = await dialog({
         title: "Let Claude Code read the excerpts, on your own Claude plan?",
         body: h("div", {}, h("p", {}, "The AI buttons of ENLENS then prepare tasks; Claude Code answers them, started by ENLENS when you press Start Claude Code, or by you with /enlens-run."),
           h("p", {}, h("strong", {}, "The passages inside the tasks Claude Code takes are sent to Anthropic."), " Your documents, results and reviews stay on this computer, and every answer is checked here against the text."),
           h("p", { class: "muted small" }, "ENLENS never sees your Claude login and never runs on anyone else's plan.")),
-        actions: [{ text: "Keep the AI on this computer", value: false, id: "dlg-safe" }, { text: "Use Claude Code", value: true, primary: true }],
+        actions: [safe, { text: "Use Claude Code", value: true, primary: true }],
       });
       if (!ok) return false;
       allowCC = true;
@@ -336,20 +343,32 @@ function modelSection(s, servers, watchers, info = { servers }) {
         title: `Let ${a.title} read the excerpts, on ${a.plan}?`,
         body: h("div", {}, h("p", {}, `The AI buttons of ENLENS then prepare tasks; ${a.title} answers them, started by ENLENS when you press Start ${a.title}.`),
           h("p", {}, h("strong", {}, `The passages inside the tasks ${a.title} takes are sent to ${a.company}.`), " Your documents, results and reviews stay on this computer, and every answer is checked here against the text."),
+          h("p", {}, h("strong", {}, AGENT_CHOICE[key].terms)),
           h("p", {}, h("strong", {}, `Only documents that allow ${a.company} are sent.`), ` Every document allows Anthropic only until you tick ${a.company} for it on the Documents page; the others wait for another AI, or for you.`),
           h("p", { class: "muted small" }, `ENLENS never sees your login and never runs on anyone else’s plan. ${a.title} is not yet measured with ENLENS: check its answers before you rely on them.`)),
-        actions: [{ text: "Keep the AI on this computer", value: false, id: "dlg-safe" }, { text: `Use ${a.title}`, value: true, primary: true }],
+        actions: [safe, { text: `Use ${a.title}`, value: true, primary: true }],
       });
       if (!ok) return false;
       allowAgent[key] = true;
     }
     return true;
   }
+  // The consent is the decision: once an agent may read, the route and its allow are saved at once, so the sidebar and
+  // every Start follow (no "ready" beside a route that is not saved yet). false when it could not be saved.
+  async function useAgent(key) {
+    try {
+      await save({ backend: key, [`allow_${key}`]: true }, state);
+      Object.assign(s, App.settings());
+    } catch (_) { return false; }   // shown by save()
+    backend = agent = key;
+    store("settings-agent", key);
+    return true;
+  }
   const onRoute = async (key) => {
     const prev = routeOf(backend);
     if (key === "subscription") {
       if (!(await askAgent(agent))) { select(prev); return; }
-      backend = agent;
+      if (!(await useAgent(agent))) { select(prev); return; }
       drawDetail();
       return;
     }
@@ -482,18 +501,16 @@ function modelSection(s, servers, watchers, info = { servers }) {
   // Which agent of the Subscription card: Claude Code (the default), Codex or Antigravity, each naming where the passages
   // go. Codex and Antigravity ask first, as Claude Code does; a no puts the choice back.
   function agentChoice() {
-    const cards = optionCards({ class: "agent-choice", id: "agent-choice", label: "Which plan", value: backend,
+    const cards = optionCards({ class: "agent-choice", id: "agent-choice", label: "Subscription: whose plan", value: backend,
       options: AGENT_ROUTES.map((r) => ({ value: r, title: AGENT_CHOICE[r].title, text: AGENT_CHOICE[r].plan, tag: AGENT_CHOICE[r].tag || null,
-        foot: [icon("cloud", { size: 12 }), `The passages go to ${AGENT_CHOICE[r].company}`] })),
+        foot: [icon("cloud", { size: 12 }), `The passages go to ${AGENT_CHOICE[r].company}${AGENT_CHOICE[r].foot ? `, which ${AGENT_CHOICE[r].foot}` : ""}`] })),
       onPick: async (v) => {
         if (v === backend) return;
-        if (!(await askAgent(v))) { cards.set(backend); return; }
-        backend = agent = v;
-        store("settings-agent", v);
-        state.textContent = "Not saved yet: press Save.";
+        if (!(await askAgent(v)) || !(await useAgent(v))) { cards.set(backend); return; }
         drawDetail();
       } });
-    return h("div", { class: "field set-agent-choice" }, h("div", { class: "field-label" }, "Which plan"), cards);
+    // an inset under the route picker, so it reads as part of the Subscription card and not as a second picker
+    return inset({ class: "set-agent-choice agent-choice-box" }, h("div", { class: "field-label" }, "Subscription: whose plan"), cards);
   }
 
   function fableSwitch() {
@@ -544,6 +561,7 @@ function modelSection(s, servers, watchers, info = { servers }) {
   // recommendation or the person's choice. A select from `models` with "Recommended (<id>)" first (its value is empty:
   // the recommendation, so a newer ENLENS brings newer ones by itself) and "Other (type a name)…" last; `typed`: three
   // text fields instead (Azure's deployment names). `.value()`: {small, middle, strong}.
+  const MODELS_LABEL = "Recommended models, applied automatically";
   function modelRows({ id, recommended = {}, chosen = {}, models = [], typed = false }) {
     const ctl = {};
     const rows = TIERS.map((t) => {
@@ -571,8 +589,8 @@ function modelSection(s, servers, watchers, info = { servers }) {
       }
       const show = () => {
         const v = value();
-        state.replaceChildren(...[].concat(typed ? (v ? [] : "Empty: another tier’s deployment answers it.")
-          : v ? ["In use: ", h("code", {}, v), " · your choice"] : rec ? ["In use: ", h("code", {}, rec), " · recommended"] : []));
+        // the select says what is in use; only a choice of the person's own is called one
+        state.replaceChildren(...[].concat(typed ? (v ? [] : "Empty: another tier’s deployment answers it.") : v ? "Your choice" : []));
       };
       if (typed) txt.addEventListener("input", () => show());
       show();
@@ -595,11 +613,18 @@ function modelSection(s, servers, watchers, info = { servers }) {
       const known = ((App.state && App.state.clis) || []).find((c) => c.id === route) || {};
       const rec = (info && info.recommended) || known.recommended || {};
       if (!Object.values(rec).some(Boolean)) { fields.cliRows = null; replace(modelsHolder); return; }
-      const avail = ((info && info.status) || {}).models_available || [];
+      const label = h("div", { class: "field-label" }, MODELS_LABEL);
+      // the plan decides which models there are: until the program is signed in, ENLENS has nothing to pick from
+      if (!(info && info.status && info.status.signed_in === true)) {
+        fields.cliRows = null;
+        replace(modelsHolder, label, h("div", { class: "field-help", id: "cli-models-wait" }, `ENLENS picks them once ${a.title} is signed in.`));
+        return;
+      }
+      const avail = info.status.models_available || [];
       fields.cliRows = modelRows({ id: `m-${route}`, recommended: rec, chosen: (s.cli_models || {})[route] || {}, models: avail.length ? avail : Object.values(rec) });
       fields.cliRoute = route;
-      replace(modelsHolder, h("div", { class: "field-label" }, "Models"),
-        h("div", { class: "field-help" }, `Applied from ${a.title}’s recommendations for your plan${avail.length ? ", among the models it lists" : ""}. A newer ENLENS brings newer ones by itself; choose another only if you need to. Saved with Save.`,
+      replace(modelsHolder, label,
+        h("div", { class: "field-help" }, `From ${a.title}’s recommendations for your plan${avail.length ? ", among the models it lists" : ""}. A newer ENLENS brings newer ones by itself; choose another only if you need to. Saved with Save.`,
           route === "antigravity" ? " On a free Google account every task uses Gemini 3.8 Flash; Google AI Pro adds Gemini 4 Argon and Hydrogen, Ultra also Gemini 4 Carbon." : ""),
         fields.cliRows);
     };
@@ -609,11 +634,12 @@ function modelSection(s, servers, watchers, info = { servers }) {
       st.textContent = "Saving…";
       try { await saveSpeed(v); s.claude_speed = v; st.textContent = "Saved."; } catch (e) { st.textContent = ""; throw e; }
     }, { label: null });
+    // the order of every AI box: the card, the models, how much thought, the helpers at once
     return h("div", { class: "stack set-claude-code-box set-agent-box" }, agentSetupCard(route, { onInfo: drawModels }),
+      modelsHolder,
       thoughtField(`Which ${a.title} models answer each kind of task, and how hard they think. `, THOUGHT_ABOUT_OTHER),
       h("div", { class: "field", id: "s-speed" }, h("div", { class: "field-label" }, "Helpers at once"), h("div", { class: "row" }, speed, st),
         h("div", { class: "field-help" }, `How many helpers ENLENS starts at once when you press Start ${a.title}. More is done sooner and uses your plan’s limits faster.`)),
-      modelsHolder,
       h("p", { class: "muted small" }, `${a.title} is not yet measured with ENLENS: its models and settings were measured with Claude only. Check its answers before you rely on them.`));
   }
 
@@ -747,7 +773,8 @@ function modelSection(s, servers, watchers, info = { servers }) {
     const list = (pst().list || []).filter((p) => p.id !== "anthropic");
     if (!list.length) return notice({ kind: "attention" }, h("p", {}, "No cloud provider is known to this copy of ENLENS."));
     let pid = list.some((p) => p.id === s.cloud_provider) ? s.cloud_provider : list[0].id;
-    let azureDeps = null;   // the deployments typed in Azure's set-up, until Save
+    let azureDeps = null;   // the deployments named in Azure's set-up (kept in the settings too)
+    const refused = {};     // provider id → the provider answered that the stored key is wrong (seen when the models were asked)
     const info = () => list.find((p) => p.id === pid) || {};
     const have = (id) => !!(pst().keys || {})[id];
     const where = h("div", {});
@@ -755,38 +782,49 @@ function modelSection(s, servers, watchers, info = { servers }) {
     fields.cloud_provider = { get value() { return pid; } };
     fields.azure_url = fieldInput({ mono: true, type: "url", id: "azure-url", value: s.azure_url || "", placeholder: "https://my-resource.openai.azure.com" });
     const azure = field("Endpoint of your Azure OpenAI resource", fields.azure_url, { help: "From the Azure portal: your Azure OpenAI resource › Keys and Endpoint. The set-up fills it in." });
-    const unsaved = () => { state.textContent = "Not saved yet: press Save."; };
-    // what is left once a key is set up, for its done step
-    const left = () => {
+    // what the done step's main button still does once a key is stored: allow cloud models and use this provider
+    // (null when that is so already). Pressing it saves at once; "Not now" leaves it for Save.
+    const offer = () => {
       const saved = App.settings(), p = info();
-      const sw = allowCloud.input.checked ? "" : "switch on Allow cloud models and ";
-      if (p.id === "azure") return `Left to do: ${sw}press Save, so the endpoint and the deployments are kept.`;
-      if (saved.backend === "cloud_api" && saved.cloud_provider === p.id && saved.allow_cloud) return "";
-      return `Left to do: ${sw}press Save, so ${p.title} reads your documents.`;
+      if (saved.backend === "cloud_api" && saved.cloud_provider === p.id && saved.allow_cloud) return null;
+      return {
+        text: saved.allow_cloud ? `Use ${p.title}` : `Allow cloud models and use ${p.title}`,
+        line: `Then ${p.title} reads your documents: the excerpts go to ${p.company}, only for documents that allow ${p.title}.`,
+        run: async () => {
+          await save({ allow_cloud: true, backend: "cloud_api", cloud_provider: p.id }, state);
+          Object.assign(s, App.settings());
+          allowCloud.input.checked = true; allowCloud.input.setAttribute("aria-checked", "true");
+          backend = "cloud_api";
+        },
+      };
     };
     const drawCards = () => replace(cardsHolder, optionCards({ name: "cloud-provider", class: "provider-cards", label: "Which cloud provider", value: pid,
-      options: list.map((p) => ({ value: p.id, icon: "key", title: p.title, text: PROVIDER_TEXT[p.id] || "", tag: have(p.id) ? "Key stored" : null,
+      options: list.map((p) => ({ value: p.id, icon: "key", title: p.title, text: PROVIDER_TEXT[p.id] || "", tag: have(p.id) ? (refused[p.id] ? "Key refused" : "Key stored") : null,
         foot: [icon("cloud", { size: 12 }), `${p.company} · billed per use${have(p.id) ? "" : " · not set up"}`] })),
       onPick: (v) => { pid = v; azureDeps = null; draw(); } }));
     const chosenNow = () => (fields.cloudRows ? fields.cloudRows.pick() : {});
     const setUp = async (at) => {
       const p = info();
-      const r = await providerSetup(p, { at, chosen: chosenNow(), left });
+      const r = await providerSetup(p, { at, chosen: chosenNow(), offer });
+      Object.assign(s, App.settings());   // the set-up may have saved (Azure's names; the main button of the done step)
       if (!r) { drawCards(); drawStatus(); return; }
-      if (r.azure_url) { fields.azure_url.value = r.azure_url; unsaved(); }
-      if (r.deployments) { azureDeps = r.deployments; unsaved(); }
+      delete refused[p.id];
+      if (r.azure_url) fields.azure_url.value = r.azure_url;
+      if (r.deployments) azureDeps = r.deployments;
       draw();
     };
     const drawStatus = () => {
       const p = info();
       const ok = have(p.id);
       const forget = async () => {
-        try { App.state.providers = (await api("DELETE", "/api/settings/provider-key", { provider: p.id })).providers; toast(`${p.title} key forgotten.`, "ok"); draw(); }
+        try { App.state.providers = (await api("DELETE", "/api/settings/provider-key", { provider: p.id })).providers; delete refused[p.id]; toast(`${p.title} key forgotten.`, "ok"); draw(); }
         catch (e) { showError(e); }
       };
       replace(statusHolder, card({ as: "div", class: "set-key provider-status" },
         h("div", { class: "field-label" }, `${p.title} API key`),
-        ok ? notice({ kind: "done", class: "set-key-notice" }, h("p", {}, "Key stored on this computer, in its keychain."))
+        ok ? (refused[p.id]
+            ? notice({ kind: "attention", class: "set-key-notice", id: "cloud-key-refused" }, h("p", {}, `${p.title} refused the stored key. Copy it again from the keys page, or make a new one.`))
+            : notice({ kind: "done", class: "set-key-notice" }, h("p", {}, "Key stored on this computer, in its keychain.")))
           : h("p", { class: "muted small" }, `Not set up yet. The set-up shows you, step by step, where to get a ${p.title} key, and keeps it in this computer’s keychain.`),
         h("div", { class: "btn-row" }, ok
           ? [button({ sm: true, icon: "key", id: "cloud-key-change", onClick: () => setUp("paste") }, "Change the key…"), button({ kind: "quiet", sm: true, id: "cloud-key-forget", onClick: forget }, "Forget the key")]
@@ -799,6 +837,7 @@ function modelSection(s, servers, watchers, info = { servers }) {
         try {
           const r = await api("GET", `/api/settings/provider-models?provider=${encodeURIComponent(p.id)}`);
           models = r.models || []; problem = r.problem || ""; if (r.recommended) rec = r.recommended;
+          if (!!r.refused !== !!refused[p.id]) { refused[p.id] = !!r.refused; if (p.id === pid) { drawCards(); drawStatus(); } }
         } catch (e) { problem = e.message; }
       }
       if (p.id !== pid) return;   // another provider was picked meanwhile
@@ -807,10 +846,11 @@ function modelSection(s, servers, watchers, info = { servers }) {
       const typed = p.id === "azure";
       fields.cloudRows = modelRows({ id: "m-cloud", recommended: rec, chosen, models: models.length ? models : Object.values(rec), typed });
       replace(modelsHolder, h("div", { class: "field", id: "s-cloud-models" },
-        h("div", { class: "field-label" }, typed ? "Your deployments" : "Recommended models, applied automatically"),
+        h("div", { class: "field-label" }, typed ? "Your deployments" : MODELS_LABEL),
         h("div", { class: "field-help" }, typed ? `The names of your three deployments. Deploy these models and keep their names: ${TIERS.map((t) => rec[t]).filter(Boolean).join(", ")}. The set-up fills them in.`
-          : `ENLENS picks each from ${p.company}’s own advice${models.length ? ", among the models your key may use" : ""}. A newer ENLENS brings newer ones by itself; choose another only if you need to. Saved with Save.`),
-        problem ? h("p", { class: "muted small" }, problem) : null,
+          : `From ${p.company}’s own advice${models.length ? ", among the models your key may use" : ""}. A newer ENLENS brings newer ones by itself; choose another only if you need to. Saved with Save.`),
+        // the refused key has its own notice above; any other problem is said here, without words that point to this page
+        problem && !refused[p.id] ? h("p", { class: "muted small" }, plainProblem(problem)) : null,
         fields.cloudRows));
     };
     const draw = () => {
@@ -832,15 +872,24 @@ function modelSection(s, servers, watchers, info = { servers }) {
   // (provider-setup.js claudeKeySetup), instead of a bare key field.
   function claudeApiCard() {
     const holder = h("div", {});
-    const left = () => {
+    const offer = () => {
       const saved = App.settings();
-      if (saved.backend === "anthropic" && saved.allow_cloud) return "";
-      return `Left to do: ${allowCloud.input.checked ? "" : "switch on Allow cloud models and "}press Save, so the Claude API reads your documents.`;
+      if (saved.backend === "anthropic" && saved.allow_cloud) return null;
+      return {
+        text: saved.allow_cloud ? "Use the Claude API" : "Allow cloud models and use the Claude API",
+        line: "Then the Claude API reads your documents: the excerpts go to Anthropic, billed to this key.",
+        run: async () => {
+          await save({ allow_cloud: true, backend: "anthropic" }, state);
+          Object.assign(s, App.settings());
+          allowCloud.input.checked = true; allowCloud.input.setAttribute("aria-checked", "true");
+          backend = "anthropic";
+        },
+      };
     };
     const draw = () => {
       const k = (App.state && App.state.key) || {};
       const have = k.env ? "from the environment variable ANTHROPIC_API_KEY" : k.stored ? "saved on this computer" : k.session ? "kept until you close ENLENS" : "";
-      const setUp = async (at) => { await claudeKeySetup({ at, left }); draw(); };
+      const setUp = async (at) => { await claudeKeySetup({ at, offer }); Object.assign(s, App.settings()); draw(); };
       const forget = async () => {
         try { App.state.key = (await api("DELETE", "/api/settings/key")).key; toast("Key forgotten.", "ok"); draw(); } catch (e) { showError(e); }
       };
@@ -1422,8 +1471,10 @@ function agentCard(ad, opts = {}) {
 
 // The checklist's words for an agent CLI (Codex, Antigravity)
 function cliCardWords(st, ad) {
+  const finish = st.found && st.signed_in === true && st.connector === false;
   return {
-    head: `Set up ${ad.title} (once)`, ready: `${ad.title} is ready`, button: `Set up ${ad.title}…`,
+    // found and signed in, ENLENS not added: only the last step is left, and the button opens the set-up there
+    head: finish ? "Finish the set-up" : `Set up ${ad.title} (once)`, ready: `${ad.title} is ready`, button: finish ? `Add ENLENS to ${ad.title}…` : `Set up ${ad.title}…`,
     rows: [
       [st.found ? true : false, `${ad.title} on this computer`, st.found ? (st.version || "found") : `Not on this computer yet. The set-up installs it with ${ad.company}’s installer (it shows you the command first).`],
       [st.signed_in === true ? true : st.signed_in === false ? false : null, `Signed in with ${ad.account}`,
@@ -1453,6 +1504,7 @@ export function agentSetupCard(route, opts = {}) {
 // too (the account on its "Claude, on your plan" card).
 function claudeAdapter() {
   const DOCS = "https://code.claude.com/docs/en/setup";
+  const finish = (st) => st.found && st.signed_in === true && st.installed === false;   // only the plugin is left
   return {
     route: "claude_code", title: "Claude Code", company: "Anthropic", program: "claude", account: "your Claude plan",
     installer: "curl -fsSL https://claude.ai/install.sh | bash", docs: DOCS,
@@ -1468,7 +1520,8 @@ function claudeAdapter() {
       h("p", {}, "Claude Code is the program that lets Claude work on your own Claude plan. ENLENS runs Anthropic's installer for it, which downloads Claude Code from claude.ai and puts it in your user folder. It needs no administrator rights and takes a minute or two."),
       // the place a program is kept does not limit what it can open: the folder it starts in and its permissions do
       h("p", { class: "small" }, icon("house", { size: 13 }), " Where the program is kept does not decide what it can read. ENLENS starts Claude Code only in an empty folder of its own, with its tools for reading files, running commands and browsing switched off, so it cannot look through your computer: it sees only the passages in ENLENS's tasks.")),
-    signInIntro: "Press the button: a window opens with Claude Code, in an empty folder of ENLENS, away from your files. Sign in there with your Claude plan.",
+    signInIntro: ["Press the button: a window opens with Claude Code, in an empty folder of ENLENS, away from your files. Sign in there with your Claude plan.",
+      "Sign in in the window that opens; close it when it shows its prompt."],
     signInWords: (opened) => (opened.opened
       ? h("p", {}, `A ${opened.window} window opened with Claude Code. Sign in there with your Claude plan (it opens a page in your browser), then close that window. This step moves on by itself.`)
       : h("div", {}, h("p", {}, "Sign in to Claude Code once: open a terminal (Terminal on a Mac, PowerShell on Windows), type the line below, and follow the steps. It starts Claude Code in an empty folder of ENLENS, away from your files."), copyLine(opened.command || "claude", "Copy", "a terminal"))),
@@ -1478,7 +1531,7 @@ function claudeAdapter() {
       h("p", { class: "muted small" }, "You can also type ", h("code", {}, `/enlens-run ${project || "<project>"}`), " in Claude Code yourself.")],
     applied: () => h("p", { class: "provider-applied" }, "Applied automatically: Haiku for labels and links, Sonnet for judging excerpts and Opus for second opinions. How much thought, in Settings → AI, moves each one step lighter or stronger."),
     cardWords: (st) => ({
-      head: "Set up Claude (once)", ready: "Claude is ready", button: "Set up Claude…",
+      head: finish(st) ? "Finish the set-up" : "Set up Claude (once)", ready: "Claude is ready", button: finish(st) ? "Add ENLENS to Claude Code…" : "Set up Claude…",
       rows: [
         [st.found ? true : false, "Claude Code on this computer", st.found ? (st.version || "found") : "Not on this computer yet. The set-up installs it with Anthropic's installer (it shows you the command first)."],
         [st.signed_in === true ? true : st.signed_in === false ? false : null, "Signed in with your Claude plan",

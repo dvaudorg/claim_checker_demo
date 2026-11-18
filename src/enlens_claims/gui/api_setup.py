@@ -78,7 +78,8 @@ class SetupApi:
     def get_provider_models(self, q):
         """The models a provider offers to the stored key → {"models": [...], "lists": bool, "recommended": {tier: id}}.
         `recommended` is the provider's line-up resolved against that list (providers.recommended): what an empty
-        choice in Settings uses, shown as "Applied automatically" by the key's set-up. Azure lists none (its
+        choice in Settings uses, shown as "Applied automatically" by the key's set-up. `problem` says why the list is
+        missing; `refused: true` when the provider answered 401 or 403 (the key is wrong). Azure lists none (its
         deployments' names are typed): its `recommended` says which models to deploy. Nothing is sent but the key."""
         from .. import providers
         from ..llm import BackendError, CloudBackend
@@ -95,7 +96,9 @@ class SetupApi:
         try:
             models = CloudBackend(pid, key).models(timeout=15)
         except BackendError as e:
-            return {"models": [], "lists": True, "problem": str(e), "recommended": providers.recommended(pid)}
+            # `refused`: the provider answered 401 or 403, so the key is wrong; without it the provider was out of reach
+            return {"models": [], "lists": True, "problem": str(e), "refused": bool(getattr(e, "refused", False)),
+                    "recommended": providers.recommended(pid)}
         return {"models": models, "lists": True, "recommended": providers.recommended(pid, models)}
 
     def post_quit(self, q):

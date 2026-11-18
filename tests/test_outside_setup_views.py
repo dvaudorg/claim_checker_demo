@@ -76,6 +76,10 @@ await scenario("each provider's steps", async (t) => {
     for (let i = 0; i < n; i++) { words.push(openStep(t, d)); if (i < n - 1) await goOn(t, d); }
     out[p.id].text = words.join(" | ");
     out[p.id].fields = d.querySelectorAll(".guided-step[data-state=current] input").map((x) => [x.id, x.getAttribute("type"), x.value]);
+    if (p.id === "azure") {
+      out[p.id].dep_placeholders = ["small", "middle", "strong"].map((k) => d.querySelector(`#key-azure-dep-${k}`).getAttribute("placeholder"));
+      out[p.id].fold_open = !!d.querySelector("#key-azure-other-names").open;
+    }
     await t.click("Cancel", { within: d.querySelector(".dialog-actions") });
     const ask = t.dialog(); if (ask && ask !== d) await t.click("Stop the set-up", { within: ask.querySelector(".dialog-actions") });
     await done;
@@ -86,7 +90,7 @@ await scenario("each provider's steps", async (t) => {
   out.claude = { titles: titles(t, d), open: openStep(t, d) };
   t.answer("POST /api/settings/key", (b) => ({ key: { session: true, env: false, stored: b.remember } }));
   await t.type(d.querySelector("#key-anthropic"), "sk-ant-1");
-  await t.click("Use this key", { within: d.querySelector(".dialog-actions") });
+  await t.click("Store the key", { within: d.querySelector(".dialog-actions") });
   await t.settle(10);
   out.claude.done = openStep(t, d);
   out.claude.post = t.calls.filter((c) => c.path === "/api/settings/key").map((c) => c.body);
@@ -105,6 +109,7 @@ async function settingsPage(t, settings, extra = {}) {
   t.answer("GET /api/local-status", {});
   t.answer("GET /api/projects/Study/queue", { kinds: [], waiting: 0 });
   t.answer("GET /api/projects/Study/agreement/plan?*", { kinds: [], problem: null, kept: [], plan: null });
+  t.answer("PUT /api/settings", (b) => ({ settings: { ...settings, ...b }, backend_label: "x", providers: NONE }));
   await t.render("views/settings.js", "renderSettings", ["model"]);
   await t.settle(200);
 }
@@ -115,21 +120,26 @@ await scenario("Subscription: Claude Code, Codex or Antigravity", async (t) => {
   await settingsPage(t, { backend: "claude_code", allow_claude_code: true });
   const out = { cards: t.view.querySelectorAll(".route-cards input[type=radio]").map((r) => [r.value, !!r.checked]),
     choice: t.view.querySelectorAll("#agent-choice [role=radio]").map((b) => [b.dataset.value, b.getAttribute("aria-checked")]),
-    words: t.text(t.view.querySelector("#agent-choice")),
+    words: t.text(t.view.querySelector("#agent-choice")), inset: !!t.view.querySelector(".agent-choice-box #agent-choice"),
+    label: t.text(t.view.querySelector(".agent-choice-box .field-label")), routeWords: t.text(t.view.querySelector(".route-cards")),
     tags: t.view.querySelectorAll("#agent-choice [role=radio]").map((c) => { const g = c.querySelector(".option-card-head .chip"); return g ? t.text(g) : ""; }) };
   await t.click(t.view.querySelector('#agent-choice [data-value="codex"]'));
   let d = t.dialog();
   out.asked = t.text(d.querySelector("h2"));
   out.says = t.text(d.querySelector(".dialog-body"));
-  await t.click("Keep the AI on this computer", { within: d });
+  out.refusal = t.text(d.querySelector("#dlg-safe"));
+  await t.click(d.querySelector("#dlg-safe"));
   await t.settle(50);
   out.back = t.view.querySelector("#agent-choice [aria-checked=true]").dataset.value;
   await t.click(t.view.querySelector('#agent-choice [data-value="codex"]'));
   await t.click("Use Codex", { within: t.dialog() });
   await t.settle(100);
+  // the consent is the decision: the route and its allow are saved at once
+  out.putAtOnce = t.calls.filter((c) => c.method === "PUT" && c.path === "/api/settings").map((c) => c.body);
   const box = t.view.querySelector(".set-agent-box");
   out.card = t.text(box.querySelector(".cc-card"));
   out.models = t.text(box.querySelector("#s-cli-models"));
+  out.order = [...box.children].map((c) => c.id || c.className.split(" ")[0]);
   // the set-up: opens at the first step not done (Codex is found, not signed in)
   st = { found: true, version: "1.4.2", signed_in: false, connector: false, ready: false };
   await t.click(box.querySelector(".cc-card .btn-row button"));
@@ -138,7 +148,9 @@ await scenario("Subscription: Claude Code, Codex or Antigravity", async (t) => {
   d = t.dialog();
   out.steps = titles(t, d);
   out.first = t.text(d.querySelector(".guided-step[data-state=current] .guided-step-title"));
-  await goOn(t, d);
+  // "I have installed it" checks, then moves on by itself once the program is found
+  await t.click("I have installed it", { within: d });
+  await t.settle(50);
   t.answer("POST /api/agent-setup/sign-in", { opened: true, window: "", command: "codex login" });
   await t.click("Open the sign-in", { within: d });
   out.waiting = openStep(t, d);
@@ -146,6 +158,10 @@ await scenario("Subscription: Claude Code, Codex or Antigravity", async (t) => {
   await t.settle(4100);
   out.moved = t.text(d.querySelector(".guided-step[data-state=current] .guided-step-title"));
   out.ready = !d.querySelector("#dlg-confirm").disabled;
+  // found and signed in, ENLENS not added: the card says what is left, not that Codex is ready
+  out.cardMid = t.text(t.view.querySelector(".set-agent-box .cc-card"));
+  out.cardButton = t.text(t.view.querySelector(".set-agent-box .cc-card .btn-row button"));
+  out.modelsMid = t.text(t.view.querySelector("#s-cli-models"));
   t.answer("POST /api/agent-setup", () => { st = { ...st, connector: true, ready: true }; return { steps: [{ step: "connector", ok: true, text: "" }], status: st }; });
   await t.click("Add ENLENS to Codex", { within: d.querySelector(".dialog-actions") });
   await t.settle(50);
@@ -153,6 +169,8 @@ await scenario("Subscription: Claude Code, Codex or Antigravity", async (t) => {
   await t.click("Done", { within: d.querySelector(".dialog-actions") });
   await t.settle(50);
   out.after = t.text(t.view.querySelector(".set-agent-box .cc-card"));
+  out.modelsAfter = t.text(t.view.querySelector("#s-cli-models"));
+  out.optionAfter = t.text(t.view.querySelector("#m-codex-middle option"));
   t.answer("PUT /api/settings", (b) => ({ settings: { ...b }, backend_label: "Codex", providers: NONE }));
   await t.click("Save");
   out.put = t.calls.filter((c) => c.method === "PUT" && c.path === "/api/settings").map((c) => c.body).pop() || null;
@@ -176,7 +194,7 @@ def page(tmp_path_factory):
 @needs_node
 def test_the_shared_dialog_is_the_storage_spaces_way(page):
     r = page["the shared dialog"]
-    assert r["titles"] == ["Make an account", "Paste it", "Done"]
+    assert r["titles"] == ["Make an account", "Paste it", "What ENLENS applied"]
     assert r["waits"] is True and r["address"].startswith("thing.example/sign-up") and "Copy" in r["copyButton"][0]["label"]
     assert r["remembered"] == "1" and r["open"] is True
     assert r["missing"] == "Paste the key."
@@ -189,15 +207,17 @@ def test_the_shared_dialog_is_the_storage_spaces_way(page):
 @needs_node
 def test_each_provider_has_its_own_checked_steps(page):
     r = page["each provider's steps"]
-    assert r["openai"]["titles"] == ["Make an account on OpenAI’s API platform", "Add credit", "Make a key for ENLENS", "Paste the key here", "Done"]
-    assert "A ChatGPT plan does not pay for the API" in r["openai"]["text"] and "Codex" in r["openai"]["text"]
+    assert r["openai"]["titles"] == ["Make an account on OpenAI’s API platform", "Add credit", "Make a key for ENLENS", "Paste the key here", "What ENLENS applied"]
+    assert "A ChatGPT plan does not pay for the API" in r["openai"]["text"] and "close this set-up and choose" in r["openai"]["text"] and "Subscription" in r["openai"]["text"] and "choose Codex above" not in r["openai"]["text"]
     assert "OpenAI shows the key only once" in r["openai"]["text"]
     assert "Dashboard › API Keys" in r["gemini"]["text"] and "Create API key" in r["gemini"]["text"]
     assert "except in the EEA, Switzerland and the UK" in r["gemini"]["text"]
     assert "a plan that includes API access and add a payment method" in r["mistral"]["text"] and "New key" in r["mistral"]["text"]
     assert "Build › Catalog › Model catalog" in r["azure"]["text"] and "Keep the model’s name as the deployment’s name" in r["azure"]["text"]
-    assert [f[0] for f in r["azure"]["fields"]] == ["key-azure-address", "key-azure", "key-azure-dep-small", "key-azure-dep-middle", "key-azure-dep-strong"]
-    assert [f[2] for f in r["azure"]["fields"][2:]] == ["gpt-6-luna", "gpt-6.2-sol", "gpt-6.2-astra"]
+    # the endpoint and the key only; the deployments' names are a closed fold at the deploying step
+    assert [f[0] for f in r["azure"]["fields"]] == ["key-azure-address", "key-azure"]
+    assert "I gave a deployment another name" in r["azure"]["text"] and r["azure"]["dep_placeholders"] == ["gpt-6-luna", "gpt-6.2-sol", "gpt-6.2-astra"]
+    assert r["azure"]["fold_open"] is False
     assert "on to the model’s own provider" in r["openrouter"]["text"]
     for pid in ("openai", "gemini", "mistral", "openrouter"):
         assert r[pid]["fields"][0][1] == "password"
@@ -216,12 +236,22 @@ def test_subscription_holds_the_agents_and_codex_is_set_up_in_steps(page):
     assert "The passages go to OpenAI" in r["words"] and "The passages go to Google" in r["words"]
     assert r["tags"] == ["Recommended", "", "Recommended on a free plan"]
     assert "Free: every task on Gemini 3.8 Flash" in r["words"]
+    assert r["inset"] is True and r["label"] == "Subscription: whose plan" and "a plan you already have" in r["routeWords"]
+    assert "may train its models on Plus or Pro unless you switch that off" in r["words"]
+    assert "may improve its products from it while Telemetry is on" in r["words"]
     assert r["asked"] == "Let Codex read the excerpts, on your ChatGPT plan?"
     assert "sent to OpenAI" in r["says"] and "Only documents that allow OpenAI are sent" in r["says"]
-    assert r["back"] == "claude_code"
+    assert "On ChatGPT Plus or Pro, OpenAI may use what Codex reads to improve its models unless Improve the model for everyone is off in ChatGPT’s Data controls; Business, Edu and Enterprise plans are not used for that by default." in r["says"]
+    assert r["refusal"] == "Stay with Claude Code" and r["back"] == "claude_code"
+    assert r["putAtOnce"] == [{"backend": "codex", "allow_codex": True}]
     assert "Set up Codex (once)" in r["card"] and "Not on this computer yet" in r["card"]
-    assert "Applied from Codex’s recommendations for your plan" in r["models"] and "In use: gpt-6.2-sol · recommended" in r["models"]
-    assert r["steps"] == ["Install Codex", "Sign in", "Add ENLENS to Codex", "Done"] and r["first"].endswith("Install Codex")
+    # until Codex is signed in, one line instead of the rows; the models come first, then thought, then helpers
+    assert "Recommended models, applied automatically" in r["models"] and "ENLENS picks them once Codex is signed in." in r["models"]
+    assert "gpt-6.2-sol" not in r["models"] and r["order"][1:4] == ["s-cli-models", "s-thought", "s-speed"]
+    assert "Finish the set-up" in r["cardMid"] and "Codex is ready" not in r["cardMid"] and r["cardButton"] == "Add ENLENS to Codex…"
+    assert "From Codex’s recommendations for your plan" in r["modelsMid"] and "In use" not in r["modelsMid"]
+    assert r["optionAfter"] == "Recommended (gpt-6.2-sol)"
+    assert r["steps"] == ["Install Codex", "Sign in", "Add ENLENS to Codex", "What ENLENS applied"] and r["first"].endswith("Install Codex")
     assert "Codex opens its sign-in page in your browser" in r["waiting"] and "Waiting for you to sign in" in r["waiting"]
     assert r["moved"].endswith("Add ENLENS to Codex") and r["ready"] is True
     assert "Codex is ready" in r["done"] and "$enlens-run" in r["done"]

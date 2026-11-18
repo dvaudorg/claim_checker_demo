@@ -43,8 +43,10 @@ export function cliAdapter(route) {
         copyLine(opened.command || (route === "codex" ? "codex login" : "agy"), "Copy", "a terminal"))
       : h("p", {}, route === "codex" ? "Codex opens its sign-in page in your browser. Sign in there with your ChatGPT account; this step moves on by itself."
         : `A ${opened.window || "terminal"} window opened with Antigravity, which opens Google’s sign-in page in your browser. Sign in, then close that window; this step moves on by itself.`)),
-    signInIntro: route === "codex" ? "Press the button: Codex opens its sign-in page in your browser. No terminal is needed."
-      : "Press the button: a window opens with Antigravity, in an empty folder of ENLENS, and it opens Google’s sign-in page in your browser.",
+    // the first line is what the button does; a second, muted, is what to do in the window that opens
+    signInIntro: route === "codex" ? "Press the button: Codex opens its sign-in page in your browser."
+      : ["Press the button: a window opens with Antigravity, in an empty folder of ENLENS, and it opens Google’s sign-in page in your browser.",
+        "Sign in in the window that opens; close it when it shows its prompt."],
     adds: route === "codex"
       ? ["the ENLENS connector, through which Codex takes the tasks and sends back its answers", ["its skill ", h("code", {}, "$enlens-run")], "its helpers, one for each kind of task"]
       : ["the ENLENS connector, through which Antigravity takes the tasks and sends back its answers", "its skill enlens-run and its helpers, as one plugin",
@@ -104,18 +106,19 @@ export async function agentSetupDialog(ad, info = {}, opts = {}) {
       showFound();
       replace(installNow);
       if (s.found) ui.go(1);
-      else replace(installNow, notice({ kind: "attention", live: false }, h("p", {}, `The installer finished, but ${ad.title} is not found yet. Press Check again in a moment.`)));
+      else replace(installNow, notice({ kind: "attention", live: false }, h("p", {}, `The installer finished, but ${ad.title} is not found yet. Press I have installed it in a moment.`)));
     } catch (e) { replace(installNow, notice({ kind: "error", live: false }, h("p", {}, e.message || String(e)))); }
     finally { ui.lock.on = false; btn.disabled = false; }
   }
   const installBtn = stepButton(`Install ${ad.title}`, (e) => runInstall(e.currentTarget), { id: `agent-install-${ad.route}`, icon: "download" });
-  const checkInstalled = stepButton("Check again", async () => { try { const s = await fresh(); showFound(); if (s.found) ui.go(1); else toast(`${ad.title} is not found on this computer yet.`, "warn"); } catch (e) { toast(e.message, "warn"); } }, { kind: "quiet" });
-  const stepInstall = { title: `Install ${ad.title}`, next: "Next step", body: [
+  const checkInstalled = stepButton("I have installed it", async () => { try { const s = await fresh(); showFound(); if (s.found) ui.go(1); else toast(`${ad.title} is not found on this computer yet.`, "warn"); } catch (e) { toast(e.message, "warn"); } }, { kind: "quiet" });
+  // no "Next step": "I have installed it" checks, then moves on by itself once the program is found
+  const stepInstall = { title: `Install ${ad.title}`, next: false, body: [
     ad.installWhy(),
     h("p", { class: "small muted" }, "The command it runs:"), copyLine(cur.installer || ad.installer, "Copy", "a terminal"),
     h("div", { class: "btn-row" }, installBtn, checkInstalled), installNow, installed,
     h("p", { class: "muted small" }, "Prefer to do it yourself? Run the command in a terminal, or follow ",
-      h("a", { href: cur.docs || ad.docs, target: "_blank", rel: "noopener" }, `${ad.title}’s set-up page`), ", then press Check again.")] };
+      h("a", { href: cur.docs || ad.docs, target: "_blank", rel: "noopener" }, `${ad.title}’s set-up page`), ", then press I have installed it.")] };
   // ---- step 2: sign in
   const signNow = h("div", { class: "agent-step-now", "aria-live": "polite" });
   const signedAs = h("p", { class: "agent-found" });
@@ -123,6 +126,7 @@ export async function agentSetupDialog(ad, info = {}, opts = {}) {
   async function openSignIn() {
     let opened = { opened: false };
     try { opened = await ad.signIn(); } catch (e) { opened = { opened: false, error: e.message }; }
+    signIntro.hidden = true;   // what the button does is done; the words of what to do now take its place
     replace(signNow, h("div", {}, ad.signInWords(opened), h("p", {}, workState("waiting", "Waiting for you to sign in…"))));
   }
   async function checkSigned(now) {
@@ -146,8 +150,9 @@ export async function agentSetupDialog(ad, info = {}, opts = {}) {
     };
     timer = setTimeout(tick, 4000);
   };
+  const signIntro = h("div", {}, [].concat(ad.signInIntro).map((t, i) => h("p", { class: i ? "muted small" : null }, t)));
   const stepSign = { title: "Sign in", next: false, body: [
-    h("p", {}, ad.signInIntro),
+    signIntro,
     h("div", { class: "btn-row" }, stepButton("Open the sign-in", openSignIn, { id: `agent-sign-in-${ad.route}`, icon: "external-link" }),
       stepButton("I have signed in", () => checkSigned(true), { id: `agent-signed-${ad.route}` })),
     signNow, signedAs,

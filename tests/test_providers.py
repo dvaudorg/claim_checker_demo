@@ -437,6 +437,28 @@ def test_the_app_stores_a_key_and_says_only_whether_one_is_stored(app_api, opena
     assert api("POST", "/api/settings/provider-key", {"provider": "anthropic", "key": "x"})[0] == 400
 
 
+def test_a_refused_key_is_told_apart_from_an_unreachable_provider(app_api, openai_server, monkeypatch):
+    import dataclasses
+
+    from enlens_claims import providers
+
+    api, _ = app_api
+    srv, base = openai_server
+    monkeypatch.setitem(providers.TABLE, "openai", dataclasses.replace(providers.TABLE["openai"], base_url=base))
+    api("POST", "/api/settings/provider-key", {"provider": "openai", "key": "wrong-key"})
+    st, r = api("GET", "/api/settings/provider-models?provider=openai")
+    # the stand-in answers 401: the key is wrong, and the key itself never comes back
+    assert st == 200 and r["refused"] is True and "refused the key" in r["problem"] and "wrong-key" not in str(r)
+    # the page then forgets it
+    st, r = api("DELETE", "/api/settings/provider-key", {"provider": "openai"})
+    assert r["providers"]["keys"]["openai"] is False
+    # a provider out of reach is a problem, but the key is not called wrong
+    api("POST", "/api/settings/provider-key", {"provider": "openai", "key": "good-key"})
+    monkeypatch.setitem(providers.TABLE, "openai", dataclasses.replace(providers.TABLE["openai"], base_url="http://127.0.0.1:9/v1"))
+    st, r = api("GET", "/api/settings/provider-models?provider=openai")
+    assert st == 200 and r["problem"] and r["refused"] is False
+
+
 def test_the_app_sets_the_providers_a_document_and_the_project_allow(app_api):
     api, (ws, ids, pid) = app_api
     st, r = api("PUT", f"/api/projects/{ws.root.name}/documents/ai-access",

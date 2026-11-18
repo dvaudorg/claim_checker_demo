@@ -833,7 +833,7 @@ export const agentSeenNow = (route) => (route === "claude_code" ? claudeSeenNow(
 export function rememberAgent(route, st, tell = true) {
   const before = agentSeenNow(route);
   const now = route === "claude_code" ? rememberClaude(st) : (agentSeen.set(route, { at: Date.now(), status: st || {} }), st || {});
-  if (tell && !!(before && before.ready) !== !!now.ready) for (const fn of App.listeners) fn(App.state);
+  if (tell && (!!(before && before.ready) !== !!now.ready || !!(before && before.found) !== !!now.found || (before && before.signed_in) !== now.signed_in)) for (const fn of App.listeners) fn(App.state);
   return now;
 }
 

@@ -209,15 +209,17 @@ _STATUS: dict[str, dict] = {}
 
 def status(route: str, refresh: bool = False) -> dict:
     """What is ready for this CLI, for the set-up checklist (cached half a minute): {found, path, version, signed_in
-    (True/False/None), account, models_available, connector (ENLENS added: True/False/None), ready, local_only,
-    problem}. `ready`: found and not known to be signed out (the app can start it; ENLENS is added on the first start
-    when it is not yet)."""
+    (True/False/None), account, models_available, connector (ENLENS added: True/False/None), ready, can_start,
+    local_only, problem}. `ready`: found, not known to be signed out, and ENLENS added (the set-up is finished).
+    `can_start`: found and not known to be signed out (the app can start it; ENLENS is added on the first start when
+    it is not yet)."""
     cli(route)
     c = _STATUS.get(route)
     if not refresh and c and time.time() - c["at"] < 30:
         return c["value"]
     out = {"found": False, "path": "", "version": "", "signed_in": None, "account": "", "models_available": [],
-           "connector": None, "ready": False, "local_only": core.local_only(), "problem": ""}
+           "connector": None, "ready": False, "can_start": False, "local_only": core.local_only(),
+           "problem": ""}
     path = "" if out["local_only"] else find(route)
     if path:
         out.update(found=True, path=path)
@@ -225,7 +227,8 @@ def status(route: str, refresh: bool = False) -> dict:
         if code == 0 and text:
             out["version"] = _said(text.splitlines()[0])
         (_codex_status if route == "codex" else _agy_status)(path, out)
-    out["ready"] = bool(out["found"] and out["signed_in"] is not False)
+    out["can_start"] = bool(out["found"] and out["signed_in"] is not False)
+    out["ready"] = bool(out["can_start"] and out["connector"] is True)
     _STATUS[route] = {"at": time.time(), "value": out}
     return out
 

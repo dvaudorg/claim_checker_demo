@@ -1238,8 +1238,10 @@ class CloudBackend(LocalBackend):
                 return BackendError(f"{t} answered with a redirect ({e.code}); ENLENS follows none, so the key is "
                                     "never sent on. Check the address in Settings → AI.")
             if e.code in (401, 403) or (e.code == 400 and ("API_KEY_INVALID" in raw or "API key not valid" in raw)):
-                return BackendError(f"{t} refused the key ({e.code}). Check it in Settings → AI, or make a new one"
-                                    + (f" ({self._spec.key_hint})." if self._spec.key_hint else "."))
+                err = BackendError(f"{t} refused the key ({e.code}). Check it in Settings → AI, or make a new one"
+                                   + (f" ({self._spec.key_hint})." if self._spec.key_hint else "."))
+                err.refused = True   # the key itself is wrong (the app's set-up forgets it), not a network problem
+                return err
             if e.code == 429:
                 return BackendError(f"{t}: the limit of this key is reached (too many requests, or no credit left). "
                                     f"Wait a minute and try again, or check your {t} account.")

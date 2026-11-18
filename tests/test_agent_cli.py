@@ -164,7 +164,9 @@ def test_not_found_and_status(clis, monkeypatch, tmp_path):
     monkeypatch.setenv("ENLENS_CODEX", CODEX)
     st = clis.status("codex", refresh=True)
     assert st["found"] and st["signed_in"] is True and "researcher@example.org" in st["account"]
-    assert st["connector"] is False and st["ready"] is True and st["version"].startswith("codex-cli")
+    # ENLENS is not added yet: the set-up is not finished (ready), though the app can start it (can_start)
+    assert st["connector"] is False and st["ready"] is False and st["can_start"] is True
+    assert st["version"].startswith("codex-cli")
     monkeypatch.setenv("FAKE_AGY_PLAN", "ultra")
     st = clis.status("antigravity", refresh=True)
     assert st["signed_in"] is True and "gemini-4-carbon-high" in st["models_available"]
@@ -232,7 +234,7 @@ def test_adding_enlens_to_codex(clis, monkeypatch):
 
     r = clis.set_up("codex")
     assert all(s["ok"] for s in r["steps"]), r["steps"]
-    assert r["status"]["connector"] is True
+    assert r["status"]["connector"] is True and r["status"]["ready"] is True
     fake = json.loads((home.home() / "fake-codex.json").read_text())
     mcp = fake["mcp"]["enlens"]
     assert mcp["env"] == {"ENLENS_HOME": str(home.home()), "ENLENS_ROUTE": "codex"}
