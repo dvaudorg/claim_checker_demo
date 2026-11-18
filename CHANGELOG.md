@@ -2,6 +2,14 @@
 
 ## 0.20.0 (November 2026): Codex and Antigravity, set up like Claude Code
 
+You can now use Codex on a ChatGPT plan, or Antigravity on a Google account (free or paid), the way you use Claude
+Code: ENLENS installs it, opens its sign-in and connects itself, and *Start Codex* or *Start Antigravity* answers the
+work wherever it waits. Every set-up of something outside ENLENS, the agents and the API keys of every provider, now
+goes step by step like the storage space's, and each provider's recommended models are applied by themselves. Claude
+Code stays the recommendation; passages still go only to a company your documents allow. (The number 0.20.0 was used
+for an hour on 15 November for the release now called 0.19.3; a copy installed in that hour is offered the next one,
+0.20.1, instead.)
+
 ### New
 
 - **Codex and Antigravity answer the queue on your own plan, as Claude Code does.** *Settings → AI → Subscription*
