@@ -138,8 +138,24 @@ def items(cx: sqlite3.Connection, root: Path | str | None) -> dict[str, dict[str
     return out
 
 
+def plain_key(kind: str, key: str) -> bool:
+    """Whether `key` can be an item's key. A codebook's key is the name of its file, so one that is not a single plain
+    file name (a path, `..`, a drive, a control character, a trailing dot or space that Windows drops) is nobody's
+    codebook: a colleague's database can say anything, and a key like that must never be built into a path. It need not
+    meet `frameworks.NAME_RE`: a codebook file put there by hand keeps its mark."""
+    if kind != "codebook":
+        return True
+    if not isinstance(key, str) or key in ("", ".", ".."):
+        return False
+    if any(c in key for c in "/\\:") or any(ord(c) < 32 or ord(c) == 127 for c in key):
+        return False
+    return key[-1] not in ". "
+
+
 def exists(cx: sqlite3.Connection, root: Path | str | None, kind: str, key: str) -> bool:
     """Whether the project holds the item now."""
+    if not plain_key(kind, key):
+        return False
     if kind == "check":
         return bool(cx.execute("SELECT 1 FROM hypotheses WHERE hyp_id=?", (key,)).fetchone())
     if kind == "themes":
@@ -163,11 +179,12 @@ def exists(cx: sqlite3.Connection, root: Path | str | None, kind: str, key: str)
 
 
 def rows(cx: sqlite3.Connection) -> dict[tuple[str, str], dict]:
-    """{(kind, key): {"state", "owner", "by", "at", "title"}} of every row of `shares`."""
+    """{(kind, key): {"state", "owner", "by", "at", "title"}} of every row of `shares`, but those whose key cannot be an
+    item's (`plain_key`): the rows of a colleague's database are data, never built into a path."""
     if not has_table(cx):
         return {}
     return {(r[0], r[1]): {"state": r[2], "owner": r[3], "by": r[4], "at": r[5], "title": r[6]}
-            for r in cx.execute("SELECT kind, key, state, owner, by, at, title FROM shares")}
+            for r in cx.execute("SELECT kind, key, state, owner, by, at, title FROM shares") if plain_key(r[0], r[1])}
 
 
 def _partner(cx: sqlite3.Connection, me: str) -> str | None:
@@ -477,7 +494,7 @@ def receive(cx: sqlite3.Connection, kind: str, key: str, r: dict, me: str, prese
     relayed by design): a private item of someone else's held here (a whole project zip of theirs, or their private
     work from their other account, sync/selfsync.py) changes its state only by a mark in its owner's own file, so no
     third person's file can publish it. Returns the new state here, or None when nothing changed."""
-    if kind not in KINDS or r.get("state") not in STATES:
+    if kind not in KINDS or r.get("state") not in STATES or not plain_key(kind, key):
         return None
     here = cx.execute("SELECT state, owner, by, at FROM shares WHERE kind=? AND key=?", (kind, key)).fetchone()
     had = present if had is None else had
