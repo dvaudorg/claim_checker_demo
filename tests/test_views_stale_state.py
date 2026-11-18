@@ -127,7 +127,20 @@ await scenario("P-1 log page text typed while adding", async (t) => {
   const ta = t.field("A new entry");
   ta.value = "First entry";
   await t.click("Add to the log");
-  ta.value = "First entry, and a second thought";   // typed while the request runs
+  ta.value = "First entry and a second thought";   // typed after it, while the request runs
+  await t.settle(1000);
+  return { left: ta.value };
+});
+
+await scenario("P-1 log page box rewritten while adding", async (t) => {
+  t.answer("GET /api/projects/Study/log?*", { entries: [], total: 0, groups: {}, group_names: {} });
+  t.answer("GET /api/projects/Study/sharing?*", { items: [] });
+  t.answer("POST /api/projects/Study/log", async () => { await new Promise((r) => setTimeout(r, 300)); return {}; });
+  await t.render("views/log.js", "renderLog", [], {});
+  const ta = t.field("A new entry");
+  ta.value = "First entry";
+  await t.click("Add to the log");
+  ta.value = "Something else entirely";   // not a continuation: left alone
   await t.settle(1000);
   return { left: ta.value };
 });
@@ -162,7 +175,7 @@ await scenario("P-1 drawer text typed while adding", async (t) => {
   const ta = document.querySelector(".logdrawer-text");
   ta.value = "First entry";
   await t.click("Add to the log");
-  ta.value = "First entry, and a second thought";
+  ta.value = "First entry and a second thought";
   await t.settle(1000);
   return { left: ta.value };
 });
@@ -320,7 +333,12 @@ def test_p1_ctrl_enter_twice_adds_one_entry_on_the_log_page(page):
 
 @needs_node
 def test_p1_text_typed_while_an_entry_is_added_is_kept_on_the_log_page(page):
-    assert page["P-1 log page text typed while adding"]["left"] == "First entry, and a second thought"
+    assert page["P-1 log page text typed while adding"]["left"] == "and a second thought"
+
+
+@needs_node
+def test_p1_a_box_rewritten_while_an_entry_is_added_is_left_alone(page):
+    assert page["P-1 log page box rewritten while adding"]["left"] == "Something else entirely"
 
 
 @needs_node
@@ -330,7 +348,7 @@ def test_p1_ctrl_enter_twice_adds_one_entry_in_the_drawer(page):
 
 @needs_node
 def test_p1_text_typed_while_an_entry_is_added_is_kept_in_the_drawer(page):
-    assert page["P-1 drawer text typed while adding"]["left"] == "First entry, and a second thought"
+    assert page["P-1 drawer text typed while adding"]["left"] == "and a second thought"
 
 
 @needs_node
