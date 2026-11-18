@@ -976,3 +976,11 @@ def test_a_split_the_model_answers_badly_is_checked_as_written(loaded):
     assert loaded.scalar("SELECT COUNT(*) FROM hypotheses WHERE hyp_id=?", (hid,)) == 1
     r = claimcheck.hypothesis_result(loaded, hid)
     assert [p["claim"] for p in r["parts"]] == [CLAIM] and not r["decomposed"]
+
+
+def test_a_part_still_waiting_keeps_the_whole_hypothesis_waiting():
+    """Bug hunt, phase 0 (mutation testing): beside the queue's own tests, nothing here failed when "waiting" was
+    taken out of the rule. A check by queue that is not finished is waiting, whatever its other parts say."""
+    assert claimcheck.aggregate(["supported", "waiting"]) == "waiting"
+    assert claimcheck.aggregate(["contradicted", "waiting", "failed"]) == "waiting"
+    assert claimcheck.aggregate(["supported", "supported"]) == "supported"

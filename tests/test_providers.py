@@ -334,10 +334,13 @@ def test_a_key_the_keychain_would_not_let_go_is_not_called_removed(mixed, monkey
 
     secret = "sk-proj-STILLHERE1234567890"
     home.set_cloud_key("openai", secret)
-    monkeypatch.setattr(keychain, "delete", lambda name: None)   # the system refused, without a word
-    with pytest.raises(ValueError, match="still on this computer"):
-        home.forget_cloud_key("openai")
-    assert home.cloud_keys()["openai"] is True and home.cloud_key("openai") == secret
+    with monkeypatch.context() as m:
+        m.setattr(keychain, "delete", lambda name: None)   # the system refused, without a word
+        with pytest.raises(ValueError, match="still on this computer"):
+            home.forget_cloud_key("openai")
+        assert home.cloud_keys()["openai"] is True and home.cloud_key("openai") == secret
+    home.forget_cloud_key("openai")   # once the keychain lets go, the key is gone (and no later test finds one)
+    assert home.cloud_keys()["openai"] is False and home.cloud_key("openai") == ""
 
 
 # ---------------------------------------------------------------------------------------------

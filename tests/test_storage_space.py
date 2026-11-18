@@ -300,3 +300,18 @@ def test_a_move_puts_project_json_in_the_new_space_before_the_old_one_is_told(te
     _round(anna)    # no "arriving": Anna's copy does not wait for project.json
     with anna:
         assert (space.mirror_of(anna.ws) / folder.team_name(anna.ws) / "project.json").is_file()
+
+
+def test_a_join_proof_holds_only_for_its_own_part_person_and_keys():
+    """Bug hunt, phase 0 (mutation testing): no test failed when the proof was made over nothing, so a proof would
+    have gone with any person and any keys. It shows that the holder of the invite made THIS first file: the same
+    proof beside another part, person or public key is refused."""
+    secret, public = b"s" * 32, {"sign": "sign-key-1", "box": "box-key-1"}
+    proof = seal.join_proof(secret, "part-1", "p-anna", public)
+    assert seal.check_join_proof(secret, "part-1", "p-anna", public, proof)
+    for part, person, keys in (("part-2", "p-anna", public), ("part-1", "p-ben", public),
+                               ("part-1", "p-anna", {**public, "sign": "sign-key-2"}),
+                               ("part-1", "p-anna", {**public, "box": "box-key-2"})):
+        assert not seal.check_join_proof(secret, part, person, keys, proof), (part, person, keys)
+    assert not seal.check_join_proof(b"t" * 32, "part-1", "p-anna", public, proof)   # another invite's secret
+    assert not seal.check_join_proof(secret, "part-1", "p-anna", public, None)       # no proof at all
