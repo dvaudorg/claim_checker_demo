@@ -343,6 +343,17 @@ class Jobs:
                     if free:
                         threading.Thread(target=llm.let_go, args=(free,), daemon=True,
                                          name=f"let-go-{job.id}").start()
+                elif job.used_models:
+                    # I6: a job that ended by itself lets go of an MLX model at once too: Ollama's MLX runner holds its
+                    # prompt cache (up to 8 GiB) for the 15 minutes the model is kept; a llama.cpp model stays, as it
+                    # does not grow. Nothing is loaded to unload it, and a model another job uses is kept
+                    with self.lock:
+                        busy = set().union(*(j.used_models for j in self.jobs.values()
+                                             if j is not job and j.state in ("queued", "running")))
+                    free = set(job.used_models) - busy
+                    if free:
+                        threading.Thread(target=llm.let_go, args=(free,), kwargs={"runner": "mlx"}, daemon=True,
+                                         name=f"let-go-mlx-{job.id}").start()
                 job.finished = time.time()
                 if job.tracker is not None:
                     job.tracker.finish()

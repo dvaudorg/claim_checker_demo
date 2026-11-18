@@ -486,6 +486,11 @@ MIGRATIONS = [("documents", "declared_ref", "TEXT"), ("vca_refs", "alias_of", "T
               # I7 stage 3 (ailog.py): who sent each passage (the person id of the copy that sent it) and on which
               # model, so the AI log can say who ran what in a team. NULL: sent before, or by an older copy
               ("ai_sent", "person_id", "TEXT"), ("ai_sent", "model", "TEXT"),
+              # I6 (suggestions only): what a local model on this computer made of an excerpt of a check is a suggestion
+              # (a JSON object: {"by": "local", "form": "check" | "point", "rank", "order"}); it sets no status until
+              # the person judges the excerpt (verdicts.effective). NULL: a judgement that counts (Claude's, a person's,
+              # or a local model's from before I6, which keeps counting: check_results says so)
+              ("verifications", "suggestion_json", "TEXT"),
               ]
 
 

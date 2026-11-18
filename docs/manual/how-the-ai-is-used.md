@@ -68,9 +68,13 @@ thought each task gets and the mix of local and Claude models: [Which model does
 
 - **Every quote is checked** against the source, word for word. A quote that is not in the text is sent back and is
   never used ([How a check reaches its answer](how-a-check-works.md#what-a-check-does)).
-- **Your judgement wins.** You review the AI as you would a co-coder; yours replace its own and always count.
+- **Your judgement wins.** You review the AI as you would a co-coder; yours replace its own and always count. A
+  local model on your computer only suggests: every excerpt it reads waits for your judgement, and only yours count
+  ([Suggestions only](local-models.md#suggestions-only)).
 - **Every answer records how it was made**: the model, the prompt version, the route and the ENLENS version. Claude Code
-  and the Claude API take no seed, so their answers are not repeatable the way a seeded local model's are
+  and the Claude API take no seed, so their answers are not repeatable the way a seeded local model's are (a local
+  model's are not guaranteed either: its engine, recorded with each answer, can word an answer differently when asked
+  again)
   ([What every answer records](models.md#what-every-answer-records)).
 - **ENLENS redoes nothing by itself** when a new version comes: results stay as they were made
   ([Results across versions](models.md#results-across-versions)).

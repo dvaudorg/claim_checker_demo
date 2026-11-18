@@ -276,7 +276,14 @@ as the icon starts it (`--launcher`, output to `logs/enlens.log`), without openi
 `suggested` (0.13.7): the models the page offers to download into Ollama with one button. `ollama_app` (0.15.6):
 whether Ollama is on this computer, running or not: `{"installed", "path", "system": "windows" | "mac" | "linux",
 "how": "app" | "terminal", "line", "manual"}` (`how`: the app installs it itself, or on Linux opens a terminal window
-running Ollama's own `line`; `manual`: Ollama's installer file, for doing it by hand).
+running Ollama's own `line`; `manual`: Ollama's installer file, for doing it by hand). `advice` (0.18.0rc2) gives the
+models that fit this computer; I6 adds `advice.tier` (`{"tier": "small" | "medium" | "large", "answers": "explorer" |
+"suggestions", "words", "size", "what"}`, the chosen tier in plain words, no model name), each chat option's `tier`,
+`answers`, `need` (bytes), `num_ctx` and `runner` (`mlx` | `llamacpp`), and `older_model`: `{"chosen", "offer", "size"}`
+when the model set up is not the tier's (null otherwise). Since I6 a check's result (`GET …/hypotheses/<id>`) carries
+per excerpt `suggestion` (`{"form": "check" | "point", "lean", "marked", "rank", "order"}`, a local model's reading,
+which counts for nothing until judged) and `local_counted`, and per part and hypothesis the counts `suggestions` and
+`local_counted`.
 
 `POST /api/jobs/<id>/again` (0.19.5) → runs again a job the local model was refused in for memory (its view says
 `error_kind: "memory"`, `memory: {"need", "free", "short", "model"}` and `can_run_again`): the same work, from where it
