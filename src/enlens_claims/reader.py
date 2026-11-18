@@ -161,7 +161,10 @@ def _pdfminer_pages(path, shapes: list | None = None,
     pages: list[list[Line]] = []
     dims: list[tuple[float, float]] = []
     if version >= 6:
-        from .reader6 import extract_pages
+        from . import reader6
+
+        if reader6.PDFMINER_RULES:   # (an older pdfminer lacks what they need: the stock `extract_pages` then)
+            extract_pages = reader6.extract_pages
     for pno, pg in enumerate(extract_pages(str(path), laparams=params)):
         height = float(pg.height)
         out: list[Line] = []

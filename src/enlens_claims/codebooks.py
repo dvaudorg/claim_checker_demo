@@ -935,6 +935,8 @@ def create(ws: Workspace, name: str, title: str = "", where: str = "project", st
     imported = None
     if start == "copy":
         of = frameworks.get(str(source.get("of") or ""), ws)
+        if of is None:   # (`get` answers None for no name at all)
+            raise ValueError("Choose the codebook to copy.")
         st = _state(of.name, of.codes, json.loads(json.dumps(of.meta or {})), of.title, of.label, of.directional)
         state.update(groups=st["groups"], codes=[{**c, "uid": ""} for c in st["codes"]], label=of.label,
                      directional=of.directional, title=title or f"{of.title} (copy)")

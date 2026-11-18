@@ -127,9 +127,11 @@ def prepare(ref: Workspace, folder: str | Path, kind: str, model: str, again: bo
         terms.ensure(ws)
         for r in rows:
             try:
-                ids.append(terms.make_link_task(ws, r["a"], r["b"], model))
+                tid = terms.make_link_task(ws, r["a"], r["b"], model)
             except KeyError:
                 continue
+            if tid is not None:   # (None: a term occurs only in documents no AI may read: no task)
+                ids.append(tid)
     elif kind == "theme":
         rows = _read_csv(folder / "f4_themes.csv")
         run_id = next((r["run_id"] for r in rows if r.get("run_id")), None)

@@ -326,6 +326,20 @@ def _read_docx(path: Path) -> tuple[list[str], str | None, set[str], dict | None
     that differs, the sixth the alternative texts."""
     import xml.etree.ElementTree as ET
 
+    class _NoDoctype(ET.TreeBuilder):   # (a Word file has no DOCTYPE; entities declared in one could swell a few
+        def doctype(self, *_a):         # hundred bytes into megabytes: the same guard as sync/_xml.py)
+            raise ET.ParseError("a DOCTYPE, which no Word file has")
+
+    def parse(data: bytes):
+        parser = ET.XMLParser(target=_NoDoctype())
+        try:
+            parser.feed(data)
+            return parser.close()
+        except ET.ParseError:
+            raise
+        except Exception as e:  # noqa: BLE001 - whatever the hook raised, through expat, is a refusal
+            raise ET.ParseError(str(e)) from None
+
     try:
         zf = zipfile.ZipFile(path)
     except zipfile.BadZipFile as e:  # 0.11.1: listed under failed like any other unreadable file, not a crash
@@ -338,7 +352,7 @@ def _read_docx(path: Path) -> tuple[list[str], str | None, set[str], dict | None
         if info.file_size > DOCX_MAX:
             raise ValueError("The Word file's text is too large to read.")
         try:
-            root = ET.fromstring(zf.read(info))
+            root = parse(zf.read(info))
         except ET.ParseError as e:
             raise ValueError(f"the Word file's text could not be read ({e})") from e
         title = None
@@ -346,7 +360,7 @@ def _read_docx(path: Path) -> tuple[list[str], str | None, set[str], dict | None
             core_info = zf.getinfo("docProps/core.xml")
             if core_info.file_size > DOCX_CORE_MAX:  # a title is a few words: anything this large is not one
                 raise KeyError("docProps/core.xml")
-            core = ET.fromstring(zf.read(core_info))
+            core = parse(zf.read(core_info))
             t = core.find("{http://purl.org/dc/elements/1.1/}title")
             title = (t.text or "").strip() or None if t is not None else None
         except (KeyError, ET.ParseError, *ZIP_ERRORS):  # 0.14.3: damaged properties: the text is read all the same

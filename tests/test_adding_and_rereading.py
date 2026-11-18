@@ -388,3 +388,30 @@ def test_the_kind_of_a_passages_blocks_is_found_quickly_and_as_before():
     some = rnd.sample(range(len(new)), 300)
     assert [got[i] for i in some] == [before(new[i].pid) for i in some]
     assert any(got) and took < 0.5, took  # before: every block looked at for every passage (4 s here, 0.07 s now)
+
+
+def _docx_with_doctype(path: Path, part: str) -> Path:
+    """A Word file whose `part` starts with a DOCTYPE of internal entities (a few hundred bytes read as megabytes)."""
+    bomb = '<!DOCTYPE d [<!ENTITY e "' + "A" * 4000 + '">]>'
+    w = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+    ref = "&e;" * 90
+    doc = f'<w:document {w}><w:body><w:p><w:r><w:t>Fine text.</w:t></w:r></w:p></w:body></w:document>'
+    core = '<cp:coreProperties xmlns:cp="c" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Real</dc:title>'
+    if part == "word/document.xml":
+        doc = bomb + doc.replace("Fine text.", ref)
+    else:
+        core = bomb + core.replace("Real", ref)
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("word/document.xml", doc)
+        z.writestr("docProps/core.xml", core + "</cp:coreProperties>")
+    return path
+
+
+def test_a_word_file_with_a_doctype_is_refused_not_expanded(tmp_path):
+    """18 November 2026 (hunt RS-1): entities declared in a DOCTYPE grew a few hundred bytes into megabytes of text."""
+    bad = _docx_with_doctype(tmp_path / "bomb.docx", "word/document.xml")
+    with pytest.raises(ValueError):
+        ingest._read_docx(bad)
+    props = _docx_with_doctype(tmp_path / "props.docx", "docProps/core.xml")
+    pages, title, *_ = ingest._read_docx(props)   # damaged properties: the text is read all the same, without them
+    assert title is None and "".join(pages).strip() == "Fine text."
