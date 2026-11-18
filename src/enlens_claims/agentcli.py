@@ -217,6 +217,7 @@ def status(route: str, refresh: bool = False) -> dict:
     c = _STATUS.get(route)
     if not refresh and c and time.time() - c["at"] < 30:
         return c["value"]
+    started = time.time()
     out = {"found": False, "path": "", "version": "", "signed_in": None, "account": "", "models_available": [],
            "connector": None, "ready": False, "can_start": False, "local_only": core.local_only(),
            "problem": ""}
@@ -229,7 +230,11 @@ def status(route: str, refresh: bool = False) -> dict:
         (_codex_status if route == "codex" else _agy_status)(path, out)
     out["can_start"] = bool(out["found"] and out["signed_in"] is not False)
     out["ready"] = bool(out["can_start"] and out["connector"] is True)
-    _STATUS[route] = {"at": time.time(), "value": out}
+    # only the newest answer is kept: a slow look begun before an install or a sign-in finished must not put back
+    # "not found" over the answer of a look begun after it (the queue then said "Antigravity was not found")
+    now_c = _STATUS.get(route)
+    if now_c is None or now_c.get("began", 0) <= started:
+        _STATUS[route] = {"at": time.time(), "began": started, "value": out}
     return out
 
 

@@ -143,10 +143,62 @@ export function providersDefaultCard(project, info, onSaved, docs = []) {
 // A model server on another computer as the main route (stage 1 of other cloud providers): it reads only the documents
 // allowed to it ("other", or the provider of its address). One line, and a button that allows it for the project; no
 // pop-up. `onAllowed(res)` after the project's choice was saved.
+// Fetch the project's AI access, then draw `make(info)` into a slot that stays hidden when there is nothing to say
+// (the lines below take `info` null for "fetch it yourself").
+function infoSlot(project, make, cls) {
+  const box = h("div", { class: cls, hidden: true });
+  api("GET", `/api/projects/${P(project)}/ai-access`).then((r) => {
+    const el = make((r && r.ai_access) || {});
+    if (el) { replace(box, el); box.hidden = false; }
+  }).catch(() => {});
+  return box;
+}
+
+// Stage 2: the main route's agent (Codex, Antigravity) or another cloud provider's API reads only the documents that
+// allow its company. A project allows Anthropic only until the person says more, so its work would wait for an agent
+// that is never handed it: this line says so, with the counts, and allows the company for the project in one press
+// (a shared project: why it cannot). null when every document marked for cloud AI allows it, or the route is
+// Claude's, on this computer, or a server on another computer (remoteServerLine). `info`: the project's AI access
+// (GET /api/projects/<p>/ai-access, or the documents' `ai_access`); null: fetched here (an element is returned at once,
+// hidden until it has something to say). `onAllowed(r)`: after the company was allowed (r: the PUT's answer).
+export function providerAllowLine(project, info, onAllowed) {
+  const s = App.settings(), st = providersState();
+  const prov = st.route;
+  const agentCli = s.backend === "codex" || s.backend === "antigravity";
+  if (!project || !prov || prov === "anthropic" || prov === "other" || !(agentCli || s.backend === "cloud_api")) return null;
+  if (info == null) return infoSlot(project, (got) => providerAllowLine(project, got, onAllowed), "provider-allow-slot");
+  const company = ((st.list || []).find((p) => p.id === prov) || {}).company || providerTitle(prov);
+  const name = agentCli ? agentTitle(s) : `${providerTitle(prov)}, through your API key,`;
+  const same = info.route_provider === prov;
+  const total = same ? (info.route_cloud || 0) : ((info.counts || {}).cloud || 0);
+  const ok = same ? (info.route_allowed || 0) : ((info.providers_default || ["anthropic"]).includes(prov) ? total : 0);
+  if (!total || ok >= total) return null;
+  const words = `${name} reads only documents that allow ${company}: ${ok} of ${total} ${total === 1 ? "does" : "do"}.`;
+  if (info.shared) {
+    return notice({ kind: "attention", class: "provider-allow-line" }, h("p", {}, words, " ",
+      info.providers_note || "Other providers come to shared projects later: your colleagues have not agreed to them."));
+  }
+  let box = null;
+  const btn = button({ sm: true, kind: "main", onClick: async () => {
+    btn.disabled = true;
+    try {
+      const r = await api("PUT", `/api/projects/${P(project)}/ai-access`, { providers_default: [...new Set([...(info.providers_default || ["anthropic"]), prov])] });
+      toast(`${company} may read this project's documents marked ${CLOUD_ANY.title}. What waited for ${agentCli ? agentTitle(s) : company} goes on.`, "ok");
+      if (onAllowed) onAllowed(r); else if (box) box.remove();
+    } catch (e) { showError(e); btn.disabled = false; }
+  } }, `Allow ${company} for this project`);
+  box = notice({ kind: "attention", class: "provider-allow-line" },
+    h("p", {}, words, " Until you allow it, their work waits; documents with a choice of their own keep it (Documents page)."),
+    h("div", { class: "row" }, btn));
+  return box;
+}
+
 export function remoteServerLine(project, info = {}, onAllowed) {
   const st = providersState();
   const route = st.route, address = st.route_address;
   if (!address || !route || route === "anthropic") return null;
+  if (project && info == null) return infoSlot(project, (got) => remoteServerLine(project, got, onAllowed), "remote-server-slot");
+  info = info || {};
   const allowed = (info.providers_default || ["anthropic"]).includes(route);
   const words = `A server on another computer (${address}) reads only documents you allow it to.`;
   if (!project) return notice({ kind: "info", class: "remote-server-line" }, h("p", {}, words, " Allow it for a project on its Documents page."));

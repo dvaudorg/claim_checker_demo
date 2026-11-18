@@ -429,6 +429,7 @@ def status(ws: Workspace, project: str | None = None, parallel: int = PARALLEL, 
         model = r.model(k) or ""
         est = estimate_seconds(ws, k, model, d["waiting"] + d["being_answered"], parallel)
         d.update(model=model, step_up=r.step_up(k), helper=r.helper(k), held=k in held,
+                 model_id=r.api_id(model) if r.lineup and model else None,   # stage 2: the provider's own id
                  estimate_seconds=round(est) if est is not None else None,
                  estimate=_estimate_text(k, d["waiting"] + d["being_answered"], est))
         d.pop("first_queued")
@@ -847,6 +848,8 @@ def preview(ws: Workspace, kind: str | None = None, start: int = 0, route: str |
                "still_waiting": max(0, waiting - len(picked)),
                "how_to_answer": HOW_TO_ANSWER}
         return {"kind": k, "title": KIND_TITLE.get(k, k), "model": m, "helper": hp, "system": system,
+                # stage 2: the provider's own model the alias stands for (Codex: gpt-6.2-sol for sonnet)
+                "model_id": r.api_id(m) if r.lineup else None,
                 "tasks": picked, "raw": json.dumps(raw, ensure_ascii=False, indent=1),
                 "waiting": waiting, "being_answered": _held_count(ws, k), "start": start,
                 "more": start + len(picked) < len(cand)}
@@ -894,7 +897,9 @@ def _answering(ws: Workspace, kind: str | None, o: list[str]) -> dict | None:
         helper = claim[0]["helper"] if claim else None
         raw = {"kind": k, "model": model, "helper": helper, "prompt_version": prompts.VERSIONS[k], "system": system,
                "tasks": [{"task_id": p["task_id"], "prompt": p["prompt"]} for p in picked]}
+        r = router(ws)
         return {"kind": k, "title": KIND_TITLE.get(k, k), "model": model, "helper": helper, "system": system,
+                "model_id": r.api_id(model) if r.lineup and model else None,
                 "tasks": picked, "raw": json.dumps(raw, ensure_ascii=False, indent=1), "answering": True,
                 "waiting": 0, "being_answered": len(rows), "start": 0, "more": False}
     return None

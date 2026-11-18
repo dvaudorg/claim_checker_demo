@@ -47,6 +47,8 @@ class QueueMixin:
             out["cli"] = dict(out["claude"])
         elif out["route"] in providers.AGENT_CLIS and not home.local_only():
             st = agentcli.status(out["route"])
+            if not st["found"]:   # looked at again (cheap when it is not there): it may have been installed just now
+                st = agentcli.status(out["route"], refresh=True)
             out["can_start"] = bool(st["found"])
             out["cli"] = {"found": st["found"], "signed_in": st["signed_in"], "installed": st["connector"],
                           "ready": st["ready"]}

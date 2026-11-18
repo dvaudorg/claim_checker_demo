@@ -101,7 +101,7 @@ export function queueSection() {
       parts.push(h("div", { class: "qp-row" + (k.held ? " qp-held" : "") },
         h("div", { class: "qp-title" }, h("strong", {}, k.title), k.held ? tag({}, "held") : null),
         h("div", { class: "muted small" }, `${k.waiting.toLocaleString()} waiting${k.being_answered ? ` · ${k.being_answered} being answered` : ""}${k.done ? ` · ${k.done.toLocaleString()} done` : ""}${k.stronger_model ? ` · ${k.stronger_model} for a stronger model` : ""}${k.for_local ? ` · ${k.for_local.toLocaleString()} for your local model` : ""}`),
-        h("div", { class: "muted small" }, [k.helper ? `${k.helper} on ${k.model}` : k.model ? `on ${k.model}` : "", k.estimate ? ` · ${k.estimate}` : ""].join("")),
+        h("div", { class: "muted small" }, [k.helper ? `${k.helper} on ${k.model_id || k.model}` : k.model ? `on ${k.model_id || k.model}` : "", k.estimate ? ` · ${k.estimate}` : ""].join("")),
         h("div", { class: "qp-actions" },
           (q.order || [])[0] !== k.kind ? button({ kind: "quiet", sm: true, onClick: () => act(k.kind, "first") }, icon("arrow-up", { size: 12 }), "Do first") : null,
           button({ kind: "quiet", sm: true, onClick: () => act(k.kind, k.held ? "go" : "hold") }, icon(k.held ? "play" : "pause", { size: 12 }), k.held ? "Go on" : "Hold"),

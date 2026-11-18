@@ -1513,7 +1513,25 @@ def project_info(ws: Workspace) -> dict:
             # stage 1 of other cloud providers: who may read the `cloud` documents without their own choice, and
             # why a shared project allows Anthropic only
             "providers_default": providers_default(ws), "shared": shared,
-            "providers_note": SHARED_ONLY_ANTHROPIC if shared else None}
+            "providers_note": SHARED_ONLY_ANTHROPIC if shared else None, **_route_allows(ws, lv)}
+
+
+def _route_allows(ws: Workspace, chosen: dict[str, str]) -> dict:
+    """Stage 2: the main route's provider (Codex: OpenAI) and how many of the documents marked for cloud AI allow it,
+    for the line "Codex reads only documents that allow OpenAI: 0 of 3 do" (views/ai-access.js providerAllowLine).
+    {} when the main route reads on this computer, or cannot be known."""
+    try:
+        from .home import load_settings
+
+        prov = route_provider(load_settings())
+    except Exception:  # noqa: BLE001 - the page then shows no such line
+        return {}
+    if prov is None:
+        return {}
+    cloud = [d for d, v in chosen.items() if v == "cloud"]
+    mine = levels(ws, cloud, provider=prov, budget=False) if cloud else {}
+    return {"route_provider": prov, "route_allowed": sum(1 for v in mine.values() if v == "cloud"),
+            "route_cloud": len(cloud)}
 
 
 def may_read(ws: Workspace, payload: Any, backend) -> bool:
