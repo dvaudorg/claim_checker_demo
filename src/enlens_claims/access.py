@@ -327,12 +327,11 @@ def default(ws: Workspace) -> str:
 
 
 def _write_config(ws: Workspace, changes: dict) -> None:
-    try:
-        cfg = json.loads(ws.config_path.read_text(encoding="utf-8")) if ws.config_path.exists() else {}
-    except (OSError, json.JSONDecodeError):
-        cfg = {}
-    cfg.update(changes)
-    ws.config_path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    # hunt phase 1 (FILES-3): written whole, and a file that does not parse is refused in words, never written over
+    # as if it held nothing (`store.change_config`)
+    from .store import change_config
+
+    change_config(ws.config_path, changes)
     ws._config_cache = None
     held = _WS_FOR_PATH.get(str(ws.root))
     if held is not None:
@@ -1659,8 +1658,13 @@ def upgrade(ws: Workspace) -> dict:
     recorded provenance) enter the ledger with the time of the answer."""
     if not default_chosen(ws):
         _write_config(ws, {"ai_access_default": "local" if _local_only() else "cloud", "ai_access_banner": True})
+    from .store import AI_ACCESS_UPGRADE_DUE
+
     out = {"relabelled": 0, "backfilled": 0}
     with ws.connect() as cx:
+        # hunt phase 1 (FILES-2): the note `Workspace._setup` left that this is still to do goes with the work below,
+        # in this one transaction, so an opening stopped before it is saved does it again the next time
+        cx.execute("DELETE FROM meta WHERE key=?", (AI_ACCESS_UPGRADE_DUE,))
         if cx.execute("SELECT value FROM meta WHERE key='ai_access_upgraded'").fetchone():
             return out
         out["relabelled"] = relabel(cx)

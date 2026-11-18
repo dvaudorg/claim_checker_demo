@@ -217,16 +217,11 @@ def team_name(ws: Workspace) -> str:
 
 
 def _set_config(ws: Workspace, **changes: Any) -> None:
-    try:
-        cfg = json.loads(ws.config_path.read_text(encoding="utf-8")) if ws.config_path.exists() else {}
-    except (OSError, ValueError):
-        cfg = {}
-    for k, v in changes.items():
-        if v is None:
-            cfg.pop(k, None)
-        else:
-            cfg[k] = v
-    ws.config_path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    # hunt phase 1 (FILES-3): written whole, and a file that does not parse is refused in words, never written over
+    # as if it held nothing (`store.change_config`; a value None takes the setting out)
+    from ..store import change_config
+
+    change_config(ws.config_path, changes)
     ws._config_cache = None
 
 

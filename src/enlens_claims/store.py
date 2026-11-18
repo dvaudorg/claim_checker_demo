@@ -536,6 +536,18 @@ def _ownership_key(cx: sqlite3.Connection) -> None:
     cx.execute("DROP TABLE ownership_before_c1")
 
 
+# hunt phase 1 (FILES-1, FILES-2): a one-time step of a project from an earlier version that is still to do, noted in
+# `meta` before the schema change that is its sign is saved, and taken off with the step's own work (`Workspace._setup`)
+SHARES_UPGRADE_DUE = "shares_upgrade_due"          # sharing.upgrade: made before 0.18 (no table `shares`)
+AI_ACCESS_UPGRADE_DUE = "ai_access_upgrade_due"    # access.upgrade: made before 0.11 (no column documents.ai_access)
+META_TABLE = "CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)"  # as in SCHEMA
+
+
+def _due(cx: sqlite3.Connection, key: str) -> bool:
+    """Whether the one-time step noted as `key` is still to do."""
+    return cx.execute("SELECT 1 FROM meta WHERE key=?", (key,)).fetchone() is not None
+
+
 def _roles_upgrade(cx: sqlite3.Connection) -> None:
     """Roles (DESIGN-roles §3.5), once per project (`meta.roles_upgraded`): who the owner is now follows this copy's
     own pins, never a clock. A project with records of who owns it and no pins pins the chain as 0.17 computed it,
@@ -782,6 +794,59 @@ def now() -> str:
     return _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat()
 
 
+class DamagedConfig(ValueError):
+    """A project's config.json is there and holds nothing ENLENS can read as settings."""
+
+
+def _damaged_config(path: Path) -> DamagedConfig:
+    return DamagedConfig(f"The project's settings file (config.json in {path.parent}) is damaged: ENLENS cannot read "
+                         "it, and nothing was saved over it. Put back a copy from a backup, or move config.json out of "
+                         "the project folder: the project then starts again from ENLENS's own settings (its documents "
+                         "and work are not in that file).")
+
+
+# one change of a config.json at a time in this program (a round of the shared folder in the background and a setting
+# saved on a page): each reads the file, changes it and writes it back, and the second must read what the first wrote
+_CONFIG_LOCK = threading.RLock()
+
+
+def write_config(path: str | Path, cfg: dict) -> None:
+    """hunt phase 1 (FILES-3): every write of a project's config.json goes through here, whole: under another name
+    beside it, then put in its place (`home._write_whole`, as the data folder's own files). Written in place, a write
+    cut off (the app quit, the computer off, the disk full) or read in the middle by another thread left it empty or
+    short: every setting of the project gone (its strictness, its AI default, its shared folder), and reading its
+    settings failed from then on."""
+    from .home import _write_whole
+
+    _write_whole(Path(path), json.dumps(cfg, indent=2))
+
+
+def change_config(path: str | Path, changes: dict) -> dict:
+    """Change some settings of a project's config.json and write it back whole (`write_config`); a value None takes
+    the setting out. Returns the settings written. A file that does not parse (or holds no object) raises
+    DamagedConfig and is left as it is: counted as empty, it was written back holding the one change alone."""
+    path = Path(path)
+    with _CONFIG_LOCK:
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            cfg: dict = {}
+        else:
+            try:
+                cfg = json.loads(raw)
+            except ValueError:
+                raise _damaged_config(path) from None
+            if not isinstance(cfg, dict):
+                raise _damaged_config(path)
+        for k, v in changes.items():
+            if v is None:
+                cfg.pop(k, None)
+            else:
+                cfg[k] = v
+        write_config(path, cfg)
+        return cfg
+
+
 class _Cx(sqlite3.Connection):
     """0.15.7: a connection a workspace can keep track of (a plain sqlite3.Connection cannot be weakly referenced)."""
 
@@ -818,7 +883,7 @@ class Workspace:
         for sub in ("tasks", "results", "exports", "report"):
             (ws.root / sub).mkdir(exist_ok=True)
         if not ws.config_path.exists():
-            ws.config_path.write_text(json.dumps(DEFAULT_CONFIG, indent=2))
+            write_config(ws.config_path, DEFAULT_CONFIG)
         if not ws.db_path.exists():
             try:
                 if scratch:
@@ -849,11 +914,23 @@ class Workspace:
             doc_cols = {r[1] for r in cx.execute("PRAGMA table_info(documents)")}
             before_011 = bool(doc_cols) and "ai_access" not in doc_cols  # a project made before 0.11, opened now
             before_018 = not cx.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='shares'").fetchone()
+            empty = not cx.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone()
+            # hunt phase 1 (FILES-1, FILES-2): the sign of a project of an earlier version (a table or a column it
+            # lacks) is saved by the schema below at once, and the one-time step it calls for runs (and is saved) only
+            # later; an opening stopped in between (the app quit, the computer off) left the sign gone and the step
+            # never done, for good. So the step to do is noted first, saved before the schema changes anything, and
+            # each step takes its note off in the same transaction as its work (as `_roles_upgrade` keeps its mark):
+            # an interrupted opening finds the note again and does the step then. A new database needs neither.
+            todo = [k for k, due in ((SHARES_UPGRADE_DUE, before_018), (AI_ACCESS_UPGRADE_DUE, before_011)) if due]
+            if todo and not empty:
+                cx.execute(META_TABLE)
+                cx.executemany("INSERT OR REPLACE INTO meta VALUES (?, '1')", [(k,) for k in todo])
+                cx.commit()
             # 2026-11-13: a new database (a new project, or one of the scratch projects of every shared-folder round) is
             # set up in one transaction, saved once instead of once per table, column and index; nothing else has it
             # open yet. A project already there is set up as before, a statement at a time, so opening it never holds
             # the database while a job of it writes.
-            new = _ONE_TRANSACTION and not cx.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone()
+            new = _ONE_TRANSACTION and empty
             begin = "BEGIN IMMEDIATE;\n" if new else ""
             cx.executescript(begin + SCHEMA)
             _migrate(cx)
@@ -862,16 +939,18 @@ class Workspace:
             dropped = _drop_old_places(cx)
             cx.executescript(begin + INDEXES)  # (executescript saves what came before it)
             _setup_addons(cx)
-            if before_018:  # 0.18 (L1): a project exchanged before counts as shared; one never sent starts private
-                from .sharing import upgrade
+            if _due(cx, SHARES_UPGRADE_DUE):  # 0.18 (L1): a project exchanged before counts as shared; one never
+                from .sharing import upgrade      # sent starts private
 
                 upgrade(cx, self.root)
+                cx.execute("DELETE FROM meta WHERE key=?", (SHARES_UPGRADE_DUE,))  # (saved with the rows it made)
             cx.commit()
+            ai_access_due = _due(cx, AI_ACCESS_UPGRADE_DUE)
             if dropped:
                 _vacuum_after_drop(cx, self.root)
         finally:
             cx.close()
-        if before_011:
+        if ai_access_due:  # (`access.upgrade` takes the note off in its own transaction)
             from .access import upgrade
 
             upgrade(self)
@@ -932,7 +1011,12 @@ class Workspace:
             return json.loads(json.dumps(self._config_cache[1]))
         cfg = json.loads(json.dumps(DEFAULT_CONFIG))
         if stamp:
-            user = json.loads(self.config_path.read_text())
+            try:
+                user = json.loads(self.config_path.read_text(encoding="utf-8"))
+            except ValueError:  # hunt phase 1 (FILES-3): in words, not a parser's position in an empty file
+                raise _damaged_config(self.config_path) from None
+            if not isinstance(user, dict):
+                raise _damaged_config(self.config_path)
             for k, v in user.items():
                 if isinstance(v, dict) and isinstance(cfg.get(k), dict):
                     cfg[k].update(v)
