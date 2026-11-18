@@ -182,25 +182,28 @@ export function initLogDrawer() {
   }
 
   // ---- writing
+  let adding = false;   // one entry at a time, from the first press (the button is disabled only after the title is asked for)
   async function add() {
+    if (adding) return;
     const text = ta.value.trim();
     if (!text) { ta.focus(); return; }
-    const ctx = context();
-    const payload = { text };
-    if (ctx && ctx.subject_kind) {
-      payload.subject_kind = ctx.subject_kind;
-      payload.subject_id = ctx.subject_id;
-      if (ctx.subject_kind === "codebook") payload.title = ctx.subject_id;
-      else if (ctx.subject_kind === "document") { const t = await titleOf(ctx); if (t && t !== ctx.label) payload.title = t; }
-    }
+    adding = true;
     addBtn.disabled = true;
     try {
+      const ctx = context();
+      const payload = { text };
+      if (ctx && ctx.subject_kind) {
+        payload.subject_kind = ctx.subject_kind;
+        payload.subject_id = ctx.subject_id;
+        if (ctx.subject_kind === "codebook") payload.title = ctx.subject_id;
+        else if (ctx.subject_kind === "document") { const t = await titleOf(ctx); if (t && t !== ctx.label) payload.title = t; }
+      }
       await api("POST", `/api/projects/${P(App.project)}/log`, payload);
-      ta.value = "";
+      if (ta.value.trim() === text) ta.value = "";   // words typed meanwhile are the next entry's
       shown = PAGE;
       toast("Added to the research log.", "ok");
       await refresh();
-    } catch (e) { showError(e); } finally { addBtn.disabled = false; }
+    } catch (e) { showError(e); } finally { adding = false; addBtn.disabled = false; }
   }
 
   // ---- when to read again, and when to close

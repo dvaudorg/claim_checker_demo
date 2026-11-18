@@ -131,6 +131,41 @@ await scenario("P-1 log page text typed while adding", async (t) => {
   await t.settle(1000);
   return { left: ta.value };
 });
+
+// ---- P-1 (drawer): the log drawer's Ctrl+Enter adds an entry once ------------------------------------------------
+async function drawer(t, hash) {
+  const shell = document.createElement("div"); shell.setAttribute("id", "shell"); document.body.appendChild(shell);
+  t.state({}, { project: "Study", hash });
+  t.answer("GET /api/projects/Study/log?*", { entries: [], total: 0, groups: {}, group_names: {} });
+  t.answer("GET /api/projects/Study/documents/d1?*", { title: "Field notes" });
+  const m = await t.module("views/logdrawer.js");
+  m.initLogDrawer();
+  await t.settle(50);
+  await t.click("Write in the log");
+  await t.settle(50);
+  return document.getElementById("logdrawer");
+}
+await scenario("P-1 drawer double Ctrl+Enter", async (t) => {
+  const posts = [];
+  t.answer("POST /api/projects/Study/log", async (body) => { posts.push(body); await new Promise((r) => setTimeout(r, 300)); return {}; });
+  await drawer(t, "#/doc/d1");
+  const ta = document.querySelector(".logdrawer-text");
+  ta.value = "A decision about this document";
+  const key = () => ta.dispatchEvent(new Event("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
+  key(); key();
+  await t.settle(1000);
+  return { posts: posts.map((p) => p.text) };
+});
+await scenario("P-1 drawer text typed while adding", async (t) => {
+  t.answer("POST /api/projects/Study/log", async () => { await new Promise((r) => setTimeout(r, 300)); return {}; });
+  await drawer(t, "#/hypotheses");
+  const ta = document.querySelector(".logdrawer-text");
+  ta.value = "First entry";
+  await t.click("Add to the log");
+  ta.value = "First entry, and a second thought";
+  await t.settle(1000);
+  return { left: ta.value };
+});
 """
 
 
@@ -181,3 +216,13 @@ def test_p1_ctrl_enter_twice_adds_one_entry_on_the_log_page(page):
 @needs_node
 def test_p1_text_typed_while_an_entry_is_added_is_kept_on_the_log_page(page):
     assert page["P-1 log page text typed while adding"]["left"] == "First entry, and a second thought"
+
+
+@needs_node
+def test_p1_ctrl_enter_twice_adds_one_entry_in_the_drawer(page):
+    assert page["P-1 drawer double Ctrl+Enter"]["posts"] == ["A decision about this document"]
+
+
+@needs_node
+def test_p1_text_typed_while_an_entry_is_added_is_kept_in_the_drawer(page):
+    assert page["P-1 drawer text typed while adding"]["left"] == "First entry, and a second thought"
