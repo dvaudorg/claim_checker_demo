@@ -3,7 +3,6 @@
 // The whole log, with search, export and the rest, is its own place (#/log): there the button and the panel hide (the
 // page has the write box and every entry), and the panel comes back on the next page if it was open.
 import { App, api, h, icon, clear, session, fmt, toast, showError, P, button, link, textarea, choice, drawer, drawerButton, setDrawerOpen } from "../lib.js";
-import { leftAfterSending } from "../lib.js";
 import { subjectHref, entryText, entrySubject, entryWho } from "./log.js";
 
 const PAGE = 30;
@@ -200,7 +199,10 @@ export function initLogDrawer() {
         else if (ctx.subject_kind === "document") { const t = await titleOf(ctx); if (t && t !== ctx.label) payload.title = t; }
       }
       await api("POST", `/api/projects/${P(App.project)}/log`, payload);
-      ta.value = leftAfterSending(ta.value, text);   // words typed meanwhile are the next entry's
+      // words typed meanwhile are the next entry's: what follows the sent words stays; a rewritten box is left alone
+      // (not lib.js's leftAfterSending: tests/test_log_drawer.py stubs lib.js with a fixed list of names)
+      const typed = ta.value.trimStart();
+      if (typed.startsWith(text)) ta.value = typed.slice(text.length).trimStart();
       shown = PAGE;
       toast("Added to the research log.", "ok");
       await refresh();
