@@ -48,6 +48,8 @@
 - Model evaluation: a link pair no AI may read is no longer counted as a task (`evaluation.prepare`).
 - The first tool sweep of the bug hunt (ruff's bug rules, pyright, semgrep, eslint, `tsc --checkJs`, coverage): 22
   faults, each fixed with a test that failed first.
+- CI lints the page's JavaScript (`tools/lint_js.py`: eslint's `no-undef` and `no-async-promise-executor`, both
+  without a finding today).
 
 ### Tests
 

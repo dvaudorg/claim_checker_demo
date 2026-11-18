@@ -38,7 +38,8 @@ python -m pytest -q -rs -n 4 --durations=15                      # the whole sui
 **CI is where the whole suite runs** (2026-11-12). `.github/workflows/tests.yml` runs it on every push to `main` and
 every pull request, on Linux (Python 3.10, and 3.13 with every optional extra: the Claude API, OCR with Tesseract,
 PyYAML), macOS and Windows (0.15; required since 0.15.7), with a quick `ruff` check for syntax errors and undefined
-names. Each machine runs the tests side by side (`-n auto`), each test with a 10-minute limit (`--timeout=600`: a test
+names, and `tools/lint_js.py` for the page's JavaScript (eslint, two rules: a name defined nowhere, an async Promise
+executor; `python tools/lint_js.py` runs it here, with Node and the network). Each machine runs the tests side by side (`-n auto`), each test with a 10-minute limit (`--timeout=600`: a test
 that hangs fails with its stack), and Windows, the slowest, is split over four machines (`ENLENS_TEST_SHARD=k/4`, a
 split made in `tests/conftest.py`), so a run takes about 8 minutes. The 25 slowest tests of each machine are listed at
 the end of its log: read them before guessing why a run got slower. Side by side, the heaviest tests take several

@@ -247,10 +247,25 @@ def test_the_tests_run_on_three_systems_and_a_linux_job_lints():
                    # 0.18.1 (J1.7): packages come from uv.lock, and the checkout has the tags the version is made from
                    "uv sync --frozen", "uv lock --check", "fetch-depth: 0", "tesseract-ocr",
                    "ruff check --select E9,F63,F7,F82 src tests tools", "workflow_dispatch", "pull_request",
+                   # bug hunt, phase 0: the page's JavaScript is linted for names defined nowhere (tools/lint_js.py)
+                   "python tools/lint_js.py",
                    "cancel-in-progress", "contents: read"):
         assert needle in text, needle
     assert text.count("lint: true") == 1
     assert "Windows, Python 3.12" in text
+
+
+def test_the_javascript_lint_keeps_to_rules_with_no_finding_left():
+    """Bug hunt, phase 0: only rules the page passed when they were added, so a finding in CI is a new fault; eslint is
+    pinned, and the lint looks at the page's own folder."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("lint_js", ROOT / "tools" / "lint_js.py")
+    lint_js = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(lint_js)
+    assert lint_js.RULES == {"no-undef": "error", "no-async-promise-executor": "error"}
+    assert all("@" in p and not p.endswith("@latest") for p in lint_js.PACKAGES)
+    assert (lint_js.STATIC / "app.js").is_file() and (lint_js.STATIC / "views").is_dir()
 
 
 def test_the_rollback_runbook_is_written_down():
