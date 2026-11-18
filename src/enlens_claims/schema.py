@@ -281,7 +281,11 @@ class LabelOut(BaseModel):
     note: Optional[str] = None
 
 
-LINK_RELATIONS = ("same", "broader", "narrower", "related", "different")
+LINK_RELATIONS = ("same", "broader", "narrower", "related", "different",
+                  # link-v2 (D1, the last part): the kinds the text patterns and a person could already give. From the
+                  # first term (a) to the second (b); needed_by and shaped_by are the same seen from b (accepted, so an
+                  # answer that turns the pair round in words is not sent back); clashes is the same from both ends
+                  "needs", "needed_by", "shapes", "shaped_by", "clashes")
 
 
 class TermLink(BaseModel):
@@ -298,7 +302,12 @@ class TermLink(BaseModel):
         v = _norm_enum(v)
         return {"synonym": "same", "equivalent": "same", "identical": "same", "parent": "broader",
                 "child": "narrower", "hypernym": "broader", "hyponym": "narrower", "unrelated": "different",
-                "co_occurs": "related"}.get(v, v)
+                "co_occurs": "related",
+                # link-v2: other words for the three new kinds
+                "requires": "needs", "depends_on": "needs", "relies_on": "needs", "need": "needs",
+                "required_by": "needed_by", "influences": "shapes", "shape": "shapes", "affects": "shapes",
+                "influenced_by": "shaped_by", "clashes_with": "clashes", "clash": "clashes", "conflicts": "clashes",
+                "conflicts_with": "clashes", "conflict": "clashes", "at_odds": "clashes"}.get(v, v)
 
 
 class LinkOut(BaseModel):

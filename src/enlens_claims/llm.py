@@ -1554,6 +1554,16 @@ class BaselineBackend:
         sa = set(a["label"].lower().split()) & set(b["label"].lower().split())
         qa = " ".join(a["snippets"][0]["text"].split()[:8]) if a["snippets"] else a["label"]
         qb = " ".join(b["snippets"][0]["text"].split()[:8]) if b["snippets"] else b["label"]
+        # link-v2: needs, shapes, clashes with, when a passage says so in the text patterns' words (either way round)
+        from .textrelations import stated
+
+        texts = [sn["text"] for sn in a["snippets"] + b["snippets"]]
+        fwd = next((r for r in (stated(x, a["label"], b["label"]) for x in texts) if r), None)
+        back = None if fwd else next((r for r in (stated(x, b["label"], a["label"]) for x in texts) if r), None)
+        if fwd or back:
+            one, two, q1, q2 = (1, 2, qa, qb) if fwd else (2, 1, qb, qa)
+            return {"relations": [{"a": one, "b": two, "relation": fwd or back, "confidence": 0.5,
+                                   "quote_a": q1, "quote_b": q2}]}
         return {"relations": [{"a": 1, "b": 2, "relation": "related" if sa else "different", "confidence": 0.5,
                                "quote_a": qa, "quote_b": qb}]}
 

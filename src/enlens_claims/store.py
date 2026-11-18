@@ -288,8 +288,9 @@ CREATE TABLE IF NOT EXISTS team_settings(key TEXT, by TEXT, owner_seq INT, n INT
   PRIMARY KEY(key, by));
 -- D1, the rest (groupnames.py): the names of the concept map's groups that are not made from their concepts (the
 -- researcher's, the AI's drafts and the AI's names used), each with its group's concepts (term ids and labels) and the
--- filters and size it was given under; the quote an AI name rests on, apart, so that it goes with its document. Both
--- stay on this computer (sync.common.LOCAL_ONLY)
+-- filters and size it was given under; the quote an AI name rests on, apart, so that it goes with its document. D1, the
+-- last part: both travel with a team, merged by their own rules (groupnames.merge); `person_id`, `changed_by` and
+-- `history_json` (MIGRATIONS): who gave the name, who changed it last, and the versions that change replaced
 CREATE TABLE IF NOT EXISTS concept_group_names(name_id TEXT PRIMARY KEY, name TEXT, source TEXT, model TEXT,
   concepts_json TEXT, labels_json TEXT, filters_json TEXT, n INT, created_at TEXT, updated_at TEXT);
 CREATE TABLE IF NOT EXISTS concept_group_quotes(name_id TEXT PRIMARY KEY, doc_id TEXT, passage_id TEXT, page INT,
@@ -476,6 +477,12 @@ MIGRATIONS = [("documents", "declared_ref", "TEXT"), ("vca_refs", "alias_of", "T
               # `cloud` allows (a JSON list of providers.ALLOWABLE; NULL: the project's `ai_providers_default`, absent:
               # Anthropic only), and who received each passage sent (NULL: Anthropic, as everything before)
               ("documents", "ai_providers", "TEXT"), ("ai_sent", "provider", "TEXT"),
+              # D1, the last part (groupnames.py, with a team): who last changed a kept name of a concept-map group
+              # (NULL: this copy's person, as every name before)
+              ("concept_group_names", "person_id", "TEXT"),
+              # review of 18 Nov 2026: who made the last change (the name stays its author's, `person_id`) and the
+              # versions it replaced (a JSON list of "time|person"), so a copy tells a later change from one made apart
+              ("concept_group_names", "changed_by", "TEXT"), ("concept_group_names", "history_json", "TEXT"),
               ]
 
 
@@ -550,8 +557,8 @@ GLOSSARY_META = ("glossary_corpus_version", "terms_corpus_version", "terms_built
 # (removed.py) leaves them out
 REMADE = ("embeddings", "term_mentions",
           "concept_link_sentences",  # 0.18.1 (D2): made again with the glossary
-          "concept_group_quotes")  # D1 rest: an AI group name's quote goes with its document, unarchived (it stays on
-#                                    this computer; the name stays, and naming the group again finds a new quote)
+          "concept_group_quotes")  # D1 rest: an AI group name's quote goes with its document, unarchived (the name
+#                                    stays, and naming the group again finds a new quote)
 
 
 def passage_range(doc_id: str) -> tuple[str, str]:
