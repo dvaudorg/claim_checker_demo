@@ -190,6 +190,12 @@ html:has(.bulk-stick:not([hidden])) { scroll-padding-bottom: 6rem; }
 .agent-choice { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin: 4px 0 0; }
 .agent-choice .option-card-head .chip { white-space: nowrap; }
 /* Settings › AI (rework) */
+/* the facts of the local model (Technical): the name of each fact beside its value, one under the other on a phone */
+.tech-dl { display: grid; grid-template-columns: minmax(9rem, max-content) minmax(0, 1fr); gap: 4px var(--space-4); margin: 0 0 var(--space-3); }
+.tech-dl > div { display: contents; }
+.tech-dl dt { color: var(--muted); font-size: var(--fs-small); }
+.tech-dl dd { margin: 0; font-size: var(--fs-small); }
+@media (max-width: 640px) { .tech-dl { grid-template-columns: minmax(0, 1fr); gap: 0; } .tech-dl dd { margin-bottom: 6px; } }
 /* which AI: 2 × 2 (the owner's sketch), the cloud above and this computer below, each row with its small caption;
    one column on a phone. A computer that keeps everything local shows only the second row. */
 .route-cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-3); margin: 8px 0 12px; }
@@ -1612,7 +1618,7 @@ html:has(.cb-savebar:not([hidden])) { scroll-padding-bottom: 6rem; }
 .settings-section .field > .input, .settings-section .field > .select, .settings-section .setting > .seg { max-width: 32rem; }
 .settings-section .field, .settings-section .switch-field { margin: 0 0 var(--space-4); }
 .settings-section .field:last-child, .settings-section .switch-field:last-child { margin-bottom: 0; }
-.settings-section .set-lang { max-width: 16em; }
+.settings-section .field > .set-lang { max-width: 16em; }
 @media (max-width: 860px) {   /* two columns become one: the first column's last row keeps its space */
   .settings-section .fields-2 > :first-child > :last-child { margin-bottom: var(--space-4); }
 }

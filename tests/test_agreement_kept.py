@@ -145,7 +145,8 @@ async function settings(t, kept, result = null) {
   t.answer("POST /api/projects/Study/agreement", { job: { id: "j1" } });
   t.answer("GET /api/jobs/j1", { id: "j1", state: "done", progress: {}, result });
   // the Settings rework: agreement between routes is a card of the Technical tab
-  await t.render("views/settings.js", "renderSettings", ["advanced"]);
+  // the card is folded on Technical until a link to it (#/settings/agreement) opens it
+  await t.render("views/settings.js", "renderSettings", ["agreement"]);
   await t.settle(1000);
   return document.getElementById("s-agreement");
 }

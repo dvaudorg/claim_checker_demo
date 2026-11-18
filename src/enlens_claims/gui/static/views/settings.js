@@ -37,7 +37,7 @@ export const AGENT_CHOICE = {
     // what its maker does with the text on that kind of account (checked on its pages, 18 November 2026)
     terms: "On ChatGPT Plus or Pro, OpenAI may use what Codex reads to improve its models unless Improve the model for everyone is off in ChatGPT’s Data controls; Business, Edu and Enterprise plans are not used for that by default.",
     foot: "may train its models on Plus or Pro unless you switch that off" },
-  antigravity: { title: "Antigravity", plan: "Your Google account, free or paid. Free: every task on Gemini 3.8 Flash.", company: "Google", box: "Google Gemini", tag: "Recommended on a free plan",
+  antigravity: { title: "Antigravity", plan: "Your Google account, free or paid. Free: every task on Gemini 3.8 Flash.", company: "Google", box: "Google Gemini", tag: "For a free plan",
     terms: "On a personal Google account, Google may use what Antigravity reads to improve its products while the Enable Telemetry setting is on (in Antigravity’s settings). Switch it off before you use it for research documents: the set-up says where.",
     foot: "may improve its products from it while Telemetry is on" },
 };
@@ -79,7 +79,7 @@ export async function agentConsent(key, { stay = "Keep the AI on this computer" 
 // Settings as five tabs: AI · Checking · Documents · General · Technical. Old links to a section (#/settings/second,
 // #/settings/calibration, #/settings/explore…) open its tab and scroll to it; a folded Technical card it names opens.
 // the AI tab wears the icon of the sidebar's AI line (where text goes): the chip is the AI mark's only (DESIGN.md 3.3)
-const TABS = [["model", "AI", "cloud"], ["basics", "Checking", "flask"], ["documents", "Documents", "book-open"], ["general", "General", "monitor"], ["advanced", "Technical", "sliders"]];
+const TABS = [["model", "AI", "cloud"], ["basics", "Checking", "flask"], ["documents", "Documents", "book-open"], ["general", "General", "sliders"], ["advanced", "Technical", "terminal"]];
 const TAB_OF = {
   model: "model", ai: "model", work: "model", terms: "model", restricted: "model", mix: "model", speed: "model", thought: "model", queue: "model",
   basics: "basics", calibration: "basics", newchecks: "basics",
@@ -542,6 +542,7 @@ function modelSection(s, servers, watchers, info = { servers }, terms = null) {
   }
   // An API key, the same way: one dialog names the company the excerpts go to, the bill, which documents are sent and
   // (in a shared project) the team's line; its yes allows cloud models and saves the provider at once.
+  const haveKey = (id) => { const st = App.state || {}, k = st.key || {}; return id === "anthropic" ? !!(k.env || k.stored || k.session) : !!((st.providers || {}).keys || {})[id]; };
   async function useProvider(id) {
     const p = provider(id), claude = p.id === "anthropic";
     const team = await projectShared();
@@ -552,7 +553,7 @@ function modelSection(s, servers, watchers, info = { servers }, terms = null) {
           ? " Documents marked Only a local AI or No AI never are."
           : ` Every document allows Anthropic only until you tick ${p.title} for it on the Documents page; the others are read by your local model, or wait for you.`),
         sharedLine(claude ? "the Claude API" : p.title, p.id, team),
-        h("p", { class: "muted small" }, `Nothing is sent before a key is stored. Your documents, results and reviews stay on this computer.${claude ? "" : ` ${p.title} is not yet measured with ENLENS: its models and settings were measured with Claude only.`}`)),
+        h("p", { class: "muted small" }, `${haveKey(p.id) ? "A key is stored, so the next AI button you press sends its excerpts." : "Nothing is sent before a key is stored."} Your documents, results and reviews stay on this computer.${claude ? "" : ` ${p.title} is not yet measured with ENLENS: its models and settings were measured with Claude only.`}`)),
       actions: [{ text: stay(), value: false, id: "dlg-safe" }, { text: claude ? "Use the Claude API" : `Use ${p.title}`, value: true, primary: true }],
       onOpen(dlg) { const b = dlg.querySelector("#dlg-safe"); if (b) b.focus(); },
     });
@@ -623,7 +624,7 @@ function modelSection(s, servers, watchers, info = { servers }, terms = null) {
     const keyTag = (id) => (have(id) ? (refused[id] ? "Key refused" : "Key stored") : null);
     const drawCards = () => {
       const pc = optionCards({ name: "cloud-provider", class: "provider-cards", label: "API key: which provider", value: pid,
-        options: providers.map((x) => ({ value: x.id, icon: "key", title: x.id === "anthropic" ? "Claude (Anthropic)" : x.title, text: PROVIDER_TEXT[x.id] || "",
+        options: providers.map((x) => ({ value: x.id, icon: "key", title: x.id === "anthropic" ? "Claude" : x.title, text: PROVIDER_TEXT[x.id] || "",
           tag: x.id === "anthropic" ? "Recommended" : keyTag(x.id), foot: [icon("cloud", { size: 12 }), `${x.company} · billed per use`] })),
         onPick: async (v) => {
           if (v === pid) return;

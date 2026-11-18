@@ -343,7 +343,7 @@ def test_subscription_holds_the_agents_and_codex_is_set_up_in_steps(page):
     assert r["cards"] == [["subscription", True], ["apikey", False], ["local", False], ["baseline", False]]
     assert r["choice"] == [["claude_code", "true"], ["codex", "false"], ["antigravity", "false"]]
     assert "The passages go to OpenAI" in r["words"] and "The passages go to Google" in r["words"]
-    assert r["tags"] == ["Recommended", "", "Recommended on a free plan"]
+    assert r["tags"] == ["Recommended", "", "For a free plan"]
     assert "Free: every task on Gemini 3.8 Flash" in r["words"]
     assert r["inset"] is True and r["label"] == "Subscription: whose plan" and "a plan you already have" in r["routeWords"]
     assert "may train its models on Plus or Pro unless you switch that off" in r["words"]

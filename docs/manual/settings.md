@@ -29,7 +29,7 @@ inside it. Each carries a mark where it fits.
 | --- | --- | --- |
 | **Claude Code** | A Claude plan (Pro, Max, Team) | *Recommended* |
 | **Codex** | A ChatGPT plan (Plus, Pro, Business) | |
-| **Antigravity** | A Google account, free or paid; free: every task on Gemini 3.8 Flash | *Recommended on a free plan* |
+| **Antigravity** | A Google account, free or paid; free: every task on Gemini 3.8 Flash | *For a free plan* |
 
 Choosing Codex or Antigravity asks first, naming the company that then receives the passages inside the tasks, as
 Claude Code does; the yes is the choice, saved at once, and a no keeps the agent you had. *Set up Codex* (or *Set up
@@ -40,7 +40,7 @@ Technical › The provider's models*. Claude Code's own set-up, checklist and sp
 
 ### An API key: Claude or another provider
 
-The second card in the cloud row, **API key**, reads with a key billed per use: **Claude (Anthropic)**, marked
+The second card in the cloud row, **API key**, reads with a key billed per use: **Claude**, marked
 *Recommended* as the only provider measured with ENLENS, or OpenAI, Google Gemini, Mistral, Azure OpenAI or OpenRouter,
 each reached through its OpenAI-compatible chat API, over HTTPS only. Picking the card, or another provider inside it,
 asks first: the dialog names the company the excerpts go to, says the use is billed to the key, that only documents
