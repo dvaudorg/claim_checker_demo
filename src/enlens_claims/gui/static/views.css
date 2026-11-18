@@ -194,7 +194,8 @@ html:has(.bulk-stick:not([hidden])) { scroll-padding-bottom: 6rem; }
   .route-cards { grid-template-columns: minmax(0, 1fr); }
   .route-cards > *, .route-cards > [data-value="subscription"], .route-cards > [data-value="local"], .route-cards.route-cards-few > * { grid-column: auto; }
 }
-.agent-choice { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin: 4px 0 0; }
+.agent-choice { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin: 4px 0 0; }
+.agent-choice .option-card-head .chip { white-space: nowrap; }
 /* This page's own pieces, placed here and not in the JavaScript; placement only */
 .docs-file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .docs-access-note { margin: var(--space-2) 0 0; }

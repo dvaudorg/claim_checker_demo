@@ -295,9 +295,11 @@ function modelSection(s, servers, watchers, info = { servers }) {
   // Code, Codex, Antigravity), chosen inside its detail; the saved backend stays the agent's route.
   const AGENT_ROUTES = ["claude_code", "codex", "antigravity"];
   const AGENT_CHOICE = {
-    claude_code: { title: "Claude Code", plan: "Your Claude plan (Pro, Max, Team)", company: "Anthropic" },
-    codex: { title: "Codex", plan: "Your ChatGPT plan", company: "OpenAI" },
-    antigravity: { title: "Antigravity", plan: "Your Google account", company: "Google" },
+    // Claude Code is the recommendation; Antigravity the one for a person without a paid plan (Claude Code is not
+    // offered on Claude's free plan; Antigravity runs on a free personal Google account, on Gemini 3.8 Flash only)
+    claude_code: { title: "Claude Code", plan: "Your Claude plan (Pro, Max, Team)", company: "Anthropic", tag: "Recommended" },
+    codex: { title: "Codex", plan: "Your ChatGPT plan (Plus, Pro, Business)", company: "OpenAI" },
+    antigravity: { title: "Antigravity", plan: "Your Google account, free or paid. Free: every task on Gemini 3.8 Flash.", company: "Google", tag: "Recommended on a free plan" },
   };
   // the agent the Subscription card stands for: the saved one, else the one last chosen here, else Claude Code
   let agent = AGENT_ROUTES.includes(backend) ? backend : (AGENT_ROUTES.includes(store("settings-agent")) ? store("settings-agent") : "claude_code");
@@ -481,7 +483,7 @@ function modelSection(s, servers, watchers, info = { servers }) {
   // go. Codex and Antigravity ask first, as Claude Code does; a no puts the choice back.
   function agentChoice() {
     const cards = optionCards({ class: "agent-choice", id: "agent-choice", label: "Which plan", value: backend,
-      options: AGENT_ROUTES.map((r) => ({ value: r, title: AGENT_CHOICE[r].title, text: AGENT_CHOICE[r].plan,
+      options: AGENT_ROUTES.map((r) => ({ value: r, title: AGENT_CHOICE[r].title, text: AGENT_CHOICE[r].plan, tag: AGENT_CHOICE[r].tag || null,
         foot: [icon("cloud", { size: 12 }), `The passages go to ${AGENT_CHOICE[r].company}`] })),
       onPick: async (v) => {
         if (v === backend) return;
@@ -597,7 +599,8 @@ function modelSection(s, servers, watchers, info = { servers }) {
       fields.cliRows = modelRows({ id: `m-${route}`, recommended: rec, chosen: (s.cli_models || {})[route] || {}, models: avail.length ? avail : Object.values(rec) });
       fields.cliRoute = route;
       replace(modelsHolder, h("div", { class: "field-label" }, "Models"),
-        h("div", { class: "field-help" }, `Applied from ${a.title}’s recommendations for your plan${avail.length ? ", among the models it lists" : ""}. A newer ENLENS brings newer ones by itself; choose another only if you need to. Saved with Save.`),
+        h("div", { class: "field-help" }, `Applied from ${a.title}’s recommendations for your plan${avail.length ? ", among the models it lists" : ""}. A newer ENLENS brings newer ones by itself; choose another only if you need to. Saved with Save.`,
+          route === "antigravity" ? " On a free Google account every task uses Gemini 3.8 Flash; Google AI Pro adds Gemini 4 Argon and Hydrogen, Ultra also Gemini 4 Carbon." : ""),
         fields.cliRows);
     };
     drawModels(null);

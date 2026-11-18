@@ -115,7 +115,8 @@ await scenario("Subscription: Claude Code, Codex or Antigravity", async (t) => {
   await settingsPage(t, { backend: "claude_code", allow_claude_code: true });
   const out = { cards: t.view.querySelectorAll(".route-cards input[type=radio]").map((r) => [r.value, !!r.checked]),
     choice: t.view.querySelectorAll("#agent-choice [role=radio]").map((b) => [b.dataset.value, b.getAttribute("aria-checked")]),
-    words: t.text(t.view.querySelector("#agent-choice")) };
+    words: t.text(t.view.querySelector("#agent-choice")),
+    tags: t.view.querySelectorAll("#agent-choice [role=radio]").map((c) => { const g = c.querySelector(".option-card-head .chip"); return g ? t.text(g) : ""; }) };
   await t.click(t.view.querySelector('#agent-choice [data-value="codex"]'));
   let d = t.dialog();
   out.asked = t.text(d.querySelector("h2"));
@@ -213,6 +214,8 @@ def test_subscription_holds_the_agents_and_codex_is_set_up_in_steps(page):
     assert r["cards"] == [["subscription", True], ["local", False], ["baseline", False], ["anthropic", False], ["cloud_api", False]]
     assert r["choice"] == [["claude_code", "true"], ["codex", "false"], ["antigravity", "false"]]
     assert "The passages go to OpenAI" in r["words"] and "The passages go to Google" in r["words"]
+    assert r["tags"] == ["Recommended", "", "Recommended on a free plan"]
+    assert "Free: every task on Gemini 3.8 Flash" in r["words"]
     assert r["asked"] == "Let Codex read the excerpts, on your ChatGPT plan?"
     assert "sent to OpenAI" in r["says"] and "Only documents that allow OpenAI are sent" in r["says"]
     assert r["back"] == "claude_code"
