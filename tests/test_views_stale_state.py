@@ -104,6 +104,33 @@ await scenario("JS-5 picker without its codebook", async (t) => {
   await t.settle(50);
   return { got: got === undefined ? "undefined" : got, toasts: t.toasts(), dialogs: t.dialogs().length };
 });
+
+// ---- P-1: the Research log's Ctrl+Enter adds an entry once --------------------------------------------------------
+await scenario("P-1 log page double Ctrl+Enter", async (t) => {
+  const posts = [];
+  t.answer("GET /api/projects/Study/log?*", { entries: [], total: 0, groups: {}, group_names: {} });
+  t.answer("GET /api/projects/Study/sharing?*", { items: [] });
+  t.answer("POST /api/projects/Study/log", async (body) => { posts.push(body.text); await new Promise((r) => setTimeout(r, 300)); return {}; });
+  await t.render("views/log.js", "renderLog", [], {});
+  const ta = t.field("A new entry");
+  ta.value = "We chose the second codebook";
+  const key = () => ta.dispatchEvent(new Event("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
+  key(); key();
+  await t.settle(1000);
+  return { posts };
+});
+await scenario("P-1 log page text typed while adding", async (t) => {
+  t.answer("GET /api/projects/Study/log?*", { entries: [], total: 0, groups: {}, group_names: {} });
+  t.answer("GET /api/projects/Study/sharing?*", { items: [] });
+  t.answer("POST /api/projects/Study/log", async () => { await new Promise((r) => setTimeout(r, 300)); return {}; });
+  await t.render("views/log.js", "renderLog", [], {});
+  const ta = t.field("A new entry");
+  ta.value = "First entry";
+  await t.click("Add to the log");
+  ta.value = "First entry, and a second thought";   // typed while the request runs
+  await t.settle(1000);
+  return { left: ta.value };
+});
 """
 
 
@@ -144,3 +171,13 @@ def test_js5_a_codebook_that_cannot_be_loaded_is_told_to_the_person(page):
     r = page["JS-5 picker without its codebook"]
     assert r["got"] == "undefined" and r["dialogs"] == 0
     assert any("Unknown framework: x" in x for x in r["toasts"]), r["toasts"]
+
+
+@needs_node
+def test_p1_ctrl_enter_twice_adds_one_entry_on_the_log_page(page):
+    assert page["P-1 log page double Ctrl+Enter"]["posts"] == ["We chose the second codebook"]
+
+
+@needs_node
+def test_p1_text_typed_while_an_entry_is_added_is_kept_on_the_log_page(page):
+    assert page["P-1 log page text typed while adding"]["left"] == "First entry, and a second thought"

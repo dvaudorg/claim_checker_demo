@@ -74,10 +74,12 @@ export async function renderLog(view) {
   view.appendChild(h("div", { class: "log-new log-new-row" }, ta, addBtn));
 
   async function add() {
+    if (addBtn.disabled) return;   // one entry at a time: a second Ctrl/⌘ + Enter waits for the first
     const text = ta.value.trim();
     if (!text) { ta.focus(); return; }
     addBtn.disabled = true;
-    try { await api("POST", base, { text }); ta.value = ""; toast("Added to the research log.", "ok"); sharesStale = true; await load(); }
+    // words typed while it was being added are the next entry's: only what was sent is cleared
+    try { await api("POST", base, { text }); if (ta.value.trim() === text) ta.value = ""; toast("Added to the research log.", "ok"); sharesStale = true; await load(); }
     catch (e) { showError(e); } finally { addBtn.disabled = false; }
   }
 
