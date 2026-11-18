@@ -1993,6 +1993,8 @@ DOWNLOADS = {"get_hypothesis_export", "get_export", "get_document_file", "get_pr
 DOWNLOADS |= api_corpus.DOWNLOADS | api_checks_extra.DOWNLOADS
 # (these may take the token as ?token=, for plain links)
 
+_HEADER_CTRL = re.compile(r"[\x00-\x1f\x7f]")  # never in a header value: CR and LF would start a header of their own
+
 
 class Handler(BaseHTTPRequestHandler, DocumentsApi, ExploreApi, ChecksApi, SetupApi, RecordApi, SharingApi,
               FolderApi, SpaceApi, PollerApi, OwnerApi, CorpusApi, ChecksExtraApi, AgentApi):
@@ -2004,6 +2006,11 @@ class Handler(BaseHTTPRequestHandler, DocumentsApi, ExploreApi, ChecksApi, Setup
         pass
 
     # -- plumbing --------------------------------------------------------------------------------
+    def send_header(self, keyword: str, value) -> None:
+        # http.server writes a value as it is: a line break in one (a file name from someone's zip) would add headers
+        # of its own, such as a second Content-Type that turns a "PDF" into a page of this app's origin
+        super().send_header(keyword, _HEADER_CTRL.sub(" ", str(value)))
+
     def _send(self, status: int, body: bytes, ctype: str, extra: dict | None = None) -> None:
         self.send_response(status)
         # one header of each name: an endpoint's own (`extra`) takes the place of the default. Sent after it, as a
