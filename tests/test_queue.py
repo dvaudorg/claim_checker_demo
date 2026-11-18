@@ -626,6 +626,25 @@ def test_an_acceptance_run_is_scored(home, corpus, tmp_path):
     assert "not measured yet" in (folder / "MODEL_CHOICE.md").read_text()   # the kinds not run
 
 
+def test_a_link_pair_no_ai_may_read_is_not_a_task(home, corpus, tmp_path):
+    """18 November 2026 (hunt P1-4): `make_link_task` gives None for a pair whose terms occur only in documents no AI
+    may read; `prepare` listed that None among the task ids (and counted it)."""
+    from enlens_claims import access, acceptance, evaluation, ingest, terms
+
+    ref = home.create_project("Ref")
+    ingest.ingest(ref, [corpus])
+    terms.ensure(ref)
+    a, b = [r[0] for r in ref.query("SELECT term_id FROM terms ORDER BY term_id LIMIT 2")]
+    access.set_documents(ref, [r[0] for r in ref.query("SELECT doc_id FROM documents")], "none")
+    folder = tmp_path / "acceptance"
+    folder.mkdir()
+    acceptance._write(folder / "f3_pairs.csv", [{"a": a, "b": b}])
+    home.update_settings({"allow_claude_code": True, "backend": "claude_code"})
+    p = evaluation.prepare(ref, folder, "link", "haiku")
+    meta = home.open_project(p["project"]).meta("evaluation")
+    assert None not in meta["tasks"] and p["tasks"] == 0
+
+
 # ---------------------------------------------------------------------------------------------
 # G7: carried over from 0.7
 # ---------------------------------------------------------------------------------------------
