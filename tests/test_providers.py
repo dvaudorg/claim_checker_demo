@@ -422,7 +422,11 @@ def test_the_app_stores_a_key_and_says_only_whether_one_is_stored(app_api, opena
     monkeypatch.setitem(providers.TABLE, "openai", dataclasses.replace(providers.TABLE["openai"], base_url=base))
     st, r = api("GET", "/api/settings/provider-models?provider=openai")
     assert st == 200 and r["models"] == ["fake-model:latest", "fake-second:latest"]
-    assert api("GET", "/api/settings/provider-models?provider=azure")[1] == {"models": [], "lists": False}
+    # none of OpenAI's line-up is in this key's list: the first candidate of each tier is recommended
+    assert r["recommended"] == providers.recommended("openai")
+    assert api("GET", "/api/settings/provider-models?provider=azure")[1] == {
+        "models": [], "lists": False, "recommended": {"small": "gpt-6-luna", "middle": "gpt-6.2-sol",
+                                                     "strong": "gpt-6.2-astra"}}
     st, r = api("PUT", "/api/settings", {"allow_cloud": True, "backend": "cloud_api", "cloud_provider": "openai",
                                          "cloud_model": "fake-model:latest"})
     assert st == 200 and r["backend_label"] == "OpenAI (API key) · fake-model:latest"

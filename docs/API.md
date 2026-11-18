@@ -183,7 +183,7 @@ true. `GET /api/state` gains `providers`: `{"list": [...], "keys": {"openai": tr
 - `POST /api/settings/provider-key` `{"provider": "openai", "key": "…"}` → `{"providers": {…}}`. The key goes to the
   keychain and is never returned, logged or put in settings. 403 when `local_only` is true.
 - `DELETE /api/settings/provider-key` `{"provider": "openai"}` → `{"providers": {…}}`.
-- `GET /api/settings/provider-models?provider=openai` → `{"models": [...], "lists": true, "problem": "…"}`. `lists`
+- `GET /api/settings/provider-models?provider=openai` → `{"models": [...], "lists": true, "problem": "…", "recommended": {"small": "…", "middle": "…", "strong": "…"}}`. `recommended` (providers stage 2) is the provider's line-up resolved against the key's list: what an empty model choice in Settings uses (Azure: the models to deploy). `lists`
   is false for Azure, which has no list (type the deployment name); `problem` is a plain sentence when the list could
   not be fetched (for example that the key was refused).
 
