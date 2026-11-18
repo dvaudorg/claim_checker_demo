@@ -1650,6 +1650,23 @@ class ClaudeCodeBackend:
         return None  # Claude Code reports no digest: the model is recorded as set for the helper
 
 
+class AgentCliBackend(ClaudeCodeBackend):
+    """An agent CLI of another provider on the person's own plan (stage 2 of other cloud providers: Codex, OpenAI;
+    Antigravity, Google): like Claude Code, nothing is asked from here; the app's runs prepare tasks and wait for them
+    in the queue, which the CLI answers through the ENLENS connector (agentcli.py starts it). The queue's models are
+    the ladder's aliases; the runner sends the provider's own (routing.Router.api_id)."""
+
+    def __init__(self, route: str, router=None):
+        super().__init__(router)
+        cli = providers.AGENT_CLIS[route]
+        self.name = route
+        self.provider = cli.provider
+        self.title = cli.title
+
+    def complete(self, kind: str, system: str, user: str, model: str, payload: dict) -> str:
+        raise BackendError(f"{self.title} answers through the task queue: press Start {self.title} in ENLENS.")
+
+
 def provenance(backend, model: str) -> dict:
     """What exactly answers: {"digest", "seed", "settings": {backend, num_ctx, think, think_budget, temperature}}."""
     name = getattr(backend, "name", "") or ""
@@ -1664,9 +1681,15 @@ def provenance(backend, model: str) -> dict:
     from .routing import ROUTE_NAMES
 
     settings = {"backend": name, "temperature": 0, "route": ROUTE_NAMES.get(name, name)}
-    if name in ("claude_code", "anthropic"):
-        # Claude Code sets no temperature and no seed; nor does the Claude API request (0.18.1: it was recorded as 0)
+    if name in ("claude_code", "anthropic") or name in providers.AGENT_CLIS:
+        # Claude Code sets no temperature and no seed; nor does the Claude API request (0.18.1: it was recorded as 0),
+        # nor the agent CLIs
         settings.pop("temperature")
+    if name in providers.AGENT_CLIS:   # which provider, and the provider's own model id the alias stood for
+        settings["provider"] = getattr(backend, "provider", None)
+        router = getattr(backend, "router", None)
+        if router is not None and getattr(router, "lineup", None):
+            settings["model_id"] = router.api_id(model)
     if name == providers.CLOUD_ROUTE:  # another cloud provider: which one (never its key)
         settings["provider"] = getattr(backend, "provider", None)
         settings["route"] = providers.title(settings["provider"])
@@ -1693,7 +1716,7 @@ def repeatable(backend, model: str) -> dict:
     if name == "anthropic":
         return {"repeatable": False, "seed": False, "note": "The Claude API takes no seed: answers are not guaranteed "
                                                             "to be the same twice, even at temperature 0."}
-    if name == "claude_code":
+    if name == "claude_code" or name in providers.AGENT_CLIS:
         return {"repeatable": False, "seed": False,
                 "note": "Claude Code takes no seed and no temperature: answers are not guaranteed to be the same "
                         "twice. Measure how much two readings differ with the acceptance runs (--again), or compare "
@@ -1744,6 +1767,8 @@ def get_backend(name: str, **kw) -> Backend:
         return BaselineBackend()
     if name == "claude_code":
         return ClaudeCodeBackend()
+    if name in providers.AGENT_CLIS:
+        return AgentCliBackend(name)
     if name == providers.CLOUD_ROUTE:
         return CloudBackend(**kw)
     raise ValueError(f"unknown backend {name!r}; use 'auto', 'ollama', 'local', 'anthropic', 'claude_code' or "

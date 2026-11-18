@@ -349,18 +349,38 @@ def test_cloud_api_needs_allow_cloud_and_is_refused_on_a_local_only_computer(tmp
                             "allow_cloud": True, "cloud_model": "m"})
 
 
-def test_the_cloud_model_answers_every_kind_and_the_small_one_labels_and_links():
-    from enlens_claims import routing
+def test_the_cloud_models_follow_the_ladder_with_the_recommendation_where_none_is_chosen():
+    """Minor 2 of stage 2: another provider's API gets the three tiers of the Claude routes (labels small, checks
+    middle, second opinions strong), each the person's model or else the provider's recommended one."""
+    from enlens_claims import providers, routing
 
     s = {"backend": "cloud_api", "cloud_provider": "mistral", "cloud_model": "mistral-large-latest",
          "task_models": {"local": {"label": "qwen3:8b"}}}
     r = routing.from_settings(s)
-    assert r.route == "cloud_api" and r.first("check") == "mistral-large-latest"
-    assert r.first("label") == "mistral-large-latest"          # a local model's name is never sent to the provider
+    assert r.route == "cloud_api" and r.call_model("check") == "mistral-large-latest"
+    # a local model's name is never sent to the provider: the small tier is Mistral's recommendation
+    assert r.call_model("label") == providers.recommended("mistral")["small"] != "qwen3:8b"
     r = routing.from_settings({**s, "cloud_small_model": "mistral-small-latest"})
-    assert r.first("label") == "mistral-small-latest" and r.first("link") == "mistral-small-latest"
-    assert r.first("check") == "mistral-large-latest" and r.step_up("label") == "mistral-large-latest"
+    assert r.call_model("label") == "mistral-small-latest" and r.call_model("link") == "mistral-small-latest"
+    assert r.call_model("check") == "mistral-large-latest"
+    assert r.api_id(r.step_up("label")) == "mistral-large-latest"
+    # nothing chosen: the recommended line-up
+    r = routing.from_settings({"backend": "cloud_api", "cloud_provider": "openai"})
+    rec = providers.recommended("openai")
+    assert (r.call_model("label"), r.call_model("check"), r.call_model("second")) == \
+        (rec["small"], rec["middle"], rec["strong"])
+    # Fable is Claude's only
+    assert routing.from_settings({"backend": "cloud_api", "cloud_provider": "openai", "use_fable": True}) \
+        .call_model("second") == rec["strong"]
     assert "cloud_api" in routing.OFF_COMPUTER and "cloud_api" not in routing.CLAUDE_ROUTES
+
+
+def test_azure_has_no_recommendation_and_a_typed_deployment_serves_every_tier():
+    from enlens_claims import routing
+
+    r = routing.from_settings({"backend": "cloud_api", "cloud_provider": "azure", "cloud_model": "my-sol"})
+    assert {r.call_model(k) for k in ("label", "check", "second")} == {"my-sol"}
+    assert r.step_up("label") is None   # the same deployment: no step up
 
 
 # ---------------------------------------------------------------------------------------------
