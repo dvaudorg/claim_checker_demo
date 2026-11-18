@@ -270,6 +270,8 @@ def pass1_status(ws: Workspace, framework: str) -> dict:
 
 
 def ensure_pass1(ws: Workspace, framework: str, embedder=None) -> dict:
+    if not framework:   # (`frameworks.get("")` is None on purpose, for the callers that look for a codebook)
+        raise ValueError("Choose a codebook.")
     st = pass1_status(ws, framework)
     if st["done"] and not st["stale"] and (embedder is None or st.get("meaning_model") == getattr(embedder, "model", None)
                                            or st.get("meaning_model") is not None):

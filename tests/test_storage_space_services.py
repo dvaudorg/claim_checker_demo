@@ -14,7 +14,7 @@ import pytest
 from enlens_claims import claimcheck, home, keychain, sharing
 from enlens_claims.llm import BaselineBackend
 from enlens_claims.sync import b2, folder, space
-from enlens_claims.sync.storage import DENIED, StorageProblem
+from enlens_claims.sync.storage import DENIED, NOT_FOUND, StorageProblem
 from test_shared_projects import Person, anna_and_ben  # noqa: F401  (fixture)
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -208,20 +208,28 @@ def test_a_move_to_r2_with_two_accounts_hands_them_back_and_moves_nothing(anna_a
     _round(anna)
     _work_together(anna, carol, tmp_path)
     _two_cloudflare_accounts(monkeypatch)
+    names = ("me", "keys", "access", "keeper")
     with anna:
         old = space.configured(anna.ws)
-        try:
-            out = space.move(anna.ws, lambda w, ident: space.setup_r2(w, "token", None, ident=ident))
-        except space.SpaceProblem:
-            out = {}
-        assert out == {} or len(out["accounts"]) == 2
-        assert "moved" not in out
-        assert space.configured(anna.ws)["id"] == old["id"]
-        assert space._get_secret(old["id"], "keeper")
         ctx = space._Ctx(anna.ws, old)
         space._read_roster(ctx)
-        people = [m["person"] for m in ctx.roster["members"].values() if not m.get("removed")]
-        assert len(people) == len(set(people))
+        roster_before = {part: (m["person"], bool(m.get("removed"))) for part, m in ctx.roster["members"].items()}
+        assert len(roster_before) == 2   # Anna and Carol
+        for what in names:
+            assert space._get_secret(old["id"], what), what
+        out = space.move(anna.ws, lambda w, ident: space.setup_r2(w, "token", None, ident=ident))
+        assert len(out["accounts"]) == 2   # the page offers the choice
+        assert "moved" not in out
+        assert space.configured(anna.ws)["id"] == old["id"]
+        for what in names:
+            assert space._get_secret(old["id"], what), what
+        ctx = space._Ctx(anna.ws, old)
+        with pytest.raises(StorageProblem) as e:
+            ctx.store.get("space/moved.json")   # nobody was told to go anywhere
+        assert e.value.kind == NOT_FOUND
+        space._read_roster(ctx)
+        assert {part: (m["person"], bool(m.get("removed"))) for part, m in ctx.roster["members"].items()} \
+            == roster_before
 
 
 def test_first_set_up_at_r2_with_two_accounts_offers_them(anna_and_ben, monkeypatch):

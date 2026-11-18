@@ -606,3 +606,12 @@ def test_the_page_files():
     assert "export async function runningJob" in lib
     for view in ("profile.js", "concepts.js", "themes.js"):
         assert "function plural(" not in (static / "views" / view).read_text(), view
+
+
+def test_pass_1_with_no_codebook_named_says_so(loaded):
+    """18 November 2026 (hunt P2-3): `frameworks.get("")` is None on purpose; `ensure_pass1(ws, "")` went on with it and
+    failed with an AttributeError."""
+    from enlens_claims import profile
+
+    with pytest.raises(ValueError, match="Choose a codebook"):
+        profile.ensure_pass1(loaded, "")

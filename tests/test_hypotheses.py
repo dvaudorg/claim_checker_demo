@@ -971,7 +971,8 @@ def test_a_split_the_model_answers_badly_is_checked_as_written(loaded):
     be = Scripted(decompose=[{}], expand=[{"terms": ["water stress"]}], check=[_quote_first("supports", 0.8)])
     events = []
     hid = claimcheck.check_hypothesis(loaded, CLAIM, be, "m", decompose=True, k=2,
-                                      progress=lambda stage, msg, extra=None: events.append(stage))
+                                      progress=lambda stage, msg, extra=None: events.append((stage, msg)))
+    assert ("decompose_done", "It could not be split, so it is checked as written") in events
     assert loaded.scalar("SELECT COUNT(*) FROM hypotheses WHERE hyp_id=?", (hid,)) == 1
     r = claimcheck.hypothesis_result(loaded, hid)
     assert [p["claim"] for p in r["parts"]] == [CLAIM] and not r["decomposed"]
