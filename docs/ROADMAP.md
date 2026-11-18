@@ -120,6 +120,10 @@ release that left each one in brackets). None of them loses work; each is small.
   `approval_policy="never"`, how a reached limit shows in `--json`, the models a ChatGPT plan offers.
 - Antigravity: the one sign-in window, whether `agy -p` loads the work folder's `.agents/mcp_config.json` and needs
   the folder trusted, the `mcp(enlens/*)` permission line, `agy models` on a free and a paid account, a reached limit.
+  ENLENS's own Antigravity home (`agy-home`): tried on Windows with agy 1.5.11 (the sign-in is kept, a file outside
+  the work folder is refused); still to try a whole ENLENS run in it, on macOS (the linked `Library/Keychains`) and
+  Linux (one more sign-in?), the name of the *Enable Telemetry* key so ENLENS can write it off itself, and "no AI
+  credits spent" on an account that has bought some.
 - Stage 3 in a real team: two people on different providers (Claude Code and Codex) on one shared project through a
   real storage space or shared folder; the owner's limit reaching a member and holding their work; the AI log filling
   with both people's rows. Tested only with two copies exchanging files on one computer.
