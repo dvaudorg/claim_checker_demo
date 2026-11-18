@@ -418,3 +418,26 @@ def test_the_cue_pass_without_sizes(tmp_path, monkeypatch):
     hits = {t: k for t, k in kinds.items() if t.startswith(("E-mail address", "Received 16 May", "Available online"))}
     assert hits and set(hits.values()) == {"front"}
     assert all(k == "body" for t, k in kinds.items() if t.startswith("Received wisdom"))
+
+
+@needs_pdfminer
+def test_reader_6_reads_a_pdf_with_an_older_pdfminer_that_lacks_its_rules(tmp_path, monkeypatch):
+    """18 November 2026 (hunt P2-2): `pdfminer.utils.apply_matrix_rect` exists only from pdfminer 20250506. Without it
+    reader 6's aggregator was `object`: `_pdfminer_pages` raised TypeError for every PDF (the caller then fell back to
+    pypdf without a word) instead of reading with pdfminer's stock rules."""
+    import importlib
+
+    import pdfminer.utils
+
+    from enlens_claims import reader6
+    from helpers import make_pdf
+
+    path = make_pdf(tmp_path / "plain.pdf", [BODY * 2])
+    monkeypatch.delattr(pdfminer.utils, "apply_matrix_rect", raising=False)
+    importlib.reload(reader6)
+    try:
+        lines, dims = reader._pdfminer_pages(path, version=6)
+    finally:
+        monkeypatch.undo()
+        importlib.reload(reader6)
+    assert dims and any(page for page in lines)
