@@ -8,7 +8,7 @@
 // (docs/DESIGN.md 8). Rules and layout: conceptmap.py, groupnames.py; routes: gui/api_corpus.py.
 import { featureEyebrow, viewTabs } from "../features.js";
 import { App, api, h, P, replace, clear, showError, failedLoad, noDocuments, addDocumentsFirst, fmt, pageHead, emptyState, plural, shortTitle, button, link, notice, card, select, field, fold, spinner,
-  tag, input, dialog, toast, setBusy, aiButton, withAI, readsLine, aiWhere, watchJob, runningJob, jobFailed, downloadLinks, saveBlob } from "../lib.js";
+  tag, input, dialog, toast, setBusy, aiButton, withAI, readsLine, aiWhere, ownStartNote, watchJob, runningJob, jobFailed, downloadLinks, saveBlob } from "../lib.js";
 import { MiniJob, isStopped, timeLeft } from "./progress.js";
 
 const NS = "http://www.w3.org/2000/svg";
@@ -825,7 +825,7 @@ export async function renderConceptMap(view, params, query) {
       const ask = aiButton({ sm: true, onClick: (e) => askNames(e.currentTarget, which) }, words);
       if (naming) setBusy(ask, true);
       section.append(h("div", { class: "btn-row cm-groups-ask" }, withAI(ask)),
-        can.reader === "local" ? aiWhere("The AI on this computer reads a few passages of each group: the text never leaves it.", "local")
+        can.reader === "local" ? aiWhere(`The AI on this computer reads a few passages of each group: the text never leaves it.${ownStartNote()}`, "local")
           : readsLine("a few passages of each group, where its concepts are mentioned together"));
     } else if (can.why) section.appendChild(h("p", { class: "muted small cm-groups-why" }, can.why));
     section.appendChild(jobBox);

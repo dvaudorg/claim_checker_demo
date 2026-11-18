@@ -230,7 +230,8 @@ class Jobs:
         `if_free`: start only when it would not have to wait; None (nothing started) otherwise.
 
         0.19.13: `local_start` the job's local gate at the start ("go": the person's own Start of the local model,
-        "force": Start it anyway); by default it opens by itself only for a job whose work is all the local model's."""
+        "force": Start it anyway); by default it waits for that Start (0.20.1: also in a job whose work is all the
+        local model's)."""
         job = Job(kind, title, project)
         job.again_args = (kind, title, project, fn, uses_model, lane, serial, scope)
         job.force_local = force_local

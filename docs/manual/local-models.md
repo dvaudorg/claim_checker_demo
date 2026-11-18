@@ -108,7 +108,9 @@ model are two separate clicks. While Claude reads its excerpts, the ones marked 
 share) wait beside them for the local model's own *Start*; one press covers the whole job, and the local model then
 reads beside Claude: *Your local model (…) is reading 3 excerpts…*, with what it is doing and its own *Stop*, which
 lets it finish the excerpt in hand and wait again. Work that only the local model does, started by its own button
-(*Read them now on this computer*, say), needs no second click.
+(*Read them now on this computer*, say), needs no second click. Work that only the local model may do but that another
+button asked for waits for its *Start* as well: *Name the themes*, when every theme comes from documents marked *Only a
+local AI*, says so on the Themes page and loads nothing until you press the local model's *Start*.
 
 A local model needs about as much memory as its size (a 9-billion-parameter model about 8 GB). On Ollama, ENLENS does
 not start it when this computer clearly has too little free: starting it anyway pushes every other program into swap

@@ -196,13 +196,14 @@ class App(LibraryMixin, QueueMixin):
 
     # -- 0.13.6: the public interface for add-ons (docs/EXTENDING.md). The old private names keep working. -----------
     def start_job(self, kind: str, title: str, name: str | None, fn, uses_model: bool = True,
-                  withdraw: tuple[str, ...] = (), ws=None) -> Job:
+                  withdraw: tuple[str, ...] = (), ws=None, local_start: str | None = None) -> Job:
         """A job; by queue (Claude Code) its tasks wait in the queue and it does not hold the model's turn. Stopping
         it takes its tasks that no session has taken yet back out of the queue (`withdraw`: their kinds).
 
         `fn(job)` does the work and returns the job's result; it checks `job.cancel.is_set()` to stop. The job shows
         in GET /api/jobs and the sidebar, can be stopped (POST /api/jobs/<id>/cancel), and is "not running"
-        (`on_hold`) while its tasks wait in the queue with nothing answering them."""
+        (`on_hold`) while its tasks wait in the queue with nothing answering them. `local_start` ("go", "force"): the
+        person pressed the local model's own Start to begin it (0.20.1: else its local part waits for that Start)."""
         q = self.queue_mode()
         since = _now()
 
@@ -214,7 +215,7 @@ class App(LibraryMixin, QueueMixin):
                     if q and job.cancel.is_set() and withdraw and ws is not None:
                         taskqueue.withdraw(ws, list(withdraw), since=since)
 
-        job = self.jobs.start(kind, title, name, run, uses_model=uses_model and not q)
+        job = self.jobs.start(kind, title, name, run, uses_model=uses_model and not q, local_start=local_start)
         job.queue = q
         return job
 
