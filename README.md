@@ -58,11 +58,13 @@ Windows from 0.15.4 on). Your projects and settings (the `enlens` folder in your
   impact claims tagged with UN SDG targets and compared with an expert Value Chain Assessment.
 
 <!-- new-in:start (written by `python tools/release.py prepare`: change the changelog entry, not this) -->
-## New in 0.20.2: Settings in one shape: five tabs, four cards for the AI, and every change saved as you make it
+## New in 0.20.3: Antigravity in a home of its own, and what new documents changed
 
-- **Settings › AI is four choices and only what the one you chose needs.** The picker is two rows: in the cloud, *Subscription* (Claude Code, Codex or Antigravity on your plan) and *API key*; on this computer, *Local model* and *No AI (demo)*.
-- **Every AI setting saves as you change it.** *Save* and *Save and test* are gone.
-- **The technical parts moved to Settings › Technical**: the local model's server, addresses, model and reasoning (*The local model*), the models of a provider or an agent per kind of task and the Claude API's stronger model (*The provider's models*).
+- **A file name cannot add headers to the app's answers.** A source whose file name held a line break (possible in a zip someone hands you) could, when you opened its original, add headers of its own to the app's answer.
+- **Reading the new documents says what it changed.** When the documents added since a check are read, the progress line ends with what that did (*1 answer changed, 1 with new evidence*, or *nothing changed*).
+- **A re-read excerpt names its model.** The note on an excerpt the AI read again says which model read it again and which read it first, in one line; the reminder that a re-read is still an AI's reading is in its tooltip.
+- **The second opinion's mark is shorter.** It reads *2nd opinion differs: N*; its tooltip says how many excerpts.
+- **Only the AI that works in a job shows.** The sidebar's work box and the AI run panel showed both the house (this computer) and the cloud (Claude) for every AI job, the one with no work in it as a dashed empty tile.
 <!-- new-in:end -->
 
 How it works, in the manual: [Explore your documents](docs/manual/explore.md) (working documents, the concept map),
