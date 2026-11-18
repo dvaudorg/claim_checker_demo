@@ -83,7 +83,9 @@ export async function renderAiLog(view) {
   function row(r) {
     const clock = new Date(r.at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
     const time = h("time", { class: "log-time", datetime: r.at, title: fmt.date(r.at) }, clock);
-    const sender = r.person ? (r.person.me ? "You" : r.person.name) : "Someone (not recorded)";
+    // a colleague's work they have not shared comes without their name (sharing._masked): "A colleague", no name
+    const sender = r.person ? (r.person.me ? "You" : r.person.name)
+      : (r.subject && r.subject.kind === "private" ? "A colleague" : "Someone (not recorded)");
     const docs = r.documents ? ` from ${plural(r.documents, "document")}` : "";
     const text = h("div", { class: "log-text" }, `${sender} sent ${plural(r.excerpts, "excerpt")}${docs} to ${r.provider_title}: ${r.kind_words}.`);
     const s = r.subject;

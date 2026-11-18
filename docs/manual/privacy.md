@@ -113,9 +113,11 @@ and nothing reaches OpenAI, Google, Mistral, Azure or OpenRouter, nor Codex or A
 - **The owner may limit the providers the team may use** (Team › People and settings › *AI providers*; no limit by
   default). With a limit, a provider outside it reads none of the project's documents in anyone's copy, whatever that
   person ticked: its work waits, and the page says *The team uses Anthropic only (set by Anna): OpenAI reads none of
-  this project's documents.* Only the owner can widen it; you can also choose a route inside it. The limit travels
-  with the owner's other settings, so a member cannot set it, and a colleague's older ENLENS (from before this
-  change) allows Anthropic only in a shared project.
+  this project's documents.* The owner widens it (or you choose a route inside it). The limit travels with the
+  owner's other settings, and the app offers it to the owner alone; a colleague's older ENLENS (from before this
+  change) allows Anthropic only in a shared project. These settings are not signed yet: a changed app could send a
+  limit in the owner's name, which holds until the owner's next round; the research log then says whose file it came
+  in ([Roles](roles.md#on-the-activity-view)).
 - **Your key** is kept in the system's keychain, never in a project, a log or a moving file. Each provider's terms
   decide what it keeps and whether it trains on it: check them first.
 

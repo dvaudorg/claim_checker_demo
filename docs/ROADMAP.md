@@ -170,6 +170,15 @@ Built and tested against stand-ins that follow each service's documents; not yet
 **A team on real computers**
 - Owner, Co-owner and Member roles, invites, a hand-over and removing a colleague, used by a real team over days.
 
+## Open decisions
+
+- **Signing the owner's settings** (I7 stage 3, 18 November 2026). The owner's settings that travel as rows of
+  `team_settings` (the providers the team may use, the codebook settings) and the roles are not signed: a changed app
+  could write one in the owner's name, which other copies follow until the owner's copy answers it at its next round.
+  When such a row came in someone else's file, the research log names the person it says and the person whose file it
+  came in. Decided for now: keep this trust model and say so (the manual's *Roles*); signing the rows with the keys a
+  storage space already has is the way to close it, if a team needs it.
+
 ## Parked or decided against
 
 Kept so the same question is not opened again without a reason.

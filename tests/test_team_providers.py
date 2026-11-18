@@ -238,11 +238,15 @@ def test_ai_log_rows_from_two_people_with_person_provider_and_model(team):
                                model="claude-sonnet-5-5")
     with ben:
         with ben.ws.connect() as cx:
-            access.record_sent(cx, "label:sdg:" + pb[0], [{"passage_id": p} for p in pb], "Codex", "label",
+            # a search through the connector started for Codex (no task: nothing private about it)
+            access.record_sent(cx, None, [{"passage_id": p} for p in pb], "Codex (connector)", "search",
+                               context=False, provider="openai", model="gpt-6")
+            # his labels of a codebook he did not share: private work
+            access.record_sent(cx, "label:sdg:" + pb[0], [{"passage_id": pb[0]}], "Codex", "label",
                                context=False, provider="openai", model="gpt-6")
             # a row Ben's file says Anna sent, which Anna's copy does not hold
             cx.execute("INSERT INTO ai_sent(passage_id, doc_id, route, task_id, sent_at, feature, provider, person_id, "
-                       "model) VALUES (?,?,?,?,?,?,?,?,?)", (pb[0], pb[0].split(":")[0], "Claude Code", "forged",
+                       "model) VALUES (?,?,?,?,?,?,?,?,?)", (pb[0], pb[0].split(":")[0], "Claude Code", None,
                                                              "2026-11-18T09:00:00", "check", "anthropic", anna.id, "x"))
     zips(ben, anna)
     zips(anna, ben)
@@ -255,24 +259,27 @@ def test_ai_log_rows_from_two_people_with_person_provider_and_model(team):
     assert mine[0]["model"] == "claude-sonnet-5-5" and mine[0]["kind_words"] == "Check" and mine[0]["route"] == "Claude Code"
     assert len(bens) == 1 and bens[0]["provider"] == "openai" and bens[0]["provider_title"] != "openai"
     assert bens[0]["person"]["name"] == "Ben" and bens[0]["model"] == "gpt-6" and bens[0]["excerpts"] == 2
-    assert bens[0]["kind_words"] == "Profile (AI pass)", bens[0]
-    # his labels of a codebook he did not share: the task is masked as it leaves, so the subject is not told
-    assert bens[0]["subject"]["kind"] == "private" and bens[0]["subject"]["href"] is None
-    forged = [r for r in rows if r["at"] == "2026-11-18T09:00:00"]   # (its unknown task leaves masked too)
-    assert len(forged) == 1 and forged[0]["person"] is None   # not taken in Anna's name
+    assert bens[0]["kind_words"].startswith("Search") and bens[0]["route"] == "Codex (connector)"
+    # his private work: the task, his name and the model are masked as it leaves (sharing._masked)
+    private = [r for r in rows if r["subject"] and r["subject"]["kind"] == "private"]
+    assert len(private) == 1 and private[0]["person"] is None and private[0]["model"] == ""
+    assert private[0]["provider"] == "openai" and private[0]["subject"]["href"] is None
+    forged = [r for r in rows if r["at"] == "2026-11-18T09:00:00"]
+    assert len(forged) == 1 and forged[0]["person"] is None   # not taken in Anna's name (merge fix_sent)
     assert {p["id"] for p in log["people"]} == {anna.id, ben.id, ailog.UNKNOWN}
     with anna:
         only_ben = ailog.entries(anna.ws, person=ben.id)["rows"]
         only_openai = ailog.entries(anna.ws, provider="openai")["rows"]
         only_me = ailog.entries(anna.ws, person="me")["rows"]
     assert [r["person"]["id"] for r in only_ben] == [ben.id]
-    assert [r["provider"] for r in only_openai] == ["openai"]
+    assert sorted(r["provider"] for r in only_openai) == ["openai", "openai"]
     assert [r["person"]["id"] for r in only_me] == [anna.id]
-    with ben:  # Ben's copy has Anna's row too; in his own, his row names its codebook
+    with ben:  # Ben's copy has Anna's row too; in his own, his label row names its codebook and him
         brows = ailog.entries(ben.ws)["rows"]
     assert any(r["person"] and r["person"]["id"] == anna.id for r in brows)
-    own = [r for r in brows if r["person"] and r["person"]["me"]]
-    assert own and own[0]["subject"]["kind"] == "codebook" and own[0]["subject"]["id"] == "sdg"
+    own_label = [r for r in brows if r["person"] and r["person"]["me"] and r["kind"] == "label"]
+    assert own_label and own_label[0]["subject"]["kind"] == "codebook" and own_label[0]["subject"]["id"] == "sdg"
+    assert own_label[0]["model"] == "gpt-6"
 
 
 def test_an_old_database_gains_the_columns_and_its_rows_are_this_persons_while_alone(tmp_path, monkeypatch):
@@ -309,6 +316,112 @@ def test_the_routes_are_there():
                                ("GET", "/api/projects/Demo/ai-log", "get_ai_log")):
         hits = [n for m, rx, n in server.ROUTES if m == method and rx.match(path)]
         assert hits == [name]
+
+
+# ---------------------------------------------------------------------------------------------
+# review fixes (19 November 2026)
+# ---------------------------------------------------------------------------------------------
+def test_lists_inherited_from_colleagues_are_cleared_once_and_this_persons_own_are_kept(team, tmp_path):
+    from enlens_claims.store import Workspace as W
+
+    anna, ben = team
+    a, b = _docs(ben)[:2]
+    with ben:
+        access.set_documents(ben.ws, [b], allow=["anthropic", "mistral"])   # his own: in the research log
+        with ben.ws.connect() as cx:   # as 0.20.0 left it: Anna's pre-share tick, copied with her document
+            cx.execute("UPDATE documents SET ai_providers=? WHERE doc_id=?", (json.dumps(["anthropic", "openai"]), a))
+            cx.execute("DELETE FROM meta WHERE key IN (?, ?)", (access.OWN_PROVIDERS_DONE, access.PROVIDERS_RESET))
+        ben.ws.close_all()
+        ws = W.open(ben.ws.root)   # opening the project runs the one-off check
+        rows = {r[0]: r[1] for r in ws.query("SELECT doc_id, ai_providers FROM documents")}
+        assert rows[a] is None and json.loads(rows[b]) == ["anthropic", "mistral"]
+        assert access.levels(ws, [a], provider="openai") == {a: "local"}
+        info = access.project_info(ws)
+        assert info["providers_reset"]["documents"] == 1
+        assert access.settle_own_providers(ws) == 0          # once
+        access.set_providers_default(ws, ["anthropic"])      # ticking again: the note goes
+        assert access.project_info(ws)["providers_reset"] is None
+        ws.close_all()
+    # a project not shared keeps every list, and is not asked again
+    dora = Person(tmp_path, "Dora", anna.mp)
+    small_project(dora, tmp_path / "dora", keys=("desalination",))
+    with dora:
+        d = _docs(dora)[0]
+        with dora.ws.connect() as cx:
+            cx.execute("UPDATE documents SET ai_providers=? WHERE doc_id=?", (json.dumps(["openai"]), d))
+            cx.execute("DELETE FROM meta WHERE key=?", (access.OWN_PROVIDERS_DONE,))
+        assert access.settle_own_providers(dora.ws) == 0
+        assert dora.ws.scalar("SELECT ai_providers FROM documents WHERE doc_id=?", (d,)) is not None
+
+
+def test_setting_or_lifting_the_limit_relabels_the_open_tasks(team):
+    from enlens_claims import tasks
+
+    anna, _ben = team
+    pid = _passages(anna, 1)[0]
+    with anna:
+        access.set_providers_default(anna.ws, ["anthropic", "openai"])
+        with anna.ws.connect() as cx:
+            access.relabel(cx, provider="openai")   # the main route is Codex: the tasks are labelled for OpenAI
+        with tasks.queueing(True):
+            with anna.ws.connect() as cx:
+                tasks._insert_task(cx, "label:sdg:" + pid, "label", "m",
+                                   {"framework": "sdg", "passage_id": pid, "candidates": []})
+        state = lambda: anna.ws.query("SELECT access, queued FROM tasks WHERE task_id=?", ("label:sdg:" + pid,))[0]  # noqa: E731
+        assert state()["access"] == "cloud"
+        teamproviders.set_limit(anna.ws, ["anthropic"])
+        assert state()["access"] == "local" and not state()["queued"]
+        teamproviders.set_limit(anna.ws, None)
+        assert state()["access"] == "cloud"
+
+
+def test_a_limit_in_the_owners_name_from_someone_elses_file_is_named_in_the_log(team, tmp_path):
+    from owner_more_helpers import send
+
+    anna, ben = team
+    chloe = Person(tmp_path, "Chloe", anna.mp)
+    join_zip(chloe, anna, tmp_path / "chloe-project")
+    zips(chloe, anna, ben)
+    with ben:   # a changed app: a row in Anna's name, numbered high
+        with ben.ws.connect() as cx:
+            teamcodebooks._write(cx, teamproviders.KEY, anna.id, 1, 77, ["mistral"])
+    chloe.bring_in(send(ben))
+    with chloe:
+        assert teamproviders.limit(chloe.ws._conn())["providers"] == ["mistral"]   # (not signed: believed until …)
+        texts = [r[0] for r in chloe.ws._conn().execute("SELECT text FROM research_log WHERE kind='owner'")]
+    assert any("a change in Anna's name (the owner's), which came in Ben's file" in t for t in texts)
+    zips(ben, anna)   # Anna's copy refuses it and answers above it
+    zips(anna, chloe)
+    with chloe:   # … the owner's next round
+        assert teamproviders.limit(chloe.ws._conn()) is None
+
+
+def test_the_connector_records_its_own_provider_and_route(team, monkeypatch):
+    from enlens_claims import claimcheck, mcp_server
+
+    anna, _ben = team
+    monkeypatch.setenv("ENLENS_ROUTE", "codex")
+    assert mcp_server.reader() == "openai" and mcp_server.sent_route() == "Codex (connector)"
+    monkeypatch.delenv("ENLENS_ROUTE")
+    assert mcp_server.sent_route() == access.ROUTE_NAMES["chat"]
+    with anna:
+        access.set_providers_default(anna.ws, ["anthropic", "openai"])
+        claimcheck.open_check(anna.ws, "Desalination needs energy.", terms=["desalination", "energy"], k=3,
+                              provider="openai", route="Codex (connector)")
+        rows = {(r[0], r[1]) for r in anna.ws._conn().execute("SELECT provider, route FROM ai_sent")}
+    assert rows == {("openai", "Codex (connector)")}
+
+
+def test_the_ledger_never_makes_a_person_id(monkeypatch, tmp_path):
+    from enlens_claims import people
+
+    monkeypatch.setattr(teamcodebooks, "_my_id", lambda: "not-an-id")
+    assert access.sender() is None
+    monkeypatch.setattr(teamcodebooks, "_my_id", lambda: "")
+    monkeypatch.setattr(people, "me", lambda: (_ for _ in ()).throw(AssertionError("an id was made")))
+    assert access.sender() is None
+    monkeypatch.setattr(teamcodebooks, "_my_id", lambda: "p0123456789ab")
+    assert access.sender() == "p0123456789ab"
 
 
 # ---------------------------------------------------------------------------------------------
@@ -349,6 +462,15 @@ await scenario("the research log links to the AI log", async (t) => {
   await t.settle(20);
   const a = t.view.querySelector(".page-sub a");
   return { href: a && a.getAttribute("href"), text: a && t.text(a) };
+});
+
+await scenario("the cleared ticks are said in place", async (t) => {
+  t.state({ settings: {}, providers: { list: [{ id: "anthropic", title: "Anthropic (Claude)" }], set_up: [], other_set_up: false } });
+  const m = await t.module("views/ai-access.js");
+  const card = m.providersDefaultCard("Study", { providers_default: ["anthropic"], shared: true, providers_reset: { documents: 2, at: "x" } }, () => {});
+  const none = m.providersDefaultCard("Study", { providers_default: ["anthropic"], shared: true, providers_reset: null }, () => {});
+  document.getElementById("view").appendChild(card);
+  return { text: t.text(card), dialogs: document.querySelectorAll("dialog").length, none: none === null };
 });
 
 await scenario("the owner's AI providers card", async (t) => {
@@ -399,6 +521,13 @@ def test_the_ai_log_page_shows_who_sent_what_and_filters(views):
 def test_the_research_log_line_leads_to_the_ai_log(views):
     r = views["the research log links to the AI log"]
     assert r["href"] == "#/log/ai" and r["text"].startswith("AI log")
+
+
+@needs_node
+def test_the_cleared_ticks_are_said_on_the_documents_page_without_a_pop_up(views):
+    r = views["the cleared ticks are said in place"]
+    assert "Your provider ticks for 2 documents of this shared project were cleared" in r["text"]
+    assert r["dialogs"] == 0 and r["none"] is True
 
 
 @needs_node

@@ -797,6 +797,85 @@ def _level_now(cx, row, dflt: str | None, budget: bool, provider=None) -> tuple[
     return stored, lv
 
 
+# I7 stage 3: a one-off look at the provider lists a shared project's documents hold. Before stage 3 a copy kept the
+# lists that came with a colleague's documents (a zip, a linked folder, a document new to this copy in a merge):
+# harmless while a shared project let Anthropic read only, but each list now counts for this person's own route. So
+# a list stays only where this person demonstrably set it (their own `ai-access` entry in the research log names the
+# document and the same providers, or their other account's); every other one is cleared, once, and the person is
+# told in place (project_info's `providers_reset`, shown on the Documents page and in the line about their route)
+# until they tick providers again.
+OWN_PROVIDERS_DONE = "ai_providers_own_checked"
+PROVIDERS_RESET = "ai_providers_reset"
+
+
+def _own_provider_choices(cx) -> dict[str, list | None]:
+    """{doc_id: the providers this person last set for it}, from their own entries in the research log."""
+    from .teamcodebooks import _my_id
+
+    me = _my_id()
+    if not me:
+        return {}
+    mine = {me}
+    try:
+        from .sharing import _partner
+
+        other = _partner(cx, me)
+        if other:
+            mine.add(other)
+    except Exception:  # noqa: BLE001 - this person's own entries only
+        pass
+    out: dict[str, list | None] = {}
+    for pid, raw in cx.execute("SELECT person_id, data_json FROM research_log WHERE kind='ai-access' AND data_json IS "
+                               "NOT NULL ORDER BY at, rowid"):
+        if pid not in mine:
+            continue
+        try:
+            data = json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(data, dict) and isinstance(data.get("documents"), list) and "providers" in data:
+            for d in data["documents"]:
+                if isinstance(d, str):
+                    out[d] = data["providers"]
+    return out
+
+
+def settle_own_providers(ws: Workspace) -> int:
+    """Once per project (meta `OWN_PROVIDERS_DONE`): in a shared project, clear the documents' provider lists this
+    person did not set (see above). Returns how many were cleared. Never raises: opening the project goes on."""
+    try:
+        cx = ws._conn()
+        if cx.execute("SELECT 1 FROM meta WHERE key=?", (OWN_PROVIDERS_DONE,)).fetchone():
+            return 0
+        lists = cx.execute("SELECT doc_id, ai_providers FROM documents WHERE ai_providers IS NOT NULL").fetchall()
+        cleared: list[str] = []
+        if lists and is_shared(cx, ws):
+            mine = _own_provider_choices(cx)
+            cleared = [d for d, raw in lists if _own_list(raw) is not None and mine.get(d) != _own_list(raw)]
+        with ws.connect() as c:
+            if c.execute("SELECT 1 FROM meta WHERE key=?", (OWN_PROVIDERS_DONE,)).fetchone():
+                return 0
+            for i in range(0, len(cleared), 500):
+                chunk = cleared[i:i + 500]
+                c.execute(f"UPDATE documents SET ai_providers=NULL WHERE doc_id IN ({','.join('?' * len(chunk))})",
+                          chunk)
+            if cleared:
+                ws.set_meta(PROVIDERS_RESET, {"documents": len(cleared), "at": now()}, c)
+                relabel(c)
+            ws.set_meta(OWN_PROVIDERS_DONE, now(), c)
+        return len(cleared)
+    except Exception:  # noqa: BLE001
+        import traceback
+
+        traceback.print_exc()
+        return 0
+
+
+def _reset_seen(ws: Workspace, cx) -> None:
+    """The person ticked providers again: the note about the cleared lists goes."""
+    cx.execute("DELETE FROM meta WHERE key=?", (PROVIDERS_RESET,))
+
+
 def _providers_words(plist: list[str] | None) -> str:
     if plist is None:
         return "the project's choice"
@@ -810,6 +889,7 @@ def set_providers_default(ws: Workspace, value) -> list[str]:
     before = providers_default(ws)
     _write_config(ws, {"ai_providers_default": plist})
     with ws.connect() as cx:
+        _reset_seen(ws, cx)
         relabel(cx)
         if before != plist:
             from . import researchlog
@@ -895,6 +975,7 @@ def set_documents(ws: Workspace, doc_ids: list[str], setting: Any = _KEEP, note:
         if allow is not _KEEP:
             from . import researchlog
 
+            _reset_seen(ws, cx)
             one = len(doc_ids) == 1
             title = cx.execute("SELECT title FROM documents WHERE doc_id=?", (doc_ids[0],)).fetchone()[0] if one else None
             researchlog.record(cx, "ai-access", (f"Cloud providers that may read {researchlog.quoted(title, 80)}"
@@ -1396,28 +1477,29 @@ def _with_context(cx, payload: Any, pids: set[str]) -> set[str]:
 _ANTHROPIC_ROUTES = {"Claude Code", "Claude API", "Claude app (connector)", "Claude", "file queue"}
 
 
-def _sender() -> str | None:
-    """This installation's person id for the ledger (I7 stage 3), read and never made here; None when it cannot be
-    read (the row then says nobody, as rows written before)."""
+def sender() -> str | None:
+    """This installation's person id for the ledger (I7 stage 3): read from the settings, never made here (making one
+    writes the settings, which must not happen inside a caller's transaction), and only when it is one
+    (people.ID_RE); None otherwise (the row then names nobody, as rows written before). A loop that records many
+    sendings looks it up once and passes it (`record_sent(person=...)`)."""
     try:
-        from .home import load_settings
+        from .people import ID_RE
+        from .teamcodebooks import _my_id
 
-        pid = load_settings().get("person_id") or ""
-        if not pid:
-            from .people import me
-
-            pid = me()
-        return pid or None
+        pid = _my_id()
+        return pid if ID_RE.fullmatch(pid or "") else None
     except Exception:  # noqa: BLE001 - the ledger row is written all the same
         return None
 
 
 def record_sent(cx, task_id: str | None, payload: Any, route: str, feature: str | None = None,
-                context: bool = True, provider: str | None = None, model: str | None = None) -> int:
+                context: bool = True, provider: str | None = None, model: str | None = None,
+                person: Any = _UNSET) -> int:
     """Write one ledger row per passage (and, with `context`, the passage shown before it) of this payload, as it
     leaves for a cloud model. A Claude chat is shown the excerpts without their context (`context=False`).
     `provider`: who receives it (stage 1 of other cloud providers; by default Anthropic for Claude's routes).
-    I7 stage 3: each row names the person who sent it and the model (`model`, else the task's), for the AI log."""
+    I7 stage 3: each row names the person who sent it (`person`, else `sender()`) and the model (`model`, else the
+    task's), for the AI log."""
     if provider is None:
         provider = ANTHROPIC if route in _ANTHROPIC_ROUTES else providers.OTHER
     pids, _dids = ids_in(payload)
@@ -1435,7 +1517,7 @@ def record_sent(cx, task_id: str | None, payload: Any, route: str, feature: str 
     if model is None and task_id:
         got = cx.execute("SELECT model FROM tasks WHERE task_id=?", (task_id,)).fetchone()
         model = got[0] if got else None
-    who = _sender()
+    who = sender() if person is _UNSET else person
     rows = [(p, docs[p], route, task_id, at, feature, provider, who, model) for p in sorted(pids) if p in docs]
     cx.executemany("INSERT INTO ai_sent(passage_id, doc_id, route, task_id, sent_at, feature, provider, person_id, "
                    "model) VALUES (?,?,?,?,?,?,?,?,?)", rows)
@@ -1563,6 +1645,8 @@ def project_info(ws: Workspace) -> dict:
             # stage 1 of other cloud providers: who may read the `cloud` documents without their own choice (this
             # person's own, also in a shared project: I7 stage 3), and the team's limit when its owner set one
             "providers_default": providers_default(ws), "shared": shared, "team_limit": team_limit,
+            # I7 stage 3: the provider lists that came from colleagues and were cleared once (settle_own_providers)
+            "providers_reset": ws.meta(PROVIDERS_RESET) if shared else None,
             "providers_note": team_limit["note"] if team_limit else None, **_route_allows(ws, lv)}
 
 

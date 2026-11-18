@@ -731,8 +731,11 @@ def strip(cx: sqlite3.Connection, root: Path | str | None, me: str) -> dict:
     cx.execute(f"DELETE FROM tasks WHERE kind IN ({marks})", LOCAL_TASK_KINDS)
     # the ledger of what was sent to Claude stays whole (a cap on what Claude may read counts every copy's reading),
     # but a row of work that is not shared no longer names its task (a check's id is in it)
-    cx.execute("UPDATE ai_sent SET task_id='private' WHERE task_id IS NOT NULL AND task_id NOT IN (SELECT task_id FROM "
-               "tasks)")
+    # (I7 stage 3: nor who sent it, nor on which model: the AI log says only "work not shared with the team")
+    cols = {r[1] for r in cx.execute("PRAGMA table_info(ai_sent)")}
+    who = ", person_id=NULL, model=NULL" if {"person_id", "model"} <= cols else ""
+    cx.execute(f"UPDATE ai_sent SET task_id='private'{who} WHERE task_id IS NOT NULL AND task_id NOT IN (SELECT "
+               "task_id FROM tasks)")
     present = {r[0] for r in cx.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     for t in _LOCAL_TABLES:
         if t in present:
@@ -1011,6 +1014,10 @@ class ProjectRows:
     def _masked(self, r: dict) -> dict:
         if r.get("task_id") is not None and not self.task_ok(r["task_id"]):
             r = dict(r, task_id="private")
+            # I7 stage 3: nor who sent it, nor on which model (the AI log says only "work not shared with the team")
+            for col in ("person_id", "model"):
+                if col in r:
+                    r[col] = None
         return r
 
     def fetch(self, table: str, rowids: Iterable[int]) -> list[dict]:

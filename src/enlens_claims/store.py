@@ -862,6 +862,10 @@ class Workspace:
             from .access import upgrade
 
             upgrade(self)
+        if not self.scratch:  # I7 stage 3: once, provider lists a shared project inherited from colleagues are cleared
+            from .access import settle_own_providers
+
+            settle_own_providers(self)
 
     def _conn(self) -> sqlite3.Connection:
         cx = getattr(self._local, "cx", None)

@@ -187,6 +187,7 @@ def _forget_folder(ws: Workspace, sender: str | None) -> None:
         # I7 stage 3: the cloud providers the sender allowed for a document are their own consent (teamproviders.py);
         # this copy starts with its own project choice (config.json's is dropped by `_clean_config` too)
         cx.execute("UPDATE documents SET ai_providers=NULL")
+        cx.execute("DELETE FROM meta WHERE key='ai_providers_reset'")  # (nothing of this person's was cleared)
         # the bibliography's attachments name files on the colleague's computer: a path here could name a file of
         # this one, which *Add the files the bibliography has* would then add to the project (as a merge clears them)
         for key, files in cx.execute("SELECT item_key, files_json FROM bib_items").fetchall():

@@ -1165,6 +1165,9 @@ class App(LibraryMixin, QueueMixin):
         limit = teamproviders.note(ws._conn(), prov) if any(h["why"] == "limit" for h in waiting) else None
         text = limit or (f"{title} reads only documents that allow {company}, and this project's do not: allow "
                          f"{company} for this project and the check goes on by itself")
+        if not limit and ws.meta(access.PROVIDERS_RESET):  # I7 stage 3: the ticks that came from colleagues went
+            text += (". Your provider ticks that had come with a colleague's copy were cleared: each person now "
+                     "chooses their own")
         tracker.model_report({"phase": "held", "seconds": time.time() - t0, "text": text, "agent": route,
                               "agent_title": title, "provider": prov, "company": company, "excerpts": n,
                               "limit": bool(limit)})

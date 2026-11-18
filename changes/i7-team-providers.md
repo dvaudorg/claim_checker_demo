@@ -8,7 +8,9 @@
 - **The owner may limit the providers the team may use.** Team › People and settings › *AI providers*: off by default;
   on, the owner ticks the providers (Anthropic only, say). The limit travels with the owner's other settings; a
   provider outside it reads none of the project's documents in anyone's copy, and work waiting for it says *The team
-  uses Anthropic only (set by Anna): OpenAI reads none of this project's documents.* Only the owner can change it.
+  uses Anthropic only (set by Anna): OpenAI reads none of this project's documents.* The app offers it to the owner
+  alone; it is not signed yet, so a change in the owner's name that came in someone else's file is named as such in
+  the research log.
 - **The AI log.** From the research log's line under its title: one row each time AI work sent excerpts to a cloud
   provider, saying who sent them, to which provider, through which route and on which model, what kind of task, when,
   how many excerpts from how many documents, and what it was about (a link to the hypothesis, codebook, themes or

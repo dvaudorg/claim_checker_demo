@@ -1368,8 +1368,11 @@ def _shown(payload: dict) -> list[dict]:
 
 def open_check(ws: Workspace, text: str, terms: list[str] | None = None, target: str | None = None, k: int = 8,
                per_doc: int = 2, doc_ids: list[str] | None = None, model: str = CHAT_MODEL,
-               framework: str | None = None) -> dict:
-    """Pick the passages for a claim and return them; the grades come back through `submit_grades`."""
+               framework: str | None = None, provider: str | None = access.ANTHROPIC,
+               route: str | None = None) -> dict:
+    """Pick the passages for a claim and return them; the grades come back through `submit_grades`. I7 stage 3:
+    `provider` is the connector's (Codex's: OpenAI), for the split and the ledger; `route` the name the ledger
+    gives it (mcp_server.sent_route)."""
     if not ws.scalar("SELECT COUNT(*) FROM passages WHERE section='body'"):
         raise ValueError("This project has no readable documents yet. Add sources first.")
     terms = clean_terms(terms)
@@ -1383,18 +1386,20 @@ def open_check(ws: Workspace, text: str, terms: list[str] | None = None, target:
     if not picked:
         return {"check_id": cid, "round": 1, "passages": []}
     payload = _payload(ws, cid, uc["text"], uc["target"], uc["framework"], picked, terms)
-    parts = _add_round(ws, cid, f"check:{cid}", payload, model, ("cloud",), _local_configured())
-    return {"check_id": cid, "round": 1, **_chat_round(ws, parts)}
+    parts = _add_round(ws, cid, f"check:{cid}", payload, model, ("cloud",), _local_configured(), provider=provider)
+    return {"check_id": cid, "round": 1, **_chat_round(ws, parts, provider, route)}
 
 
-def _chat_round(ws: Workspace, parts: dict[str, str]) -> dict:
+def _chat_round(ws: Workspace, parts: dict[str, str], provider: str | None = access.ANTHROPIC,
+                route: str | None = None) -> dict:
     """The excerpts of a round a Claude chat may read (the main part), and how many others there are (0.11)."""
     main = ws.scalar("SELECT payload_json FROM tasks WHERE task_id=?", (parts["main"],)) if "main" in parts else None
     shown = _shown(json.loads(main)) if main else []
     if main:
         with ws.connect() as cx:
             # the chat sees the excerpts alone (`_shown`): no context passage enters the ledger (0.11.1)
-            access.record_sent(cx, parts["main"], json.loads(main), access.ROUTE_NAMES["chat"], "check", context=False)
+            access.record_sent(cx, parts["main"], json.loads(main), route or access.ROUTE_NAMES["chat"], "check",
+                               context=False, provider=provider)
     n = _part_counts(ws, {k: v for k, v in parts.items() if k != "main"})
     out: dict = {"passages": shown}
     if n:
@@ -1409,7 +1414,8 @@ def _chat_round(ws: Workspace, parts: dict[str, str]) -> dict:
 
 def more_passages(ws: Workspace, cid: str, k: int = 8, model: str = CHAT_MODEL, terms: list[str] | None = None,
                   embedder=None, doc_ids: list[str] | None = None, main_levels=("cloud",),
-                  local_reader: bool | None = None, provider: str | None = access.ANTHROPIC) -> dict:
+                  local_reader: bool | None = None, provider: str | None = access.ANTHROPIC,
+                  route: str | None = None) -> dict:
     """The next best passages, none of them shown before, as a new round of the same check.
 
     With `terms`, the ranking uses these new search terms (with the claim) instead of the earlier ones, and only
@@ -1444,7 +1450,7 @@ def more_passages(ws: Workspace, cid: str, k: int = 8, model: str = CHAT_MODEL, 
     parts = _add_round(ws, cid, f"check:{cid}:r{n}" if groups else f"check:{cid}", payload, model, tuple(main_levels),
                        _local_configured() if local_reader is None else local_reader, provider=provider)
     if model == CHAT_MODEL:  # a Claude chat (the connector): it is shown the excerpts it may read
-        return {"check_id": cid, "round": n, **_chat_round(ws, parts)}
+        return {"check_id": cid, "round": n, **_chat_round(ws, parts, provider, route)}
     return {"check_id": cid, "round": n, "passages": _shown(payload), "parts": parts}
 
 

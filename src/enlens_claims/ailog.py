@@ -194,7 +194,7 @@ def entries(ws: Workspace, person: str | None = None, provider: str | None = Non
                     "answered": bool(r["task_id"]) and look.answered(r["task_id"])})
     plist = sorted(count_people.items(), key=lambda kv: (kv[0] != me, kv[0] == UNKNOWN, names.get(kv[0], kv[0])))
     return {"rows": out, "total": len(picked), "team": team,
-            "people": [{"id": k, "name": "you" if k == me else ("not recorded" if k == UNKNOWN else
+            "people": [{"id": k, "name": "you" if k == me else ("not named" if k == UNKNOWN else
                                                                 names.get(k, "a colleague")),
                         "me": k == me, "n": n} for k, n in plist],
             "providers": [{"id": k, "title": providers.title(k), "n": n}

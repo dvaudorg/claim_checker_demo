@@ -18,7 +18,15 @@ const cloudWords = () => (othersSetUp() ? CLOUD_ANY : CLOUD_CLAUDE);
 export const sentToWords = () => (othersSetUp() ? "cloud AI" : "Claude");
 const isDefault = (list) => !list || (list.length === 1 && list[0] === "anthropic");
 // the provider tick boxes show once another provider is set up, or while any allowance differs from the default
-export const providersInPlay = (info = {}, docs = []) => othersSetUp() || !isDefault(info.providers_default) || docs.some((d) => d.providers_own != null);
+export const providersInPlay = (info = {}, docs = []) => othersSetUp() || !isDefault(info.providers_default) || !!info.providers_reset || docs.some((d) => d.providers_own != null);
+// I7 stage 3: provider ticks that came with colleagues' documents were cleared once in a shared project; said in place
+// (the Documents page's providers line, the line about the route) until the person ticks providers again
+export function providersResetWords(info = {}) {
+  const r = info.providers_reset;
+  if (!r) return "";
+  const n = r.documents || 0;
+  return `Your provider ticks for ${n} ${n === 1 ? "document" : "documents"} of this shared project were cleared: they had come with a colleague’s copy, and each person now chooses their own. Tick again the ones you want.`;
+}
 
 export const LEVEL = {
   cloud: { get title() { return cloudWords().title; }, get many() { return cloudWords().many; },
@@ -138,10 +146,12 @@ export function providersDefaultCard(project, info, onSaved, docs = []) {
     catch (e) { showError(e); btn.disabled = false; }
   });
   const now = (info.providers_default || ["anthropic"]).map(providerTitle).join(", ");
-  return fold({ class: "providers-default" }, `${CLOUD_ANY.title}: ${now}`,
+  const reset = providersResetWords(info);
+  const box = fold({ class: "providers-default" }, `${CLOUD_ANY.title}: ${now}`,
     h("div", { class: "stack" }, h("p", { class: "muted small" }, "For the documents marked Cloud AI may read it without a choice of their own. A document not ticked for the AI you chose is read as Only a local AI. Change one document in its AI setting.",
       info.shared ? " This is your own choice: each person in the team chooses theirs, and your colleagues see it in the research log." : ""),
       checks, h("div", { class: "row" }, btn, st)));
+  return reset ? h("div", { class: "stack providers-default-wrap" }, h("p", { class: "muted small providers-reset" }, icon("info", { size: 13 }), " ", reset), box) : box;
 }
 
 // A model server on another computer as the main route (stage 1 of other cloud providers): it reads only the documents
@@ -193,7 +203,8 @@ export function providerAllowLine(project, info, onAllowed) {
     } catch (e) { showError(e); btn.disabled = false; }
   } }, `Allow ${company} for this project`);
   box = notice({ kind: "attention", class: "provider-allow-line" },
-    h("p", {}, words, " Until you allow it, their work waits; documents with a choice of their own keep it (Documents page)."),
+    h("p", {}, words, " Until you allow it, their work waits; documents with a choice of their own keep it (Documents page).",
+      providersResetWords(info) ? ` ${providersResetWords(info)}` : ""),
     h("div", { class: "row" }, btn));
   return box;
 }

@@ -11,10 +11,13 @@ bundle._forget_folder). What the team decides is the AI level of each document (
 set, a list of providers (Anthropic only, or several). It is a row of `team_settings` (key `team_providers`), written
 and merged exactly as the owner's settings about codebooks are (teamcodebooks.py: only the owner writes it, a row
 counts when its writer owned the place it names in the chain of owners this copy follows, a row in this copy's own name
-that it does not hold is refused and answered). So it reaches every copy with the owner's other rules, and a Member or
-a Co-owner cannot set it. A provider outside the limit reads none of the project's documents in any copy (access._Allow,
-where every decision about a provider passes): its work is held as when the person has not allowed that provider yet,
-and the note says which limit holds and who set it (`note`). A copy of an older ENLENS does not know the row and leaves
+that it does not hold is refused and answered). So it reaches every copy with the owner's other rules, and the app
+offers it to the owner alone. The rows are not signed yet (as roles and the codebook settings): a changed app could
+write one in the owner's name, which third copies would follow until the owner's copy answers it with its next round;
+when the row that counts came in someone else's file, the research log names both (`arrived`). The owner chose this
+trust model over signing for now (roadmap, open decisions). A provider outside the limit reads none of the
+project's documents in any copy (access._Allow, where every decision about a provider passes): its work is held as
+when the person has not allowed that provider yet, and the note says which limit holds and who set it (`note`). A copy of an older ENLENS does not know the row and leaves
 it aside: such a copy allows Anthropic only in a shared project, which is inside any limit but one without Anthropic.
 """
 from __future__ import annotations
@@ -62,13 +65,13 @@ def _title(pid: str) -> str:
     return "a server on another computer" if pid == providers.OTHER else providers.company(pid)
 
 
-def _who(cx: sqlite3.Connection, pid: str | None) -> str:
+def _who(cx: sqlite3.Connection, pid: str | None, unknown: str = "the owner") -> str:
     from .ownership import _names_cx
     from .teamcodebooks import _my_id
 
     if pid and pid == _my_id():
         return "you"
-    return _names_cx(cx).get(pid or "", "the owner")
+    return _names_cx(cx).get(pid or "", unknown)
 
 
 def note(cx: sqlite3.Connection, provider: str | None = None) -> str | None:
@@ -84,6 +87,34 @@ def note(cx: sqlite3.Connection, provider: str | None = None) -> str | None:
     if provider is None:
         return head + "."
     return f"{head}: {_title(provider)} reads none of this project's documents. Ask the owner, or choose another route."
+
+
+def arrived(cx: sqlite3.Connection, before: dict | None, via: str | None) -> bool:
+    """After a merge brought `team_settings` rows (sync/owner_merge.py): when the limit that counts changed, and the
+    row that counts now was written in another person's name than the person whose file brought it (relayed, or
+    forged: rows are not signed yet), the research log says so, naming both, so the team can see where it came from.
+    The owner's own change already has the owner's entry. True when an entry was written."""
+    try:
+        after = limit(cx)
+    except sqlite3.Error:
+        return False
+    if (before or {}).get("providers") == (after or {}).get("providers"):
+        return False
+    from .teamcodebooks import _counting
+
+    row = _counting(cx).get(KEY)
+    by = row["by"] if row else None
+    if not by or by == via:
+        return False
+    from . import researchlog
+
+    words = f"{_titles(after['providers'])} only" if after else "any cloud provider again"
+    sender = _who(cx, via, "a colleague")
+    researchlog.record(cx, "owner", f"The team may use {words}: a change in {_who(cx, by)}'s name (the owner's), "
+                                    f"which came in {sender}'s file. If the owner did not make it, their next change "
+                                    "replaces it.",
+                       data={"setting": KEY, "providers": after["providers"] if after else None, "by": by, "via": via})
+    return True
 
 
 def view(ws) -> dict:
@@ -119,6 +150,12 @@ def set_limit(ws, value: Any) -> dict:
         if (cur["value"] if cur else None) == want and (cur is not None or want is None):
             return view(ws)
         _write(cx, KEY, me, _place(cx), _own_n(cx, me) + 1, want)
+        # the open tasks get their setting under the new limit now, in this transaction: a task its route may no
+        # longer read leaves the queue, and one held for the limit is `cloud` again once it is lifted (as
+        # access.set_providers_default does; a member's copy relabels at the end of the merge that brings the row)
+        from .access import relabel
+
+        relabel(cx)
         if want is None:
             researchlog.record(cx, "owner", "The team may use any cloud provider again: each person reads with the "
                                             "provider they choose, for the documents marked for cloud AI.",
