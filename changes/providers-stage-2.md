@@ -20,7 +20,7 @@
 - **Recommended models, applied by themselves.** Every provider now gets ENLENS's three tiers (small tasks such as
   labels and links; judging excerpts; second opinions and hard cases) from its own current line-up: for example
   GPT-6 Luna, GPT-6.2 Sol and GPT-6.2 Astra on OpenAI, Gemini 3.5 Flash-Lite, Gemini 4 Hydrogen and Gemini 4 Carbon on
-  Google's API, Ministral, Mistral Small and Mistral Large on Mistral. The one in use follows the route you chose and
+  Google's API, Mistral Small and Mistral Large on Mistral. The one in use follows the route you chose and
   the models your key or plan offers; a model you pick for a tier comes first. *How much thought* (Energy efficient,
   Balanced, Intelligence) now works for every provider: one tier lower or higher, and less or more reasoning effort
   where the model takes it. On a free Google account Antigravity offers Gemini 3.8 Flash only, so every task uses it.
