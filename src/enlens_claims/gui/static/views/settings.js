@@ -1621,6 +1621,21 @@ function dataSection() {
     ledgerSection());
 }
 
+// 0.20.4: what the app reaches over the network. The 0.8.2 line ("This computer only · nothing is loaded from the
+// internet") stopped being true with update checks, team storage, cloud AI and Crossref lookups.
+function networkText(st) {
+  const reach = st.any_host ? "Other computers on your network can open the app (started with --host)."
+    : "Only this computer can open the app.";
+  const online = ["GitHub, to check for a new version and to download it when you press Update",
+    st.local_only ? null : "the cloud AI you choose (Claude, Codex, Antigravity): only the passages of a task",
+    "the team storage space you set up (Backblaze B2, Cloudflare R2, WebDAV)",
+    "Crossref, when you look up retractions",
+    "ollama.com or Anthropic's installer, when you press Install Ollama or Set up Claude"].filter(Boolean);
+  return [reach, h("div", { class: "muted small" }, "It goes online only to reach:"),
+    h("ul", { class: "small net-list" }, ...online.map((t) => h("li", {}, t))),
+    st.local_only ? h("div", { class: "muted small" }, "Cloud AI is switched off on this computer.") : null];
+}
+
 // Technical › This installation: the version and how it was installed and is updated, the network, the text
 // recognition parts and what is missing
 function installationSection() {
@@ -1632,13 +1647,13 @@ function installationSection() {
   return { id: "installation", title: "This installation", summary: `${appName()} ${v}${how ? `, installed ${how[0]}` : ""}`,
     body: [h("dl", { class: "kv-grid" },
       h("div", { class: "kv" }, h("dt", {}, "Version"), h("dd", {}, `ENLENS ${v}`, installedWith(st.installation))),
-      h("div", { class: "kv" }, h("dt", {}, "Network"), h("dd", {}, "This computer only · nothing is loaded from the internet")),
       h("div", { class: "kv" }, h("dt", {}, "Text recognition (OCR) for scanned PDFs"), h("dd", {}, ocr.available ? `installed (Tesseract${ocr.languages && ocr.languages.length ? `, languages: ${ocr.languages.join(", ")}` : ""})`
         : ["not available", ocr.missing && ocr.missing.length ? h("div", { class: "muted small" }, `Missing: ${ocr.missing.map((m) => ({ tesseract: "the Tesseract program (tesseract-ocr)", pypdfium2: "the Python package pypdfium2", pillow: "the Python package pillow" }[m] || m)).join("; ")}.${ocr.missing.includes("tesseract") ? " How to get Tesseract: Settings › Documents." : ""}${ocr.missing.some((m) => m !== "tesseract") ? " The Python parts: pip install 'enlens-claims[ocr]', then restart the app." : ""}`) : null])),
       // hunt phase 1.5: the add-ons that could not be loaded, and those left out of the open project (GET /api/state
       // `addon_problems`), one line each; nothing when there are none
       problems.length ? h("div", { class: "kv" }, h("dt", {}, problems.length === 1 ? "An add-on could not be loaded" : "Add-ons that could not be loaded"),
-        h("dd", {}, problems.map((e) => h("div", { class: "addon-problem small" }, `${e.addon}: ${e.error}${e.project ? ` (project ${e.project})` : ""}`)))) : null)] };
+        h("dd", {}, problems.map((e) => h("div", { class: "addon-problem small" }, `${e.addon}: ${e.error}${e.project ? ` (project ${e.project})` : ""}`)))) : null,
+      h("div", { class: "kv kv-wide" }, h("dt", {}, "Network"), h("dd", {}, ...networkText(st))))] };
 }
 
 // ---------------------------------------------------------------------------------------------

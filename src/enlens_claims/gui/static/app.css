@@ -95,6 +95,8 @@ legend { padding: 0; }
 .kv-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px 16px; }
 .kv dt { color: var(--muted); font-size: var(--fs-xs); }
 .kv dd { word-break: break-word; }
+.kv-wide { grid-column: 1 / -1; }
+.kv dd .net-list { margin: 2px 0 0; padding-left: 18px; }
 .errors-list { margin: 6px 0 0 18px; padding: 0; color: var(--danger); font-size: var(--fs-small); }
 .plain-steps { margin: 0; padding-left: 1.2em; }
 .plain-steps li { margin: 4px 0; }
