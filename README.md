@@ -58,7 +58,7 @@ Windows from 0.15.4 on). Your projects and settings (the `enlens` folder in your
   impact claims tagged with UN SDG targets and compared with an expert Value Chain Assessment.
 
 <!-- new-in:start (written by `python tools/release.py prepare`: change the changelog entry, not this) -->
-## New in 0.21.0rc1: The bug hunt: about 400 fixes and Reader 7
+## New in 0.21.0rc2: The bug hunt: about 400 fixes and Reader 7
 
 - **The codebook you choose on the Codes page is the one the AI uses.** *Let the AI read the passages* kept the first codebook after you chose another, so Start labelled the passages with the earlier one.
 - **A second change of strictness is no longer lost.** Two quick changes (two presses of an arrow key on the slider, or *Back to normal* during a save) stored the first value while the slider showed the second.
