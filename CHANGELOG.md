@@ -2,6 +2,14 @@
 
 ## 0.21.0rc1 (November 2026): The bug hunt: about 400 fixes and Reader 7
 
+This release candidate is the result of a bug hunt with no new features: about 400 faults are fixed, each with a test
+that failed first, and the test suite grew from 3,400 to 4,700 tests on Windows, macOS and Linux. The most important
+fixes keep documents marked *Only a local AI* or *No AI* away from cloud AIs and proxies, stop a team member from
+doing what only the owner may, and stop work being lost when a save fails or a move is cut off. Reader 7 reads Word
+text boxes, interview turns and one-line paragraphs properly, so most projects will offer to move their documents to
+it; moving can change results for those documents. Several fixes below can change results too: read *Changes that
+can alter your results* first. It is a pre-release: the install line and *Update* do not take it.
+
 ### Changes that can alter your results
 
 - **The codebook you choose on the Codes page is the one the AI uses.** *Let the AI read the passages* kept the first
@@ -946,6 +954,18 @@
 ### Tests
 
 - `tests/test_views_stale_state.py`: views whose state went stale after a select changed or while a request ran.
+
+### Not yet done
+
+- **Tried only by tests, not by hand on Windows:** Update started from a terminal (no rescue window), pasting the
+  Antigravity sign-in line into PowerShell, and a sync round while the Team tab has a colleague's file open.
+- **Mutation testing of the largest modules** (`store.py`, `sync/merge.py`, `claimcheck.py`, `check_results.py`) is
+  still to run; it takes hours and waits for a dedicated test computer.
+- **Old data is not repaired where it cannot be told apart from honest data:** sentences saved earlier with a
+  colleague's verdict as your own, judgements wiped by the old *Judge it myself* fault, and a few projects whose first
+  opening was cut off before 0.18. The points above say how to check your own projects.
+- **Signed share marks for zips brought by hand and plain shared folders,** and deleting a removed codebook for good,
+  are on the roadmap.
 
 ## 0.20.3 (November 2026): Antigravity in a home of its own, and what new documents changed
 
