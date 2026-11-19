@@ -211,6 +211,36 @@ def _failures(ws: Workspace) -> list[tuple[set[str], dict]]:
     return out
 
 
+def _as_on_map(ws: Workspace, records: list[dict], on_map: set[str]) -> list[dict]:
+    """The kept names with each concept as the map hands it out now. Hunt phase 1.5: a node's id is the wording that
+    names its concept (conceptpaths `_Graph.term`: the most frequent); new documents, or two wordings linked as the
+    same, can make another wording name it, and a name kept with the old id lost that concept: a name of a group of
+    two concepts then fitted no group and went to *names elsewhere* for good. A stored id that is not on the map stands
+    for the map's node of its concept, when one of the concept's wordings is on the map."""
+    if not records:
+        return records
+    try:
+        concept = {r[0]: r[1] for r in ws.query("SELECT term_id, concept_id FROM concept_terms")}
+    except Exception:  # noqa: BLE001 - (an older project: no concepts, nothing to translate)
+        return records
+    node: dict[str, str] = {}   # concept id: its wording on the map
+    for t, c in concept.items():
+        if t in on_map:
+            node.setdefault(c, t)
+    out = []
+    for rec in records:
+        now_of = {x: x if x in on_map else node.get(concept.get(x, ""), x) for x in rec["concepts"]}
+        if all(o == n for o, n in now_of.items()):
+            out.append(rec)
+            continue
+        labels = dict(rec["labels"])
+        for o, n in now_of.items():
+            if o != n and n not in labels and o in labels:
+                labels[n] = labels[o]
+        out.append({**rec, "concepts": list(dict.fromkeys(now_of[x] for x in rec["concepts"])), "labels": labels})
+    return out
+
+
 def attach(ws: Workspace, out: dict, members: list[list[str]], labels: dict[str, str], filters: dict, n: int,
            docs_in_scope: set[str] | None, settings: dict | None = None) -> None:
     """Give each of the map's groups its name ({"name", "name_source", "name_id", "model", "quote", "changed",
@@ -221,6 +251,7 @@ def attach(ws: Workspace, out: dict, members: list[list[str]], labels: dict[str,
     except Exception:  # noqa: BLE001 - a project opened by an older ENLENS: no table yet, no kept names
         records = []
     on_map = set(labels)
+    records = _as_on_map(ws, records, on_map)
     fitting = match_all(records, members, on_map)
     took = {gi: cs[0] for gi, cs in fitting.items()}
     fails = _failures(ws) if any(gi not in took or took[gi]["source"] != "person" for gi in range(len(members))) else []

@@ -1115,9 +1115,10 @@ def _decisions(ws: Workspace) -> dict[tuple[str, str], dict]:
 
     out = {}
     order, oargs = review_order()  # 0.14: yours count over a colleague's
-    for r in ws.query(f"SELECT item_id, decision, corrected FROM reviews WHERE item_kind='concept_link' {order}", oargs):
+    for r in ws.query(f"SELECT item_id, decision, corrected, proposed FROM reviews WHERE item_kind='concept_link' "
+                      f"{order}", oargs):
         a, _, b = (r["item_id"] or "").partition("|")
-        out[(a, b)] = {"decision": r["decision"], "relation": r["corrected"] or None}
+        out[(a, b)] = {"decision": r["decision"], "relation": r["corrected"] or None, "seen": r["proposed"] or None}
     return out
 
 
@@ -1128,6 +1129,10 @@ def links(ws: Workspace) -> list[dict]:
     for r in ws.query("SELECT * FROM concept_links ORDER BY a, b, source"):
         d = dict(r)
         p = dec.get((d["a"], d["b"]))
+        if p and p["decision"] == "accept" and p["seen"] and p["seen"] != d["relation"]:
+            # hunt phase 1.5: accepted as another relation (the glossary made again proposed the pair anew, by what
+            # its sentences state most often now): the person never saw this one, so it is a proposal again
+            p = None
         d["decision"] = p["decision"] if p else None
         if p and p["decision"] == "reject":
             d["relation_effective"] = None
@@ -1468,11 +1473,16 @@ def set_link(ws: Workspace, a: str, b: str, decision: str, relation: str | None 
             cx.execute("INSERT OR REPLACE INTO concept_links VALUES (?,?,?,?,?,?,?,?,?)",
                        (a, b, relation or "same", "person", 1.0, None, None, None, now()))
         else:
-            if not cx.execute("SELECT 1 FROM concept_links WHERE a=? AND b=?", (a, b)).fetchone():
+            row = cx.execute("SELECT relation FROM concept_links WHERE a=? AND b=? ORDER BY source = 'pattern'",
+                             (a, b)).fetchone()
+            if row is None:
                 raise KeyError(f"{a}|{b}")
+            # (hunt phase 1.5: the relation the person accepted, as `proposed`: kept by the pair, an acceptance
+            # otherwise confirmed whatever relation a later glossary proposed for it)
             cx.execute("INSERT INTO reviews(item_kind, item_id, field, proposed, decision, corrected, reviewer, note, "
-                       "decided_at, person_id) VALUES ('concept_link', ?, 'relation', NULL, ?, ?, ?, ?, ?, ?)",
-                       (f"{a}|{b}", decision, relation, reviewer, note, now(), me()))
+                       "decided_at, person_id) VALUES ('concept_link', ?, 'relation', ?, ?, ?, ?, ?, ?, ?)",
+                       (f"{a}|{b}", row[0] if decision == "accept" else None, decision, relation, reviewer, note,
+                        now(), me()))
     rebuild_concepts(ws)
 
 

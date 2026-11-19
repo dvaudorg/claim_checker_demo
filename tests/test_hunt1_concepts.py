@@ -436,11 +436,10 @@ def test_a_task_that_failed_on_a_code_the_codebook_did_not_know_is_asked_again_b
     assert demo.scalar("SELECT status FROM tasks WHERE task_id=?", (tid,)) == "failed"
     profile.make_label_tasks(demo, "remote", [pid], "m", all_passages=True)
     assert demo.scalar("SELECT status || '/' || attempts FROM tasks WHERE task_id=?", (tid,)) == "pending/0"
-    # the codebook removed while the task waits: refused for the codebook, then brought back from History
+    # the codebook removed while the task waits: (hunt phase 1.5) the waiting task is taken back at the removal, no
+    # longer answered and refused three times; brought back from History, the next run asks it again
     codebooks.remove(demo, "remote")
-    for _ in range(3):
-        _answer(demo, pid, quote, "Commuting")
-    assert demo.scalar("SELECT status FROM tasks WHERE task_id=?", (tid,)) == "failed"
+    assert demo.scalar("SELECT status FROM tasks WHERE task_id=?", (tid,)) is None
     history.restore(demo, "codebook", "remote", codebooks._versions(demo, "remote")[0]["version_id"])
     profile.make_label_tasks(demo, "remote", [pid], "m", all_passages=True)
     assert demo.scalar("SELECT status FROM tasks WHERE task_id=?", (tid,)) == "pending"

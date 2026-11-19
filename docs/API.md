@@ -1088,7 +1088,9 @@ result: the `search` state plus `added` and `remaining`; 400 when no embedding m
 commas, semicolons or tabs.
 `GET /api/projects/<p>/frameworks/<name>` → `{"framework": {...info, "items": [{"code", "description", "group", "group_name"}]}}`.
 `POST /api/projects/<p>/frameworks` `{"name": "h2", "csv": "code,description\nH1,…", "title": "…", "label": "hypothesis code"}`
-→ `{"framework": info}`; 400 with the row problem. `DELETE /api/projects/<p>/frameworks/<name>`.
+→ `{"framework": info}`; 400 with the row problem. `DELETE /api/projects/<p>/frameworks/<name>` removes the project's own
+codebook as the editor's *Remove the codebook* does: a version is kept, the research log says so, and its label tasks
+still waiting are taken back.
 0.16: the Codebooks page uses the routes under *Your record* below; these four stay.
 `GET /api/projects/<p>/suggest?text=<claim>&framework=sdg&n=5` → `{"codes": [{"code": "6.4", "group": "6",
 "description": "…", "score": 16.9}]}` (keyword match; empty for texts under 10 characters).

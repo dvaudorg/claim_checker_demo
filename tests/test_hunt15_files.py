@@ -631,3 +631,81 @@ def test_sweep_a_kept_excerpts_id_with_a_final_newline_is_no_kept_excerpt():
 
     made = reread.tombstone("d1:0005", 1)
     assert "\n" not in made and reread.is_tombstone(made) and not reread.is_tombstone("d1:0005")
+
+
+# ---------------------------------------------------------------------------------------------
+# 3, after review: the level a project needs is THIS copy's own. What leaves never carries it (a file of the sync says
+# what it needs by its own `sync_needs`, sync/formats.py), and a merge never sets, raises or lowers it here
+# ---------------------------------------------------------------------------------------------
+def _zip_meta(zpath: pathlib.Path, member: str, tmp: pathlib.Path) -> dict:
+    db = tmp / f"{zpath.stem}-{member.replace('/', '_')}"
+    with zipfile.ZipFile(zpath) as zf:
+        db.write_bytes(zf.read(member))
+    return _meta(db)
+
+
+@pytest.mark.parametrize("scope", ["shared", "all"])
+def test_a_project_zip_carries_no_level_of_its_own_and_the_copy_it_becomes_records_its_own(loaded, tmp_path, scope):
+    assert loaded.meta(store.PROJECT_NEEDS_KEY) == store.PROJECT_LEVEL
+    out = tmp_path / f"{scope}.zip"
+    bundle.export_project(loaded, out, scope=scope)
+    assert store.PROJECT_NEEDS_KEY not in _zip_meta(out, "enlens.sqlite", tmp_path)
+    copy = bundle.import_project(out, tmp_path / "copy")
+    assert copy.meta(store.PROJECT_NEEDS_KEY) == store.PROJECT_LEVEL
+    copy.close_all()
+
+
+def test_the_databases_bundles_are_made_in_record_no_level(tmp_path):
+    """Every bundle of the shared folder, of a storage space and of one person's private sync is written from a
+    scratch copy (`Workspace.create(..., scratch=True)`, a copy of the empty database): neither holds the level."""
+    scratch = Workspace.create(tmp_path / "work", scratch=True)
+    assert scratch.meta(store.PROJECT_NEEDS_KEY) is None
+    scratch.close_all()
+    own = Workspace.create(tmp_path / "own")  # (made from the same empty database: records its own at once)
+    assert own.meta(store.PROJECT_NEEDS_KEY) == store.PROJECT_LEVEL
+    own.close_all()
+
+
+def test_a_shared_folder_bundle_carries_no_level(loaded, tmp_path):
+    from enlens_claims.sync import folder
+
+    _check(loaded, CLAIM)
+    team = tmp_path / "team"
+    team.mkdir()
+    folder.set_folder(loaded, str(team))
+    folder.write(loaded)
+    bundles = sorted(team.rglob("bundles/*.zip"))
+    assert bundles
+    for b in bundles:
+        assert store.PROJECT_NEEDS_KEY not in _zip_meta(b, "rows.sqlite", tmp_path)
+
+
+@pytest.mark.parametrize("theirs", ["0", "2"])
+def test_a_merge_never_changes_this_copys_level_from_a_file(loaded, tmp_path, theirs):
+    """No zip ENLENS writes carries a level; a colleague's folder zipped by hand may (its database's own). One at or
+    below this version's is merged by the sync's own rules; one above it is a database a newer ENLENS changed, which
+    this version would read wrongly: refused in words before anything is merged (as opening it is). Either way this
+    copy's level is its own and stays as it was."""
+    from enlens_claims import sync
+
+    out = tmp_path / "theirs.zip"
+    bundle.export_project(loaded, out, scope="all")
+    unpacked = tmp_path / "theirs"
+    with zipfile.ZipFile(out) as zf:
+        zf.extractall(unpacked)
+    _set_meta(unpacked / "enlens.sqlite", store.PROJECT_NEEDS_KEY, theirs)
+    hand = tmp_path / "hand.zip"
+    with zipfile.ZipFile(hand, "w") as zf:
+        for f in unpacked.rglob("*"):
+            if f.is_file():
+                zf.write(f, f.relative_to(unpacked).as_posix())
+    mine = bundle.import_project(out, tmp_path / "mine")
+    before = mine.scalar("SELECT COUNT(*) FROM sync_log")
+    if int(theirs) > store.PROJECT_LEVEL:
+        with pytest.raises(store.ProjectTooNew):
+            sync.bring_in(mine, hand, anyway=True)
+        assert mine.scalar("SELECT COUNT(*) FROM sync_log") == before  # nothing merged
+    else:
+        sync.bring_in(mine, hand, anyway=True)
+    assert mine.meta(store.PROJECT_NEEDS_KEY) == store.PROJECT_LEVEL
+    mine.close_all()

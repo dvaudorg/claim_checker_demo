@@ -453,7 +453,7 @@ def save(ws, name: str, csv_text: str, title: str | None = None, label: str | No
         from .codebooks import held_message, name_held
 
         if name_held(ws, n):   # a removed codebook's labels and versions are kept under its name (codebooks.py)
-            raise ValueError(held_message(n))
+            raise ValueError(held_message(n, "", ws))
     from .home import _write_whole
 
     # hunt phase 1.5: whole (beside it, then put in its place), as the codebooks' other files are: written in place, a
@@ -479,12 +479,14 @@ def delete(ws, name: str) -> None:
         raise KeyError(name)  # never a path: the name comes from a URL
     folder = Path(ws.root) / "frameworks"
     p = folder / f"{name}.csv"
-    if not p.exists():
+    if not p.is_file():
         raise KeyError(name)
-    p.unlink()
-    side = folder / f"{name}.json"
-    if side.exists():
-        side.unlink()
+    # hunt phase 1.5: removed as the editor's *Remove the codebook* removes it (codebooks.remove): a version kept, an
+    # entry in the research log, its waiting label tasks taken back. Deleted here, nobody could see the removal or
+    # bring the codebook back, and its labels stayed under the name all the same
+    from .codebooks import remove
+
+    remove(ws, name)
 
 
 def resolve(ws, framework: str | None, code: str | None) -> tuple[str | None, str | None, str | None, str | None]:

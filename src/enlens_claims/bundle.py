@@ -60,6 +60,7 @@ def export_project(ws: Workspace, out: str | Path, scope: str = "all") -> dict:
 
     from . import sharing, sync
     from .sync import changes as sync_changes, formats as sync_formats
+    from .store import PROJECT_NEEDS_KEY
 
     if scope not in SCOPES:
         raise ValueError("A project zip holds the whole project or what you shared.")
@@ -90,6 +91,10 @@ def export_project(ws: Workspace, out: str | Path, scope: str = "all") -> dict:
                 else:
                     sharing.materialise(cx, ws.root, stamp["from"]["id"])
                     left_out, shared_books = {}, None
+                # hunt phase 1.5: the level of ENLENS this copy's database needs (store.PROJECT_LEVEL) stays here, as
+                # in a zip of what you shared (`sharing.strip`): the zip's own `sync_needs` says what it needs, and
+                # the copy it becomes records its own level when first opened
+                cx.execute("DELETE FROM meta WHERE key=?", (PROJECT_NEEDS_KEY,))
             if scope == "shared":
                 cx.execute("VACUUM")
         finally:

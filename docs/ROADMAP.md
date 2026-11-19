@@ -112,6 +112,18 @@ log in 0.20.1)
   project, by the owner's word), and every mark signed by its maker, with its item, state and time, so it can be
   checked whichever file carries it. The same keys would sign the owner's settings (*Open decisions*).
 
+**Delete a removed codebook for good** · Level 0 · hunt phase 1.5, 19 November 2026 (the owner's item; feature freeze)
+- What is there today: *Remove the codebook* takes its files away and keeps everything made with it under its name (its
+  labels, the passages the AI read for it, its earlier versions), so it can come back from the research log (the entry
+  of its removal: *Compare with before*, then *Restore*). While any of these remain, a new codebook cannot take the name
+  (`codebooks.held_where`): it would take them over. A codebook kept with all projects keeps its versions with all
+  projects, so its name stays taken in every project, also after the project it was removed in is gone. The refusal
+  says so and names the way back only where it exists.
+- To build: a *Delete for good* beside the removal's entry (and for a name refused this way), which says what goes (the
+  labels and the AI's reading in each project that holds them, the versions, the done label tasks), asks *Why?* for the
+  research log, and frees the name. Labels are results: a check or a theme set that used them, and a colleague's copy
+  that holds them, need a word on what they keep.
+
 ## Small things left
 
 Known gaps of built features, gathered on 18 November 2026 from the *Not yet done* lists of the changelog (the

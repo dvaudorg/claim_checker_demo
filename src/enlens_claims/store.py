@@ -567,6 +567,14 @@ def _clamp_share_dates(cx: sqlite3.Connection) -> None:
 # write wrongly (not for a table or a column it can leave aside, which `_setup` adds); an ENLENS that meets a level
 # above its own refuses the project in words and writes nothing. Versions released before this one check nothing.
 # Level 1: every project up to now.
+#
+# It is a property of THIS copy's database, never of what copies exchange: whether a file of the sync needs a newer
+# ENLENS is said by its own `sync_format`/`sync_needs` (sync/formats.py), which every route checks before it reads
+# anything. So the level stays out of every file that leaves (a zip of what you shared or of the whole project, a
+# shared-folder or storage-space bundle: `bundle.export_project` and `sharing.strip` take it out, and the scratch
+# databases bundles are made in never record it), and a merge never sets, raises or lowers it here. The copy a zip
+# becomes records its own level when it is first opened. A later version that raises PROJECT_LEVEL for a change that
+# also travels in a zip raises the zip's `sync_needs` with it, so an older copy refuses the file before it opens it.
 PROJECT_LEVEL = 1
 PROJECT_NEEDS_KEY = "project_needs"
 
@@ -860,6 +868,7 @@ def _copy_empty_database(dest: Path, page_size: int | None = None) -> None:
             tmp = Path(tempfile.mkdtemp(prefix="enlens-empty-"))
             try:
                 made = Workspace(tmp)
+                made._records_level = False  # (scratch copies are made from it: the level stays out of bundles)
                 if page_size:
                     cx = sqlite3.connect(made.db_path)
                     try:
@@ -969,6 +978,7 @@ class Workspace:
         # used by one thread and thrown away when the work ends: its connections write each change once (a rollback
         # journal in memory, where WAL writes it to the log and again into the file) and never flush (`scratch`)
         self.scratch = scratch
+        self._records_level = not scratch  # hunt phase 1.5: `meta.project_needs` is this copy's own (PROJECT_LEVEL)
         self.db_path = self.root / "enlens.sqlite"
         self.config_path = self.root / "config.json"
         self._local = threading.local()
@@ -1012,7 +1022,8 @@ class Workspace:
     def _setup(self) -> None:
         cx = sqlite3.connect(self.db_path, timeout=60)
         try:
-            _refuse_newer(cx)  # hunt phase 1.5: before anything is written, the journal mode included
+            if not self.scratch:  # (a scratch copy is a file of the sync: its own `sync_needs` rules it)
+                _refuse_newer(cx)  # hunt phase 1.5: before anything is written, the journal mode included
             cx.execute("PRAGMA journal_mode=WAL")  # readers do not block on a long write; persistent per file
             # each statement of the schema below is a transaction of its own: with the default FULL each one is
             # flushed to disk (about a second per new project on Windows, and a round of the shared folder makes
@@ -1051,7 +1062,8 @@ class Workspace:
 
                 upgrade(cx, self.root)
                 cx.execute("DELETE FROM meta WHERE key=?", (SHARES_UPGRADE_DUE,))  # (saved with the rows it made)
-            _record_needs(cx)
+            if self._records_level:  # (not in a scratch copy, nor in the empty database new ones are copied from)
+                _record_needs(cx)
             if not self.scratch:  # (a scratch copy is a colleague's file or a bundle: a merge clamps what it reads)
                 _clamp_share_dates(cx)
                 # hunt phase 1.5 (CHECKS-7, CHECKS-2): judgements an earlier version left without their check, or

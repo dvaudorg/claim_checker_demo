@@ -355,6 +355,8 @@ def make_label_tasks(ws: Workspace, framework: str, passage_ids: list[str], mode
 
     fw = frameworks.get(framework, ws)
     events_known = _events(fw.meta or {})
+    rewords_known = [e["id"] for e in (fw.meta or {}).get("events") or []
+                     if isinstance(e, dict) and e.get("op") == "reword" and e.get("id")]
     n = 0
     with ws.connect() as cx:
         for pid in passage_ids:
@@ -381,7 +383,10 @@ def make_label_tasks(ws: Workspace, framework: str, passage_ids: list[str], mode
                        # the codebook's renames and merges this question already shows (`_as_asked`): by their ids, as
                        # times to the second (and a colleague's own clock) cannot tell a change just before it from one
                        # just after. Not in the prompt, so not in the task's id or its kept answer's key either
-                       "codebook_events": [e["id"] for e in events_known]}
+                       "codebook_events": [e["id"] for e in events_known],
+                       # hunt phase 1.5: likewise the changes of wording it already shows, so `codebooks.stale` tells a
+                       # label made from an earlier wording by what its question showed, not by times to the second
+                       "codebook_rewords": rewords_known}
             tid = f"label:{fw.name}:{pid}"
             if _failed_on_the_codebook(cx, tid):
                 # its answers were refused because the codebook changed under it (before answers with the names a
@@ -438,8 +443,8 @@ def store_labels(cx, t, payload: dict, obj: dict, model: str) -> tuple[bool, lis
     for i, lb in enumerate(out.labels):
         then = as_asked(lb.code)
         if then == "unsure":
-            unsure.append(f"labels[{i}]: the code {lb.code!r} {_CHANGED_SINCE}, and another code is called so now; "
-                          "this answer cannot say which it means")
+            unsure.append(f"labels[{i}]: the code {lb.code!r} {_CHANGED_SINCE} (or as it was made), and this answer "
+                          "cannot say which code it means")
             then = None
         got.append((lb, *then, True) if then else (lb, fw.normalise(lb.code), None, False))
     if unsure:
@@ -543,6 +548,12 @@ def _as_asked(fw: frameworks.Framework, payload: dict, asked_at: str) -> Callabl
             return None
         if not isinstance(known, list) and fw.normalise(name):
             return "unsure"   # a task of before: the name is a code's now too, and its time cannot say which
+        if not isinstance(known, list) and cur == hit and any(
+                e["op"] in ("rename", "merge") and e["from"] == hit and str(e.get("at") or "") == asked_at for e in ok):
+            # hunt phase 1.5: a task of before, its code renamed or merged in the second it was asked: its time cannot
+            # say whether it showed the name before the change or after, so it is refused and asked again (never
+            # guessed); it was stored as a REMOVED code's label, under a name no code had any more, for good
+            return "unsure"
         if cur in fw.codes:
             return cur, merged
         return cur, None   # removed since it was asked: its label waits for it under Removed codes

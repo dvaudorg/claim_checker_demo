@@ -71,7 +71,9 @@ class CodebookRules:
 
         for csv in sorted(src.glob("*.csv")):
             name = csv.stem
-            if name in BUNDLED or not NAME_RE.match(name):
+            # (hunt phase 1.5, phase 0 P1-7: a FOLDER named `x.csv` in their zip is no codebook: it has no
+            # fingerprint, and naming its copy beside yours raised TypeError, which stopped the whole merge)
+            if name in BUNDLED or not NAME_RE.match(name) or not csv.is_file():
                 continue
             fp_in = _codebook_fp(src, name)
             if name in copies_there and name not in here:  # their copy of a codebook: perhaps your own version

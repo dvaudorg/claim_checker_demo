@@ -32,6 +32,7 @@ import io
 import json
 import re
 import shutil
+import sqlite3
 import threading
 import time
 import unicodedata
@@ -79,9 +80,29 @@ def locate(ws: Workspace, name: str) -> tuple[str, Path | None]:
         raise KeyError(name)
     for where in ("project", "home"):
         f = folder(ws, where)
-        if (f / f"{name}.csv").is_file():
+        if (f / f"{name}.csv").is_file() or _named_as_listed(f, name):
             return where, f
     raise KeyError(name)
+
+
+def _named_as_listed(f: Path, name: str) -> bool:
+    """Hunt phase 1.5: a file put in a codebooks folder as `Mine.csv` is listed as "mine" (frameworks._load_file names
+    a codebook by its file's name in lower case), and every change here writes `<name>.csv`: on a file system where
+    case matters (Linux) the editor answered 404 for a codebook the list showed, and a save would have made a second
+    file. Such a file (and its side file) is given the name it is listed under, once; True when it was."""
+    if not f.is_dir():
+        return False
+    for p in f.glob("*.csv"):
+        if p.stem != name and p.stem.lower() == name and p.is_file():
+            try:
+                for ext in ("csv", "json"):
+                    src = p.with_suffix(f".{ext}")
+                    if src.is_file():
+                        src.rename(f / f"{name}.{ext}")
+            except OSError:   # open in a spreadsheet (Windows): it stays as it is, this time
+                return False
+            return True
+    return False
 
 
 def _meta(f: Path, name: str) -> dict:
@@ -299,12 +320,40 @@ def removed_codes(ws: Workspace, name: str) -> list[dict]:
     return out
 
 
-# the AI's labels of a code given with its wording as it was before a time: by when the passage's task was made (its
-# question holds the wording of then: a task that waited in the queue across a change of wording and was answered
-# after it read the earlier wording all the same) or the label, whichever is earlier
-_ASKED_BEFORE = ("FROM labels l LEFT JOIN tasks t ON t.task_id=l.task_id WHERE l.framework=? AND l.code=? AND "
-                 "l.source='model' AND MIN(COALESCE(t.created_at, l.created_at, ''), COALESCE(l.created_at, "
-                 "t.created_at, '')) < ?")
+def _rewords(meta: dict) -> dict[str, list[tuple[str, str]]]:
+    """{code id: [(event id, time)]}: each code's changes of wording."""
+    out: dict[str, list[tuple[str, str]]] = {}
+    for e in meta.get("events") or []:
+        if isinstance(e, dict) and e.get("op") == "reword" and e.get("uid"):
+            out.setdefault(e["uid"], []).append((str(e.get("id") or ""), str(e.get("at") or "")))
+    return out
+
+
+def _stale_passages(ws: Workspace, name: str, code: str, rewords: list[tuple[str, str]]) -> list[str]:
+    """The passages the AI labelled with `code` from a wording earlier than its last (`rewords`: its changes of
+    wording). Hunt phase 1.5: a task made since the fix says which changes of wording its question already showed
+    (`codebook_rewords`, profile.make_label_tasks): one it does not name came after it. Times are to the second, and a
+    reword in the second a task was asked counted as before it. A label whose task says nothing (made before, or a
+    colleague's) is judged by the times, as before: by when the passage's task was made (its question holds the
+    wording of then: a task that waited in the queue across a change of wording was answered from it all the same) or
+    the label, whichever is earlier."""
+    since = max((at for _i, at in rewords), default="")
+    ids = {i for i, _at in rewords if i}
+    out: dict[str, None] = {}
+    for pid, l_at, t_at, shown in ws.query(
+            "SELECT l.passage_id, l.created_at, t.created_at, json_extract(t.payload_json, '$.codebook_rewords') "
+            "FROM labels l LEFT JOIN tasks t ON t.task_id=l.task_id WHERE l.framework=? AND l.code=? AND "
+            "l.source='model' ORDER BY l.passage_id", (name, code)):
+        try:
+            shown = json.loads(shown) if shown else None
+        except ValueError:
+            shown = None
+        if isinstance(shown, list) and ids:
+            if ids - {str(x) for x in shown}:
+                out[pid] = None
+        elif min(t_at or l_at or "", l_at or t_at or "") < since:
+            out[pid] = None
+    return list(out)
 
 
 def stale(ws: Workspace, name: str) -> dict[str, dict]:
@@ -316,18 +365,15 @@ def stale(ws: Workspace, name: str) -> dict[str, dict]:
         return {}
     meta = fw.meta or {}
     ids = meta.get("ids") or {}
-    by_uid = {}
-    for e in meta.get("events") or []:
-        if isinstance(e, dict) and e.get("op") == "reword" and e.get("uid"):
-            by_uid[e["uid"]] = max(by_uid.get(e["uid"], ""), str(e.get("at") or ""))
+    by_uid = _rewords(meta)
     out = {}
     for code in fw.codes:
-        since = by_uid.get(ids.get(code) or default_uid(name, code))
-        if not since:
+        rw = by_uid.get(ids.get(code) or default_uid(name, code))
+        if not rw:
             continue
-        n = int(ws.scalar(f"SELECT COUNT(DISTINCT l.passage_id) {_ASKED_BEFORE}", (name, code, since)) or 0)
+        n = len(_stale_passages(ws, name, code, rw))
         if n:
-            out[code] = {"since": since, "passages": n}
+            out[code] = {"since": max(at for _i, at in rw), "passages": n}
     return out
 
 
@@ -369,7 +415,10 @@ def _clean_state(st: dict, kept: dict[str, str] | None = None, draft: bool = Fal
     names: dict[str, tuple[str, str]] = {}
     groups = []
     listed: set[str] = set()
-    as_written: dict[str, str] = {}   # a group by `name_key`: the group as first written
+    # a group by its accent form (NFC): the group as first written. Hunt phase 1.5: not by `name_key`, which folds
+    # case too: the editor lists "Water" and "water" as two groups (keyed as written), and a save folded the second
+    # into the first, moving its codes without a word; a composed and a decomposed "ő" look the same, so stay one
+    as_written: dict[str, str] = {}
     for g in st.get("groups") or []:
         if not isinstance(g, dict):
             continue
@@ -377,7 +426,7 @@ def _clean_state(st: dict, kept: dict[str, str] | None = None, draft: bool = Fal
         if key in listed:
             continue
         listed.add(key)
-        as_written.setdefault(name_key(key), key)
+        as_written.setdefault(unicodedata.normalize("NFC", key), key)
         groups.append({"group": key, "group_name": _clean_text(g.get("group_name"), 120)})
     for i, c in enumerate(st.get("codes") or [], 1):
         if not isinstance(c, dict):
@@ -399,10 +448,10 @@ def _clean_state(st: dict, kept: dict[str, str] | None = None, draft: bool = Fal
                 raise ValueError(f"Two codes are called {code!r}: give each its own name.")
         names.setdefault(low, (code, uid))
         group = _clean_text(c.get("group"), 60)
-        # a group written another way only by case or accent form, and not listed as it is, is the group already
-        # there, as it was written (groups listed as they are stay as they are)
+        # a group written another way only by its accent form, and not listed as it is, is the group already there,
+        # as it was written (groups listed as they are stay as they are)
         if group not in listed:
-            group = as_written.setdefault(name_key(group), group)
+            group = as_written.setdefault(unicodedata.normalize("NFC", group), group)
             if group not in listed:
                 listed.add(group)
                 groups.append({"group": group, "group_name": ""})
@@ -740,7 +789,9 @@ def save(ws: Workspace, name: str, state: dict, merges: list[dict] | None = None
         _kept(f, name, vid, False)
         raise
     _kept(f, name, vid, True)
-    follow(ws, name)
+    carried: list[dict] = []
+    follow(ws, name, carried=carried)
+    changes += _carried_words(carried)   # hunt phase 1.5 (owner): the History entry says what the merge kept
     text = (f"Restored the codebook {researchlog.quoted(meta['title'], 80)} to its version of {restoring}: "
             if restoring else f"Changed the codebook {researchlog.quoted(meta['title'], 80)}: ")
     with ws.connect() as cx:
@@ -755,10 +806,13 @@ def save(ws: Workspace, name: str, state: dict, merges: list[dict] | None = None
 # ---------------------------------------------------------------------------------------------
 # labels follow renames and merges
 # ---------------------------------------------------------------------------------------------
-def follow(ws: Workspace, name: str | None = None) -> int:
+def follow(ws: Workspace, name: str | None = None, carried: list | None = None) -> int:
     """Move this project's labels (and checks tagged with a code) as the codebooks' renames and merges say, once per
     change, in the order the codebook lists them (its saves' order). A colleague's labels that come in follow the
-    changes their copy had not followed (`follow_merged`, from sync.py). Returns how many labels moved."""
+    changes their copy had not followed (`follow_merged`, from sync.py). Returns how many labels moved.
+    `carried` (from `save`): where to note the person's decisions a merge carried (`_carry_decision`), which `save`
+    puts in its own research log entry; without it, such decisions get an entry of their own here."""
+    from . import researchlog
     from .profile import label_id
 
     fws = frameworks.available(ws)
@@ -771,12 +825,19 @@ def follow(ws: Workspace, name: str | None = None) -> int:
         if not set(e["id"] for e in events) - set(ws.meta(key) or []):
             continue
         ok, _skipped = checked_events(events)  # roles (H8): an event that does not fit the list moves nothing
+        here: list[dict] = []
         with ws.connect() as cx:  # read again inside the write lock: two requests at once apply a change once
             done = set(ws.meta(key) or [])
             for e in ok:
                 if e["id"] not in done:
-                    moved += _follow_one(cx, fw.name, e, label_id)
+                    moved += _follow_one(cx, fw.name, e, label_id, carried=here)
             ws.set_meta(key, sorted({e["id"] for e in events}), cx)
+            if here and carried is None:   # (a change made in another project, followed here on opening)
+                title = researchlog.quoted(fw.title, 80)
+                researchlog.record(cx, "codebook-changed", f"Followed the merges of the codebook {title}: "
+                                   + "; ".join(_carried_words(here)) + ".", "codebook", fw.name, fw.title)
+        if carried is not None:
+            carried.extend(here)
     return moved
 
 
@@ -817,9 +878,74 @@ def checked_events(events: list[dict]) -> tuple[list[dict], list[str]]:
     return ok, skipped
 
 
-def _follow_one(cx, fw: str, e: dict, label_id: Callable, only: set | None = None, hyps: set | None = None) -> int:
+def _last_review(cx, lid: str) -> dict | None:
+    """The review of a label that counts (profile._decisions' order: the last, yours after a colleague's)."""
+    from .people import me, review_order
+
+    order, oargs = review_order()
+    rows = cx.execute(f"SELECT decision, corrected, reviewer, note, COALESCE(person_id, ?) AS who FROM reviews "
+                      f"WHERE item_kind='label' AND item_id=? {order}", (me(), lid, *oargs)).fetchall()
+    if not rows:
+        return None
+    r = rows[-1]
+    return {"decision": r[0], "corrected": r[1], "reviewer": r[2], "note": r[3], "mine": r[4] == me()}
+
+
+def _carry_decision(cx, old_id: str, new_id: str, src: str, dst: str) -> bool:
+    """Hunt phase 1.5 (owner): a merge of code `src` into `dst` met a passage that has both. When this person's own
+    decision on the `src` label is that it applies (accept or change) and the `dst` label does not count (rejected,
+    or a keyword label nobody accepted), the decision goes to the `dst` label as the newer one, in this person's
+    name, marked with the code it came from (`proposed.merged_from`), so restoring the codebook from before the merge
+    takes it back (`_uncarry_decision`). True when it was carried."""
+    from .people import me
+
+    a = _last_review(cx, old_id)
+    if not a or not a["mine"] or a["decision"] not in ("accept", "change"):
+        return False
+    b = _last_review(cx, new_id)
+    row = cx.execute("SELECT code, relevance, direction, confidence, source FROM labels WHERE label_id=?",
+                     (new_id,)).fetchone()
+    if row is None or (b and b["decision"] in ("accept", "change")):
+        return False
+    if b is None and row[4] in ("model", "person"):
+        return False   # it counts already
+    proposed = json.dumps({"code": row[0], "relevance": row[1], "direction": row[2], "confidence": row[3],
+                           "source": row[4], "merged_from": src})
+    cx.execute("INSERT INTO reviews(item_kind, item_id, field, proposed, decision, corrected, reviewer, note, "
+               "decided_at, person_id) VALUES ('label', ?, 'label', ?, ?, ?, ?, ?, ?, ?)",
+               (new_id, proposed, a["decision"], a["corrected"], a["reviewer"], a["note"], now(), me()))
+    return True
+
+
+def _uncarry_decision(cx, lid: str, was: str) -> None:
+    """The decisions `_carry_decision` gave label `lid` from code `was`, taken back (an unmerge of `was`)."""
+    from .people import forget_reviews, mine_sql
+
+    mine, margs = mine_sql()
+    ids = [r[0] for r in cx.execute(f"SELECT review_id FROM reviews WHERE item_kind='label' AND item_id=? AND {mine} "
+                                    "AND json_extract(proposed, '$.merged_from') = ?", (lid, *margs, was))]
+    if ids:
+        forget_reviews(cx, review_ids=ids)
+
+
+def _carried_words(carried: list[dict]) -> list[str]:
+    """What the research log says of the decisions a merge carried, one line per merge."""
+    from .researchlog import quoted
+
+    out = []
+    for (src, dst) in dict.fromkeys((c["from"], c["to"]) for c in carried):
+        n = len({c["passage_id"] for c in carried if (c["from"], c["to"]) == (src, dst)})
+        out.append(f"kept your decision on {n} passage{'s' if n != 1 else ''} you had accepted as {quoted(src, 60)}: "
+                   f"{'they count' if n != 1 else 'it counts'} as {quoted(dst, 60)} now, though "
+                   f"{quoted(dst, 60)} did not count there before")
+    return out
+
+
+def _follow_one(cx, fw: str, e: dict, label_id: Callable, only: set | None = None, hyps: set | None = None,
+                carried: list | None = None) -> int:
     """One change, followed by the labels made up to it. `only`: these labels alone (their ids, kept up to date as
-    they change), and `hyps`: the checks whose tags follow it (None: every label and check)."""
+    they change), and `hyps`: the checks whose tags follow it (None: every label and check). `carried`: where to
+    note the person's decisions a merge carried to the code it went into (`_carry_decision`)."""
     at = str(e.get("at") or "")
     src, dst = str(e.get("from") or ""), str(e.get("to") or "")
     if not src or not dst or src == dst:
@@ -844,6 +970,11 @@ def _follow_one(cx, fw: str, e: dict, label_id: Callable, only: set | None = Non
                 # the passage has the code it goes into already: this label stays as it is, marked, and waits under
                 # Removed codes (so restoring the codebook from before the merge gives it back)
                 cx.execute("UPDATE labels SET merged_from=COALESCE(merged_from, ?) WHERE label_id=?", (src, old_id))
+                # hunt phase 1.5 (owner): the person said this code applies here; the label it goes into does not
+                # count (they rejected it, or a keyword label the AI has read since): their own decision goes with
+                # the merge, as the newer one, so the passage keeps the code
+                if _carry_decision(cx, old_id, new_id, src, dst) and carried is not None:
+                    carried.append({"from": src, "to": dst, "passage_id": pid})
             elif e["op"] == "rename":  # a label there under the new name already: never lost, left as it is
                 pass
             # an unmerge, and the label is there under the name it goes back to already: roles (H8) this label stays
@@ -859,10 +990,13 @@ def _follow_one(cx, fw: str, e: dict, label_id: Callable, only: set | None = Non
             cx.execute("UPDATE reviews SET item_id=? WHERE item_kind='label' AND item_id=?", (new_id, old_id))
         n += 1
     if e["op"] == "unmerge":  # the labels that stayed (the passage had both codes) count again as they are
-        for (lid,) in cx.execute("SELECT label_id FROM labels WHERE framework=? AND code=? AND merged_from=?",
-                                 (fw, e.get("was") or "", e.get("was") or "")).fetchall():
+        stayed = cx.execute("SELECT label_id, passage_id, source FROM labels WHERE framework=? AND code=? AND "
+                            "merged_from=?", (fw, e.get("was") or "", e.get("was") or "")).fetchall()
+        for lid, pid, source in stayed:
             if only is None or lid in only:
                 cx.execute("UPDATE labels SET merged_from=NULL WHERE label_id=?", (lid,))
+                # hunt phase 1.5: the decision the merge carried to the code it went into is taken back with it
+                _uncarry_decision(cx, label_id(fw, pid, src, source or ""), e.get("was") or "")
     if e["op"] in ("rename", "merge") and (hyps is None or hyps):  # checks tagged with the code
         some = "" if hyps is None else f" AND hyp_id IN ({','.join('?' * len(hyps))})"
         ids = [] if hyps is None else sorted(hyps)
@@ -955,28 +1089,72 @@ def held_where(ws: Workspace, name: str, cx=None, everywhere: bool = False) -> s
         return ""
     if _version_files(ws, name):
         return ""
-    if everywhere:
-        from . import home
+    return _held_elsewhere(ws, name) if everywhere else None
 
-        here = Path(ws.root).resolve()
-        for pname in home.list_projects():
-            try:
-                f = home.project_path(pname) / "frameworks"
-                if f.resolve().parent == here or (f / f"{name}.csv").is_file():
-                    continue   # this project (looked at above), or one whose own codebook of the name lives
-                d = _version_dir(f, name)
-                if d.is_dir() and any(_VID.fullmatch(p.stem) for p in d.glob("c*.json")):
-                    return pname
-            except OSError:
-                continue
+
+def _held_elsewhere(ws: Workspace, name: str) -> str | None:
+    """`held_where(everywhere=True)`'s look at the other projects: the name of one that keeps a removed codebook's
+    versions under `name`, else None."""
+    from . import home
+
+    here = Path(ws.root).resolve()
+    for pname in home.list_projects():
+        try:
+            f = home.project_path(pname) / "frameworks"
+            if f.resolve().parent == here or (f / f"{name}.csv").is_file():
+                continue   # this project (looked at above), or one whose own codebook of the name lives
+            d = _version_dir(f, name)
+            if d.is_dir() and any(_VID.fullmatch(p.stem) for p in d.glob("c*.json")):
+                return pname
+        except OSError:
+            continue
     return None
 
 
-def held_message(name: str, where: str | None = None) -> str:
+def _removal_restorable(db: Path, name: str, versions: set[str]) -> bool:
+    """Whether the research log in project database `db` has the entry of codebook `name`'s removal with a version
+    that is still kept (`versions`): the one way back the app shows (log.js *Compare with before*, then *Restore*)."""
+    try:
+        cx = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True)
+        try:
+            ids = {r[0] for r in cx.execute("SELECT version_id FROM research_log WHERE kind='codebook-removed' AND "
+                                            "subject_kind='codebook' AND subject_id=?", (name,))}
+        finally:
+            cx.close()
+    except (sqlite3.Error, OSError, ValueError):
+        return False
+    return bool(ids & versions)
+
+
+def held_message(name: str, where: str | None = None, ws: Workspace | None = None, moving: bool = False) -> str:
+    """The refusal of a name a removed codebook's work holds (`held_where`). Hunt phase 1.5 (owner): it names only a
+    way back that exists. A removed codebook has no page, so no *History* button: it comes back from the research
+    log's entry of its removal, in the project where it was removed, when that project and the version are still
+    there. Nothing frees the name yet (docs/ROADMAP.md, *Delete a removed codebook for good*)."""
     there = f" in the project {where!r}" if where else ""
+    back = ""
+    if ws is not None:
+        try:
+            if where:
+                from . import home
+
+                d = home.project_path(where) / "frameworks"
+                versions = {p.stem for p in _version_dir(d, name).glob("c*.json")}
+                db = home.project_path(where) / "enlens.sqlite"
+            else:
+                versions = {p.stem for p in _version_files(ws, name)}
+                db = Path(ws.db_path)
+            if _removal_restorable(db, name, versions):
+                back = (f"To bring it back, open {'the project ' + repr(where) + ' and its' if where else 'the'} "
+                        "Research log: the entry of its removal has “Compare with before”, then “Restore”. Otherwise ")
+        except (OSError, ValueError):
+            back = ""
+    if moving:   # (`move` to all projects: this codebook keeps its name; it stays with this project)
+        return (f"A removed codebook called {name!r} still has its labels or its earlier versions{there}, kept under "
+                f"that name: kept with all projects, this codebook would take them over there, so it stays with this "
+                f"project. {back.replace('Otherwise ', '')}".rstrip())
     return (f"A removed codebook called {name!r} still has its labels or its earlier versions{there}, kept under that "
-            f"name: a new codebook of the name would take them over. Bring it back from History{there} (Restore), or "
-            "choose another name.")
+            f"name: a new codebook of the name would take them over. {back}{'c' if back else 'C'}hoose another name.")
 
 
 def _free_name(ws: Workspace, name: str, where: str = "project") -> str:
@@ -991,7 +1169,7 @@ def _free_name(ws: Workspace, name: str, where: str = "project") -> str:
         raise ValueError(f"A codebook called {n!r} exists already: choose another name.")
     held = held_where(ws, n, everywhere=where == "home")
     if held is not None:
-        raise ValueError(held_message(n, held))
+        raise ValueError(held_message(n, held, ws))
     return n
 
 
@@ -1042,7 +1220,9 @@ def create(ws: Workspace, name: str, title: str = "", where: str = "project", st
         theory = (of.meta or {}).get("theory")
     elif start == "csv":
         codes = frameworks.parse_csv(frameworks.decode(str(source.get("csv") or "").encode("utf-8")), extra=True)
-        st = _state(n, codes, {}, state["title"], state["label"], False)
+        # (hunt phase 1.5: in the file's order, as the editor writes it: sorted by name, a codebook downloaded and
+        # brought back in lost the order its person gave it)
+        st = _state(n, codes, {"ordered": True}, state["title"], state["label"], False)
         state.update(groups=st["groups"], codes=[{**c, "uid": ""} for c in st["codes"]])
         how = "a CSV file"
     elif start == "qdc":
@@ -1159,9 +1339,35 @@ def remove(ws: Workspace, name: str, why: str | None = None) -> None:
     _kept(f, name, vid, True)
     (f / f"{name}.json").unlink(missing_ok=True)
     with ws.connect() as cx:
+        n = _take_back_label_tasks(cx, name)
+        taken = (f" {n} label task{'s' if n != 1 else ''} waiting for the AI {'were' if n != 1 else 'was'} taken back "
+                 "(a run after bringing it back asks them again)." if n else "")
         researchlog.record(cx, "codebook-removed", f"Removed the codebook {researchlog.quoted(title, 80)} "
-                                                   f"({'from all projects' if where == 'home' else 'from this project'}).",
-                           "codebook", name, title, why=why, version_id=vid, data={"where": where})
+                                                   f"({'from all projects' if where == 'home' else 'from this project'})."
+                                                   + taken,
+                           "codebook", name, title, why=why, version_id=vid, data={"where": where, "tasks": n})
+    if where == "home":   # it is gone from every project that used it: so are their waiting tasks
+        from . import home
+
+        here = Path(ws.root).resolve()
+        for pname in home.list_projects():
+            try:
+                other = home.project_path(pname)
+                if other.resolve() == here or (other / "frameworks" / f"{name}.csv").is_file():
+                    continue   # this project (done above), or one with its own codebook of the name
+                with home.open_project(pname).connect() as cx:
+                    _take_back_label_tasks(cx, name)
+            except (OSError, ValueError, sqlite3.Error):
+                continue   # a project that cannot be opened now: its tasks fail on the codebook, as before
+
+
+def _take_back_label_tasks(cx, name: str) -> int:
+    """Hunt phase 1.5: the label tasks of codebook `name` still waiting for an AI (in the queue, retried, or in a batch
+    handed out), taken back when the codebook is removed: answered, each was refused three times for a codebook that is
+    not there (AI work wasted). An answered one stays (its labels are results). Returns how many."""
+    head = f"label:{name}:"
+    return cx.execute("DELETE FROM tasks WHERE task_id >= ? AND task_id < ? AND +kind='label' AND "
+                      "+status IN ('pending', 'retry', 'exported')", (head, head[:-1] + ";")).rowcount
 
 
 def move(ws: Workspace, name: str, to: str) -> dict:
@@ -1176,6 +1382,13 @@ def move(ws: Workspace, name: str, to: str) -> dict:
     dest = folder(ws, to)
     if (dest / f"{name}.csv").exists():
         raise ValueError("A codebook of that name is kept there already.")
+    if to == "home":
+        # hunt phase 1.5: kept with all projects, it shows in every project, and in one that keeps a removed
+        # codebook's work under the name it would take that work over, as a new codebook of the name would
+        # (`_free_name`). This project's own labels and versions are the moved codebook's own.
+        other = _held_elsewhere(ws, name)
+        if other is not None:
+            raise ValueError(held_message(name, other, ws, moving=True))
     dest.mkdir(parents=True, exist_ok=True)
     for ext in ("csv", "json"):
         if (f / f"{name}.{ext}").is_file():
@@ -1484,10 +1697,15 @@ def try_codes(ws: Workspace, state: dict, progress: Callable[[int, int], None] |
 def relabel_passages(ws: Workspace, name: str, code: str) -> list[str]:
     """The passages the AI labelled with `code` before its wording changed: their label tasks are taken back (the
     labels stay until the new answers replace them), so a labelling run reads them again with the new wording."""
-    st = stale(ws, name).get(code)
-    if not st:
+    try:
+        fw = frameworks.get(name, ws)
+    except ValueError:
         return []
-    pids = [r[0] for r in ws.query(f"SELECT DISTINCT l.passage_id {_ASKED_BEFORE}", (name, code, st["since"]))]
+    meta = fw.meta or {}
+    rw = _rewords(meta).get((meta.get("ids") or {}).get(code) or default_uid(name, code)) if code in fw.codes else None
+    if not rw:
+        return []
+    pids = _stale_passages(ws, name, code, rw)
     with ws.connect() as cx:
         for pid in pids:
             cx.execute("DELETE FROM tasks WHERE task_id=? AND status IN ('done', 'failed')", (f"label:{name}:{pid}",))
@@ -1668,17 +1886,18 @@ def answer_offer(ws: Workspace, name: str, follow: bool) -> dict:
         raise KeyError(name)
     moved = 0
     title = _title_of(ws, name)
+    carried: list[dict] = []
     with ws.connect() as cx:
         if follow:
             ok, _ = checked_events(events)
             for e in ok:
-                moved += _follow_one(cx, name, e, label_id)
+                moved += _follow_one(cx, name, e, label_id, carried=carried)
         cx.execute("DELETE FROM meta WHERE key=?", (f"codebook_offers:{name}",))
         who = (cx.execute("SELECT name FROM people WHERE person_id=?", (raw.get("from"),)).fetchone() or [None])[0]
         researchlog.record(cx, "codebook-changed",
                            (f"Followed {who or 'a colleague'}'s renames and merges of the codebook "
                             f"{researchlog.quoted(title, 80)}: {moved} label{'s' if moved != 1 else ''} "
-                            "moved." if follow else
+                            "moved" + "".join(f"; {w}" for w in _carried_words(carried)) + "." if follow else
                             f"Kept the labels as they were after {who or 'a colleague'}'s renames and merges of the "
                             f"codebook {researchlog.quoted(title, 80)}."), "codebook", name, title)
     return {"name": name, "followed": follow, "moved": moved}

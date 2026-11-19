@@ -1366,6 +1366,11 @@ def make(ws: Workspace) -> dict:
         if ai:
             if c.get("meaning") and c["meaning"] == ai.get("meaning"):
                 drafted["description"] = desc
+            elif (not c.get("sources") and not c.get("meaning") and c.get("when_to_use")
+                  and c["when_to_use"] == ai.get("when_to_use")):
+                # (hunt phase 1.5: no quote and no meaning, so the definition is the AI's *when to use it*
+                # (`_description`): it is the AI's words, and was not marked so)
+                drafted["description"] = desc
             if c.get("when_to_use") and c["when_to_use"] == ai.get("when_to_use"):
                 drafted["include"] = c["when_to_use"]
             if c.get("when_not") and c["when_not"] == ai.get("when_not"):

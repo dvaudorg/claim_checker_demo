@@ -73,7 +73,8 @@ _LOCAL_TABLES = ("embeddings", "code_vectors", "terms", "term_mentions", "concep
                  "concept_link_sentences", "ai_cache",
                  "agreement_runs")  # I5: the comparisons of this computer's local model with Claude
 # the keys of `meta` a zip for a colleague keeps (besides `codebook_followed:` of shared codebooks and `read_again:`
-# of documents): what a colleague's merge or import reads
+# of documents): what a colleague's merge or import reads. Never `project_needs` (store.PROJECT_LEVEL, hunt phase 1.5):
+# the level this copy's database needs is its own; what a file needs is its `sync_needs`
 _META_KEPT = {"project_uid", "project_uids_known", "bibliography", "corpus_version",
               "roles_upgraded"}  # roles (DESIGN-roles §3.5): a copy made from the zip never pins by 0.17's rule
 
