@@ -42,6 +42,8 @@
 - ***How these results were made* says "not recorded" for an answer from before ENLENS recorded how answers were
   made**, instead of a blank that read as "no temperature sent".
 - **A Codex or Antigravity helper whose message says "design in" no longer ends the run as "not signed in".**
+- **The AI log names the model of a Codex or Antigravity helper ENLENS started, every time.** A helper that took
+  its first batch at the moment ENLENS rewrote its record of the run was logged as "not known (its own choice)".
 - **A helper started before you put its kind on *Hold* is not counted as failing**, so three of them no longer end
   the run with "did not answer the queue".
 - **A refused Antigravity helper is said in plain words** in the run's report, without Python's name for the error,

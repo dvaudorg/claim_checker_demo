@@ -538,8 +538,10 @@ def test_install_ps1_takes_every_path_literally():
     assert "-OutFile" not in text  # Windows PowerShell 5.1 reads -OutFile as a pattern too, and has no literal form
 
 
+@pytest.mark.skipif(os.name != "nt", reason="install.ps1 installs on Windows only (install.sh elsewhere): the Windows CI "
+                    "leg runs it whole")
 def test_install_ps1_installs_from_a_temporary_folder_with_brackets(tmp_path):
-    """INSTALL15-4 (owner; runs where PowerShell is: GitHub's Windows and Linux machines): the whole install.ps1 with
+    """INSTALL15-4 (owner; Windows CI): the whole install.ps1 with
     %TEMP% under "Anna [Lab]" and the package in a folder with brackets, uv a stand-in: it reaches uv's install with
     the package's address (step 3), and cleans its temporary folder up. Before, Resolve-Path, Get-FileHash and the
     clean-up took the brackets as a pattern ("Cannot find path")."""

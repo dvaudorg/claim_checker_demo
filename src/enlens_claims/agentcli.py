@@ -1032,11 +1032,14 @@ def _write_record(run: dict) -> None:
     pids = [p["proc"].pid for p in run["procs"] if p["proc"].poll() is None and isinstance(p["proc"].pid, int)]
     try:
         # hunt phase 1: with the project's folder and the model on each helper's command line, by the name it takes
-        # batches under (`models`), for the queue to record the model that really read a batch (`started_model`)
-        _record_path(run["route"], run["project"]).write_text(json.dumps(
+        # batches under (`models`), for the queue to record the model that really read a batch (`started_model`).
+        # Hunt phase 1.5: written whole (home._write_whole). Written in place, the file was empty for a moment each
+        # time the runner rewrote it (right after a helper starts, and every round), and a helper taking its first
+        # batch just then had its batch logged as "not known" in the AI log (seen on CI, Linux, Python 3.10)
+        core._write_whole(_record_path(run["route"], run["project"]), json.dumps(
             {"project": run["project"], "route": run["route"], "pid": pids[0] if pids else 0, "pids": pids,
              "started_at": run["started_at"], "t0": run["t0"], "plan": run["plan"] or {},
-             "root": run.get("root") or "", "models": run.get("models") or {}}), encoding="utf-8")
+             "root": run.get("root") or "", "models": run.get("models") or {}}))
     except OSError:
         pass
 

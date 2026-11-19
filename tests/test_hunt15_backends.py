@@ -561,3 +561,33 @@ def test_an_unanswered_passage_is_never_a_right_code_decision():
     p2 = _pass(checks=[], labels=[_label("1", [], [])])
     r = v.repeatability(p1, p2, ["A", "B"])["labels"]
     assert r["code_agreement"] == 0.0 and r["same_codes"] == 0.0, r
+
+
+# --------------------------------------------------------------------------------------------- the run record (CI)
+def test_a_helper_reading_the_run_record_while_the_runner_rewrites_it_always_finds_its_model(tmp_path):
+    """CI, Linux on Python 3.10: the AI log said "not known (Antigravity's own choice)" for a helper ENLENS started
+    with --model, while its answers named the model. The runner rewrites its record right after a helper starts and
+    every round; written in place, the file was empty for a moment, and a helper taking its first batch just then
+    found no record (`started_model`). The record is written whole: a reader finds the old one or the new one."""
+    from enlens_claims import agentcli, home
+
+    root = home.home() / "projects" / "Q"
+    root.mkdir(parents=True)
+    run = {"route": "antigravity", "project": "Q", "procs": [], "started_at": "", "t0": 0.0, "plan": {},
+           "root": str(root.resolve()), "models": {"enlens-labeller in Antigravity #1": "gemini-4-hydrogen-high"}}
+    agentcli._write_record(run)
+    stop = threading.Event()
+
+    def rewrite():
+        while not stop.is_set():
+            agentcli._write_record(run)
+
+    t = threading.Thread(target=rewrite, daemon=True)
+    t.start()
+    try:
+        misses = sum(agentcli.started_model("antigravity", root, "enlens-labeller in Antigravity #1")
+                     != (True, "gemini-4-hydrogen-high") for _ in range(3000))
+    finally:
+        stop.set()
+        t.join(10)
+    assert misses == 0, misses
