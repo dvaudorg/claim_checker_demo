@@ -170,8 +170,13 @@ def test_update_from_the_latest_release(monkeypatch, tmp_path):
     from enlens_claims import update
 
     monkeypatch.setattr(update, "find_uv", lambda: "/bin/uv")
+    # 0.21.0rc1: on a release candidate's own commit the package is the candidate, whose tag sends the stable channel
+    # to the list of releases; this test is about a stable release, so the running copy is the plain X.Y.Z
+    import enlens_claims
+    stable = re.match(r"\d+\.\d+\.\d+", VERSION).group(0)
+    monkeypatch.setattr(enlens_claims, "__version__", stable)
     assert update.version_tuple("v0.10.1") == update.version_tuple("0.10.1") and update.version_tuple("0.9.1") < update.version_tuple("0.10.0")
-    r = update.update_release(fetch=_releases(VERSION), run=Runs())
+    r = update.update_release(fetch=_releases(stable), run=Runs())
     assert r["updated"] is False and "up to date" in r["message"]
     r = update.update_release(check_only=True, fetch=_releases(), run=Runs())
     assert r["waiting"] == NEXT and "ready to install" in r["message"]

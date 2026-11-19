@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.21.0rc1 (November 2026): The bug hunt: about 400 fixes and Reader 7
+## 0.21.0rc2 (November 2026): The bug hunt: about 400 fixes and Reader 7
 
 This release candidate is the result of a bug hunt with no new features: about 400 faults are fixed, each with a test
 that failed first, and the test suite grew from 3,400 to 4,700 tests on Windows, macOS and Linux. The most important
