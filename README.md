@@ -58,13 +58,13 @@ Windows from 0.15.4 on). Your projects and settings (the `enlens` folder in your
   impact claims tagged with UN SDG targets and compared with an expert Value Chain Assessment.
 
 <!-- new-in:start (written by `python tools/release.py prepare`: change the changelog entry, not this) -->
-## New in 0.20.3: Antigravity in a home of its own, and what new documents changed
+## New in 0.21.0rc1: The bug hunt: about 400 fixes and Reader 7
 
-- **A file name cannot add headers to the app's answers.** A source whose file name held a line break (possible in a zip someone hands you) could, when you opened its original, add headers of its own to the app's answer.
-- **Reading the new documents says what it changed.** When the documents added since a check are read, the progress line ends with what that did (*1 answer changed, 1 with new evidence*, or *nothing changed*).
-- **A re-read excerpt names its model.** The note on an excerpt the AI read again says which model read it again and which read it first, in one line; the reminder that a re-read is still an AI's reading is in its tooltip.
-- **The second opinion's mark is shorter.** It reads *2nd opinion differs: N*; its tooltip says how many excerpts.
-- **Only the AI that works in a job shows.** The sidebar's work box and the AI run panel showed both the house (this computer) and the cloud (Claude) for every AI job, the one with no work in it as a dashed empty tile.
+- **The codebook you choose on the Codes page is the one the AI uses.** *Let the AI read the passages* kept the first codebook after you chose another, so Start labelled the passages with the earlier one.
+- **A second change of strictness is no longer lost.** Two quick changes (two presses of an arrow key on the slider, or *Back to normal* during a save) stored the first value while the slider showed the second.
+- **The validation report never counts a passage without an answer as a right code decision.** A passage the model left unanswered was read as "no code", so it was right for every code the gold set does not give it, as an unfinished check never is.
+- **An acceptance theme sheet written before the model answered is not scored.** A `g6_theme_names_<model>.csv` written by an earlier version before the model had named its themes holds the reference project's own names; your "fitting" for those was scored as the model's.
+- **Judgements of checks removed by an earlier version stop counting in "how often you agreed".** Removing a check used to leave every person's judgements of its excerpts behind; the agreement with a colleague still counted them.
 <!-- new-in:end -->
 
 How it works, in the manual: [Explore your documents](docs/manual/explore.md) (working documents, the concept map),

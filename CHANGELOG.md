@@ -1,5 +1,952 @@
 # Changelog
 
+## 0.21.0rc1 (November 2026): The bug hunt: about 400 fixes and Reader 7
+
+### Changes that can alter your results
+
+- **The codebook you choose on the Codes page is the one the AI uses.** *Let the AI read the passages* kept the first
+  codebook after you chose another, so Start labelled the passages with the earlier one. If you switched codebooks
+  on that page and then started the AI, look at which codebook those labels went to. Changing the codebook while the
+  AI is labelling no longer hides the run either.
+- **A second change of strictness is no longer lost.** Two quick changes (two presses of an arrow key on the slider,
+  or *Back to normal* during a save) stored the first value while the slider showed the second. Results were then
+  counted at the stored value. Look at Settings → Basics once to see that it shows the strictness you mean.
+- **The validation report never counts a passage without an answer as a right code decision.** A passage the model
+  left unanswered was read as "no code", so it was right for every code the gold set does not give it, as an
+  unfinished check never is. Its decisions now count as "no answer"; a model that fails passages scores lower, and
+  repeatability no longer counts an unanswered passage as agreeing with an empty one.
+- **An acceptance theme sheet written before the model answered is not scored.** A `g6_theme_names_<model>.csv`
+  written by an earlier version before the model had named its themes holds the reference project's own names; your
+  "fitting" for those was scored as the model's. Only rows holding the model's own name count, and `acceptance score`
+  says when a sheet holds other names (move it away and score again: it is written anew).
+- **Judgements of checks removed by an earlier version stop counting in "how often you agreed".** Removing a check
+  used to leave every person's judgements of its excerpts behind; the agreement with a colleague still counted
+  them. When a project opens, judgements of checks that no longer exist are now removed. Can change the agreement
+  figures.
+- **A judgement lost by pressing *Judge it myself* twice comes back.** An earlier version wrote the excerpt again
+  without your judgement, though ENLENS still had it. When a project opens, such an excerpt gets its judgement back,
+  and it counts in the answer again. Can change results.
+- **The excerpts of a round whose AI answers failed can be judged.** The result says that such an excerpt counts
+  once you judge it yourself, and that the excerpts the local model could not read can be judged by you, but saving
+  the judgement was refused. It is saved now, and counts. Can change results, once you judge them.
+- **A document added since a check is read for every part.** When *Read it* failed for one part of a hypothesis
+  while you judged an excerpt of another part, that part's reading was kept, and the document then no longer counted
+  as added since: the part whose reading failed never got it. It now stays listed until every part that searched
+  before it was added has read it. The same holds when *Read more excerpts* on one part read a new document: *Read
+  it* still reads it for the others.
+- **Merging two codes keeps your own decision on a passage.** Where a passage had both codes and you had accepted the
+  code you merged away but rejected the other (or the other was a keyword label the AI had read past), the merge left
+  the passage with no code at all. Your acceptance now goes with the merge, so the passage keeps the code it merged
+  into; the research log entry of the change says how many passages, and restoring the codebook from before the merge
+  takes it back. This holds in every project that uses a codebook kept with all projects, when it is opened, and in a
+  colleague's copy that follows your merge.
+- **Two people who merge the same two codes into each other no longer lose both.** One merged A into B, the other B
+  into A: after exchanging their work, both copies held neither code and every label waited under *Removed codes*. The
+  earlier merge now stands and the later one is undone, the same in every copy, and the research log says so.
+- **"Earlier wording" no longer depends on the clock.** A code reworded in the same second a label task was asked
+  was not marked as labelled with its earlier wording, so *Label them again* could not reach the passage. Tasks asked
+  from now on remember which wordings they showed.
+- **Accepting a proposed relation between two terms accepts that relation only.** When the glossary was made again
+  and the sentences now stated another relation for the pair (new documents), your acceptance confirmed the new one,
+  which you never saw. It is proposed again instead.
+- **Groups whose names differ only in capitals stay two groups.** A save could fold "water" into "Water" and move its
+  codes without a word. Only a name whose accents are written another way (the same on screen) is one group.
+- **A decision about a work in the bibliography follows only that work.** When the bibliography is brought in again
+  from another source (a BibTeX file in place of Zotero, say), a work whose key changed keeps what you confirmed or
+  rejected about it, found by its title and year. Two works of the same title and year (the annual reports of two
+  bodies) both took the decisions of either, so a document could be confirmed as the other body's report. The first
+  author's name now counts too, and a decision that still names more than one work is not carried over: that work is
+  matched again for you to decide.
+- **Retractions looked up by title no longer stumble on a reply.** A reply or comment titled after the work ("Reply
+  to: …", "Comment on …") by the same authors counted as the work itself for long titles, so the work had two matches
+  and was looked up by neither. Such a record is no longer taken for the work.
+- **Adding documents from a Claude chat or the command line asks who may read them with AI.** The app asks when you
+  add documents, with nothing preselected; the connector (`create_project`, `add_sources`) and `enlens ingest` took
+  *Claude may read it* when nobody said. Now, until a project's default is chosen, they add nothing without an answer
+  and say how to give one: Claude asks you and passes `ai_access` (cloud, local or none), and `enlens ingest` takes
+  `--ai-access cloud|local|none`. This holds for every project whose default was never chosen, which includes every
+  project made with `enlens ingest` or the connector so far: scripts that add documents to one need `--ai-access`
+  now. On a project without documents, the first answer becomes its default; on one whose earlier documents follow a
+  default nobody chose, the answer is only the new documents' own, the earlier ones stay as they were, and you are
+  told how many there are, so you can choose the default in the app. Once a default is chosen, it applies.
+- **Claude cannot open documents wider than you chose.** Through the connector, a setting looser than the project's
+  default (*Claude may read it* where you chose *Only a local AI* or *No AI*) is refused in words; the same or a
+  stricter one is taken. You can still open a document or the project wider yourself, in the Documents page (or with
+  `enlens ingest --ai-access`). Linking a folder made with the command line (`use_folder_as_project`) asks who may
+  read its documents first.
+- **A sentence you mark is kept where you marked it.** On a result page, a sentence (or words) you selected to quote
+  that stands more than once in the excerpt was saved at its first place, which could be another sentence of the
+  excerpt. The page now sends where you selected it, and the sentence is kept there; the same holds for a sentence
+  picked from the list. Can change results only where such words stand twice in one excerpt.
+- **A label on words selected partly inside a word lands where you selected.** Selecting "art of repair" out of
+  "start of repair" and choosing *Label it with a code* placed the label on "art of repair" standing whole elsewhere
+  in the passage. It now goes on the words you selected, widened to whole words ("start of repair"), as such a
+  selection always is.
+- **Reader 7 also reads a text file saved as UTF-16 without its mark.** Such a file (rare: Windows writes the mark)
+  was read with an empty character between every two letters, so none of its words could be searched or quoted.
+  Reader 7 reads it as UTF-16. Documents already in a project keep their reading until you choose *Read with the new
+  reader*.
+- ***Read with the new reader* keeps the blocks you left out.** *Leave out*, *Restore*, *Text starts here* and *Text
+  ends here* are kept by the block's words. When the new reader cut the text into other blocks (reader 7 reads each
+  short line of a text file as a block of its own, and a Word text box as a paragraph of its own), no block had those
+  words, and the text you had left out counted again in searches, codes, themes and checks, without a word. Your
+  choice now holds for the new blocks that hold the old block's text; one that cannot be found again is listed in the
+  preview with the results that have no place. Can change results, for documents you move from now on.
+- **A model you chose for checks steps up only to a stronger one.** With Fable chosen for checks (or Opus, with *Let
+  the auditor use Fable* off), *Ask a stronger model* and an unsure answer read the check again on Opus, a weaker
+  model or the same one, and recorded that reading as the stronger model's. Fable now has no stronger model, nor has
+  Opus while the Fable switch is off: the result page says so, and nothing is read again. If you chose Fable or Opus
+  for checks, a result marked as read again by a stronger model may rest on Opus's reading.
+- **An acceptance run scores only what the model under test answered.** `enlens acceptance score` scored the
+  reference project's own AI labels, links, theme names and chains wherever the model had not answered (not run yet,
+  failed or rejected), so a model that answered nothing got the reference's score and could pass, and `--apply` could
+  make it a default. A run with nothing answered now has no score and never passes. Score your acceptance runs
+  again if you used them to choose models.
+- **The validation report's repeatability leaves out a check or a passage unanswered in both passes**, as the
+  acceptance runs do, and says how many it left out. Two failures counted as the same answer twice, so a model that
+  failed looked more repeatable.
+- **A judgement you made by hand survives changing your mind twice.** After *Judge it myself*, a judgement, *Let the
+  local model read them* and *Judge it myself* again, the excerpt lost your judgement and no longer counted in the
+  answer. It now keeps it. If you went back and forth like this before, look at those excerpts once and judge again
+  any that shows no judgement of yours. Can change results.
+- **Documents added since a check whose reading did not work can be read again.** When the AI's answers for them
+  could not be used (three tries), *Read it* marked them as looked at: they left the card, the answer did not say it
+  was incomplete, and they could never be read for that check. Now nothing of such a reading is kept, the page says
+  that the reading did not work, and the documents stay listed for *Read it* again. *Read these* (documents with the
+  search words never read) does the same. Can change results, once the documents are read.
+- **A removed check no longer counts in "how often you agreed".** Removing a check (or every document) left every
+  person's judgements of its excerpts behind, and the agreement with a colleague still counted them. Can change the
+  agreement figures; judgements of checks removed before this version still count there.
+- **A new codebook no longer takes over the work of a removed one of the same name.** Removing a codebook keeps its
+  labels, the passages the AI read for it and its earlier versions under its name, so it can be brought back from
+  History. A new codebook made under that name counted the old labels, listed them under *Removed codes* (which then
+  blocked those code names), skipped every passage the old one's AI had read, and showed the old versions as its own.
+  Now the name is refused while that work remains, with a sentence saying to restore the codebook from History or to
+  choose another name. This holds for every way of making a codebook (fresh, copy, CSV, .qdc, themes, theory), for
+  one kept with all projects (another project's removed codebook of the name counts too, and the message names that
+  project; a project's own codebook still in use there does not), and for a colleague's
+  codebook that arrives under such a name: it comes in beside yours, marked as their version. A codebook made before
+  this version under a removed one's name keeps what it took over. Can change results.
+- **An answer to a label task that waited while you changed the codebook is no longer lost.** The AI answers with the
+  code names its task showed; after a rename the answer was refused three times and the passage was never labelled,
+  after a merge likewise, and after removing a code the whole answer (the passage's other codes too) was refused.
+  Now the label lands on the renamed code, on the code it was merged into, or under *Removed codes*. Tasks that failed
+  this way before, or while their codebook was removed, are asked again by the next labelling run. A task knows which
+  changes it already showed, so a change made in the same second, or a colleague's dated by a clock that is off, never
+  sends a label to the wrong code; for a task made before this version, an answer that could mean two codes is
+  refused, as before. Can change results.
+- **A label task asked before a code was reworded counts as labelled with the earlier wording.** The code shows
+  *earlier wording* and *Label them again* reaches those passages too.
+- **Label them again reads every passage it names.** After a run that read every passage, a passage the AI labelled
+  without a keyword candidate was not read again (its task was taken back all the same), and the AI was not shown the
+  reworded code. Now it is read, with the code's new wording among its candidates, and the message after the run says
+  how many passages were really read. Can change results.
+- **Try it leaves out theory documents, as the keyword pass and the labels do.** Its counts, examples and shares now
+  match what the Profile shows; working documents stay in.
+- **Making the keyword pass again leaves out a document marked as theory since.** The earlier pass's candidates in it
+  stayed and counted on the Profile page. A candidate you accepted or changed stays.
+- **A rename made in another project reaches every page of this one at once.** For a codebook kept with all projects,
+  Search by code, the concept map, the themes' code grid and the reading view found none of a renamed code's labels
+  until the Profile or Codebooks page had been opened. Labels now follow when the project is opened in the app, by the
+  connector or by the command line.
+- **A project's settings survive a crash while one of them is saved.** The project's settings file (`config.json`)
+  was written in place, so if the app was quit, the computer went off or the disk was full during a save (who may
+  read new documents with AI, the banner, a shared folder, a project brought in), the file could be left empty. The
+  next save then kept only its own change: the project's strictness, AI default, models and shared folder went back
+  to ENLENS's defaults, which can change results. The file is now written whole or not at all. A settings file that
+  cannot be read is no longer written over: ENLENS says so in words, and you can put back a copy from a backup or
+  move the file out of the project folder to start from ENLENS's own settings.
+- **Opening a project from an earlier version finishes its one-time update even when the first opening was cut
+  off.** If ENLENS was quit or the computer stopped while it first opened a project from before 0.18 that you had
+  exchanged with a colleague, the project counted as never sent from then on: every check, note and codebook was
+  private, and the colleague got none of them. A project from before 0.11 likewise lost its record of what Claude
+  had read before (the AI log, and the share of a document Claude may read). The next opening now does the update.
+  A project already caught this way cannot be told apart from one that was never exchanged: if your colleague stopped
+  getting your work after you updated to 0.18, share those items again (*Shared with your team* under a check's or
+  codebook's title, *Share* in a note's card).
+- **A check made in a Claude chat is reported at your Strictness.** The connector (`get_check`, `submit_grades`,
+  `list_checks`) counted a judgement from 60%, the value in the project's own file, while the app used the Strictness
+  you set in Settings. With Strictness at 80% and a grade 70% sure, the app showed *Only uncertain evidence* and Claude
+  told you the claim was supported. The connector now reads your Strictness at every call, as the app does, and says
+  which value it used (`confidence_threshold`). Can change results: the status Claude reports for a check, when your
+  Strictness is not 60% (or a project came from a colleague with another value in its file).
+- **The command line counts at your Strictness too.** `enlens check`, `batch`, `history` and `annotate` used the
+  project file's value; they now use the Strictness of Settings (`--threshold` still sets another), and the first
+  three print the value used. The SDG pack's pipeline (`report`, `evaluate`) keeps the project file's value, as its
+  manual says. Can change results: the statuses these commands print.
+- **A review relayed in a colleague's name no longer overrules that colleague's own review.** When Carol's file
+  carried a later review "by Anna" of a label, it counted over the review Anna sent herself, and Anna's own files
+  never ended it. Now a relayed review does not come in beside the author's own, and the author's own file ends one
+  that came first. Can change which labels count, where a review came only through a third person.
+- **A colleague who removed their copy of your check no longer keeps it from others.** When Carol removed her copy
+  of Anna's shared check (or set of themes, note or research-log entry) before Ben had it, Ben never got Anna's own
+  either. Now only its author's removal keeps it out. Ben gets the work at Anna's next file.
+- **Marking a sentence never makes a colleague's judgement yours.** In a shared project, where a colleague's
+  judgement counts in your copy and you have not judged the excerpt, choosing a sentence to quote saved it with the
+  colleague's verdict as your own judgement, which you never chose; from then on theirs no longer counted for you. The
+  sentence now waits on the card until you choose your own judgement, and the card says whose judgement counts until
+  then. The same card no longer offers *Take back* for a judgement that is not yours, no longer starts the comment
+  field (or the hint of *Read this again…*) from the colleague's comment, and lets you choose the colleague's verdict
+  as your own. Can change results, where a sentence was marked this way before: look at those excerpts once.
+- **A label you give to selected words lands on those words.** Where the same words stand twice in a passage and you
+  selected the second place, *Label it with a code* put the label on the first: the reading view marked the wrong
+  words, and the REFI-QDA export (.qdpx) coded them there. The label now goes where you selected. It counts for the
+  same passage and code as before, so the counts do not change; labels given this way before keep their place, so
+  look again at any you gave to words that occur twice in their passage.
+- **Reader 7 reads text files, Word files and web pages more faithfully: an interview's repeated question, short
+  paragraphs one per line, Word text boxes and Latin-2 text.** In an interview typed with a blank line between turns
+  (or a Word file or web page whose paragraphs are one line each), a question the interviewer asked now and then was
+  taken for a running head and left out of searches, codes, themes and checks; it now stays. A text file of short
+  paragraphs, one per line (survey answers or notes saved by Word as plain text), was read as one paragraph, so every
+  quote in it was cited as paragraph 1; each line is now a paragraph. A Word file's text box was read twice (Word
+  keeps the box and an older copy of it), glued to the last word of the paragraph that holds it, so searches and code
+  counts found its words twice; it is now read once, as a paragraph of its own after that paragraph. A Polish, Czech or
+  Slovak text file or web page saved as ISO-8859-2 lost its ą, ś, ź, š and ž (they came out as ±, ¶, Ľ and the like)
+  without a word; it now keeps them. PDFs read as before. **Can change results, for documents you move to it**: a
+  Word file with a text box counts that box's words once instead of twice, a transcript keeps its repeated question,
+  and quotes in a file of short lines are cited by their own paragraph. New documents are read by reader 7; text
+  files, Word files and web pages already in a project keep their reading until you choose *Read with the new reader*
+  (the preview says whether anything changes). In text copied out of a PDF whose every paragraph is one line, a
+  running head that never falls in the middle of a sentence can now stay in the text, and so can a header line
+  repeated in an interview typed with a blank line between turns.
+
+### Safer
+
+- **A file brought in by hand can no longer change your own notes or research-log entries by naming your other
+  account as its sender.** Only your private sync between your own accounts may do that.
+- **A colleague's file can no longer reach files outside the project.** A share mark for a codebook that held a path
+  in place of the codebook's name could delete `.csv` and `.json` files elsewhere on your computer when you brought
+  the file in (as a zip, through a shared folder or a storage space), and a label naming a codebook by a path could
+  put a file from outside the codebook folder into a zip you send. Such keys are now ignored everywhere. Found by
+  CodeQL's path rule and a reading of the code around it.
+- **A codebook's name cannot end in a line break** (the name rule let one through).
+- **A Word file with a document type declaration is refused.** Such a file of a few hundred bytes could grow to
+  gigabytes of text while it was read. Word never writes one, so your documents read as before.
+- **Codex or Antigravity installed with npm on Windows gets the helper's instructions whole.** npm installs them as
+  `.cmd` files, which Windows runs through its command line: it cut the instructions at the first line break, and a
+  project named with `&` could run a command. ENLENS now starts the program the `.cmd` file starts (a real `node.exe`,
+  never a `node.cmd` a version manager put first); a command file of another kind is refused at *Start*, with a line
+  saying to use the maker's installer. Where both are on the computer, the maker's program is used.
+- **The Antigravity sign-in line works pasted into PowerShell.** It set the home folder inside double quotes, which
+  PowerShell fills in before the line runs, so Antigravity signed in under your own home folder instead of ENLENS's.
+  The line now carries its commands encoded, so it reads the same in PowerShell and in the Command Prompt, whatever
+  your folders are called.
+- **A copy made for an acceptance run or a model test leaves the team's settings behind.** It carried the project's
+  shared folder and storage space, so a round run in it would have acted in the team's place.
+- **Quit ends a Codex sign-in still waiting for the browser.** It went on running after ENLENS had closed.
+- **A codebook removed while its label tasks wait takes them back.** The AI answered them, each answer was refused
+  three times, and the work was wasted. The removal takes back the tasks still waiting, in every project for a
+  codebook kept with all projects (each project's research log says how many; a project with none is not touched);
+  after bringing the codebook back, a labelling run asks them again.
+- **Opening a project never waits behind a sync round** to follow a codebook's renames and merges: the labels follow
+  at the next opening. It could wait up to a minute, and every page of the project with it.
+- **Keeping a codebook with all your projects checks its name first.** If another project keeps a removed codebook's
+  labels or versions under that name, the move is refused, as making a new codebook of that name already was:
+  otherwise it took that work over there.
+- **A removal through the API is a removal like the editor's.** `DELETE /api/projects/<project>/frameworks/<name>`
+  deleted a codebook with no version kept and no research log entry. It now keeps both, so it can be brought back.
+- **A project saved by a newer ENLENS is not opened.** An older ENLENS opened a project a newer one had changed (a
+  folder you share, or going back from an early version) and wrote to it. From now on a project says which ENLENS it
+  needs; one that needs a newer version is shown on the Projects page as *cannot be opened*, with what to do (update
+  ENLENS), and nothing in it is changed. Projects made so far open as before.
+- **A project's settings are changed by one program at a time.** The app, Claude Code's connection to ENLENS and the
+  command line could each change a project's settings at the same moment, and one change was then lost. They now
+  take turns.
+- **A codebook uploaded again is written whole**, as its other files are: a save cut off by a crash or a full disk
+  could leave the codebook empty and unreadable. A colleague's version of a codebook whose details file arrived
+  damaged is kept as it came rather than written over.
+- **A broken add-on no longer stops every project from opening.** An add-on whose tables could not be set up (a
+  mistake in its `SCHEMA`, `INDEXES` or `MIGRATIONS`) made every project fail to open, with a database error that did
+  not name the add-on. That add-on is now left out of the project where it failed (what it set up there is taken
+  back): the project opens, the add-on's pages there say in words that it is left out, its other projects are not
+  affected, and the failure is part of what the app's page reads (`addon_problems`), with the add-on, the project and
+  why. An add-on whose SQL manages its own transaction (`BEGIN`, `COMMIT`, `VACUUM`, `PRAGMA journal_mode`) is
+  refused, naming the statement: such statements ran before and now cannot.
+- **Claude Code installed with npm gets the plugin folder whole on Windows.** Windows runs npm's `claude.cmd` through
+  cmd.exe, which read a data folder such as `D:\R&D\enlens` as two commands at the `&`, and a folder name holding
+  `%PATH%` as that variable. Every part of the line is now quoted for cmd.exe, for *Set up Claude*, the plugin's repair
+  and *Start Claude Code*.
+- **The install line works for a Windows user name with brackets.** With a user folder such as `C:\Users\Anna [Lab]`
+  (so the temporary folder too), the install stopped at "Cannot find path": PowerShell read the brackets as a pattern.
+  Every path in the install script is now taken as written.
+- **The icon does not start a second ENLENS beside a busy or starting one.** When the running ENLENS was too busy to
+  answer in a second and a half, or was still starting, the icon took its note for a stale one, removed it and
+  started a second copy of the same data folder. The note is now removed only when the ENLENS it names has ended;
+  while it runs, the icon opens it.
+- **A Claude Code run left going is recognised on a computer without `ps`.** On such a computer (a small Linux) a run
+  an earlier ENLENS started was forgotten and went on unseen; its command line is now read from `/proc`.
+- **Stable updates never offer a release candidate.** A candidate published by mistake as a full release (it happened
+  once) was offered on the stable channel; stable now takes the newest full release.
+- **A "taken back" mark dated in the future no longer outlasts its owner's own word.** A colleague's file could say,
+  in the name of an item's owner, that the owner took a shared note, check or codebook back, dated years ahead: the
+  item then stayed out of your copy, and the owner's own later *Share* lost to it. A mark from the future now counts
+  as made when it arrived, also in a zip a copy is made from, and such a mark a project already holds is mended once
+  when the project opens; the owner's next *Share* or *Unshare* decides.
+- **In a storage space, a member's *Unshare* counts only from their own files.** Every file in a storage space is
+  signed by the member who wrote it; a withdrawal (or any change of a mark you hold) in a member's name that came in
+  someone else's file is no longer taken (the member's own files always carry their marks). An item shared with you
+  through a colleague still comes in shared. A zip brought by hand into such a project says, when it brings in, that
+  its members' marks wait for their own files. A zip brought by hand and a plain shared folder carry no
+  signature: there the mark is still taken as before, now with the date rule above (the roadmap's *Signed share
+  marks* says what is left).
+- **A file that says it is yours can no longer remove or rename your name of a concept-map group.** Every other part
+  of a project already refused rows in your name from any file; the group names took them from a file that named you
+  as its sender.
+- **A note or research-log entry its author removed stays removed, whoever else said they removed it first.** When a
+  colleague's file said first that they had removed someone else's note, the author's own removal that came after was
+  not recorded, and a copy of the note relayed by a third person came back in until the author sent another file.
+  Both are kept now; each still keeps out only its own remover's note.
+- **A model just downloaded on the first page waits for its own Start.** After *Download …* on the first-run page,
+  the model was tested at once, which loaded it without a press of yours. The page now says which model is there,
+  and *Save and test* loads it when you press it.
+- **The warning before quitting, updating or restarting is not dropped when the app cannot say what runs.** When the
+  look at the work in progress failed, the dialog said nothing of a check or an add that might be running. It now says
+  that this could not be checked, and that quitting or restarting stops whatever runs.
+- **A consent dialog in a shared project keeps its line about the team.** When the project could not be looked at,
+  the dialog that lets a cloud AI read the excerpts left out that the project is shared with a team. It now says it
+  could not check, and what holds if the project is shared.
+- **After you hand a project over, your copy no longer offers to remove colleagues.** Your computer keeps the storage
+  space's keys until its next round hands them to the new owner; meanwhile *People and settings* offered *Remove
+  from the team…* to you as a Member, and ENLENS carried it out. Only the owner (or a Co-owner) removes a colleague
+  now, in the app and in ENLENS itself, and *People* says that your computer still keeps the keys and where they go.
+  The same holds for inviting a colleague, withdrawing an invite and moving the team: your copy offered and did all
+  three, so a former owner could let someone into the new owner's team. When the new owner is not in the storage space
+  yet, your copy offers one invite only they can use; once they have joined, the keys go to their copy and none stay
+  on your computer (before, the keys stayed with you for good).
+- **Hold keeps a kind of task back from everyone.** A Claude Code helper started before you pressed *Hold* went on
+  asking for its kind by name and was handed it all the same. A kind on Hold is now handed to no helper, read by
+  your local model neither as its share of the AI mix nor by *Answer them here instead*, shown as about to be sent
+  by none of *See what is sent*, written to no file by `enlens export-tasks` and asked of no model by `enlens run` or
+  `enlens queue run` until you press *Go on*; a page that waits on such a task says it is on Hold.
+- **A task given a new text while a helper held it is taken from that helper.** The helper had been given the old
+  text, and its answer was checked against the new one: its quotes were refused and its attempts used up. The task
+  is handed out again with its new text.
+- **An answer from the file queue no longer lands beside a helper's.** `enlens import-results` stored a late file
+  answer for a task put back with `enlens requeue` that a Claude Code helper was answering, whose answer was then
+  refused; it is now left to the helper, and the command says how many it did not store and to import the file
+  again if the helper gives them back. `enlens refresh` leaves tasks still out in
+  the file queue as they are, so their answers are recorded under the instructions written beside their files.
+- **One file that cannot be made into passages no longer stops the whole add.** A file that was read but whose
+  passages could not be made (a fault in ENLENS) stopped every file after it. It is now listed under the files that
+  could not be read, and the others are added.
+- **A project zip keeps two files whose names differ only by capital letters or by how an accent is written.** A zip
+  made on Linux could hold "Report.pdf" and "report.pdf"; opened on a Mac or a Windows computer, one overwrote the
+  other, and one document then showed the other's original. The second is now unpacked as "report (2).pdf", and its
+  document points at it.
+- **Your notes and highlights are counted in the preview of *Read with the new reader*.** The preview counted checks,
+  judgements, codes and themes, and said nothing of notes: a note whose words the new reader no longer has was found
+  out only afterwards, and *Move the ones that move cleanly* moved such a document as clean. Notes are now counted and
+  listed like your other results.
+- **A note never moves to the same words in another part of the text.** A note whose words were no longer where they
+  had been was put on the same words wherever else they stood (a summary that repeats a sentence), when the document
+  was read again and later whenever notes were shown. It now follows its words where they now are, as a check's quote
+  does, and otherwise says that its words are not in the text and keeps them.
+- **A button pressed twice starts its work once, also from two tabs.** Labelling passages, finding themes, naming the
+  themes, naming the groups of the concept map, reading one excerpt again and reading documents with the new reader
+  now give the work already under way back to a second press; other work of the same kind that would clash with it
+  (the same codebook labelled with other choices, other themes, the same excerpt with another note, a document
+  already being read) is refused with a sentence saying to wait for it. Installing Claude Code, downloading a model
+  and answering a move zip's question were likewise started twice by two presses at the same moment.
+- **Removing a project waits a moment for a round of the shared folder.** A round the app started by itself cannot
+  be stopped by you, so *Remove* (and a quick look's *Discard now*) waits a few seconds for it to end; if it is still
+  running, it says the project is being brought up to date with your team and to try again in a moment. For work you
+  can stop, it says which work and to stop it in the sidebar, as before.
+- **A request whose body stops coming no longer holds the app.** A connection waits two minutes at most for a
+  client, and a body sent in chunks, without its length, is refused in words instead of being stored as an empty
+  file. A request refused while its body is still being sent (a file too large, a wrong address) now gets its answer
+  in words on Windows too, instead of a dropped connection.
+- **An invite whose secret is gone from this computer lets nobody in.** When an invite's secret was no longer in the
+  keychain, any member of the team could write a key file that passed for it and join a second time under any name.
+  Such a key file is now set aside, and the Team tab says to withdraw the invite and make a new one; when the keychain
+  only did not answer for a moment (locked), it says that instead, and the colleague is let in at the next round.
+- **A list of members from before a removal, put back in the storage space, is written over.** The owner's copy wrote
+  the newest list again only when the list was missing, so a colleague joining later could take the old one, removed
+  colleague and all, until the owner's copy let them in. The owner's copy now writes the newest list again at its next
+  round.
+- **Choosing a shared folder no longer forgets the storage space's keys by a side door.** Choosing a shared folder for a
+  project that works through a storage space (possible through ENLENS's local interface, not offered on the page)
+  left the space and deleted its keys, the owner's master key or token included, with no way back. It is now refused,
+  in words: *Stop using the storage space here* on the Team page, which asks first, stays the one way to leave.
+- **Two projects in one storage space on one computer stop spoiling the team's work.** Before such joins were refused,
+  a second project on the same computer could join a space (your own invite link, tried on your own computer); it
+  replaced the first project's keys, so colleagues set aside everything the first one sent. A project folder duplicated
+  by hand did the same with the same keys. Both wrote into one copy of the space. Now only the project that last
+  connected to the space on this computer runs, and the Team tab of the other says what to do.
+- **The record of a storage space on this computer is written whole.** Withdrawing an invite rewrote it in place: a
+  write cut off there (a full disk, the computer turned off) made the copy forget the team's list of members and what
+  it had already taken of each colleague, so an older file put back could be taken again.
+- **A damaged list of linked projects is set aside, not written over.** If `links.json` in ENLENS's data folder was
+  cut short (a power cut, a sync or backup tool), linking, making or removing one project saved a list with that
+  one alone, and every other linked project was dropped for good. ENLENS now keeps the damaged file as
+  `links.json.damaged`, says so, and starts a new list when you try again. The projects themselves were never
+  touched. The list of quick looks and the model test's speeds are set aside the same way.
+- **The ENLENS icon opens only this data folder's ENLENS.** After ENLENS ended without *Quit* (a crash, a logout or a
+  restart), the icon trusted the address it had noted, so when another account's ENLENS (or the one of another data
+  folder) had taken that address meanwhile, it opened that one and never started yours. The icon now asks the app
+  there to prove it is yours (with your own access token); a note that proves nothing is removed, and ENLENS starts.
+  An older ENLENS still running is quit only when it proves the same.
+- **Stop ends only this project's Claude Code run.** A run an earlier ENLENS started is recognised by its command
+  line, and now by the project named in it: a run of another project that had been given the same process number was
+  stopped too, and on a computer without `ps` the number alone was enough to end any program.
+- **The Claude app's settings file survives a full disk.** Adding the connector (`enlens-mcp --install-claude-desktop`,
+  or the repair at a start after ENLENS moved) wrote `claude_desktop_config.json` in place: a full disk or a stop part
+  way left it cut short, and the Claude app lost every connector in it. It is now written beside and put in place
+  whole (the `.bak` copy is still kept), keeps every setting ENLENS does not know, and a file that is not valid JSON
+  is left as it is, with a message that says so (it was a traceback). A file saved with a byte order mark is read.
+- **The Windows command file keeps a data folder whole.** When neither the Shell nor PowerShell could make the ENLENS
+  icon, the command file ENLENS.cmd cut a data folder such as `D:\R&D\enlens` at the `&`: the icon started ENLENS on
+  an empty `D:\R` and ran the rest as a command. Every part of the line is now quoted for cmd.exe (`%` and `!` too).
+- **A file that says it comes from you cannot act in your name.** A colleague's zip that named you as its sender
+  could remove a document from the project, take back your review or remove your note as if you had done it. Such a
+  file now changes nothing of yours; a removal of a document in your name is listed on the Team tab, like any other
+  row a file brings in your name.
+- **Only the person who made a proposal can take it back.** A colleague's file could mark a third person's proposal
+  as taken back, so the owner no longer saw it waiting. It now keeps waiting until its maker's own file says so,
+  and the report says once that such a file came. A proposal the owner has not seen yet that comes through a
+  colleague already taken back is shown only when its maker's own file arrives, so the owner is never asked to
+  decide one its maker withdrew.
+- **A colleague's file can no longer take back your review by naming only its key.**
+- **A document whose id differs from one of yours only in capitals is not brought in.** On a Mac or on Windows its
+  original file replaced the original file of your document with the same name. ENLENS never makes such ids: only a
+  changed file has them.
+- **`enlens export-tasks` and `enlens run` leave alone the tasks a Claude Code helper is answering.** Both took every
+  waiting task of the kind, also those a helper had just taken, so the same task was asked twice and the helper's
+  answer was then refused as "already answered". They now leave those tasks to the helper and say how many they left
+  (`left_to_the_helper_answering_them`). `run` still answers tasks that were never in the queue, as before. Answers
+  already stored are not changed.
+- **Adding a newer zip from the same place no longer replaces the originals of documents added from the older one.**
+  Both zips were unpacked into one folder, so the first document's original file was overwritten: it was then
+  reported as changed since it was added, and could no longer be opened beside its text or read with the new reader.
+  Each zip now unpacks into a folder named after its place and its contents, so a newer zip gets a folder of its own
+  and the same zip added again unpacks onto its own copy. A zip first added with an earlier version is unpacked once
+  more, into a new folder, when it is added again (its documents are not added twice). Documents added before keep
+  the files they recorded.
+- **Two files in one zip whose names differ only by capital letters or by how an accent is written** ("Report.pdf"
+  and "report.pdf") were written to one file on a Mac or a Windows computer, and one document was lost. The second is
+  now unpacked as "report (2).pdf".
+- **A project is not removed while work of it runs.** Removing a project while documents were being added to it, and
+  then making a new project of the same name, put the old project's remaining documents into the new one. *Remove*
+  (and a quick look's *Discard now*) now says which work is still running or waiting in that project and asks you to
+  stop it in the sidebar or wait until it has finished. A quick look whose week is up also stays until its work has
+  ended. Cannot change results.
+- **"Read the new documents" pressed twice reads them once.** With Claude Code answering (or while the local model
+  waited for its Start), a second press started a second job that ended in an error meant for Claude Code's chat
+  ("Grade the passages already shown first"), and two presses at the same moment could read the same documents
+  twice. A second press now follows the job already at it.
+- **Trying your own invite link on your own computer no longer breaks your team.** *Join a team* with a link for a
+  storage space that another project on the computer already works in replaced that project's keys, so its new work
+  was set aside by every colleague and it could no longer let anyone in. Such a join is now refused, in both *Join a
+  team* routes, and ENLENS names the project to open instead. Where two projects on one computer already share a
+  space, *Stop using the storage space here* in one of them no longer deletes the keys the other still uses.
+- **A colleague's work from before they started afresh, put back in the storage space, is set aside.** Every copy
+  used to wait for "work number 1" that had long gone, until that colleague wrote again.
+
+### Reading
+
+- **Reader 6 needs pdfminer.six 20250506 or newer, and ENLENS now asks for it.** With an older one its rule for text
+  a form crops away could not run, and PDFs were read without it and without a word. A normal install already has a
+  newer one.
+
+### Fixed
+
+- **Moving a team to Cloudflare R2 with a token that reaches several accounts.** The move said it was done without
+  moving anything, listed every colleague twice (which dropped them from the team), and after an error could remove
+  the owner's keys for the storage space. It now asks which account to use and moves there. A first set-up at R2
+  with such a token failed before it could ask; it asks now.
+- **A hypothesis the AI could not split is checked as written.** The check used to fail and the hypothesis was
+  removed.
+- **Look before checking** drops its parts when you changed the hypothesis or an option while the AI was looking,
+  and says so. It used to show the parts of the old wording and then check without them.
+- **Add my label** on a document offers the codes of the codebook you chose, also after you change it, and asks
+  again when the codes could not be loaded.
+- **Choose a code…** says when the codebook cannot be loaded; it used to do nothing.
+- **The research log** adds an entry once when Ctrl+Enter is pressed twice, and keeps what you typed while an entry
+  was being saved. The same holds for a code's examples and the reason for a codebook change.
+- **A theory draft that changed elsewhere** is saved again with the new version, not once more with the old one.
+- **Removing an API key says when the key is still there.** A keychain that is locked, or whose prompt was refused,
+  kept the key while ENLENS showed none stored and went on using it.
+- **Plain messages in place of errors:** *Try again* for a drive on a project with no storage space, a new codebook
+  as a copy with no codebook named, and a profile asked for with an empty codebook name. The storage space set-up
+  asks for its help links again after a failed try.
+- **A local model typed as `ollama.localhost` or `localhost.localdomain` says how to fix it.** Such an address counts
+  as another computer, so documents marked *Only a local AI* waited with only "is another computer" said. The local
+  panel and *Settings › AI* now add: type `localhost` or `127.0.0.1` instead.
+- ***How these results were made* says "not recorded" for an answer from before ENLENS recorded how answers were
+  made**, instead of a blank that read as "no temperature sent".
+- **A Codex or Antigravity helper whose message says "design in" no longer ends the run as "not signed in".**
+- **The AI log names the model of a Codex or Antigravity helper ENLENS started, every time.** A helper that took
+  its first batch at the moment ENLENS rewrote its record of the run was logged as "not known (its own choice)".
+- **A helper started before you put its kind on *Hold* is not counted as failing**, so three of them no longer end
+  the run with "did not answer the queue".
+- **A refused Antigravity helper is said in plain words** in the run's report, without Python's name for the error,
+  and takes no helper number.
+- **A local server's answer piece of an unexpected shape is skipped**, as an unreadable line is: Ollama's stopped the
+  task with an internal error, and an OpenAI-compatible server's was said as "Could not reach the local server".
+- **A check left half-done can be finished from its result.** When the app was closed while it was checking, or a
+  Claude chat stopped answering after its grades were refused (or never sent any), the check said *The check did
+  not work* or *Not finished yet* for good, and *Read more excerpts* refused to start ("still has excerpts waiting to
+  be judged"). Such a reading now ends: a chat's after 30 minutes without an answer, the app's own once the app has
+  been started again. The check then says it did not work, and *Read more excerpts* reads its excerpts again in the
+  app; a chat that sends its grades after that is told the app read them. What you judged in it stays. A check by
+  queue that waits for you to allow its AI provider keeps waiting, however long.
+- **"N of M hypotheses brought up to date" counts only those brought up to date.** After *Read the new documents*
+  for several hypotheses, one whose reading did not work was counted among them as well as in "1 could not be read".
+- **A colleague's sentence is no longer called yours.** Where a colleague's judgement counts on an excerpt and they
+  chose its sentence, the result and Excel's *Quote chosen by* said it was yours. They now name the colleague.
+- **Check several reads ENLENS's own spreadsheet back as written.** A hypothesis starting with "+", "-", "=" or "@"
+  came back with the apostrophe ENLENS puts before such a cell so that a spreadsheet does not run it as a formula.
+- **An unfinished *Look before checking* is not offered as an earlier check.** A look stopped half-way could show up
+  as "checked before" beside a hypothesis close to it.
+- **Claude's report of a check counts a kept document's grades as the app does.** For a document you keep on this
+  computer, Claude was told every grade as counting in the answer, those below your strictness too; these are now
+  given apart (`not_counted`).
+- **The refusal of a removed codebook's name says how to bring it back, and only where that is possible.** It sent
+  you to the codebook's *History*, which a removed codebook does not have. It now names the research log entry of the
+  removal (*Compare with before*, then *Restore*), in the project where it was removed, and says only *choose another
+  name* when that entry or its project is gone. There is no way yet to delete a removed codebook for good (it is on the roadmap).
+- **A folder named like a codebook file in a colleague's project no longer stops bringing in their work.**
+- **A codebook made from a CSV file keeps the file's order of codes.** A codebook downloaded as CSV and brought back
+  in came back sorted by name.
+- **A group name you gave stays with its group when one of its concepts is named by another wording** (new documents,
+  or two wordings linked as the same). A name of a group of two concepts went to *Names elsewhere* for good.
+- **A theme's own page shows the size the themes page shows** when the run names a passage this copy does not have.
+- **A codebook drafted from theory marks a definition taken from the AI's *when to use it* as the AI's draft.**
+- **A codebook file named with capitals (`Mine.csv`) opens in the editor on Linux too.**
+- **An old label task whose code was renamed in the second it was asked is asked again.** Its answer was stored
+  under the old name as a removed code's label, which no code could bring back.
+- **The Projects page says why a project cannot be opened.** A project whose settings file (`config.json`) is damaged
+  was listed as if all was well, and every page of it then failed. It is now marked *cannot be opened*, with what to
+  do: put back a copy from a backup, or move `config.json` out of the folder to start again from ENLENS's own
+  settings. ENLENS still never writes over the damaged file.
+- **The highlighted PDF of a document marked Non-scientific says that its judgements are not counted** (unless the
+  hypothesis counts such documents), as the evidence map does.
+- **A label that a colleague's newer ENLENS made no longer stops the codes pages or the FlexiConc file.** A label of a
+  kind this version does not know made them fail; it now ranks after the kinds it knows.
+- **An evaluation copy is no longer made under the name of a linked project, or trashed as a vanished quick look of
+  the same name.**
+- **A Zotero library or key that ends in a line break is refused** before Zotero is asked.
+- **Removing a project whose folder was replaced** closes ENLENS's connections to the old database first, so Windows
+  does not say the folder is still in use.
+- **On Windows, an update no longer rewrites the Claude Code plugin at the first start after it.** The installer
+  names `python.exe`, the app from its icon `pythonw.exe`; each found the other's plugin out of date, so every update
+  was followed by a second rewrite and four `claude plugin` commands. The plugin and the Claude app's entry now name
+  `python.exe` (the connector talks through its console streams), and both count as this ENLENS.
+- **When Claude Code keeps refusing the plugin, ENLENS asks it once a day.** Every start rewrote the plugin and ran up
+  to four `claude plugin` commands, two minutes each at most, in the background. ENLENS now waits a day, unless ENLENS
+  or Claude Code was updated meanwhile; the installer, *Set up Claude* and `enlens claude-setup` still try at once. An
+  answer that the marketplace is already there counts only when Claude Code has it from this data folder; one it
+  has from another folder (the data folder moved) is registered again from this one.
+- **The command line gives clearer answers.** `enlens --ws Pilot …` with the name of an app's project said to run
+  `init`, which would make an empty project in the current folder; it now names the project's folder.
+  `enlens --ws P measure` measures P (it was ignored). `enlens prepare` for a copied project folder whose name the data
+  folder already uses queued its tasks and then stopped with a traceback; it now says why and queues nothing.
+  `reset-corpus` names everything it deletes (hypotheses with their judgements, labels, themes and concepts too).
+- **A data folder with `%` in its name keeps it in the Linux menu entry.** The `.desktop` file's command line read
+  `%` as one of its own codes.
+- **A connector project is no longer left empty on an installation without cloud models.** Asking to add documents
+  as *Claude may read it* there made the project and then refused the documents; it is refused before anything is
+  made.
+- **Removing a second reading of a file no longer takes the file from the first.** When a colleague's word removed a
+  document that shared its original file with another (a sync-clash reading, or a colleague's reading of a file you
+  hold), the file was moved into the 30-day archive and the document that stayed lost its original. The file now
+  stays where it is.
+- **Your own old backup's removal says what to do.** Bringing in an old file of your own that still says you removed
+  a document, check or set of themes keeps it, as before; *Team* › *Activity* no longer says "You did not", but that a
+  file never removes your work in your name and, when you hold the item, where you remove it yourself.
+- **Archiving many removed documents at once** no longer looks at every other document's file for each one.
+- **A short text typed in a dialog is kept when its save fails.** Renaming a theme (in the list and on the theme's
+  page), the *Why?* of removing a theme, deleting a result or a set of themes, and the hint of *Read this again…*
+  closed their dialog before saving, so a failed save lost what you had typed. The dialog now stays open with your
+  words, and a hint saved as your comment on a first try is not saved twice.
+- **A dialog waits for the save it started.** While a save sent from a dialog runs, *Cancel*, Escape, the x and the
+  dialog's other buttons wait for it, so what follows a save that went through (its message, the page drawn again)
+  is never skipped, and *Remove a theme* cannot send two removals.
+- **The codes of the themes follow the codebook chosen last.** Two codebooks picked quickly on the themes' code grid
+  could show the second's name over the first's codes.
+- **A failed choice no longer undoes a later one.** The speed of Claude Code, how much thought it gives the tasks, and
+  in Settings *Sharing the work* and *At your plan's usage limit*: a first choice whose save failed after a second
+  choice was saved put the control back to the value before both. It now goes back only to what was saved last.
+- **The queue in Settings shows the newest state.** A look at the work waiting, answered late, could draw over what
+  *Hold*, *Go on* or *Do first* had just shown, for a few seconds. And a failed look no longer takes away the start of
+  your local model's part of a check.
+- **The start of a local model is nudged again after a few seconds**, also on a panel drawn again meanwhile (the queue
+  looks every few seconds, and the nudge started over each time).
+- **A result page does not show another project's retraction notices**, and says so when the notices of retracted or
+  corrected works could not be read (no excerpt was marked, without a word).
+- **Failures that left something out now say so, or try again.** The result page asks again for the link to an
+  original file after a passing failure, and looks again for a second opinion or another reading still running when
+  its first look failed. *How often you agree* in Settings says when it could not be worked out. The sidebar keeps the
+  work waiting for Claude Code when one look at it failed.
+- **New answers while you write.** While a check waits for Claude Code, a cursor left in a comment box stopped the
+  page from looking for new answers. The page now goes on looking, says *New answers came in* with *Show them*
+  (without moving the field you are in), and draws them when you ask or a few seconds after you leave the field.
+- **A judgement is saved once and said to be saved.** A double click on *Agree*, *Not about this* or a judgement sent
+  it twice; and when the page could not be drawn again after a save, only the error showed, though the judgement was
+  saved. The toast now says it was saved, and that the page could not show it yet.
+- **Stop that was refused is not taken as stopped.** When the app refused to stop an AI run, the panel acted as if it
+  had stopped.
+- **Numbers are written in English** (1,234), as dates are, whatever the browser's language.
+- **One wording for a check not finished.** The window's title said *Not finished* beside a badge saying *Not
+  finished yet*; it now uses the badge's words.
+- **An address typed with a bare % opens a page.** It left an empty page.
+- **Settings › Technical › This installation lists the add-ons that could not be loaded**, one line each, with the
+  project when it is one project's.
+- **The connector's refusal of a looser AI setting names what the Documents page offers**: adding the documents there
+  with another setting, and changing one document's setting in its details (it promised a change for the whole
+  project that the page does not offer).
+- **A reason or a name you type is not lost when it cannot be saved.** The *Why?* of removing a document or a
+  codebook and of *Unshare*, the reason of *Hand over*, *Take over*, *Accept* and *Decline*, and a group's new name on
+  the concept map closed their dialog first and saved after: when the save was refused, the words were gone. The
+  dialog now stays open with your words and says why. While it saves, *Cancel*, Escape and the × wait for the save, so
+  a save that went through is never left half said.
+- **New codebook "From the themes" keeps your choices after a refusal.** When the name was refused, the themes were
+  asked again with the first set ticked and the names as first offered; the themes you ticked and the longer or
+  shorter names you chose now stay.
+- **Fields keep the focus when the page is drawn again.** A tick in the list of documents after documents are added
+  or search by meaning is set up; *Read at most* on *Let the AI read the passages* when a comparison ends (with what
+  you had typed); the Bibliography's Zotero chooser (its search, ticks and collection) when a check for retractions
+  ends.
+- **A labelling run is followed once.** When the page found the run it had just started, it said its end twice.
+- **The summary after adding documents says when earlier documents still follow a setting nobody chose.**
+- **Accepting a proposed relation between two terms records the relation the card showed you.**
+- **Two files of one name and size from two folders are both listed for adding.** One was dropped from the list
+  without a word; the same file picked twice is still listed once.
+- **The glossary list no longer shows an error over newer results.** An older request that failed after a newer one
+  had been drawn put its error in place of the list.
+- **A copy of a project no longer takes the place kept for the original.** After moving a document to the new reader,
+  the same document opened in a copy of the project could open on the original's tab and scroll position.
+- **An add-on's kind of task is handed each quote as the passage writes it.** The quote check reads "10³ tonnes" and
+  "103 tonnes" alike; ENLENS's own kinds always kept the passage's own words, an add-on's store function was handed
+  the model's, a different number.
+- **Reading further while a round waits to be judged says what to do.** *Read the new documents* and *Read more
+  passages* on a check whose excerpts still wait to be judged ended in words meant for a Claude chat ("Grade the
+  passages already shown first (submit_grades)"); they now say to read further once the excerpts are judged.
+- **Answering the queue here with a local model counts each second reading once.** A task waiting for the stronger
+  model was counted as answered before any model read it, and again when it was read after the run.
+- **Stop ends a file whose reading never ends, also in a small batch, and says which file it was.** A file whose
+  reading never ends is waited for until you press *Stop* (a long scanned book can rightly take a long time). In a
+  batch under half a megabyte, the usual case, the files were read inside the app itself, where *Stop* could not end
+  such a reading, so the add went on for ever. Every file added from the app is now read in a reading process of its
+  own, which *Stop* ends at once. The list then said only how many documents were added; it now says that the add was
+  stopped, which file was being read, how many were not added, and how to add them again leaving that file out.
+- **The reading of a text file that names no encoding says which one was guessed** (*Read as: Windows-1250, a
+  guess*), so a wrong guess can be seen and the file saved as UTF-8.
+- **The preview of *Read with the new reader* says whether anything changes.** Reader 7 is offered to every text,
+  Word and web document reader 6 read, because whether one reads otherwise is known only by reading it again. The
+  preview now says when the new reader reads a document exactly as before, so moving it changes nothing but the
+  reader's number.
+- **An AI's link between two concepts keeps the documents' own words.** Its two quotes were stored as the AI wrote
+  them (another case, straight quotation marks), so the Concepts page could show words the documents do not hold.
+- **A theory code's, a code definition's and a concept group name's quotes keep the document's own characters.** A
+  non-breaking space in them was stored as a plain one (and so were the quotes of a theory framework, the links the
+  text patterns find and a theory document's examples), so the quote shown was not exactly the document's words.
+- **A project folder zipped on a Mac or Linux and opened on Windows (or the other way round) finds its documents'
+  files.** Paths written on the other kind of computer were not taken for full paths, so no document of such a
+  folder pointed at its file in the imported project.
+- **A colleague's notes placed on your reading keep their page.** When a colleague's results on another reading of a
+  document were placed on yours, each of their notes lost its page.
+- **A run of codes, a reference run or *Read again* of an excerpt no longer fails when the document is read again
+  meanwhile** (a round of the shared folder can move a document whose new reading the owner accepted). The run ends
+  and skips the passages that were read again (they are asked again for the new reading); *Read again* says in words
+  that the AI's answer was not kept, instead of "unknown task".
+  The run's closing message says how many passages (or stretches) it did not read for that reason.
+- **A *Leave out* of text the new reader no longer has does not hold a document back.** Nothing is left to leave
+  out, so it is not counted as work without a place, and *Move the ones that move cleanly* moves the document.
+- **A *Leave out* follows only the new blocks that hold its text together.** When one sentence of a left-out
+  paragraph now stands far away, the blocks in between are no longer left out with it.
+- **A note that lost its place cites no page.** The notes export gave it the earlier reading's page; it now says
+  *(place lost)*.
+- **The preview and the message after a move name notes and blocks as what they are** (*2 notes and highlights find
+  their place*), instead of counting them as results.
+- **Removing a project just as work of it ends no longer closes ENLENS.** Removing a project (or a quick look's week
+  running out) at the moment a job of it finished, while what follows its end still read the project, could crash
+  the app. A removal now waits for that to finish (or says to try again in a moment), nothing of the app opens a
+  project being removed, and a project's database connections are closed only between two of their steps and outside
+  a change being saved: a change is saved whole or not at all, and a project still being written to is not moved to
+  the trash (you are asked to try again in a moment).
+- **A model test leaves no "… model test" project behind.** On Windows its scratch copy could stay in the list of
+  projects when a helper was still reading it. Nothing of the app reads a project while its folder is removed now,
+  and a copy that still could not be removed goes at the app's next look instead of a week later.
+- **A hypothesis removed while its check waited says so.** The check ended with the hypothesis's bare id as its
+  problem.
+- **Downloaded file names stay whole.** A hypothesis exported from a colleague's copy, whose id holds a quote, or a
+  name ending in a backslash, lost its name in some browsers.
+- **A second computer is not named "['Anna']".** *Use both computers* took a name sent as a list (or a number) as
+  the name; such a request is now refused in words.
+- **A round no longer fails when the Team tab reads a colleague's file at the moment the round replaces it** (Windows).
+  The round now waits a moment for the file and tries again; if another program holds it open longer, the round says
+  so in words and takes the file at the next round.
+- **Handing the space's keys to a new owner works when the old owner's copy wrote its list of invites in another
+  shape.** The new owner's copy stopped reading the storage space at that step, every round, and never took the keys.
+- **An invite at Backblaze that fails says why.** When the second key for a colleague could not be made and removing
+  the first failed too, the second failure hid the first, and the invite ended with an error instead of the reason.
+- ***How these results were made* no longer says Temperature 0** for answers from the Claude API, Codex, Antigravity
+  or a cloud model that refused a temperature: none was sent, and none is shown. Answers that recorded one keep it.
+- **A cloud provider or local server that keeps streaming is given up at its time limit** (10 minutes for a cloud
+  provider), as an answer that goes silent already was.
+- **Codex and Antigravity runs count each helper's batches once.** With two helpers of one kind at work, the report
+  counted each other's batches too ("Done: 2 batches" for one), and a helper that found its colleague had taken the
+  work, or one that took nothing, was counted wrongly as working or as failed. "Batches answered" now counts only
+  batches with an answer stored, not those given back or left to lapse.
+- **Settings › Repeatable results says what is really sent**: a seed and temperature 0 to a model on your computer
+  (and to a cloud provider's API that takes them), neither to Claude Code, the Claude API, Codex or Antigravity.
+- **A gold set saved with semicolons** (as Excel does in most of Europe) is read as one saved with commas; a row
+  with more cells than its header is said plainly instead of stopping `enlens validate` with an error.
+- **The connector's `get_check` answers for the whole hypothesis that `list_checks` lists.** For a hypothesis the
+  app checked in parts, `list_checks` gave the combined answer (say, *contradicted*) and `get_check` with the same id
+  answered for the first part alone (*supported*, with that part's evidence only). It now gives the combined answer,
+  each part with its own answer, and every part's evidence. A check made in a chat is answered as before.
+- **A Claude chat whose grades were refused once is *Not finished yet*, not *The check did not work*.** The chat
+  still had two tries to fix them; the app, the Results list and `get_check` said the check had failed.
+- **The Results list counts documents added since a check as the result page does.** A theory or working document
+  added after a check showed as *1 document added since* in the list, and *Read the new documents* picked that
+  hypothesis, while the result page and the Excel summary said none.
+- **"Changed by you" in the Results list matches the result page and Excel.** Judging an excerpt the small local
+  model only pointed at (it judged nothing) counted as a change of an AI judgement in the list only.
+- **The review spreadsheet is read back when Excel saved it with semicolons.** Excel in most European languages puts
+  ";" between cells; `review-import` then applied no decision and reported every row as skipped.
+- ***Check several* reads a spreadsheet with the one column `hypothesis`.** The word "hypothesis" became a
+  hypothesis to check, and a hypothesis with a comma kept the spreadsheet's quotes.
+- **A codebook file saved with old Mac line endings no longer breaks every page.** Excel for Mac's "CSV (Macintosh)"
+  ends lines with a carriage return alone; listing the codebooks then answered "Unexpected problem" on every page.
+  Such a file is now read (its download too), and a CSV that still cannot be read is listed with its reason.
+- **Moving a codebook keeps its history when the other place holds old versions of that name.** Its versions went
+  one folder down and vanished from History. They now join the folder there; versions moved that way before are
+  found again, and restore to the right place.
+- **Two codes, groups or imported names that differ only in how an accent is written are one name.** "Kő" typed and
+  "Kő" from a Mac file (the accent as a separate character) are refused as two codes in the editor and a CSV import,
+  named apart in a .qdc import and in a merge with a colleague's codebook, and found by the AI's answers either way.
+  Names stay as written. A codebook's name keeps the letter of an accented one ("kőzet" is "kozet"), however written.
+  "Maße" and "Masse" stay two names. A codebook saved before with such a pair still saves any other change; only
+  adding or renaming a code into such a pair is refused.
+- **A colleague's version of a codebook with a long name is listed.** When both changed a codebook whose name had 35
+  characters or more, their version came in under a name too long to be listed, so it could not be opened.
+- **A project made with the name of a quick look you deleted outside ENLENS is no longer moved to the trash.** A
+  quick look whose folder you removed in the Finder or Explorer stayed on the list of quick looks for its week; a
+  project you made, linked or brought in under that name in that week went to the trash in its place. If a project
+  went missing this way, it is in the `trash` folder of ENLENS's data folder.
+- **A BibTeX DOI with an escaped underscore is read as the DOI.** `10.1016/j.wat\_res…` (and Mendeley's
+  `{\_}`) kept the backslash: the work was not linked to its document by DOI, and Retractions looked up a DOI that
+  does not exist and showed the work as checked with no notice. Bring the BibTeX file in again (*Use an exported
+  file instead*) to correct such works. A DOI in the note field and links in the url field are read the same way.
+- **A colleague's version of a codebook kept beside yours** is written whole: a cut-off write could leave its codes'
+  ids, groups and history empty.
+- **After an update on Windows, ENLENS started from a terminal is seen coming back.** The update recognised only a
+  copy started from the icon, so about 90 seconds after a terminal-started ENLENS had come back, a PowerShell window
+  said it had not and installed ENLENS again over it. Every copy is now recognised by its own access token.
+- **"The Claude Code plugin now uses this installation" only when it does.** After an install or update, the line
+  was printed (and the app's log said "brought up to date") although Claude Code had refused the new plugin and kept
+  the old one; nothing tried again. It now says that Claude Code refused, with its answer, and ENLENS tries again at
+  its next start (*Set up Claude* or `enlens claude-setup` try at once). `enlens claude-setup` ends with an error
+  when Claude Code refuses.
+- **The command line says when something failed.** `enlens ingest` with a path that does not exist printed
+  `{"files": 0, …}` and ended as a success; it now names the path and adds nothing. `measure --folder` / `--ws` with
+  a missing folder, `annotate` and `resolve` with an unknown document, and refusals such as an unknown kind of task
+  for `queue first` ended in a traceback or as a success; they now end with a message and an error code.
+- **An add-on's column is added once.** A column name ending in a line break, or written in other capitals than the
+  table's own (`AI_Note` beside `ai_note`), made every later opening of a project fail with "duplicate column name";
+  the first is refused with a message that names the add-on, the second is recognised as the same column.
+- **What you type stays in its field when the result page is drawn again.** When a second opinion, a reading of new
+  documents or *Read more excerpts* ended while you typed in *Your notes*, the box showed the old note, and typing on
+  saved the old note with the new words over what you had written. A comment being typed on an excerpt lost the
+  focus in the same way, also when a check waiting for Claude Code found more excerpts. The field now keeps what is
+  typed, the cursor and the focus.
+- **A colleague's judgement is no longer called yours.** On the result page of a shared project, a colleague's
+  sentence read *highlighted by you*, their comment *Your comment*, a re-read said *Your judgement counts*, and other
+  people's judgements *differ from yours*, where the judgement in force was the colleague's. Each now names them.
+- **Work the app no longer reports on does not stay running on the page.** After ENLENS started again (or stopped
+  answering), a second opinion, *Read more excerpts*, a check followed on the *Hypotheses* page or *Read the new
+  documents* under the answers kept its panel with *Stop*, and its button stayed disabled, until a reload. The page
+  now says how it ended is not known and shows what the app has.
+- **A page that could not be loaded says so.** When the app could not answer, the evidence map said *Nothing to map
+  yet* and the *Hypotheses* page said the project had no documents. Both now say the page could not be loaded.
+- **The Hypotheses page follows only this project's check.** A check started in one project, followed by a switch to
+  another project, showed as *Checking* there and then opened a result the project does not hold.
+- **A reading of new documents that did not work says so wherever it is followed.** Followed on a result page after
+  being started elsewhere, it said *The new documents were read.* though nothing was kept. Pressing *Read the new
+  documents* twice while it ran also said it was done twice.
+- **Settings no longer say a model is not installed when no model server answered.** *Settings › Technical* said
+  *not installed now* beside the model for second opinions, and *None installed yet* for search by meaning.
+- **Smaller wording.** An excerpt not counted at the strictness tried on one result page says it is below that
+  strictness (it said its round of reading did not finish); a split hypothesis with one excerpt says *1 of 1
+  judgement counts*; a result's and a theme's window title name the app as its maker set it.
+- **A note, a log entry or a title you write is not lost when it cannot be saved.** *Add a note*, editing a note,
+  editing your research-log entry or its *Why?*, renaming a document and the comment of *Use as evidence* closed their
+  dialog first and saved after: when the save was refused (the note was removed from your other account, the words
+  are no longer in the document's text, ENLENS had started again), what you had written was gone and only a message
+  was left. The dialog now stays open with your words and says why, and closes once the save worked.
+- **New codebook stays open when its name is refused.** A name a removed codebook still holds (its labels and versions
+  are kept under it), a CSV file that cannot be read and the like came back as a message after the dialog had gone,
+  so the title and choices had to be made again. The dialog now opens again with everything as you left it and the
+  reason in it, also after the theory documents step of *From theory documents* (with the question you typed there).
+- **What you type in the codebook editor while it saves stays.** Words typed in a code's fields after you pressed
+  *Save* vanished when the save answered, and the editor said nothing was unsaved. They now stay, and the bar still
+  says there are unsaved changes. When *Try it* or a save ends while you type, the field keeps the focus and the
+  cursor instead of the next keys going nowhere.
+- **Fields stay as you typed them when a page is drawn again after work in the background.** Your own words under
+  *Words the glossary leaves out* while the glossary is made; a short name, title or question in a theory framework
+  draft when the AI's reading of the theory ends; a note and choice under a label's *Change how it applies* when the
+  codes of a document are read again; a filter of the Bibliography's lists when a check for retractions ends. Each
+  was emptied or reset; each now keeps what you typed, and the focus.
+- **A file you take off the list while the others are copied is not added.** After *Add*, its × removed it from the
+  list, but it was copied and read in all the same, with the AI setting chosen for the others. It is now left out; a
+  file already copied shows its × switched off. When two files of one name are added together, both are added and the
+  summary says under which name the second one was kept.
+- **The offer of the new reader says what it changes for that kind of file.** A text file read by reader 4 was told
+  reader 5's news (tables and figures in PDFs, "Other text reads the same") although the offer is there because reader
+  7 reads text files otherwise. The notice on Documents and the *Reading* panel now give the news of every reader since
+  the document's that changes its kind of file.
+- **The Concepts page names the app as the app is called** in its window title and two sentences.
+- **The line of a job waiting for Claude Code counts only what Claude Code will be handed.** With the AI mix, the
+  tasks the local model answers first were counted as "Waiting for Claude Code"; the line now leaves them out, and
+  says "Waiting for your local model" when only those wait. The same holds for the app's own count of what waits, for `/enlens-run` without a project (it no longer lists a project where only the local model's tasks wait),
+  and for the "still waiting" a Claude Code helper is told after a batch (an app's helper run no longer ends a helper
+  as failed because of tasks it was never meant to take). Results are not changed.
+- **`enlens run <kind> --limit N` answers N tasks a helper is not answering.** When a Claude Code helper held the
+  first N tasks, the run stopped with nothing done. On the Claude API it now names the model in the AI log and the
+  answers' records as the app's own runs do ("claude-haiku-5-5", not "haiku"); the model asked is the same.
+- **Changing a document's AI setting stays quick with many waiting *Name the groups* tasks.** The check of their
+  concepts read every place each concept occurs, once per task, while the project was locked for writing; it now
+  looks at each concept once, and stops at the first document the AI may read.
+- **A zip that cannot be opened is named.** A zip cut off in a download was passed over without a word, so the add
+  reported nothing and added nothing. It is now listed under the files that could not be read ("damaged zip: copy or
+  download it again"), and the other files are added.
+- **Documents of a kind ENLENS does not read are named.** An older Word file (.doc), rich text (.rtf, .odt) or slides
+  (.pptx) in a folder or zip were passed over without a word. They are now listed under the files that could not be
+  read, with what to do (save them as .docx or PDF). Pictures, spreadsheets and other files that are not documents
+  are still passed over.
+- **A quote is found in text with an invisible right-to-left or left-to-right mark.** Arabic, Hebrew and mixed text
+  from Word, web pages and PDFs keeps these marks; a quote of the words as you see them was not found and was
+  rejected. Quotes that were found before are found as before.
+- **The original of a text file marks a quote of a document read by reader 6** also when the file is saved as
+  ISO-8859-2.
+- **Two files of the same name added in one go are both added.** Two different files called `report.txt` (chosen in
+  two folders) became one document, and the summary counted one. The second now gets a name of its own
+  (`report (2).txt`), as it does when the names differ only by capital letters or accents, or by a `:`, `?` or `*`
+  that cannot be in a file name. A file called like a Windows device (`CON.txt`) gets a `_` in front, and a name too
+  long for the disk is shortened. Can change results: documents that were missing are added.
+- **Stop pressed just after work has finished no longer marks it as stopped.** A finished result (a drafted code
+  definition, for example) was then put aside as if you had stopped it.
+- **Odd requests are answered in words.** A number such as `1e400` in the page's address (`?offset=1e400`), a value of
+  the wrong kind sent by a script, a path too long for any disk, or a token with an accented letter got "Unexpected
+  problem" from the app; it now says what was wrong (or, for the token, how to open ENLENS).
+- **One colleague's odd file no longer stops everyone's rounds.** A bundle whose description named its writer as plain
+  text, held a number where a list belongs, or said it needs a format of 1e999; a head or roster file with such a
+  number; a database without a column ENLENS reads; or a note on what a colleague waits for with a number in place of
+  its list: each made every copy's round (and, for some, the Team tab) fail with an error. Now such a bundle is set
+  aside as damaged and stops that colleague's work only, and the other files are read as saying nothing. No results
+  change.
+- **An invite link of an unexpected shape is refused in words.** A link that was whole but lacked the project's id,
+  or named its sender in an odd way, answered "Not found: 'uid'" or failed; it now says the link is cut off, damaged
+  or made by a newer ENLENS.
+- **A drive whose sharing answer has an unexpected shape** gives a message in words instead of an error.
+
+### Privacy
+
+- **A codebook's text that may carry words of documents an embedding server on another computer may not read stays
+  off it.** Search by meaning sent every code's text to the embedding server set up, wherever it was: a codebook made
+  from theory documents marked *Only a local AI* or *No AI* (or not allowed to that server) quotes them, and an AI's
+  draft of a definition is its reading of documents. Such codes, and any definition quoting six words in a row of a
+  document that server may not read, are now matched by their words only, judged by the documents' settings now. A
+  codebook made from theory before this version is recognised by its research-log entry in its own project, and
+  elsewhere by its definitions' quotations with their source; a definition you have reworded without its quotation
+  is sent as your own words. A server on this computer still gets them all.
+- **A check started from a document is hidden from the AI that may not read that document.** The connector kept such
+  a check out of a Claude chat when Claude may not read the document; started for Codex or Antigravity, it asked about
+  Claude too. It now asks about the AI the connector answers.
+- **The concepts the AI drafts from a theory document stay on your computer.** Its tasks and answers (the document's
+  passages, the draft concepts) went into a zip of what you shared and into the shared folder, though they belong to
+  no item. They stay here now, as the draft definitions of codes and the framework drafts already did; the codebook
+  you make from them, with its quoted definitions, travels when you share it.
+- **A copy made from a colleague's whole-project zip keeps none of their AI drafts.** A zip from a colleague on an
+  older version held their draft names of groups, draft definitions of codes and theory drafts, and a new copy made
+  from it kept them (with their focus and passages). They are left out now; your own backup keeps yours.
+- **No project zip adds consent for a cloud provider.** Which providers may read each document is your own consent,
+  and a zip that said it was yours brought the sender's lists in as yours: nothing in a zip proves whose it is. A copy
+  made from any zip, your own backup or a move to another computer too, now keeps of each list only what the new
+  copy's default allows: a document you kept from Anthropic stays kept from it, a provider the zip adds is not taken,
+  and the Documents page (in every project, shared or not) asks you to tick again what was narrowed.
+- **"Name the groups again" no longer sends an earlier name made from documents the AI may not read now.** The name
+  the AI drafted before goes with the request ("give another"), and it holds words of the documents it was drafted
+  from: it now goes only when the AI may still read every one of them, and a document made stricter while the request
+  waits takes the request out of Claude Code's queue. A colleague's draft name, whose documents this copy cannot
+  tell, is not sent.
+- **A concept named after an abbreviation goes to the AI only when all its wordings may.** Such a concept is named
+  "long form (SHORT)", none of its wordings, and *Name the groups* judged the name by one wording alone: the long form,
+  written only in documents marked *No AI*, could be sent.
+- **A quick look's document is for a local AI only.** Nobody is asked who may read the one document of a quick look,
+  so no cloud AI may: it is marked *Only a local AI*, and the Claude connector cannot read its text. Keep it as a
+  project and ENLENS asks who may read it, as for a new project; your answer then applies to that document too,
+  unless you gave it a setting of its own meanwhile. Until you answer, the question says so.
+- **Documents are never added for Claude without anyone choosing.** A request to add documents (or the
+  bibliography's files) to a project whose AI setting was never chosen, without saying who may read them, took
+  *Claude may read it*; it now adds nothing and says to choose. The Documents page always asked first, so adding
+  documents there is unchanged. When earlier documents follow a setting nobody chose, the answer is the new
+  documents' own, and the result says how many still follow it.
+- **Notifications name no document marked *Only a local AI* or *No AI*.** A notification shows on the lock screen,
+  and its text could hold such a document's title (reading it with the new reader, drafting its concepts), a person
+  named in it (following references) or its file name (in a problem's message, or as the name of a quick look). It
+  now says "a document" (or "a quick look") instead. A hypothesis's text and the project's name are always shown
+  whole.
+- **A label or references run that met a document read again says so in its notification.** The passages of that
+  document wait for the next run; the notification says how many.
+- **A colleague on an older ENLENS whose clock went back can still turn *Keep … out* on.** An older ENLENS dates its
+  description of a colleague by the computer's clock alone. When that clock had been put back, their switch *Keep
+  documents marked Only a local AI or No AI out*, turned on afterwards, looked older than what the other copies had
+  and was set aside, so they went on writing those documents' words into the storage space. A switch turned on is now
+  always taken from such a copy (the stricter setting wins, as it does everywhere); an older description with the
+  switch off, put back in the space, still changes nothing. Once a colleague runs a version that counts its
+  descriptions, an uncounted one of theirs is older by definition and is set aside, so an old file with the switch on,
+  put back, no longer turns it on again.
+- **Text for a model on your computer never goes through a proxy.** With a web proxy set on the computer (the
+  `http_proxy` setting, or a proxy in the system's network settings without an exception for 127.0.0.1), every
+  request to Ollama, LM Studio or another model or embedding server on this computer, with the passages of documents
+  marked *Only a local AI*, went to the proxy, another computer. ENLENS now opens this computer's addresses without a
+  proxy, as it already did for Zotero and the team's storage space.
+- **Only `localhost` and loopback addresses count as this computer.** A local server typed as
+  `localhost.localdomain` or as a name ending in `.localhost` counted as this computer, though some computers ask the
+  network's name server for such names. It is now a server on another computer, as the privacy page says: it reads
+  only documents you allow it. If you used such an address, type `localhost` or `127.0.0.1` instead.
+- **The AI log names the model that really read the text.** With the Claude API it named the model the task was made
+  for (Opus) where Haiku read it, or the first model after a step up; with Codex and Antigravity it named Claude's
+  "haiku" for text sent to OpenAI or Google. It now names the model asked: on Codex and Antigravity the model on the
+  command line ENLENS started the helper with (the same in each answer's record), Claude's own name for Claude Code.
+  Where you start the helpers yourself in Codex or Antigravity, the model is that program's own choice, and the log
+  says it is not known rather than guess. A model test or label comparison answered by Codex or Antigravity
+  is no longer recorded as sent to Anthropic.
+- **The AI's drafts stay on the computer that made them.** *Send what you shared* and the shared folder carried the
+  task behind a code's draft definition (the code's name, its group and the passages of its examples) even when the
+  codebook was private, and the task behind a framework drafted from theory documents (with the focus you wrote).
+  They now stay on your computer, as the draft names of the concept map's groups already did, and none comes in from
+  a colleague. The search words the AI suggested for a concept of the glossary stay too. What you take from a draft
+  goes with the codebook once you share it.
+- **Naming the groups of the concept map sends no concept found only in documents the AI may not read.** The task
+  listed every concept of a group, also a word found only in documents marked *No AI* or *Only a local AI*. It now
+  names only the concepts found in documents its reader may read; a group with none is left for you to name.
+- **A document made stricter while an AI task waits takes the task away from the AI, also when the task names a
+  concept or a title rather than a passage.** *Other wordings* of a concept, *Name the groups* and a framework from
+  theory documents (the titles of your own documents) kept such words in tasks waiting for Claude Code after you
+  marked their documents *No AI*. Such a task now leaves the queue, as a task of passages always did, including tasks
+  made by an earlier version that are still waiting. The answers AI gave before are not changed.
+- **An old file put back in the storage space no longer turns a colleague's *Keep … out* switch off.** When a
+  colleague turned on *Keep documents marked Only a local AI or No AI out*, an older copy of their description put
+  back in the space (by the storage service, a member who can write there, or a drive's version history) made the
+  switch read as off again, and the other copies wrote the kept-out documents' words into the space once more. Each
+  copy now remembers the latest description it took of each colleague and sets an older one aside; the Team tab lists
+  it, as it already did for work that went back. A colleague who really turns the switch off still turns it off.
+
+### For developers
+
+- Model evaluation: a link pair no AI may read is no longer counted as a task (`evaluation.prepare`).
+- The first tool sweep of the bug hunt (ruff's bug rules, pyright, semgrep, eslint, `tsc --checkJs`, CodeQL, coverage): 26
+  faults, each fixed with a test that failed first.
+- CI lints the page's JavaScript (`tools/lint_js.py`: eslint's `no-undef` and `no-async-promise-executor`, both
+  without a finding today).
+
+### Tests
+
+- `tests/test_views_stale_state.py`: views whose state went stale after a select changed or while a request ran.
+
 ## 0.20.3 (November 2026): Antigravity in a home of its own, and what new documents changed
 
 Antigravity now runs for ENLENS in a home folder of its own. The permissions, connectors and credits of your own
