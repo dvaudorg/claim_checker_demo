@@ -310,7 +310,7 @@ class App(LibraryMixin, QueueMixin):
                "backend_label": home.backend_label(s), "backend_labels": home.BACKEND_LABELS,
                "projects": projects, "project": current, "local_only": home.local_only(),
                "launcher": self.launcher, "can_quit": self.stop is not None,
-               "any_host": self.any_host,   # 0.20.4: Settings › This installation says who can reach the app
+               "any_host": self.any_host,   # Settings › This installation says who can reach the app
                "can_restart": self.restart is not None,
                "context": home.context_plan(s),
                "restricted": home.restricted_choice(s),   # 0.11: the local model for restricted documents

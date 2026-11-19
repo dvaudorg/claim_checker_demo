@@ -1621,7 +1621,7 @@ function dataSection() {
     ledgerSection());
 }
 
-// 0.20.4: what the app reaches over the network. The 0.8.2 line ("This computer only · nothing is loaded from the
+// What the app reaches over the network. The 0.8.2 line ("This computer only · nothing is loaded from the
 // internet") stopped being true with update checks, team storage, cloud AI and Crossref lookups.
 function networkText(st) {
   const reach = st.any_host ? "Other computers on your network can open the app (started with --host)."

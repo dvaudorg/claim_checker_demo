@@ -1,4 +1,4 @@
-"""0.20.4: Settings › This installation › Network says what the app reaches over the internet. The 0.8.2 line ("This
+"""Settings › This installation › Network says what the app reaches over the internet. The 0.8.2 line ("This
 computer only · nothing is loaded from the internet") stopped being true with update checks, team storage (Backblaze
 B2, Cloudflare R2, WebDAV), cloud AI and Crossref lookups."""
 from __future__ import annotations
