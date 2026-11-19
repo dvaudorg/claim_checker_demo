@@ -184,9 +184,25 @@ def _others_using(ws: Workspace | None, space_id: str) -> list[str]:
         except (OSError, ValueError):
             continue   # (a project removed since: its keys are nobody's any more)
         sp = cfg.get(CONFIG) if isinstance(cfg, dict) else None
-        if isinstance(sp, dict) and sp.get("id") == space_id:
+        if isinstance(sp, dict) and sp.get("id") == space_id and not _evaluation_copy(p):
             out.append(name)
     return out
+
+
+def _evaluation_copy(root: Path) -> bool:
+    """Whether a project is a copy made to evaluate the AI or test a model (`evaluation._copy` marks its database with
+    meta "evaluation"): it carries the original's config.json, storage space and all, but nobody works in the team
+    through it, so it neither refuses a join nor keeps keys from being forgotten. Unreadable: counted as a project."""
+    import sqlite3
+
+    try:
+        cx = sqlite3.connect(f"{(root / 'enlens.sqlite').as_uri()}?mode=ro", uri=True)
+        try:
+            return cx.execute("SELECT 1 FROM meta WHERE key='evaluation'").fetchone() is not None
+        finally:
+            cx.close()
+    except (sqlite3.Error, ValueError):
+        return False
 
 
 def _forget_secrets(space_id: str, parts: list[str] = (), ws: Workspace | None = None) -> None:
@@ -1413,8 +1429,7 @@ def _json_dict(data: bytes) -> dict | None:
 
 def _taken_of(ctx: _Ctx, part: str) -> dict:
     """What this copy took last of a colleague's small files (`.space-state.json` "taken", per part): the time of their
-    `person.json`, the epoch and number of their `head.json`, and the epochs their copy has left behind (it started
-    afresh). Kept beside the mirror's own copy, which goes when the file goes from the space: a file removed and an
+    `person.json`, and the epoch, number and time of their `head.json`. Kept beside the mirror's own copy, which goes when the file goes from the space: a file removed and an
     older one put back in its place is still known as older."""
     taken = ctx.state.get("taken")
     if not isinstance(taken, dict):
@@ -1430,8 +1445,11 @@ def _older(ctx: _Ctx, part: str, leaf: str, have: Path, data: bytes) -> bool:
     put back by the storage, by a member who can write there, or by a drive's version history: each is signed by that
     colleague and sealed for that very place, so only its words can tell). A copy never goes back:
     - `head.json`: one of the same epoch with a lower number (`_older_head`, which also covers a copy of the state
-      from before the record was kept), or one of an epoch this colleague has left behind. A new epoch seen for the
-      first time is their start afresh, and taken;
+      from before the record was kept), or one of another epoch that is not newer than the head taken (`_head_newer`:
+      written earlier by the colleague's clock, or with a lower number). A start afresh is newer, and taken. No epoch
+      is refused for good: a head is only ever weighed against the one taken, so an honest colleague's next heads
+      (numbers that grow, a clock that goes on) always get through, at worst once their clock passes a head that
+      was taken while it ran fast;
     - `person.json`: one written before the one taken (its "updated_at" and "n", from the colleague's own copy: their
       files are compared only with each other), so a switch they turned on is not turned off again by an old file.
     A file whose words cannot be read is not judged here (it reads as nothing, and the switch as last seen:
@@ -1444,12 +1462,16 @@ def _older(ctx: _Ctx, part: str, leaf: str, have: Path, data: bytes) -> bool:
     if leaf == "head.json":
         if _older_head(have, data):
             return True
-        epoch = new.get("epoch")
-        if isinstance(epoch, str) and epoch in (rec.get("gone") or []):
-            return True
-        last = _as_int(new.get("last"))
-        return epoch == rec.get("epoch") and last is not None and _as_int(rec.get("last")) is not None and \
-            last < _as_int(rec.get("last"))
+        mirror = folder._json(have) or {}
+        held = dict(rec) if isinstance(rec.get("epoch"), str) else mirror   # (no record yet: the mirror's copy)
+        if not isinstance(held.get("epoch"), str):
+            return False   # (nothing taken of theirs yet)
+        if not isinstance(held.get("at"), str) and mirror.get("epoch") == held["epoch"]:
+            held["at"] = mirror.get("at")   # (a record from before "at" was kept)
+        if new.get("epoch") == held["epoch"]:
+            last, had = _as_int(new.get("last")), _as_int(held.get("last"))
+            return last is not None and had is not None and last < had
+        return not _head_newer(new, held)
     if leaf == "person.json":
         had = rec.get("person")
         if not (isinstance(had, list) and len(had) == 2 and isinstance(had[0], str)):
@@ -1457,6 +1479,17 @@ def _older(ctx: _Ctx, part: str, leaf: str, have: Path, data: bytes) -> bool:
         at = _person_age(new)
         return had is not None and (at is None or at < tuple(had))
     return False
+
+
+def _head_newer(new: dict, held: dict) -> bool:
+    """Whether a colleague's head of another epoch than the one taken is the newer of the two: written later by their
+    own clock ("at"), or, when the times are the same or not said, with a number at least as high (a copy's numbers
+    are never reused across its starts afresh, folder.py `_start`). Their old head put back is older on both."""
+    a, b = new.get("at"), held.get("at")
+    if isinstance(a, str) and isinstance(b, str) and a != b:
+        return a > b
+    x, y = _as_int(new.get("last")), _as_int(held.get("last"))
+    return x is None or y is None or x >= y
 
 
 def _person_age(pj: dict) -> tuple[str, int] | None:
@@ -1473,10 +1506,9 @@ def _taken(ctx: _Ctx, part: str, leaf: str, data: bytes) -> None:
         return
     rec = _taken_of(ctx, part)
     if leaf == "head.json" and isinstance(new.get("epoch"), str):
-        if isinstance(rec.get("epoch"), str) and rec["epoch"] != new["epoch"]:
-            gone = [e for e in rec.get("gone") or [] if isinstance(e, str)]
-            rec["gone"] = [*gone, rec["epoch"]][-50:]   # (a colleague starts afresh seldom; the latest are enough)
+        rec.pop("gone", None)   # (kept by an earlier version: an epoch is never refused for good, `_older`)
         rec["epoch"], rec["last"] = new["epoch"], _as_int(new.get("last"))
+        rec["at"] = new.get("at") if isinstance(new.get("at"), str) else None
     elif leaf == "person.json" and _person_age(new) is not None:
         rec["person"] = list(_person_age(new))
 

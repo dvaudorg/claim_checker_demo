@@ -16,7 +16,9 @@
   row a file brings in your name.
 - **Only the person who made a proposal can take it back.** A colleague's file could mark a third person's proposal
   as taken back, so the owner no longer saw it waiting. It now keeps waiting until its maker's own file says so,
-  and the report says that such a file came.
+  and the report says once that such a file came. A proposal the owner has not seen yet that comes through a
+  colleague already taken back is shown only when its maker's own file arrives, so the owner is never asked to
+  decide one its maker withdrew.
 - **A colleague's file can no longer take back your review by naming only its key.**
 - **A document whose id differs from one of yours only in capitals is not brought in.** On a Mac or on Windows its
   original file replaced the original file of your document with the same name. ENLENS never makes such ids: only a

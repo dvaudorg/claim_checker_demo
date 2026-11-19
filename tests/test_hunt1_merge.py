@@ -338,7 +338,8 @@ def test_the_authors_own_file_ends_a_relayed_review_in_their_name(abc, tmp_path)
 
 def test_a_relayed_take_back_of_a_proposal_new_here_is_held_back(abc, tmp_path):
     """MERGE-4 for a proposal the owner's copy does not hold yet: Ben's file brings Carol's proposal already marked
-    taken back. It comes in waiting; Carol's own file (she never took it back) leaves it waiting."""
+    taken back. It is not taken as taken back (after review: nor as waiting, so the owner cannot accept a proposal its
+    maker withdrew): it waits for Carol's own file, which (she never took it back) brings it waiting."""
     anna, ben, carol = abc
     doc = _first_doc(carol)
     with carol:
@@ -351,7 +352,7 @@ def test_a_relayed_take_back_of_a_proposal_new_here_is_held_back(abc, tmp_path):
     forged = _forge(ben.send(), tmp_path / "ben-forged.zip",
                     ("UPDATE proposals SET taken_back_at=? WHERE id=?", (now(), pid)))
     anna.bring_in(forged)
-    assert {p["id"]: p for p in proposals(anna)}[pid]["state"] == "waiting"
+    assert {p["id"]: p for p in proposals(anna)}.get(pid, {}).get("state") != "taken_back"
     anna.bring_in(f)
     assert {p["id"]: p for p in proposals(anna)}[pid]["state"] == "waiting"
 
@@ -486,3 +487,87 @@ def test_a_colleague_who_removed_their_copy_of_your_check_does_not_keep_it_from_
     ben.bring_in(anna.send())
     with ben:
         assert ben.ws.scalar("SELECT 1 FROM hypotheses WHERE hyp_id=?", (hid,))
+
+
+# ---- after review (reviews/sync.md): a relayed take-back must not bring a withdrawn proposal back as new ------------
+def _carol_takes_back(anna, ben, carol):
+    """Carol proposes to remove a document, Ben brings that in, Carol takes it back; Ben then has her take-back."""
+    doc = _first_doc(carol)
+    with carol:
+        carol.ws.remove_document(doc, why="Out of scope")
+    ben.bring_in(carol.send())
+    with carol:
+        pid = carol.ws.scalar("SELECT id FROM proposals WHERE by=? AND kind='remove'", (carol.id,))
+        ownership.take_back(carol.ws, pid)
+    own = carol.send()
+    ben.bring_in(own)
+    with ben:
+        assert ben.ws.scalar("SELECT taken_back_at FROM proposals WHERE id=?", (pid,))
+    return pid, own
+
+
+def test_a_take_back_relayed_first_does_not_bring_the_proposal_to_the_owner_as_new(abc):
+    """Ben's file reaches the owner before Carol's own: the proposal Carol withdrew must not wait for the owner nor be
+    reported as new, and the held take-back is said once, not with every file of Ben's."""
+    anna, ben, carol = abc
+    pid, own = _carol_takes_back(anna, ben, carol)
+    r1 = anna.bring_in(ben.send())
+    assert not [p for p in r1["proposals"]["new"] if p["id"] == pid]
+    assert pid not in {p["id"] for p in proposals(anna, state="waiting")}
+    r2 = anna.bring_in(ben.send())
+    assert not r2["proposals"].get("taken_back_held") and not r2["proposals"]["new"]
+    anna.bring_in(own)
+    assert {p["id"]: p for p in proposals(anna)}[pid]["state"] == "taken_back"
+
+
+def test_a_take_back_from_its_maker_first_stays_taken_back(abc):
+    """The other order: Carol's own file first, then Ben's relaying the same take-back."""
+    anna, ben, carol = abc
+    pid, own = _carol_takes_back(anna, ben, carol)
+    anna.bring_in(own)
+    r = anna.bring_in(ben.send())
+    assert {p["id"]: p for p in proposals(anna)}[pid]["state"] == "taken_back"
+    assert not r["proposals"].get("taken_back_held") and not r["proposals"]["new"]
+
+
+def test_a_relayed_take_back_of_a_waiting_proposal_is_said_once(abc, tmp_path):
+    """MERGE-4's own case, counted once per proposal: the forged take-back is held back with each of Ben's files, and
+    the report says so the first time only."""
+    anna, ben, carol = abc
+    doc = _first_doc(carol)
+    with carol:
+        carol.ws.remove_document(doc, why="Out of scope")
+    f = carol.send()
+    anna.bring_in(f)
+    ben.bring_in(f)
+    pid = [p for p in proposals(anna, state="waiting") if p["kind"] == "remove"][0]["id"]
+    forged = _forge(ben.send(), tmp_path / "ben-forged.zip",
+                    ("UPDATE proposals SET taken_back_at=? WHERE id=?", (now(), pid)))
+    assert anna.bring_in(forged)["proposals"].get("taken_back_held") == 1
+    assert not anna.bring_in(forged)["proposals"].get("taken_back_held")
+    assert {p["id"]: p for p in proposals(anna)}[pid]["state"] == "waiting"
+
+
+def test_a_removal_note_by_key_alone_is_applied_once_the_review_is_here(abc, tmp_path):
+    """After review (MERGE-2): a note naming a review by its key alone, for a review this copy does not hold, takes
+    nothing back and is not noted. The review then comes relayed; the remover's next file, still carrying the note,
+    takes it back here (the remover is its author)."""
+    anna, ben, carol = abc
+    doc = _first_doc(anna)
+    with anna:
+        pid = anna.ws.scalar("SELECT passage_id FROM passages WHERE doc_id=? ORDER BY seq LIMIT 1", (doc,))
+        lid = profile.add_label(anna.ws, "sdg", pid, "6.4")
+        profile.set_label(anna.ws, lid, "accept")
+        key = people.review_key(dict(anna.ws.query("SELECT * FROM reviews WHERE item_kind='label' AND item_id=?",
+                                                   (lid,))[0]))
+    carol.bring_in(anna.send())
+    took_back = (("DELETE FROM reviews WHERE item_kind='label' AND item_id=?", (lid,)),
+                 ("INSERT INTO sync_removed(kind, key, title, at, person_id) VALUES ('review', ?, NULL, ?, ?)",
+                  (key, now(), anna.id)))
+    ben.bring_in(_forge(anna.send(), tmp_path / "anna-1.zip", *took_back))
+    ben.bring_in(carol.send())  # the review comes relayed
+    with ben:
+        assert ben.ws.scalar("SELECT COUNT(*) FROM reviews WHERE item_kind='label' AND item_id=?", (lid,)) == 1
+    ben.bring_in(_forge(anna.send(), tmp_path / "anna-2.zip", *took_back))
+    with ben:
+        assert ben.ws.scalar("SELECT COUNT(*) FROM reviews WHERE item_kind='label' AND item_id=?", (lid,)) == 0

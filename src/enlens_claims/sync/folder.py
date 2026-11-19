@@ -1597,8 +1597,12 @@ def _person(mine: Path, me: str, name: str, keep_out: bool) -> None:
     have = _json(mine / "person.json") or {}
     if {k: have.get(k) for k in want} != want:
         # "n" counts this copy's writes of the file: with "updated_at" (whole seconds) it tells a storage space's copies
-        # which of two files is the newer, so an older one put back there is set aside (space.py `_older`)
-        _put_json(mine / "person.json", {**want, "updated_at": now(), "n": (_int(have.get("n")) or 0) + 1})
+        # which of two files is the newer, so an older one put back there is set aside (space.py `_older`).
+        # "updated_at" never goes back: a clock that ran fast and was put right must not make the next file look older
+        # than the last one (a switch turned on would be set aside until the clock caught up)
+        at, before = now(), have.get("updated_at")
+        _put_json(mine / "person.json", {**want, "updated_at": max(at, before) if isinstance(before, str) else at,
+                                         "n": (_int(have.get("n")) or 0) + 1})
 
 
 # ---------------------------------------------------------------------------------------------

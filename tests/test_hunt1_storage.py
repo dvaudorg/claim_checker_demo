@@ -342,3 +342,113 @@ def test_a_drive_answering_sharing_in_an_odd_shape_is_a_problem_in_words(monkeyp
     monkeypatch.setattr(_web, "send_retrying", lambda *a, **k: _web.Reply(200, {}, b'{"ocs": {"meta": "x"}}'))
     with pytest.raises(webdav.WebDAVProblem):
         webdav.unshare("https://drive.example.org/remote.php/dav/files/anna/", "anna", "pw", "7")
+
+
+# ---------------------------------------------------------------------------------------------
+# the review of 19 November 2026 (reviews/sync.md)
+# ---------------------------------------------------------------------------------------------
+def test_an_old_head_of_an_epoch_never_seen_does_not_block_the_colleagues_real_work(team, store_dir):
+    """STORAGE-4, review: this copy's record knows only the colleague's epoch after they started afresh (a bare
+    record: they started afresh before this copy ran this version). Their head from before is put back: it was taken,
+    the real epoch was then counted as left behind, and every later head of theirs was set aside for good."""
+    from enlens_claims import sharing
+
+    anna, carol = team
+    for p in (anna, carol, anna, carol):
+        _round(p)
+    hc = _check(carol, "Hydrogen storage is cheap.")
+    _share(carol, "check", hc)
+    _round(carol)
+    f = _space_dir(carol, store_dir) / "parts" / _part_of(carol) / "m" / "head.json"
+    old = f.read_bytes()                       # Carol's head before she starts afresh (epoch E0)
+    with carol:
+        sharing.unshare(carol.ws, [{"kind": "check", "key": hc}])   # a new epoch, E1
+    _round(carol)
+    _round(anna)
+    with anna:
+        state_file = space.mirror_of(anna.ws) / ".space-state.json"
+    st = json.loads(state_file.read_text())
+    st.pop("taken", None)                      # a bare record, as an earlier version left it
+    state_file.write_text(json.dumps(st))
+    f.write_bytes(old)                         # E0 put back
+    with anna:
+        out = folder.sync_now(anna.ws)
+    assert not [x for x in out["problems"] if (x.get("person") or {}).get("id") == carol.id]
+    h2 = _check(carol, "Fuel cells need platinum.")   # Carol writes again, in her real epoch
+    _share(carol, "check", h2)
+    _round(carol)
+    _round(anna)
+    with anna:
+        assert _has(anna.ws, h2)
+
+
+class _Bare:
+    def __init__(self):
+        self.state = {}
+
+
+def test_no_record_sets_an_honest_colleagues_heads_aside_for_good(tmp_path):
+    """STORAGE-4, review: from any record, the colleague's next heads get through. Even when an old head of another
+    epoch with a higher number was taken (heads without a time, from the review's proof), the real epoch's heads are
+    taken again as soon as their numbers pass it, never set aside for ever."""
+    ctx, part, have = _Bare(), "m0123456789ab", tmp_path / "head.json"
+
+    def pull(h):
+        data = json.dumps(h).encode()
+        if space._older(ctx, part, "head.json", have, data):
+            return "set aside"
+        space._taken(ctx, part, "head.json", data)
+        have.write_bytes(data)
+        return "taken"
+
+    assert pull({"epoch": "E1", "last": 5}) == "taken"
+    pull({"epoch": "E0", "last": 9})
+    assert pull({"epoch": "E1", "last": 50}) == "taken"
+    assert pull({"epoch": "E1", "last": 51}) == "taken"
+    # with times, as ENLENS writes them: the old head is older, and the real stream goes on
+    ctx, have = _Bare(), tmp_path / "h2.json"   # (the same, for another colleague)
+    assert pull({"epoch": "E1", "last": 5, "at": "2026-11-18T10:00:00+00:00"}) == "taken"
+    assert pull({"epoch": "E0", "last": 9, "at": "2026-11-17T10:00:00+00:00"}) == "set aside"
+    assert pull({"epoch": "E1", "last": 6, "at": "2026-11-18T11:00:00+00:00"}) == "taken"
+    assert pull({"epoch": "E2", "last": 1, "at": "2026-11-19T10:00:00+00:00"}) == "taken"   # a start afresh, numbers lost
+
+
+def test_a_switch_turned_on_after_a_fast_clock_was_put_right_is_taken(team, monkeypatch):
+    """STORAGE-1, review: Carol's person.json written while her clock ran fast (n=4, a later time), then, with the
+    clock put right, her "keep out" switch turned on (n=5, an earlier time): every copy set the new file aside."""
+    anna, carol = team
+    for p in (anna, carol, anna, carol):
+        _round(p)
+    real_now = folder.now
+    monkeypatch.setattr(folder, "now", lambda: "2099-01-01T00:00:00+00:00")   # the clock runs fast
+    with carol:
+        folder.set_keep_out(carol.ws, True)
+    _round(carol)
+    with carol:
+        folder.set_keep_out(carol.ws, False)
+    _round(carol)
+    _round(anna)
+    monkeypatch.setattr(folder, "now", real_now)                              # and is put right
+    with carol:
+        folder.set_keep_out(carol.ws, True)
+    _round(carol)
+    _round(anna)
+    with anna:
+        team_dir = space.mirror_of(anna.ws) / folder.team_name(anna.ws)
+        st = folder.keep_out_state(anna.ws, team_dir)
+    assert st["in_force"] and st["colleagues"] == ["Carol"]
+
+
+def test_an_evaluation_copy_of_a_project_does_not_hold_the_space(team):
+    """STORAGE-2, review: an evaluation or model-test copy (`evaluation._copy`) carries config.json with the storage
+    space in it. It must not refuse a join ("Open the project ‘X model test’"), nor keep the keys when the project
+    itself leaves the space."""
+    from enlens_claims import evaluation, keychain
+
+    anna, _carol = team
+    with anna:
+        evaluation._copy(anna.ws, "Anna model test")
+        sid = space.configured(anna.ws)["id"]
+        assert space._others_using(None, sid) == [Path(anna.ws.root).name]
+        space.leave(anna.ws)
+        assert keychain.get(space._secret_name(sid, "me")) is None
