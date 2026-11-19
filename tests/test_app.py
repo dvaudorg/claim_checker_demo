@@ -269,7 +269,7 @@ def test_api_project_sources_check_and_results(api, corpus):
     for f in sorted(corpus.iterdir()):
         st, up = api("POST", f"/api/projects/Demo/uploads?batch=b1&name={f.name}", raw=f.read_bytes())
         assert st == 200 and up["name"] == f.name
-    st, r = api("POST", "/api/projects/Demo/ingest", {"batch": "b1"})
+    st, r = api("POST", "/api/projects/Demo/ingest", {"ai_access": "cloud", "batch": "b1"})
     job = api.wait(r["job"]["id"])
     assert job["state"] == "done" and job["result"]["added"] == 3 and len(job["result"]["documents_added"]) == 3
     docs = api("GET", "/api/projects/Demo/documents")[1]["documents"]
@@ -338,7 +338,7 @@ def test_api_check_with_a_local_server_semantic_index_and_cancel(api, corpus):
                                      "embed_backend": "ollama", "embed_model": fake_servers.FAKE_EMBED})
         assert api("POST", "/api/servers/test")[1]["embedding"]["dimensions"] == 64
         api("POST", "/api/projects", {"name": "P"})
-        st, r = api("POST", "/api/projects/P/ingest", {"path": str(corpus)})
+        st, r = api("POST", "/api/projects/P/ingest", {"ai_access": "cloud", "path": str(corpus)})
         job = api.wait(r["job"]["id"])
         assert job["result"]["semantic_index"]["complete"] is True
         assert api("GET", "/api/projects/P")[1]["search"]["embedded"] > 0
@@ -506,7 +506,7 @@ def test_a_document_reads_by_paragraph_or_page(api, corpus):
     api("POST", "/api/projects", {"name": "Docs"})
     for f in sorted(corpus.iterdir()):
         api("POST", f"/api/projects/Docs/uploads?batch=b1&name={f.name}", raw=f.read_bytes())
-    api.wait(api("POST", "/api/projects/Docs/ingest", {"batch": "b1"})[1]["job"]["id"])
+    api.wait(api("POST", "/api/projects/Docs/ingest", {"ai_access": "cloud", "batch": "b1"})[1]["job"]["id"])
     docs = api("GET", "/api/projects/Docs/documents")[1]["documents"]
     for d in docs:
         st, v = api("GET", f"/api/projects/Docs/documents/{d['doc_id']}?view=blocks&limit=500")
@@ -520,11 +520,11 @@ def test_the_original_file_opens_safely_and_a_moved_file_is_said_plainly(api, co
     api("POST", "/api/projects", {"name": "F"})
     for f in sorted(corpus.iterdir()):
         api("POST", f"/api/projects/F/uploads?batch=b1&name={f.name}", raw=f.read_bytes())
-    api.wait(api("POST", "/api/projects/F/ingest", {"batch": "b1"})[1]["job"]["id"])
+    api.wait(api("POST", "/api/projects/F/ingest", {"ai_access": "cloud", "batch": "b1"})[1]["job"]["id"])
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "field_notes.txt").write_text("Notes kept outside the project.\n\nHydrogen needs water in deserts.\n" * 3)
-    api.wait(api("POST", "/api/projects/F/ingest", {"path": str(outside / "field_notes.txt")})[1]["job"]["id"])
+    api.wait(api("POST", "/api/projects/F/ingest", {"ai_access": "cloud", "path": str(outside / "field_notes.txt")})[1]["job"]["id"])
     docs = {d["file"]: d["doc_id"] for d in api("GET", "/api/projects/F/documents")[1]["documents"]}
 
     def get(doc, extra=""):
@@ -573,7 +573,7 @@ def _social_project(api, url, name="S"):
     api("POST", "/api/projects", {"name": name})
     import tempfile
     folder = social_documents(Path(tempfile.mkdtemp()) / "docs", make_pdf)
-    job = api.wait(api("POST", f"/api/projects/{name}/ingest", {"path": str(folder)})[1]["job"]["id"])
+    job = api.wait(api("POST", f"/api/projects/{name}/ingest", {"ai_access": "cloud", "path": str(folder)})[1]["job"]["id"])
     assert job["state"] == "done", job
     return folder
 
@@ -679,7 +679,7 @@ def test_api_map_calibration_new_documents_and_project_zip(api, tmp_path, monkey
         (tmp_path / "late").mkdir()
         (tmp_path / "late" / "late_commute_study.txt").write_text(
             "A late study of commuting. Working from home reduces commuting emissions by a fifth in our sample. " * 3)
-        api.wait(api("POST", "/api/projects/Z/ingest", {"path": str(tmp_path / "late")})[1]["job"]["id"])
+        api.wait(api("POST", "/api/projects/Z/ingest", {"ai_access": "cloud", "path": str(tmp_path / "late")})[1]["job"]["id"])
         rows = {r["hyp_id"]: r for r in api("GET", "/api/projects/Z/hypotheses")[1]["hypotheses"]}
         assert rows[hids[0]]["docs_added_since"] == 1
         h = api("GET", f"/api/projects/Z/hypotheses/{hids[0]}")[1]

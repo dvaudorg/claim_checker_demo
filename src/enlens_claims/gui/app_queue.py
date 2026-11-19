@@ -6,7 +6,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .api_common import ONE_START, ApiError, Cancelled, Job, _body_int, _bool, _list, _str, benchmark_table
+from .api_common import ONE_START, ApiError, Cancelled, Job, _body_int, _bool, _list, _str, benchmark_table, once, restricted
 from .progress import Tracker
 from .. import access, addons, claimcheck, frameworks, home, runs as runs_mod, taskqueue, tasks as tasks_mod
 from ..claude_setup import setup_info as claude_setup_info
@@ -284,14 +284,23 @@ class QueueMixin:
         pids = body.get("passage_ids")  # 0.16: only these passages (a code labelled again after its wording changed)
         if pids is not None and not (isinstance(pids, list) and all(isinstance(p, str) for p in pids)):
             raise ApiError(400, "passage_ids must be a list of passage ids.")
-        job = self._model_job("label", f"The AI labels passages ({fw})", name, lambda job, be, model, prog:
-                               profile.run_labels(ws, fw, be, model, docs, bool(body.get("all_passages")), limit,
-                                                  progress=prog, should_stop=job.cancel.is_set, passage_ids=pids,
-                                                  force=bool(body.get("force"))),
-                               # 0.20.1: the local model's own panel started it (its Start is the one start)
-                               local_start=body.get("local") if body.get("local") in ("go", "force") else None)
-        job.scope = ",".join(docs) if docs else fw
-        return job
+        def start() -> Job:
+            job = self._model_job("label", f"The AI labels passages ({fw})", name, lambda job, be, model, prog:
+                                   profile.run_labels(ws, fw, be, model, docs, bool(body.get("all_passages")), limit,
+                                                      progress=prog, should_stop=job.cancel.is_set, passage_ids=pids,
+                                                      force=bool(body.get("force"))),
+                                   # 0.20.1: the local model's own panel started it (its Start is the one start)
+                                   local_start=body.get("local") if body.get("local") in ("go", "force") else None)
+            job.scope = ",".join(docs) if docs else fw
+            return job
+
+        # hunt phase 1.5: pressed twice (or in two tabs), the same run is the job already there; another run with the
+        # same codebook would label the same passages beside it
+        key = ("label", fw, tuple(sorted(docs)) if docs else None, bool(body.get("all_passages")), limit,
+               tuple(sorted(pids)) if pids else None, bool(body.get("force")))
+        return once(self, name, "label", key, start, clash=lambda j: (getattr(j, "start_key", None) or ("", ""))[1] == fw,
+                    words=f"The AI labels passages with the codebook {fw} already: wait until it has finished, or stop "
+                          "it in the sidebar, then start this one.")
 
     def start_label_compare(self, name: str, body: dict) -> Job:
         from .. import profile
@@ -371,7 +380,11 @@ class QueueMixin:
                              should_stop=job.cancel.is_set)
             return {"run_id": rid}
 
-        return self.jobs.start("themes", f"Finding {k} themes", name, run, uses_model=False)
+        # hunt phase 1.5: pressed twice, the same themes are the job already there; other themes wait for the end
+        return once(self, name, "themes", ("themes", k, seed, mode),
+                    lambda: self.jobs.start("themes", f"Finding {k} themes", name, run, uses_model=False),
+                    clash=lambda j: True, words="Themes are being found in this project already: wait until that has "
+                                                "finished, or stop it in the sidebar, then start again.")
 
     def start_theme_names(self, name: str, run_id: str) -> Job:
         from .. import themes
@@ -379,9 +392,10 @@ class QueueMixin:
         ws = self.ws(name)
         if not ws.scalar("SELECT 1 FROM theme_runs WHERE run_id=?", (run_id,)):
             raise ApiError(404, "No such set of themes.")
-        return self._model_job("theme-names", "The AI names the themes", name,
-                               lambda job, be, model, prog: themes.name_with_model(ws, run_id, be, model, prog,
-                                                                                   job.cancel.is_set))
+        return once(self, name, "theme-names", ("theme-names", run_id),   # hunt phase 1.5: pressed twice, one job
+                    lambda: self._model_job("theme-names", "The AI names the themes", name,
+                                            lambda job, be, model, prog: themes.name_with_model(
+                                                ws, run_id, be, model, prog, job.cancel.is_set)))
 
     def start_new_theme(self, name: str, run_id: str, body: dict) -> Job:
         """A new theme in place of a removed one (themes.new_theme): on this computer, no AI."""
@@ -436,6 +450,8 @@ class QueueMixin:
         job = self._model_job("resolve", title, name, lambda job, be, model, prog: references.resolve_document(
             ws, doc_id, be, model, who, prog, job.cancel.is_set))
         job.scope = doc_id
+        if who and restricted(ws, [doc_id]):   # hunt phase 1.5: a notification does not name the person in it
+            job.note_title = "Following references in a document"
         return job
 
     def start_quicklook(self, filename: str, path: Path) -> tuple[str, Job]:
@@ -453,7 +469,10 @@ class QueueMixin:
             shutil.rmtree(ws.root, ignore_errors=True)
             raise
         home.update_settings({"project": name})
-        job = self.start_ingest(name, {"batch": "quicklook"})
+        # hunt phase 1.5: a quick look is for reading without AI, and nobody is asked who may read its document: only a
+        # local AI may (its own setting), and the project's default stays unchosen, so keeping it asks (it took "Claude
+        # may read it", and the connector could search it)
+        job = self.start_ingest(name, {"batch": "quicklook"}, own_access="local")
         job.kind = "quicklook"
         return name, job
 

@@ -280,7 +280,7 @@ def _project(api, files):
     api("POST", "/api/projects", {"name": "R"})
     for f in files:
         api("POST", f"/api/projects/R/uploads?batch=b1&name={f.name}", raw=f.read_bytes())
-    api.wait(api("POST", "/api/projects/R/ingest", {"batch": "b1"})[1]["job"]["id"])
+    api.wait(api("POST", "/api/projects/R/ingest", {"ai_access": "cloud", "batch": "b1"})[1]["job"]["id"])
     return api("GET", "/api/projects/R/documents")[1]["documents"]
 
 

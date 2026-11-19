@@ -69,6 +69,9 @@ class Job:
         # also has work for Claude
         self.gate = LocalGate()
         self.used_models: set[tuple[str, str]] = set()   # 0.19.15: (address, model) of the local models it asked
+        # hunt phase 1.5: the title a notification gives a job about a document marked Only a local AI or No AI (its
+        # own title, or its error, would name it on a lock screen: notify.note_for); None: its title
+        self.note_title: str | None = None
 
     def view(self, full: bool = True) -> dict:
         end = self.finished or time.time()
@@ -147,6 +150,47 @@ WHERE_OF_KIND = {
     "retractions": "crossref",
     **dict.fromkeys(("ollama-install", "model-pull", "claude-install", "space-setup"), "none"),
 }
+
+
+_START_LOCKS: dict[str, threading.Lock] = {}
+_START_LOCKS_GUARD = threading.Lock()
+
+
+def start_lock(project: str) -> threading.Lock:
+    """Hunt phase 1.5: the project's own lock for the look for the same work already there and the start of a new job,
+    as one step (two presses at one moment). Per project, so no other project waits for it; held for the look and the
+    start only, never across the work."""
+    with _START_LOCKS_GUARD:
+        return _START_LOCKS.setdefault(project, threading.Lock())
+
+
+def once(app, project: str, kind: str, key, start: Callable[[], "Job"], clash: Callable[["Job"], bool] | None = None,
+         words: str = "") -> "Job":
+    """Hunt phase 1.5 (the owner's rule): the server, not only the page's buttons, guards against a double start. A
+    second start of the same work (`key`) in the same project gets the job already queued or running back; one of
+    other work of the same kind that would clash with a live one (`clash`) is a 409 in `words`. `start()` makes the
+    job (its plain mistakes are still reported at once)."""
+    with start_lock(project):
+        live = [j for j in app.jobs.all() if j.project == project and j.kind == kind
+                and j.state in ("queued", "running")]
+        for j in live:
+            if getattr(j, "start_key", None) == key:
+                return j
+        if clash is not None and any(clash(j) for j in live):
+            raise ApiError(409, words)
+        job = start()
+        job.start_key = key
+        return job
+
+
+def restricted(ws, doc_ids) -> bool:
+    """Hunt phase 1.5: whether any of these documents is marked Only a local AI or No AI (a notification about a job
+    of them then names none: `Job.note_title`)."""
+    from .. import access
+
+    ids = [d for d in doc_ids if d]
+    return bool(ids) and any(v in ("local", "none") for v in
+                             access.levels(ws, ids, budget=False, provider=None).values())
 
 
 def job_where(job: Job) -> str | None:
@@ -747,7 +791,9 @@ def _disposition(fname: str) -> str:
     from urllib.parse import quote
 
     fname = re.sub(r"[\x00-\x1f\x7f]+", " ", fname)  # a line break in a name from someone's zip: no header of its own
-    ascii_name = fname.encode("ascii", "replace").decode().replace("?", "_").replace('"', "")
+    # (hunt phase 1.5: and no backslash: in the quoted name it escapes the next character, the closing quote at the
+    # end of "notes\", and the browser then lost the name)
+    ascii_name = fname.encode("ascii", "replace").decode().replace("?", "_").replace('"', "").replace("\\", "_")
     return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(fname)}"
 
 

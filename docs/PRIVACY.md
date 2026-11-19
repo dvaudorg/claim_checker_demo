@@ -43,12 +43,13 @@ Releases are downloaded from GitHub ([below](#other-online-services-not-ai)).
 Nothing is sent to Claude until the researcher runs a feature that uses the AI. With Claude Code, the default route,
 the work then waits until the researcher starts Claude Code
 ([Start Claude Code](manual/claude-code.md#start-claude-code)). In the app, the first documents added to a new
-project ask who may read them, with nothing preselected (`access.default_chosen`). The command line (`enlens ingest
---ai-access`) and the connector (`create_project`, `add_sources`, `use_folder_as_project`: `ai_access`) ask too
+project ask who may read them, with nothing preselected (`access.default_chosen`). The app's own routes (adding
+documents, the bibliography's files), the command line (`enlens ingest --ai-access`) and the connector (`create_project`, `add_sources`, `use_folder_as_project`: `ai_access`) ask too
 (`ingest.adding_access`): without a setting they add nothing to a project whose default was never chosen, and take
 the default once it is chosen. The connector refuses a setting looser than the chosen default (only the person opens
 documents wider). A setting given for new documents becomes the default only when no earlier document follows an
-unchosen one; otherwise it is the new documents' own.
+unchosen one; otherwise it is the new documents' own. A quick look at one document asks nobody: its document is
+*Only a local AI*, and the quick look's default stays unchosen, so keeping it as a project asks.
 
 ## Each document's AI setting
 

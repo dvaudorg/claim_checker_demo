@@ -212,6 +212,14 @@ def reread_excerpt(ws: Workspace, claim_id: str, passage_id: str, backend, model
               "confidence": v["confidence"] if v and v["verdict"] in GRADES else None}
     try:
         ok, _errs = tasks.run_one(ws, tid, backend, model)
+    except KeyError:
+        if ws.scalar("SELECT 1 FROM tasks WHERE task_id=?", (tid,)):
+            raise
+        # hunt phase 1.5: the document was read with the new reader while the AI read the excerpt (a round of the
+        # shared folder moves an accepted reading): the move asked its task again (reread.py), and the answer, about a
+        # passage id that now names other text, is not stored. Said in words, not as "unknown task …"
+        raise ValueError("This document was read with the new reader while the AI was reading the excerpt again, so "
+                         "its answer was not kept. Nothing else changed: read the excerpt again now.") from None
     except BaseException:
         with ws.connect() as cx:  # stopped: nothing changes, and it can be asked again
             cx.execute("DELETE FROM results WHERE task_id=?", (tid,))

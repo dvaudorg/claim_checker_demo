@@ -29,7 +29,7 @@ def _project(api, name="P", docs=()):
     if docs:
         for i, text in enumerate(docs):
             assert api("POST", f"/api/projects/{name}/uploads?batch=b0&name=d{i}.txt", raw=text.encode())[0] == 200
-        st, r = api("POST", f"/api/projects/{name}/ingest", {"batch": "b0"})
+        st, r = api("POST", f"/api/projects/{name}/ingest", {"ai_access": "cloud", "batch": "b0"})
         assert st == 200, r
         assert api.wait(r["job"]["id"])["state"] == "done"
 
@@ -46,7 +46,7 @@ def test_two_files_of_the_same_name_in_one_upload_are_both_added(served):
     a, b = _doc_text("wind energy"), _doc_text("water management")
     assert api("POST", "/api/projects/P/uploads?batch=b1&name=report.txt", raw=a.encode())[0] == 200
     assert api("POST", "/api/projects/P/uploads?batch=b1&name=report.txt", raw=b.encode())[0] == 200
-    st, r = api("POST", "/api/projects/P/ingest", {"batch": "b1"})
+    st, r = api("POST", "/api/projects/P/ingest", {"ai_access": "cloud", "batch": "b1"})
     job = api.wait(r["job"]["id"])
     assert job["state"] == "done", job["error"]
     assert job["result"]["added"] == 2
@@ -79,7 +79,7 @@ def test_two_files_whose_names_are_one_file_name_are_both_kept(served, first, se
     st2, r2 = api("POST", f"/api/projects/P/uploads?batch=b1&name={quote(second)}", raw=_doc_text("rivers").encode())
     assert st1 == st2 == 200, (r1, r2)
     assert _name_key(r1["name"]) != _name_key(r2["name"]), (r1, r2)
-    st, r = api("POST", "/api/projects/P/ingest", {"batch": "b1"})
+    st, r = api("POST", "/api/projects/P/ingest", {"ai_access": "cloud", "batch": "b1"})
     job = api.wait(r["job"]["id"])
     assert job["state"] == "done" and job["result"]["added"] == 2, job
 
@@ -102,7 +102,7 @@ def test_a_second_upload_of_a_name_that_is_cut_off_leaves_the_first_file(served)
     conn.sock.shutdown(1)   # the client stops sending: the server reads to the end and finds the body cut off
     assert conn.getresponse().status == 400
     conn.close()
-    st, r = api("POST", "/api/projects/P/ingest", {"batch": "b1"})
+    st, r = api("POST", "/api/projects/P/ingest", {"ai_access": "cloud", "batch": "b1"})
     job = api.wait(r["job"]["id"])
     assert job["state"] == "done" and job["result"]["added"] == 1, job
 
@@ -160,7 +160,7 @@ def test_documents_of_a_removed_project_never_land_in_a_new_project_of_its_name(
         return real(ws, inputs, progress=prog, **kw)
 
     monkeypatch.setattr(ingest, "ingest", slow_reader)
-    st, r = api("POST", "/api/projects/P/ingest", {"path": str(src)})
+    st, r = api("POST", "/api/projects/P/ingest", {"ai_access": "cloud", "path": str(src)})
     assert st == 200, r
     assert at_second.wait(20)
     removed = api("DELETE", "/api/projects/P", {"confirm": "P"})[0]
@@ -192,7 +192,7 @@ def _held_ingest(api, monkeypatch, tmp_path, project="P"):
         return real(ws, inputs, progress=prog, **kw)
 
     monkeypatch.setattr(ingest, "ingest", slow_reader)
-    st, r = api("POST", f"/api/projects/{project}/ingest", {"path": str(src)})
+    st, r = api("POST", f"/api/projects/{project}/ingest", {"ai_access": "cloud", "path": str(src)})
     assert st == 200, r
     assert at_second.wait(20)
     return r["job"]["id"], go_on
@@ -279,7 +279,7 @@ def test_stop_pressed_after_a_job_has_finished_does_not_mark_it_stopped(served):
     api, _app = served
     _project(api)
     assert api("POST", "/api/projects/P/uploads?batch=b1&name=a.txt", raw=_doc_text("forests").encode())[0] == 200
-    st, r = api("POST", "/api/projects/P/ingest", {"batch": "b1"})
+    st, r = api("POST", "/api/projects/P/ingest", {"ai_access": "cloud", "batch": "b1"})
     job = api.wait(r["job"]["id"])
     assert job["state"] == "done" and job["stopped"] is False
     api("POST", f"/api/jobs/{job['id']}/cancel")
@@ -490,7 +490,7 @@ def _new_document_by_queue(api, app, tmp_path, monkeypatch):
     monkeypatch.setattr(store, "_dt", _SkewedDatetime(2))   # stored times have whole seconds
     (tmp_path / "late").mkdir()
     (tmp_path / "late" / "late.txt").write_text(_doc_text("solar power") + " A late study.")
-    assert api.wait(api("POST", "/api/projects/P/ingest", {"path": str(tmp_path / "late")})[1]["job"]["id"])["state"] == "done"
+    assert api.wait(api("POST", "/api/projects/P/ingest", {"ai_access": "cloud", "path": str(tmp_path / "late")})[1]["job"]["id"])["state"] == "done"
     assert api("GET", f"/api/projects/P/hypotheses/{hid}")[1]["docs_added_since"]
     assert api("PUT", "/api/settings", {"backend": "claude_code"})[0] == 200 and app.queue_mode()
     return hid
@@ -566,8 +566,8 @@ def test_a_slow_removal_holds_no_other_project_up_and_nothing_starts_in_the_one_
     try:
         assert moving.wait(10)
         lister, listed = _in_thread(lambda: api("GET", "/api/jobs"))
-        starter, started = _in_thread(lambda: api("POST", "/api/projects/Q/ingest", {"batch": "b1"}))
-        refused, refusal = _in_thread(lambda: api("POST", "/api/projects/P/ingest", {"batch": "b1"}))
+        starter, started = _in_thread(lambda: api("POST", "/api/projects/Q/ingest", {"ai_access": "cloud", "batch": "b1"}))
+        refused, refusal = _in_thread(lambda: api("POST", "/api/projects/P/ingest", {"ai_access": "cloud", "batch": "b1"}))
         for t in (lister, starter, refused):
             t.join(5)
         assert listed.get("out", (None,))[0] == 200, "the job list waited for the removal"

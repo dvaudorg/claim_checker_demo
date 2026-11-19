@@ -227,7 +227,7 @@ def resolve_document(ws: Workspace, doc_id: str, backend, model: str, name: str 
     ids = make_tasks(ws, doc_id, model, name)
     todo = [t for t in ids if ws.scalar("SELECT status FROM tasks WHERE task_id=?", (t,)) != "done"]
     rid = runs.start(ws, "resolve", doc_id, backend, model, len(todo))
-    done = failed = 0
+    done = failed = moved = 0
     for i, tid in enumerate(todo, 1):
         if should_stop and should_stop():
             break
@@ -236,12 +236,23 @@ def resolve_document(ws: Workspace, doc_id: str, backend, model: str, name: str 
         if ws.scalar("SELECT status FROM tasks WHERE task_id=?", (tid,)) == "failed":
             with ws.connect() as cx:
                 cx.execute("UPDATE tasks SET status='pending', attempts=0 WHERE task_id=?", (tid,))
-        ok, _e = tasks.run_one(ws, tid, backend, model)
+        # hunt phase 1.5: the document read with the new reader meanwhile drops its windows' tasks (reread.py: the
+        # next request reads the new windows); the rest of this run has nothing to read, and must not fail on them
+        try:
+            ok, _e = tasks.run_one(ws, tid, backend, model) if ws.scalar(
+                "SELECT 1 FROM tasks WHERE task_id=?", (tid,)) else (None, [])
+        except KeyError:
+            if ws.scalar("SELECT 1 FROM tasks WHERE task_id=?", (tid,)):
+                raise
+            ok = None
+        if ok is None:
+            moved += 1
+            continue
         done += ok
         failed += not ok
     runs.finish(ws, rid, done + failed)
     return {"doc_id": doc_id, "windows": len(ids), "read": done, "failed": failed,
-            "already_read": len(ids) - len(todo), "chains": len(chains(ws, doc_id))}
+            "already_read": len(ids) - len(todo), "chains": len(chains(ws, doc_id)), "read_again_meanwhile": moved}
 
 
 def chains(ws: Workspace, doc_id: str) -> list[dict]:

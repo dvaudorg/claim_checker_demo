@@ -337,7 +337,10 @@ class SetupApi:
                 raise ValueError("Claude Code could not be installed. " + (r["text"][-600:] or ""))
             return r
 
-        return {"job": self.app.jobs.start("claude-install", "Installing Claude Code", None, run, uses_model=False).view()}
+        # (hunt phase 1.5: `unique`: the look above and this start were two steps, and two tabs at one moment started
+        # two installers; the jobs' own look under their lock gives the second press the first job)
+        return {"job": self.app.jobs.start("claude-install", "Installing Claude Code", None, run, uses_model=False,
+                                           unique=True).view()}
 
     def post_claude_sign_in(self, q):
         """Open a terminal window running `claude`, for the one-time sign-in (ENLENS never sees the login)."""

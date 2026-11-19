@@ -178,7 +178,7 @@ def test_notes_through_the_app(api, tmp_path):  # noqa: F811
     for f in sorted(DEMO.iterdir()):
         if f.suffix in (".txt", ".html"):
             assert api("POST", f"/api/projects/Demo/uploads?batch=b1&name={f.name}", raw=f.read_bytes())[0] == 200
-    assert api.wait(api("POST", "/api/projects/Demo/ingest", {"batch": "b1"})[1]["job"]["id"])["state"] == "done"
+    assert api.wait(api("POST", "/api/projects/Demo/ingest", {"ai_access": "cloud", "batch": "b1"})[1]["job"]["id"])["state"] == "done"
     from enlens_claims import home as home_mod
 
     ws = home_mod.open_project("Demo")

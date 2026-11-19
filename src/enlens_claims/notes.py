@@ -66,11 +66,12 @@ def _hits(text: str, quote: str, lo: int, hi: int, most: int = 200) -> list[tupl
     return out
 
 
-def find(text: str, quote: str, near: int | None = None) -> tuple[int, int] | None:
+def find(text: str, quote: str, near: int | None = None, anywhere: bool = True) -> tuple[int, int] | None:
     """Where the words of a note are in a text: as a quote is found (whole words, typography and spacing evened out),
-    the place nearest `near` (near it first, then anywhere)."""
+    the place nearest `near` (near it first, then anywhere; with `anywhere` false, only near it: hunt phase 1.5, a
+    note followed to a new reading is never put on the same words in another part of the text)."""
     if near is not None:
-        for lo, hi in ((max(0, near - 3000), near + len(quote) + 3000), (0, len(text))):
+        for lo, hi in ((max(0, near - 3000), near + len(quote) + 3000), (0, len(text)))[:2 if anywhere else 1]:
             hits = _hits(text, quote, lo, min(hi, len(text)))
             if hits:
                 return min(hits, key=lambda h: (abs(h[0] - near), h[0]))
@@ -185,8 +186,11 @@ def _placed(cx: sqlite3.Connection, rows: list[sqlite3.Row]) -> list[dict]:
         here = body[d["start"]:d["end"]] if present else d["quote"]
         # 0.17.2: words that differ from the note's only in typography (a new reading) are still its words in place:
         # nothing is looked for again, and nothing is written
-        if present and here != d["quote"] and normalise(here) != normalise(d["quote"] or ""):
-            got = find(body, d["quote"] or "", d["start"])
+        if present and d["start"] is not None and d["start"] == d["end"]:
+            d["lost"] = True   # hunt phase 1.5: left without a place by a new reading (`move`): never looked for again
+        elif present and here != d["quote"] and normalise(here) != normalise(d["quote"] or ""):
+            # (hunt phase 1.5: near its place only; the same words elsewhere in the text are other words)
+            got = find(body, d["quote"] or "", d["start"], anywhere=False)
             if got is None:
                 d["lost"] = True
             else:
@@ -359,20 +363,32 @@ def use_as_evidence(ws: Workspace, note_id: str, claim_id: str, verdict: str, co
     return {"hyp_id": uc["hyp_id"] or claim_id, "claim_id": claim_id, "passage_id": p["passage_id"], "new": new}
 
 
-def move(cx: sqlite3.Connection, doc_id: str, new_text: str, page_spans: list | None = None) -> dict:
-    """The notes of a document read again into `new_text` (reread.py): each follows its words, nearest its old place
-    in proportion, and takes the page of its new place (`page_spans`: the new reading's (start, end) of each page, in
-    order; none for a text without pages); those whose words cannot be found keep them and are marked lost when
-    shown. {moved, lost}."""
+def move(cx: sqlite3.Connection, doc_id: str, new_text: str, page_spans: list | None = None,
+         placed: dict | None = None) -> dict:
+    """The notes of a document read again into `new_text` (reread.py): each follows its words, and takes the page of
+    its new place (`page_spans`: the new reading's (start, end) of each page, in order; none for a text without
+    pages). `placed` (hunt phase 1.5): where reread.py's alignment of the two readings put each note's words
+    ({note_id: (start, end), or None: no place}, as the preview reported); a note not in it is looked for nearest its
+    old place in proportion, near it only (never the same words elsewhere in the text). A note whose words cannot be
+    found keeps them and is marked lost when shown: its start and end become one point (`_placed` never looks for it
+    again, so it is never put on other words later). {moved, lost}."""
     starts = [a for a, _b in page_spans or []]
-    rows = cx.execute("SELECT note_id, start, quote FROM notes WHERE doc_id=?", (doc_id,)).fetchall()
+    rows = cx.execute("SELECT note_id, start, end, quote FROM notes WHERE doc_id=?", (doc_id,)).fetchall()
     old_len = cx.execute("SELECT length(text) FROM documents WHERE doc_id=?", (doc_id,)).fetchone()
     scale = (len(new_text) / old_len[0]) if old_len and old_len[0] else 1.0
     moved = lost = 0
-    for nid, start, quote in rows:
-        got = find(new_text, quote or "", int((start or 0) * scale))
+    for nid, start, end, quote in rows:
+        if placed is not None and nid in placed:
+            got = placed[nid]   # (one an earlier reading left without a place too: found again in this one)
+        elif start is not None and start == end:
+            lost += 1   # left without a place by an earlier reading: stays so
+            continue
+        else:
+            got = find(new_text, quote or "", int((start or 0) * scale), anywhere=False)
         if got is None:
             lost += 1
+            at = min(int((start or 0) * scale), len(new_text))
+            cx.execute("UPDATE notes SET start=?, end=? WHERE note_id=?", (at, at, nid))
             continue
         page = max(0, bisect.bisect_right(starts, got[0]) - 1) + 1 if starts else None
         cx.execute("UPDATE notes SET start=?, end=?, page=? WHERE note_id=?", (*got, page, nid))

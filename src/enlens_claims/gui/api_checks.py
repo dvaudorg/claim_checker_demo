@@ -12,7 +12,7 @@ import threading
 import time
 from pathlib import Path
 
-from .api_common import ApiError, XLSX, _csv, _disposition, _filename, _float, _int, _str, _usable_embedder
+from .api_common import ApiError, XLSX, _body_text, _csv, _disposition, _filename, _float, _int, _str, _usable_embedder
 from .. import claimcheck, home, sync, taskqueue
 from ..llm import BackendError
 
@@ -171,7 +171,9 @@ class ChecksApi:
             body, ctype = json.dumps(res, indent=2, ensure_ascii=False).encode(), "application/json; charset=utf-8"
         else:
             body, ctype = _csv(claimcheck.hypothesis_rows(res)), "text/csv; charset=utf-8"
-        self._send(200, body, ctype, {"Content-Disposition": f'attachment; filename="hypothesis_{hyp_id}.{fmt}"'})
+        # (hunt phase 1.5: through `_disposition`, as every other download: an id with a quote, from a colleague's
+        # database, cut the name off)
+        self._send(200, body, ctype, {"Content-Disposition": _disposition(f"hypothesis_{hyp_id}.{fmt}")})
 
     def post_more(self, name, claim_id, q):
         return {"job": self.app.start_more(name, claim_id, self._body()).view()}
@@ -330,17 +332,20 @@ class ChecksApi:
 
         body = self._body()
         token = str(body.get("token") or "")
-        path = _MOVES._get(token)
-        if path is None:
-            raise ApiError(410, "The file is no longer here: choose it again.")
+        mode, pname = _body_text(body, "mode") or "", (_body_text(body, "name") or "").strip() or None
         servers = body.get("servers") or []
         if not isinstance(servers, list) or not all(isinstance(x, str) for x in servers):
             raise ApiError(400, "servers must be a list of setting names.")
+        # hunt phase 1.5: one answer at a time per move zip: two at once (two tabs, a script) brought every project in
+        # twice. The zip is kept until it is brought in, so a refused answer can be given again
+        path = _MOVES._take(token)
         try:
-            moved = bundle.import_all(path, str(body.get("mode") or ""), settings=bool(body.get("settings")),
-                                      servers=servers, name=(str(body.get("name") or "").strip() or None))
-        except ValueError as e:
-            raise ApiError(400, str(e)) from e
+            try:
+                moved = bundle.import_all(path, mode, settings=bool(body.get("settings")), servers=servers, name=pname)
+            except ValueError as e:
+                raise ApiError(400, str(e)) from e
+        finally:
+            _MOVES._give_back(token)
         _MOVES._drop(token)
         return {"moved": moved, "project": self.app.project_summary(moved["current"]) if moved["current"] else None}
 
@@ -349,8 +354,8 @@ class ChecksApi:
         from .. import people
 
         body = self._body()
-        try:
-            pid = home.new_identity(str(body.get("name") or ""))
+        try:   # (hunt phase 1.5: a list or a number became a person named "['Anna']", for good)
+            pid = home.new_identity(_body_text(body, "name") or "")
         except ValueError as e:
             raise ApiError(400, str(e)) from e
         return {"person": {"id": pid, "name": people.my_name()}}
@@ -655,6 +660,7 @@ class _Uploads:
 
         self._lock = threading.Lock()
         self._kept: dict[str, tuple[float, Path]] = {}
+        self._taking: set[str] = set()   # tokens an answer is bringing in now (`_take`)
 
     def _keep(self, path: Path) -> str:
         import secrets
@@ -669,6 +675,22 @@ class _Uploads:
         with self._lock:
             self._kept[token] = (time.time(), dest)
         return token
+
+    def _take(self, token: str) -> Path:
+        """Hunt phase 1.5: the zip of `token`, taken for one answer (`_give_back` after it): 410 when it is gone, 409
+        while another answer brings it in."""
+        path = self._get(token)
+        if path is None:
+            raise ApiError(410, "The file is no longer here: choose it again.")
+        with self._lock:
+            if token in self._taking:
+                raise ApiError(409, "This file is being brought in already: wait for it.")
+            self._taking.add(token)
+        return path
+
+    def _give_back(self, token: str) -> None:
+        with self._lock:
+            self._taking.discard(token)
 
     def _get(self, token: str) -> Path | None:
         self._expire()

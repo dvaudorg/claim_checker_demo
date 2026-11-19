@@ -94,7 +94,11 @@ def place_on(inc, icx: sqlite3.Connection, iid: str, reading: _Reading) -> dict:
     reread._write_plan(icx, plan)
     for t in _READING_TABLES:
         icx.execute(f"DELETE FROM {t} WHERE doc_id=?", (iid,))
-    moved_notes = notes.move(icx, iid, reading.text)  # before the text changes: it reads the old text's length
+    # before the text changes (a note `_plan` did not place is looked for by the old text's length); hunt phase 1.5:
+    # to the places `_plan` found for them, and with the pages of this copy's reading (without them every note of the
+    # colleague's lost its page here)
+    moved_notes = notes.move(icx, iid, reading.text, reading.page_spans if reading.raw.paginated else None,
+                             placed=info.get("notes"))
     old = _fps(drow.get("old_fps"))
     before = text_fp(drow.get("text"))
     old += [before] if before not in old else []
@@ -112,8 +116,11 @@ def place_on(inc, icx: sqlite3.Connection, iid: str, reading: _Reading) -> dict:
     for sql, args in plan.after:
         icx.execute(sql, args)
     rep = info["report"]
-    placed = sum(v.get("moved", 0) for v in rep["counts"].values())
-    return {"placed": placed, "not_placed": len(rep["not_placed"]), "notes_lost": moved_notes["lost"],
+    # (notes are counted apart, as `notes_lost`, and block choices are not results: since hunt phase 1.5 the report
+    # lists both with the results, and they stay out of these counts, which say whether results lost their place)
+    placed = sum(v.get("moved", 0) for k, v in rep["counts"].items() if k not in ("note", "block"))
+    return {"placed": placed, "not_placed": sum(1 for e in rep["not_placed"] if e["kind"] not in ("note", "block")),
+            "notes_lost": moved_notes["lost"],
             "share_added": max(0.0, float(info["sent_share"] or 0) - float(drow.get("sent_share") or 0))}
 
 

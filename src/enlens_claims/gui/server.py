@@ -87,6 +87,7 @@ from .api_common import (  # noqa: F401 - the names are importable from here as 
     _usable_embedder,
     _xlsx_with_provenance,
     benchmark_table,
+    once,
     page_images_available,
     reading_report,
     render_page,
@@ -497,7 +498,9 @@ class App(LibraryMixin, QueueMixin):
             listed = {m: m if ":" in m.rsplit("/", 1)[-1] else f"{m}:latest" for m in got}
             return {"url": url, "models": got, "listed": listed, "chosen": choose(listed) if use else None}
 
-        return self.jobs.start("model-pull", "Downloading " + " and ".join(models), None, run, uses_model=False)
+        # (hunt phase 1.5: `unique`, as the look above and the start were two steps: two tabs, two downloads)
+        return self.jobs.start("model-pull", "Downloading " + " and ".join(models), None, run, uses_model=False,
+                               unique=True)
 
     def test_backend(self) -> dict:
         s = self.settings()
@@ -1057,7 +1060,7 @@ class App(LibraryMixin, QueueMixin):
                                              embed_model=getattr(_usable_embedder(ws, emb), "model", None),
                                              **opts, **prepared)
                 self._follow_queued(job, ws, [hid], tracker)
-                return {"hyp_id": hid, "status": claimcheck.hypothesis_result(ws, hid, s["threshold"])["status"]}
+                return {"hyp_id": hid, "status": _status_now(ws, hid, s["threshold"])}
 
             return self._job("check", text[:120], name, qrun)
 
@@ -1068,7 +1071,7 @@ class App(LibraryMixin, QueueMixin):
             hid = claimcheck.check_hypothesis(ws, text, be, model, framework=fw, code=code, progress=tracker.step,
                                               embedder=_usable_embedder(ws, emb), should_stop=job.cancel.is_set,
                                               **opts, **prepared)
-            return {"hyp_id": hid, "status": claimcheck.hypothesis_result(ws, hid, s["threshold"])["status"]}
+            return {"hyp_id": hid, "status": _status_now(ws, hid, s["threshold"])}
 
         return self.jobs.start("check", text[:120], name, run, uses_model=True)
 
@@ -1316,7 +1319,13 @@ class App(LibraryMixin, QueueMixin):
             r["hyp_id"] = ws.scalar("SELECT hyp_id FROM user_claims WHERE claim_id=?", (claim_id,))
             return r
 
-        return self._job("reread", "Reading one excerpt again", name, run, withdraw=("reread",), ws=ws)
+        # hunt phase 1.5: pressed twice (or in two tabs), the same excerpt read again is the job already there (two
+        # would make one task id, judgements.reread_excerpt); with another note it waits for that one's answer
+        key = ("excerpt", claim_id, passage_id, note)
+        return once(self, name, "reread", key,
+                    lambda: self._job("reread", "Reading one excerpt again", name, run, withdraw=("reread",), ws=ws),
+                    clash=lambda j: (getattr(j, "start_key", None) or ())[:3] == key[:3],
+                    words="This excerpt is being read again already: wait for its answer, then ask again.")
 
     def start_read_local(self, name: str, hyp_id: str, force: bool = False) -> Job:
         """0.11: read the excerpts of a check that wait for the local model (made in a Claude chat, or while the app
@@ -1346,7 +1355,7 @@ class App(LibraryMixin, QueueMixin):
                 raise readers.memory_short
             taskqueue.advance(ws, [hyp_id])
             return {"hyp_id": hyp_id, "parts": n,
-                    "status": claimcheck.hypothesis_result(ws, hyp_id, self.settings()["threshold"])["status"]}
+                    "status": _status_now(ws, hyp_id, self.settings()["threshold"])}
 
         # 0.19.13: its own button, all the local model's work: no second Start ("force": Start it anyway)
         job = self.jobs.start("read-local", "Reading excerpts with the local model", name, run, uses_model=True,
@@ -1558,9 +1567,12 @@ class App(LibraryMixin, QueueMixin):
         return self._job("second-opinion", f"Second opinion from {second} on {len(ids)} "
                          f"{'hypothesis' if len(ids) == 1 else 'hypotheses'}", name, run, withdraw=("second",), ws=ws)
 
-    def start_ingest(self, name: str, body: dict, paths: list[Path] | None = None, title: str = "Adding sources") -> Job:
+    def start_ingest(self, name: str, body: dict, paths: list[Path] | None = None, title: str = "Adding sources",
+                     own_access: str | None = None) -> Job:
         """Add documents: an upload batch, a folder or file path typed by the person, or (0.13) the files the
-        bibliography has for works without a document (`paths`)."""
+        bibliography has for works without a document (`paths`). Who may read them with AI follows the one rule of
+        every route that adds documents (`ingest.adding_access`); `own_access` (a quick look) is the documents' own
+        setting, chosen by the app, and the project's default stays unchosen, so keeping it still asks."""
         ws = self.ws(name)
         inputs: list[Path] = list(paths or [])
         if body.get("batch"):
@@ -1578,14 +1590,21 @@ class App(LibraryMixin, QueueMixin):
             raise ApiError(400, "Upload files or give a folder path first.")
         exclude = str(body.get("exclude") or "").split() or None
         s = self.settings()
-        level = body.get("ai_access") or None  # 0.11: "Who may read these documents with AI?"
-        if level is not None:
+        # 0.11: "Who may read these documents with AI?" Hunt phase 1.5 (the owner's rule): documents never become
+        # readable by an AI through silence. Without an answer, a project whose default was never chosen is refused in
+        # words (the Documents page asks first, with nothing preselected; a request without `ai_access` took "Claude
+        # may read it"); with a chosen default, it applies. Earlier documents that follow an unchosen default keep
+        # following it: the answer is the new documents' own, and the result says how many follow it (`note`)
+        if own_access is not None:
+            plan = {"ai_access": own_access, "set_default": False, "earlier": 0}
+        else:
             try:
-                level = access.clean(level)
+                plan = ingest.adding_access(ws, _body_text(body, "ai_access") or None)
+            except ingest.AccessChoice as e:
+                raise ApiError(400, f"{e} (In a request: ai_access, one of cloud, local, none.)") from None
             except ValueError as e:
                 raise ApiError(400, str(e)) from None
-            if level == "cloud" and home.local_only():
-                raise ApiError(400, "Cloud models are switched off on this computer.")
+        level = plan["ai_access"]
         note = str(body.get("ai_note") or "").strip() or None
 
         def run(job: Job):
@@ -1597,7 +1616,9 @@ class App(LibraryMixin, QueueMixin):
             before = {r[0] for r in ws.query("SELECT doc_id FROM documents")}
             stats = ingest.ingest(ws, inputs, exclude=exclude, progress=prog, should_stop=job.cancel.is_set,
                                   ocr=ingest.OcrOptions(s.get("ocr", "auto"), s.get("ocr_lang") or "eng"),
-                                  ai_access=level, ai_note=note)
+                                  ai_access=level, ai_note=note, set_default=plan["set_default"])
+            if plan["earlier"]:
+                stats["note"] = ingest.earlier_words(ws, plan["earlier"])
             stats["documents_added"] = [d for d in document_overview(ws) if d["doc_id"] not in before]
             emb = home.make_embedder(s)
             if emb is not None and stats["added"] and not job.cancel.is_set():
@@ -1618,10 +1639,24 @@ class App(LibraryMixin, QueueMixin):
                     stats["bibliography_error"] = str(e)
             return stats
 
-        return self.jobs.start("ingest", title, name, run, uses_model=False)
+        job = self.jobs.start("ingest", title, name, run, uses_model=False)
+        # hunt phase 1.5: documents only a local AI or no AI may read: a notification of this job does not show its
+        # error, which can name their files (`Job.note_title`)
+        if (level or access.default(ws)) in ("local", "none"):
+            job.note_title = title
+        return job
 
 
 
+
+
+def _status_now(ws, hyp_id: str, threshold: float) -> str:
+    """The status of a hypothesis a job has just checked. Hunt phase 1.5: one removed meanwhile (while its check waited
+    for the queue) is said in words; the job's error was the bare id of the KeyError."""
+    try:
+        return claimcheck.hypothesis_result(ws, hyp_id, threshold)["status"]
+    except KeyError:
+        raise ValueError("The hypothesis was removed while it was being checked: there is no result to show.") from None
 
 
 def _clis_summary() -> list[dict]:
@@ -2064,6 +2099,9 @@ class Handler(BaseHTTPRequestHandler, DocumentsApi, ExploreApi, ChecksApi, Setup
     app: App
     server_version = f"enlens/{__version__}"
     protocol_version = "HTTP/1.1"
+    # hunt phase 1.5: how long the connection waits for a client that sends nothing more (seconds; socketserver sets
+    # it on the socket). A body shorter than its Content-Length, on a connection kept open, held a thread for ever
+    timeout = 120
 
     def log_message(self, fmt, *args):  # quiet: the terminal shows only problems
         pass
@@ -2144,7 +2182,7 @@ class Handler(BaseHTTPRequestHandler, DocumentsApi, ExploreApi, ChecksApi, Setup
         n = self._length()
         if n > MAX_JSON:
             raise ApiError(413, "The request is too large.")
-        raw = self.rfile.read(n) if n else b""
+        raw = self._read(n) if n else b""
         if not raw:
             return {}
         try:
@@ -2157,6 +2195,15 @@ class Handler(BaseHTTPRequestHandler, DocumentsApi, ExploreApi, ChecksApi, Setup
         if not isinstance(obj, dict):
             raise ApiError(400, "The request body must be a JSON object.")
         return obj
+
+    def _read(self, n: int) -> bytes:
+        """Up to `n` bytes of the request body. Hunt phase 1.5: a client that stops sending (a body shorter than its
+        length) is answered 408 when the connection's `timeout` is up, and the connection closed; it was a 500."""
+        try:
+            return self.rfile.read(n)
+        except TimeoutError:
+            self.close_connection = True
+            raise ApiError(408, "The request's body did not arrive in time.") from None
 
     def do_GET(self):
         self._dispatch("GET")
@@ -2189,6 +2236,14 @@ class Handler(BaseHTTPRequestHandler, DocumentsApi, ExploreApi, ChecksApi, Setup
         path = url.path
         q = parse_qs(url.query)
         self._consumed = False
+        te = (self.headers.get("Transfer-Encoding") or "").strip().lower()
+        if te and te != "identity":
+            # hunt phase 1.5: a body sent in chunks (no Content-Length) was not read: an upload was stored empty with
+            # 200, and the chunks were read as the next request. The page always sends a length; scripts are told to
+            self._consumed = True
+            self._json(411, {"error": "Send the request body with a Content-Length: a body sent in chunks is not "
+                                      "read.", "kind": "request"})
+            return
         try:
             self._route(method, path, q)
         finally:

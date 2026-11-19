@@ -169,7 +169,7 @@ def _project(api, corpus):
     api("POST", "/api/projects", {"name": "Demo"})
     for f in sorted(corpus.iterdir()):
         api("POST", f"/api/projects/Demo/uploads?batch=b1&name={f.name}", raw=f.read_bytes())
-    st, r = api("POST", "/api/projects/Demo/ingest", {"batch": "b1"})
+    st, r = api("POST", "/api/projects/Demo/ingest", {"ai_access": "cloud", "batch": "b1"})
     assert api.wait(r["job"]["id"])["state"] == "done"
 
 

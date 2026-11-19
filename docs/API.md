@@ -35,6 +35,8 @@ the model service chosen in Settings.
   0.13.5: `GET /static/site.css` is the installation's own `site.css` followed by each add-on package's;
   `GET /static/addons/<add-on>/<file>` serves an add-on package's page files (docs/EXTENDING.md).
 - **JSON in, JSON out.** Request bodies are JSON objects (`Content-Type: application/json`), except uploads (raw bytes).
+  A body needs its `Content-Length`: one sent in chunks is refused with 411, and one that stops coming is answered
+  408 after two minutes.
 - **Errors**: status 4xx/5xx with `{"error": "plain-language message", "kind": "request" | "backend" | "internal"}`.
   `kind: "backend"` (HTTP 502) means the model service is the problem (not running, model missing, key wrong): offer
   a link to Settings. 401 means the token is missing or from an earlier run: open ENLENS from its icon (or run
@@ -42,7 +44,9 @@ the model service chosen in Settings.
 - **Jobs.** Long work returns `{"job": Job}` at once; poll `GET /api/jobs/<id>` (about every 500 ms while
   `state` is `queued` or `running`). Jobs that use the chat model run one at a time; others wait in `queued`.
   0.17.0: jobs of one project that change the same things wait their turn in `queued` too, with `waiting_for` saying
-  for which job (see Jobs below).
+  for which job (see Jobs below). The same work started twice in a project (a label run, themes, naming the themes or
+  the concept map's groups, reading one excerpt or documents again) returns the job already queued or running; work
+  of the same kind that would clash with it is a 409 in words.
 - Times: hypotheses and documents carry ISO 8601 UTC strings (`created_at`); jobs carry Unix seconds.
 - Ids are opaque strings. URL-encode project names (they may contain spaces).
 
@@ -374,7 +378,8 @@ never written over; a project saved by a newer ENLENS, which this version does n
 file (a shared-folder record, file paths of the other computer, and what was stored for speed go; the documents and
 the work stay) and links it. `DELETE /api/projects/<p>` `{"confirm": "<p>"}` → `{"result": "unlinked" | "moved to …/trash/…"}`;
 409 with `"kind": "busy"` and the `job_id` while a job of the project is queued or running (its message names the job:
-stop it or wait, then remove the project). While the removal runs, a job started in the project is a 409 ("is being
+stop it or wait, then remove the project). A round of the shared folder the app started by itself, which the person
+cannot stop, is waited for a few seconds first; if it still runs, the 409 says to try again in a moment. While the removal runs, a job started in the project is a 409 ("is being
 removed"). A quick look is not moved to the trash at the end of its week while a job of
 it runs either.
 
@@ -967,7 +972,8 @@ that would do, changing nothing: `{"ok": false, "reason", "reader", "new_reader"
 (read by the new reader already, the original missing or changed, a task of it waiting or out with Claude Code, almost
 no text in the new reading), otherwise the report: `{"ok": true, "moved": false, "doc_id", "title", "reader",
 "new_reader", "counts": {kind: {"moved", "not_placed", "left_out"}}` (kinds: `check`, `judgement`, `second_opinion`,
-`label`, `claim`, `sdg_check`, `theme_member`), `"not_placed": [{"kind", "kind_text", "what", "quote", "page", "where",
+`label`, `claim`, `sdg_check`, `theme_member`; hunt phase 1.5: `note`, a note or highlight, and `block`, a person's
+*Leave out*, *Restore*, *Text starts here* or *Text ends here* the new reader's other blocks are given), `"not_placed": [{"kind", "kind_text", "what", "quote", "page", "where",
 "left_out_kind", "why"}]` (page in the old reading), `"left_out": [{… "note"}]` (placed, in text the new reader leaves
 out; page in the new reading), `"remade"`, `"tasks": {"asked_again", "moved", "kept_as_records"}`, `"themes":
 {"runs_kept_up_to_date", "runs_out_of_date", "runs"}`, `"passages": {"before", "after", "one_to_one", "body_before",
@@ -1049,7 +1055,10 @@ project's default. The setting is enforced where tasks are made and run (see `ac
 - `PUT /api/projects/<p>/ai-access` `{"default": "cloud"|"local"|"none"}` and/or `{"dismiss_banner": true}` →
   `{"ai_access": {…}}`.
 - `POST /api/projects/<p>/ingest` takes `ai_access` (who may read the new documents; the first answer in a project
-  becomes its default) and `ai_note`. A `manifest.csv` may have `ai_access` and `ai_note` columns per file; an unknown
+  becomes its default) and `ai_note`. Without `ai_access`, a project whose default was never chosen answers 400 in words
+  and adds nothing; with a chosen default, the default applies. When earlier documents follow a default nobody chose,
+  the answer is the new documents' own setting and the job's `result.note` says how many still follow it (the same
+  rule for `POST …/bibliography/files`). A `manifest.csv` may have `ai_access` and `ai_note` columns per file; an unknown
   value is listed under `manifest_problems`.
 - `GET /api/projects/<p>/documents/<doc_id>/ai-sent` → what Claude has read of a document: `{"doc_id", "share",
   "since", "passages": [{"passage_id", "seq", "page", "preview", "times", "first", "last", "features", "routes"}]}`.
@@ -1546,7 +1555,8 @@ every answer they store records the model, its digest, the prompt version, the s
 #### Quick look and FlexiConc (F8)
 
 - `POST /api/quicklook?name=<file>` (raw body) → `{project, job}`: a temporary project for one document, opened at
-  once; `project.temporary = {created_at, expires_at, file, from}`. It goes to the trash after 7 days unless
+  once; `project.temporary = {created_at, expires_at, file, from}`. Its document is *Only a local AI* (`local`) and
+  the project's default stays unchosen: nobody was asked, so no cloud AI may read it until the person decides. It goes to the trash after 7 days unless
   `POST /api/projects/<p>/keep`. Removing it (`DELETE /api/projects/<p>`) opens another project.
 - `GET /api/projects/<p>/flexiconc.sqlite?framework=` → the project in the FlexiConc layout of the Cross-Doc SDG
   Explorer: `documents`, `sentences` (with a code label, confidence and consensus), `chains`, `clusters` and, when

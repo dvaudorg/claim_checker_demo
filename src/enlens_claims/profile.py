@@ -623,6 +623,7 @@ def run_labels(ws: Workspace, framework: str, backend, model: str, doc_ids: list
     has_cloud = any(p not in by_local for p in plan["passage_ids"])
     total = len(plan["passage_ids"])
     seen = [0]
+    moved_away = [0]   # passages whose document was read with the new reader during the run
     import threading
     import time
 
@@ -638,8 +639,13 @@ def run_labels(ws: Workspace, framework: str, backend, model: str, doc_ids: list
         if progress:
             progress(min(seen[0], total), total)
         t0 = time.time()
-        # its setting worked out again as its text is about to leave, as `tasks.run` does: a document's cap counts
-        # what the passages before this one sent (and a passage Claude has read already adds nothing to it)
+        # hunt phase 1.5: its document was read with the new reader meanwhile (a round of the shared folder moves an
+        # accepted reading beside a run): the move asked this task again for the new passages (reread.py), so there is
+        # nothing to read here, and nothing may be written for an old passage id (it now names other text)
+        if not ws.scalar("SELECT 1 FROM tasks WHERE task_id=?", (tid,)):
+            with tally:
+                moved_away[0] += 1
+            return
         with ws.connect() as cx:
             if access.recheck(cx, tid, dflt) is None:
                 with tally:
@@ -658,6 +664,12 @@ def run_labels(ws: Workspace, framework: str, backend, model: str, doc_ids: list
             readers.local_ended(readers.memory_short or local_off)  # its passages came first: its panel says it has ended
         try:
             ok, _errs = tasks.run_one(ws, tid, got[0], got[1])
+        except KeyError:
+            if ws.scalar("SELECT 1 FROM tasks WHERE task_id=?", (tid,)):
+                raise
+            with tally:   # (moved while the model read it: its answer is not stored, as above)
+                moved_away[0] += 1
+            return
         except MemoryShort as e:
             readers.memory_short = e
             if not gated:  # with the gate, it waits for Start (or Start it anyway) and is read again then
@@ -710,6 +722,9 @@ def run_labels(ws: Workspace, framework: str, backend, model: str, doc_ids: list
     local_model = readers._local[1] if readers._local and by_local else None
     return {"framework": framework, "read": done, "failed": failed, "planned": len(plan["passage_ids"]),
             "stopped": bool(should_stop and should_stop()), "changes": change,
+            # hunt phase 1.5: passages not read because their document was read again meanwhile (asked again for the
+            # new reading's passages, by the next run)
+            "read_again_meanwhile": moved_away[0],
             "skipped_restricted": skipped + plan.get("no_ai", 0),
             "local_read": readers.read, "local_waiting": waiting, "local_model": local_model,
             "memory_short": str(readers.memory_short) if readers.memory_short else None,

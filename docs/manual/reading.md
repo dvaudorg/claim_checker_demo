@@ -120,10 +120,13 @@ flowchart LR
 ```
 
 The preview says how many of your results (a check's judgements and yours, codes and your reviews of them, themes,
-references) find their place in the new text, and which do not. **Move it to the new reader** then does it in one
-step, or not at all:
+references, your notes and highlights, the blocks you left out or restored) find their place in the new text, and
+which do not. **Move it to the new reader** then does it in one step, or not at all:
 
-- each result follows its quote to the same words in the new text, and a check keeps the excerpt it showed;
+- each result follows its quote to the same words in the new text, and a check keeps the excerpt it showed; a note
+  follows its words the same way, never to the same words in another part of the text;
+- a block you left out (or restored), and where you said the text starts or ends, hold for the new reader's blocks
+  that have the old block's text, also where the new reader cuts the text otherwise;
 - keyword codes, key terms and the document's search index are made again;
 - work still waiting for the AI about it is asked again;
 - a set of themes is marked out of date where its passages changed;

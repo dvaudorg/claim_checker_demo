@@ -88,7 +88,7 @@ def test_the_real_list_pages_and_keeps_its_order(api, corpus):
     assert api("POST", "/api/projects", {"name": "Demo"})[0] == 200
     for f in sorted(corpus.iterdir()):
         assert api("POST", f"/api/projects/Demo/uploads?batch=b1&name={f.name}", raw=f.read_bytes())[0] == 200
-    st, r = api("POST", "/api/projects/Demo/ingest", {"batch": "b1"})
+    st, r = api("POST", "/api/projects/Demo/ingest", {"ai_access": "cloud", "batch": "b1"})
     assert api.wait(r["job"]["id"])["state"] == "done"
     text = "\n".join(f"Green hydrogen production can increase water stress in arid regions, case {i}." for i in range(5))
     st, r = api("POST", "/api/projects/Demo/batches", {"text": text, "k": 2})

@@ -348,7 +348,7 @@ def test_a_new_theme_for_another_removed_theme_waits_for_the_first(home, tmp_pat
         assert api("POST", "/api/projects", {"name": "P"})[0] == 200
         for f in sorted(topics_corpus(tmp_path / "topics").iterdir()):
             assert api("POST", f"/api/projects/P/uploads?batch=b1&name={f.name}", raw=f.read_bytes())[0] == 200
-        assert api.wait(api("POST", "/api/projects/P/ingest", {"batch": "b1"})[1]["job"]["id"])["state"] == "done"
+        assert api.wait(api("POST", "/api/projects/P/ingest", {"ai_access": "cloud", "batch": "b1"})[1]["job"]["id"])["state"] == "done"
         rid = api.wait(api("POST", "/api/projects/P/themes", {"k": 4})[1]["job"]["id"])["result"]["run_id"]
         base = f"/api/projects/P/themes/{rid}"
         ids = [t["theme_id"] for t in api("GET", base)[1]["themes"]]

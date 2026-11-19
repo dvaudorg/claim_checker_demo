@@ -170,7 +170,7 @@ def test_the_api_for_what_the_glossary_leaves_out(api, tmp_path):  # noqa: F811
     assert api("POST", "/api/projects", {"name": "P"})[0] == 200
     for f in sorted(corpus.iterdir()):
         assert api("POST", f"/api/projects/P/uploads?batch=b1&name={f.name}", raw=f.read_bytes())[0] == 200
-    job = api.wait(api("POST", "/api/projects/P/ingest", {"batch": "b1"})[1]["job"]["id"])
+    job = api.wait(api("POST", "/api/projects/P/ingest", {"ai_access": "cloud", "batch": "b1"})[1]["job"]["id"])
     assert job["state"] == "done", job["error"]
     st, r = api("GET", "/api/projects/P/terms/words")
     assert st == 200 and r["off"] == [] and r["own"] == [] and r["max_own"] == stopwords.MAX_OWN

@@ -32,7 +32,7 @@ def _project(api, corpus, name="P"):
     assert api("POST", "/api/projects", {"name": name})[0] == 200
     for f in sorted(corpus.iterdir()):
         assert api("POST", f"/api/projects/{name}/uploads?batch=b1&name={f.name}", raw=f.read_bytes())[0] == 200
-    st, r = api("POST", f"/api/projects/{name}/ingest", {"batch": "b1"})
+    st, r = api("POST", f"/api/projects/{name}/ingest", {"ai_access": "cloud", "batch": "b1"})
     assert api.wait(r["job"]["id"])["state"] == "done"
     return {d["file"]: d["doc_id"] for d in api("GET", f"/api/projects/{name}/documents")[1]["documents"]}
 
@@ -98,7 +98,7 @@ def test_every_ai_button_waits_for_claude_code_and_gets_its_answers(api, corpus)
         j = api.wait(r["job"]["id"])
         assert j["state"] == "done" and j["result"]["judged"] == 1, j
         # theme names (on more text)
-        r = api("POST", "/api/projects/P/ingest", {"path": str(ROOT / "tools" / "demo_corpus")})[1]
+        r = api("POST", "/api/projects/P/ingest", {"ai_access": "cloud", "path": str(ROOT / "tools" / "demo_corpus")})[1]
         assert api.wait(r["job"]["id"])["state"] == "done"
         r = api("POST", "/api/projects/P/themes", {"k": 4})[1]
         rid = api.wait(r["job"]["id"])["result"]["run_id"]

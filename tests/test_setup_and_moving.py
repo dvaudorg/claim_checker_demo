@@ -430,7 +430,7 @@ def test_installer_command_per_system(monkeypatch):
 def _project_with_a_document(api, name, corpus):  # noqa: F811
     st, r = api("POST", "/api/projects", {"name": name})
     assert st == 200, r
-    st, r = api("POST", f"/api/projects/{name}/ingest", {"path": str(corpus)})
+    st, r = api("POST", f"/api/projects/{name}/ingest", {"ai_access": "cloud", "path": str(corpus)})
     assert api.wait(r["job"]["id"])["state"] == "done"
 
 

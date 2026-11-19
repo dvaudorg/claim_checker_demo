@@ -7,7 +7,7 @@ import json
 import time
 import traceback
 
-from .api_common import ONE_START, ApiError, Job, _usable_embedder
+from .api_common import ApiError, Job, _usable_embedder, once, restricted, start_lock
 from .. import bibliography, embed, frameworks, home, taskqueue
 from ..llm import BackendError
 from ..store import now as _now
@@ -123,13 +123,18 @@ class LibraryMixin:
                 self._after_adding(ws, job, stats, [doc_id], s)
             return stats
 
-        with ONE_START:  # 0.18 (M6): this document's move waits or runs already: that one, not a second
+        # 0.18 (M6): this document's move waits or runs already: that one, not a second (hunt phase 1.5: the look and
+        # the start under the project's own lock, as every guarded start: no other project waits for it)
+        with start_lock(name):
             same = [j for j in self.jobs.all() if j.kind == "reread" and j.lane == "reader" and j.project == name
                     and j.scope == doc_id and j.state in ("queued", "running")]
             if same:
                 return same[0]
-            return self.jobs.start("reread", f"Reading “{title[:60]}” with the new reader", name, run,
-                                   uses_model=False, lane="reader", scope=doc_id)  # it runs alone in its project
+            job = self.jobs.start("reread", f"Reading “{title[:60]}” with the new reader", name, run,
+                                  uses_model=False, lane="reader", scope=doc_id)  # it runs alone in its project
+            if restricted(ws, [doc_id]):   # hunt phase 1.5: a notification does not name it
+                job.note_title = "Reading a document with the new reader"
+            return job
 
     def start_new_reader_preview(self, name: str, doc_ids: list[str]) -> Job:
         """0.18 (M7): the dry run before moving several documents: each is read again by the current reader (nothing is
@@ -231,8 +236,13 @@ class LibraryMixin:
             return stats
 
         n = len(doc_ids)
-        return self.jobs.start("new_reader", f"Reading {n} {'document' if n == 1 else 'documents'} with the new reader",
-                               name, run, uses_model=False)
+        key = ("new_reader", tuple(sorted(doc_ids)), bool(keep_unplaced))
+
+        # hunt phase 1.5: pressed twice (or in two tabs), the same documents are the job already there. Others, even
+        # some of the same ones, wait their turn in the reader's lane (0.18, M6) and say in words what was moved already
+        return once(self, name, "new_reader", key,
+                    lambda: self.jobs.start("new_reader", f"Reading {n} {'document' if n == 1 else 'documents'} with "
+                                            "the new reader", name, run, uses_model=False))
 
     def set_reading_checked(self, name: str, doc_id: str, checked: bool) -> dict:
         """0.15.7: the person looked at what a document's reading report asks them to check and found the reading good

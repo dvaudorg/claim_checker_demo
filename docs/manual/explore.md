@@ -241,7 +241,8 @@ filled where it differs, and whether the hypothesis counts them.
 ## Quick look
 
 *Quick look at one document* (on the Overview and *Manage projects*) reads one file into a
-temporary project and opens it at its key terms: search it, see its codes and references at once. A banner offers
+temporary project and opens it at its key terms: search it, see its codes and references at once. Nobody is asked
+who may read it with AI, so it is marked *Only a local AI*; keep it as a project and ENLENS asks. A banner offers
 *Keep as a project* or *Discard now*; otherwise it goes to the trash after 7 days (not while work of it is still
 running: then once that has finished, and *Discard now* asks you to stop it or wait). A quick look opened while a project
 is open can use that project's codebooks, without changing them; its own labels stay in the quick look.

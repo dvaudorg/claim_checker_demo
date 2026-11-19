@@ -51,6 +51,7 @@ class DocumentsApi:
         # removed under the jobs' lock, so no job of it starts until the removal has ended (Jobs.removal), and the
         # folder is moved after the lock (a quick look's Discard comes here too)
         what = "discard the quick look" if home.is_temporary(name) else "remove the project"
+        _wait_for_round(self.app.jobs, name)
         with self.app.jobs.removal([name], refuse=lambda job: busy_with(job, what)) as free:
             if name not in free:   # (another removal of it is under way)
                 raise ApiError(409, "This project is being removed already.")
@@ -340,7 +341,11 @@ class DocumentsApi:
         left = n
         with open(target, "wb") as f:
             while left > 0:
-                chunk = self.rfile.read(min(left, 1 << 20))
+                try:
+                    chunk = self.rfile.read(min(left, 1 << 20))
+                except TimeoutError:   # (hunt phase 1.5: the client stopped sending: cut off, as below)
+                    self.close_connection = True
+                    chunk = b""
                 if not chunk:
                     break
                 f.write(chunk)
@@ -377,10 +382,33 @@ class DocumentsApi:
         return claimcheck.neighbours(self.app.ws(name), passage_id, around, around)
 
 
+ROUND_WAIT = 5.0   # seconds a removal waits for a round of the shared folder the app started by itself
+
+
+def _wait_for_round(jobs, name: str) -> None:
+    """Hunt phase 1.5 (the owner's decision 8): a round of the shared folder the app started by itself (the poller's)
+    cannot be stopped by the person, so a removal waits a few seconds for it to end before it answers; the jobs' lock
+    is let go while it waits (`Condition.wait`), so other jobs start and end meanwhile. A job the person can stop is
+    not waited for: the answer says which and how (`busy_with`)."""
+    end = time.monotonic() + ROUND_WAIT
+    with jobs.turns:
+        while True:
+            job = jobs.busy(name)
+            left = end - time.monotonic()
+            if job is None or not job.background or left <= 0:
+                return
+            jobs.turns.wait(min(left, 0.25))
+
+
 def busy_with(job, what: str) -> None:
-    """Hunt phase 1: refuse (409, kind "busy") what would pull a project from under its job, naming the job."""
+    """Hunt phase 1: refuse (409, kind "busy") what would pull a project from under its job, naming the job. Hunt
+    phase 1.5: a round of the shared folder the app started by itself cannot be stopped by the person, so the answer
+    says to try again in a moment (after `_wait_for_round` waited for it)."""
     if job is None:
         return
+    if job.background:
+        raise ApiError(409, f"“{job.project}” is being brought up to date with your team: try again in a moment.",
+                       kind="busy", extra={"job_id": job.id})
     title = job.title if len(job.title) <= 80 else job.title[:79].rstrip() + "…"
     doing = "is waiting to run" if job.state == "queued" else "is still running"
     raise ApiError(409, f"“{title}” {doing} in this project. Stop it in the sidebar, or wait until it has "
