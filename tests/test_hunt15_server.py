@@ -1294,15 +1294,24 @@ def test_a_closed_project_can_still_be_moved_at_once(tmp_path):
 
     ws = Workspace.create(tmp_path / "p")
     ws.scalar("SELECT 1")
-    done = threading.Event()
-    threading.Thread(target=lambda: (ws.scalar("SELECT 1"), done.set()), daemon=True).start()
-    done.wait(5)
+    # the other thread stays ALIVE, with its connection idle, until close_all has returned: that is the case close_all
+    # is for. (The Tests run on main, 19 Nov 2026, Linux with Python 3.10: the thread used to end here, and on 3.10 a
+    # thread's connection is freed, and so closed, as the thread ends; close_all no longer saw it, and the check below
+    # caught its descriptor in the instant before that close was through.)
+    used, let_go = threading.Event(), threading.Event()
+    other = threading.Thread(target=lambda: (ws.scalar("SELECT 1"), used.set(), let_go.wait(30)), daemon=True)
+    other.start()
+    assert used.wait(5)
     files = [ws.db_path, Path(str(ws.db_path) + "-wal"), Path(str(ws.db_path) + "-shm")]
-    if os.name != "nt":
-        assert _fds_on(files), "the test opened nothing"
-    assert ws.close_all() is True
-    if os.name != "nt":
-        assert _fds_on(files) == set(), "a descriptor is still open on the database"
+    try:
+        if os.name != "nt":
+            assert len(_fds_on(files)) >= 2, "the test opened nothing in the other thread"
+        assert ws.close_all() is True
+        if os.name != "nt":
+            assert _fds_on(files) == set(), "a descriptor is still open on the database"
+    finally:
+        let_go.set()
+        other.join(5)
     shutil.move(str(tmp_path / "p"), str(tmp_path / "q"))
     assert (tmp_path / "q" / "enlens.sqlite").exists()
 
