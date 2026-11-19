@@ -369,7 +369,7 @@ async function renderRun(view, runId, info, query) {
         frameworks.map((f) => h("option", { value: f.name, selected: f.name === framework }, f.title || f.name)))) : null;
     if (choices) wrap.appendChild(choices);
     if (!cg || !(cg.codes || []).length) {
-      wrap.appendChild(emptyState("tag", "No codes found in these passages yet", "Find the codes of the codebook first on the Profile page: the grid then shows which codes each theme holds.", link({ kind: "next", href: "#/profile" }, "Go to Profile")));
+      wrap.appendChild(emptyState("tag", "No codes found in these passages yet", "Find the codes of the codebook first on the Codes page: the grid then shows which codes each theme holds.", link({ kind: "next", href: "#/profile" }, "Go to Codes")));
       return wrap;
     }
     const desc = codeInfo.get(cg.framework);
@@ -382,7 +382,7 @@ async function renderRun(view, runId, info, query) {
     const fwLabel = (frameworks.find((f) => f.name === cg.framework) || {}).label || "code";
     const cells = cg.cells || {};
     const max = gridMax(cells);
-    wrap.appendChild(h("p", { class: "muted small th-codes-grid-help" }, `How many passages of each theme carry each ${fwLabel} (found by keywords, by the AI, or by you on the Profile page). The darker the cell, the more passages.`));
+    wrap.appendChild(h("p", { class: "muted small th-codes-grid-help" }, `How many passages of each theme carry each ${fwLabel} (found by keywords, by the AI, or by you on the Codes page). The darker the cell, the more passages.`));
     const table = h("table", { class: "map-table th-grid th-codes" },
       h("caption", { class: "visually-hidden" }, `Themes by ${fwLabel}: the number of passages`),
       h("thead", {}, h("tr", {}, h("th", { scope: "col", class: "map-hyp-head" }, "Theme"),

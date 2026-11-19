@@ -764,7 +764,7 @@ export async function renderConceptMap(view, params, query) {
     pngBtnHolder.hidden = true;
     if (!m.built) {
       filtersBox.hidden = true;
-      mapBox.appendChild(emptyState("network", "No glossary yet", "The map is drawn from the glossary: the terms your documents use, grouped into concepts. Make the glossary first; it is made on this computer and nothing is sent anywhere.",
+      mapBox.appendChild(emptyState("network", "No glossary yet", "The map is drawn from the glossary: the terms your documents use, grouped into concepts. Make the glossary first.",
         link({ kind: "next", href: "#/concepts" }, "Make the glossary on the Glossary tab")));
       return;
     }

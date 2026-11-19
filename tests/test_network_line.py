@@ -47,3 +47,23 @@ def test_the_network_line_names_what_goes_online(tmp_path):
     # under local-only no cloud AI is listed, and the line says it is switched off
     assert not any("cloud AI" in i for i in local["items"]) and "Cloud AI is switched off on this computer." in local["text"]
     assert wide["text"].startswith("Other computers on your network can open the app")
+
+
+PRIVACY = r"""
+async function where(t, providers) {
+  t.state({ settings: { backend: "ollama", ollama_model: "qwen3:8b" }, providers });
+  const { App } = await t.module("lib.js");
+  return App.privacy();
+}
+await scenario("on this computer", (t) => where(t, { route_address: null }));
+await scenario("on another computer", (t) => where(t, { route_address: "http://10.0.0.5:11434" }));
+"""
+
+
+@needs_node
+def test_the_privacy_note_says_when_the_model_is_on_another_computer(tmp_path):
+    out = run_views(PRIVACY, tmp_path)
+    here, far = out["on this computer"], out["on another computer"]
+    assert here["plain"] == "The AI runs on this computer. Your documents never leave it."
+    assert far["label"] == "A model on another computer" and "never leave" not in far["plain"]
+    assert far["where"] == "local"   # still the local route: no Claude Code queue

@@ -14,7 +14,7 @@ const LOCAL_MAIN = new Set(["ollama", "openai", "auto"]);
 const plainPhase = (phase) => ({ waiting: "The AI is getting ready and reading", thinking: "The AI is thinking it over", writing: "The AI is writing down its judgement", done: "The AI has finished" }[phase] || "The AI is working");
 // what Claude's side draws from the queue's words: not when they were said (a poll's own clock)
 const queueKey = (q) => JSON.stringify(q ? Object.fromEntries(Object.entries(q).filter(([k]) => !["at", "seconds"].includes(k))) : null);
-const MIXED_FOOT = "Two parts, two starts: each begins when you press its own Start, in either order, and they run side by side. Nothing is sent to Anthropic from the documents marked Only a local AI.";
+const MIXED_FOOT = "Two parts, two starts: each begins when you press its own Start, in either order, and they run side by side. Documents marked Only a local AI never go to the cloud.";
 
 // 0.19.6: the line under a short job while a model reads, in words: what it has written so far and how fast, and how
 // long since its last token. `seen` keeps when the token count last changed, across polls. The panel shows the same

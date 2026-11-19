@@ -116,7 +116,7 @@ export async function renderSearch(view, params, query) {
       meaningLabel),
     fold({ open: !!st.code }, "Only passages with a code",
       h("div", { class: "search-opts sr-code-opts" }, h("label", {}, "Code", codeIn),
-        h("span", { class: "muted small" }, "A code of the Profile page, written as codebook:code (sdg:6.4). Only passages labelled with it are searched."))));
+        h("span", { class: "muted small" }, "A code of the Codes page, written as codebook:code (sdg:6.4). Only passages labelled with it are searched."))));
   view.appendChild(form);
   const meaningBox = h("div", { class: "search-meaning" });   // 0.18 (M3): setting up search by meaning, from here
   view.appendChild(meaningBox);
@@ -160,7 +160,7 @@ export async function renderSearch(view, params, query) {
     meaning.disabled = !semantic;
     if (!semantic) meaning.checked = false;
     meaningLabel.title = semantic
-      ? "Whole passages that say the same thing in other words (uses the embedding model, on this computer; no AI model)"
+      ? "Whole passages that say the same thing in other words (uses the embedding model, not an AI)"
       : "Not set up for this project yet: see the note below the search box.";
   }
   async function setUpMeaning(search, job = null) {

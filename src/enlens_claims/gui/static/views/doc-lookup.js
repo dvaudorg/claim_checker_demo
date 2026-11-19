@@ -31,7 +31,7 @@ export function termsPanel(ctx) {
     clear(body);
     const st = data.status || {};
     if (!st.built) {
-      body.appendChild(emptyState("network", "No glossary yet", "Key terms come from the glossary of the project's terms. It is made on this computer in seconds to a minute; nothing is sent anywhere.",
+      body.appendChild(emptyState("network", "No glossary yet", "Key terms come from the glossary of the project's terms. It takes seconds to a minute to make.",
         jobBox.hidden ? button({ kind: "main", sm: true, onClick: (e) => build(e.currentTarget) }, icon("network", { size: 13 }), "Make the glossary") : null));
       return;
     }

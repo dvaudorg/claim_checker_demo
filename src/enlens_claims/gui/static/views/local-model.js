@@ -352,7 +352,7 @@ function pullBox(ollama, chat, emb, opts, advice) {
       if (j.state === "done") {
         const r = j.result || {};
         const got = r.models || [];
-        replace(area, notice({ kind: "done" }, h("p", {}, tier && adviceChat && adviceChat.pick && got.includes(adviceChat.pick.name) ? "The local model is set up on this computer. It starts only when you start a check." : `Downloaded: ${got.join(" and ")}.`)));
+        replace(area, notice({ kind: "done" }, h("p", {}, tier && adviceChat && adviceChat.pick && got.includes(adviceChat.pick.name) ? "The local model is set up on this computer. It starts only when you press its Start." : `Downloaded: ${got.join(" and ")}.`)));
         const listed = (m) => (m && got.includes(m.name) ? (r.listed || {})[m.name] || m.name : "");
         if (opts.onReady) opts.onReady({ url: r.url || ollama.url, chat: listed(pickChat()), embed: listed(pickEmb()), chosen: r.chosen || null });
         return;

@@ -34,7 +34,7 @@ export const LEVEL = {
   cloud: { get title() { return cloudWords().title; }, get many() { return cloudWords().many; },
     get short() { return cloudWords().short; }, icon: "cloud", get sub() { return cloudWords().sub; } },
   local: { title: "Only a local AI", many: "Only a local AI", short: "Local AI", icon: "house",
-    sub: "Read only by a model on this computer, or by you. Never sent to Claude." },
+    sub: "Read only by a model on this computer, or by you. Never sent to the cloud." },
   none: { title: "No AI", many: "No AI", short: "No AI", icon: "eye-off",
     sub: "Only you judge its excerpts. Search, the keyword codes, concepts and themes still work." },
 };
@@ -99,7 +99,7 @@ export function accessBanner(project, onDismiss) {
     onDismiss();
   } });
   return notice({ kind: "info", icon: "info", class: "access-banner", role: "status" },
-    h("div", { class: "grow" }, h("p", {}, h("strong", {}, "New in 0.11: choose which documents Claude may read. "),
+    h("div", { class: "grow" }, h("p", {}, h("strong", {}, "Choose which documents an AI may read. "),
       "Mark a licensed PDF or an interview transcript as ", h("em", {}, "Only a local AI"), " or ", h("em", {}, "No AI"),
       " in a document's details: ", link({ kind: "jump", onClick: () => { const t = document.querySelector(".doc-toggle"); if (t) { t.scrollIntoView({ block: "center" }); t.focus(); } } }, "the arrow at the end of its row"),
       ". Everything else stays as it was.")), close);

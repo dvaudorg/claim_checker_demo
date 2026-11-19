@@ -28,7 +28,7 @@ const HOW_HELP = "Each of you keeps your own copy of this project on your own co
 const SEALED = "It will hold the documents’ text and files and only what you share of your own work, encrypted on this computer before it is sent, with a key only your team has: the service cannot read it.";
 export const WHERE = [
   { value: "b2", icon: "database", title: "A storage space at Backblaze", tag: "Recommended", go: "Set up at Backblaze…", holds: SEALED,
-    text: "Online storage only your team can read. Free, no payment card, kept in the EU; you make one account, your colleagues need none." },
+    text: "Online storage only your team can read. Free, no payment card, in the EU if you choose it; you make one account, your colleagues need none." },
   { value: "webdav", icon: "library", title: "Your institution’s drive", go: "Set up in your institution’s drive…", holds: SEALED,
     text: "A folder in SURFdrive, SURF Research Drive or a Nextcloud, which only your team can read. No new account, but every colleague needs one at the same drive." },
   { value: "r2", icon: "database", title: "A storage space at Cloudflare", go: "Set up at Cloudflare…", holds: SEALED,

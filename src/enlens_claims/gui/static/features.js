@@ -22,7 +22,7 @@ export const FEATURES = {
   },
   together: {
     section: "project", title: "Work together", icon: "users", href: "#/team", ai: "none",
-    what: "Work on a project with colleagues. Each of you keeps a copy on your own computer and Claude plan; ENLENS sends what you choose to share and brings in what they share: each person’s judgements are kept under their name, and nothing you decided is replaced.",
+    what: "Work on a project with colleagues. Each of you keeps a copy on your own computer; ENLENS sends what you choose to share and brings in what they share: each person’s judgements are kept under their name, and nothing you decided is replaced.",
     overview: false,
   },
   bibliography: {
@@ -87,12 +87,12 @@ export const FEATURES = {
   // 0.18.1 part B (AI mix, checks, retractions): its features below this line
   retractions: {
     section: "project", title: "Retractions and corrections", icon: "alert-triangle", href: "#/bibliography", ai: "none",
-    what: "Asks Crossref, when you press a button, whether the works of your bibliography and your documents have been retracted, corrected or flagged. Only DOIs are sent, and for a work of your bibliography without one its title, first author’s family name and year; works whose document is marked No AI, and your own drafts, are left out.",
+    what: "Asks Crossref, when you press a button, whether the works of your bibliography and your documents have been retracted, corrected or flagged. Only DOIs are sent, and for a work of your bibliography without one its title, first author’s family name and year; works whose document is marked No AI are left out.",
     overview: false,   // a button and a warning on the Bibliography, and a mark on excerpts
   },
   agreement: {
     section: "project", title: "Agreement between routes", icon: "scale", href: "#/settings", ai: "uses",
-    what: "On request, your local model and Claude answer the same sample of your own tasks of one kind, and Cohen's kappa says whether the local model is good enough for it. Only documents Claude may read go to Claude; nothing is stored.",
+    what: "On request, your local model and Claude answer the same sample of your own tasks of one kind, and Cohen's kappa says whether the local model is good enough for it. Only documents Claude may read go to Claude; each comparison is kept.",
     overview: false,   // a box in Settings → AI, under the mix of local and Claude
   },
   // end of 0.18.1 part B

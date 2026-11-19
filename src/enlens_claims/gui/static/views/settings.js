@@ -1366,10 +1366,10 @@ function exploreSection(s) {
   fwSel.addEventListener("change", async () => { try { await save({ profile_framework: fwSel.value }); } catch (_) { /* shown */ } });
   const k = rangeControl("Themes per set", { min: 2, max: 60, step: 1, value: s.themes_k ?? 20, help: "How many themes a new set looks for. A small project gets fewer." });
   k.input.addEventListener("change", async () => { try { await save({ themes_k: k.input.valueAsNumber }); } catch (_) { /* shown */ } });
-  return sectionCard("explore", "Exploring", "The defaults of the Profile and Themes pages. You can change both on those pages too.",
+  return sectionCard("explore", "Exploring", "The defaults of the Codes and Themes pages. You can change both on those pages too.",
     setting("Codebook of the profiles", fwSel, { help: team
       ? `This project uses the team’s default: “${team.title}” (set by the owner). This setting still applies to your other projects.`
-      : "Which codes the Profile page and a document’s Codes panel look for, and new documents get." }),
+      : "Which codes the Codes page and a document’s Codes panel look for, and new documents get." }),
     k,
     h("p", { class: "small", id: "s-frameworks" }, link({ kind: "next", href: "#/codebooks" }, "Open Codebooks"), " ", h("span", { class: "muted" }, "to make, change or copy a codebook.")));
 }
@@ -1603,10 +1603,10 @@ function helpSection() {
 // 0.11: every passage sent to Claude, as a table for records such as a data management plan (a row of Your data)
 function ledgerSection() {
   const project = App.project;
-  return setting("What was sent to Claude", project ? downloadButton({ onClick: () => download(`/api/projects/${P(project)}/ai-sent.csv`).catch(showError) }, `Download the list for “${project}” (CSV)`)
+  return setting("What was sent to the cloud", project ? downloadButton({ onClick: () => download(`/api/projects/${P(project)}/ai-sent.csv`).catch(showError) }, `Download the list for “${project}” (CSV)`)
     : h("p", { class: "muted small" }, "Open a project first."), { id: "s-ledger",
-    help: "Every passage sent to Claude, with when, by which route and for which feature.",
-    about: ["What was sent to Claude", "ENLENS writes down every passage it sends to Claude (Claude Code, the Claude API, or a Claude chat through the connector) at the moment it leaves. The Documents page shows the share of each document; this is the whole list as a spreadsheet file."] });
+    help: "Every passage sent to a cloud AI, with when, by which route and for which feature.",
+    about: ["What was sent to the cloud", "ENLENS writes down every passage it sends to a cloud AI at the moment it leaves. The Documents page shows the share of each document; this is the whole list as a spreadsheet file."] });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1614,7 +1614,7 @@ function ledgerSection() {
 function dataSection() {
   const st = App.state || {};
   const n = (st.projects || []).length;
-  return sectionCard("data", "Your data", "Everything the app keeps lives in one folder on this computer.",
+  return sectionCard("data", "Your data", "Your projects and settings live in one folder on this computer.",
     setting("Data folder", h("code", { class: "path set-path", title: st.home || "" }, ...String(st.home || "").split(/(?<=[\/\\])/).flatMap((seg) => [seg, h("wbr")])),
       { about: ["The data folder", "Each project is a folder with a database, the added files and the settings. Removed projects go to a trash folder inside the data folder."] }),
     setting("Projects", h("p", { class: "set-projects" }, `${n} ${n === 1 ? "project" : "projects"} · `, link({ href: "#/projects" }, "Manage projects"))),

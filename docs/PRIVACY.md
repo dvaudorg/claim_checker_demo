@@ -129,7 +129,7 @@ enforced](manual/privacy.md#how-it-is-enforced)).
 **The ledger.** Every passage that leaves for Claude, through any of the three routes, or in the file queue, is written
 to the table `ai_sent` at that moment, with the passage, the document, the route, the feature, the task and the time;
 for the queue and the API, the passage shown before each excerpt is recorded too (`access.record_sent`). The
-Documents page shows the share of each document sent; *Settings → Technical → What was sent to Claude* downloads the
+Documents page shows the share of each document sent; *Settings → Technical → What was sent to the cloud* downloads the
 whole list as CSV ([What Claude has read](manual/privacy.md#what-claude-has-read)). Changing a document's setting
 applies to everything not yet answered; what Claude has already read stays in the results and the ledger.
 
