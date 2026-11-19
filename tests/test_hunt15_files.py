@@ -315,32 +315,54 @@ def _use_in_a_thread(name: str) -> None:
     t.join(30)
 
 
+def _fds_on(files: list[pathlib.Path]) -> set[int]:
+    """The file descriptors of this process open on these files (POSIX: /proc/self/fd on Linux, /dev/fd on macOS)."""
+    ids = set()
+    for f in files:
+        with contextlib.suppress(OSError):
+            st = os.stat(f)
+            ids.add((st.st_dev, st.st_ino))
+    where = "/proc/self/fd" if os.path.isdir("/proc/self/fd") else "/dev/fd"
+    out = set()
+    for name in os.listdir(where):
+        with contextlib.suppress(OSError, ValueError):
+            st = os.fstat(int(name))
+            if (st.st_dev, st.st_ino) in ids:
+                out.add(int(name))
+    return out
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows refuses to replace a database file that is open: the test below")
 def test_a_project_whose_database_was_replaced_closes_the_connections_to_the_old_one():
     """The platform-free half: `open_project` keeps one project per folder and its database's file id. When the
     database is another file (the folder replaced), the one kept is dropped: its connections, in every thread, are
-    closed then, not left to the garbage collector (on Windows an open database keeps its folder from moving)."""
+    closed then, not left to the garbage collector (on Windows an open database keeps its folder from moving).
+
+    (After CI, Linux on Python 3.10: the rule is asserted on the files themselves, not on `Workspace._all`. That set
+    holds weak references; there the connection of a thread that has ended was already freed, and so closed, when the
+    thread ended, while newer Pythons keep it until the garbage collector runs. Either way nothing may stay open.)"""
     ws = ehome.create_project("Fieldwork")
     ws.close_all()
-    _use_in_a_thread("Fieldwork")
+    _use_in_a_thread("Fieldwork")   # a request thread that has ended (its connection freed or not, by the Python)
     old = ehome.open_project("Fieldwork")
-    held = list(old._all)
-    assert held
+    old.scalar("SELECT COUNT(*) FROM documents")  # and one still in use by this thread, on every Python
     db = old.db_path
+    files = [db, db.with_name(db.name + "-wal"), db.with_name(db.name + "-shm")]
+    held = _fds_on(files)
+    assert held  # (the setting holds: the old database is open)
     old_copy = db.with_name("copy.sqlite")
     shutil.copyfile(db, old_copy)
-    for f in (db, db.with_name(db.name + "-wal"), db.with_name(db.name + "-shm")):
+    for f in files:
+        f.unlink(missing_ok=True)
+    os.replace(old_copy, db)  # another file in its place
+    new = ehome.open_project("Fieldwork")
+    assert new is not old
+    # every descriptor that was on the old files is closed, or (its number taken again) on a file still linked: an
+    # open descriptor on one of the old, now unlinked, files has no link left
+    for fd in held:
         with contextlib.suppress(OSError):
-            if os.name != "nt":
-                f.unlink()
-    if os.name != "nt":
-        os.replace(old_copy, db)  # another file in its place
-        new = ehome.open_project("Fieldwork")
-        assert new is not old
-        for cx in held:
-            with pytest.raises(sqlite3.ProgrammingError):
-                cx.execute("SELECT 1")
-    new_ws = ehome.open_project("Fieldwork")
-    new_ws.close_all()
+            assert os.fstat(fd).st_nlink > 0, "a connection to the replaced database is still open"
+    new.close_all()
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows keeps a folder whose database is open from moving")
@@ -709,3 +731,39 @@ def test_a_merge_never_changes_this_copys_level_from_a_file(loaded, tmp_path, th
         sync.bring_in(mine, hand, anyway=True)
     assert mine.meta(store.PROJECT_NEEDS_KEY) == store.PROJECT_LEVEL
     mine.close_all()
+
+
+# ---------------------------------------------------------------------------------------------
+# 3, after the review of wave 3: no zip carries the level a project needs, so an older ENLENS's only guard for a zip is
+# the zip's `sync_needs`. The two rise together
+# ---------------------------------------------------------------------------------------------
+# what a zip needed while level 1 was the only project level (sync/formats.py when the level was made)
+ZIP_NEEDS_AT_LEVEL_1, OWNED_ZIP_NEEDS_AT_LEVEL_1 = 1, 4
+
+
+def test_a_higher_project_level_comes_with_a_higher_need_of_every_zip():
+    from enlens_claims.sync import formats
+
+    if store.PROJECT_LEVEL == 1:
+        return  # (nothing to keep in step yet)
+    assert formats.ZIP_NEEDS > ZIP_NEEDS_AT_LEVEL_1 and formats.OWNED_ZIP_NEEDS > OWNED_ZIP_NEEDS_AT_LEVEL_1, (
+        f"store.PROJECT_LEVEL is {store.PROJECT_LEVEL}, but a project zip still needs only sync format "
+        f"{formats.ZIP_NEEDS} (with an owner {formats.OWNED_ZIP_NEEDS}): no zip carries the project level "
+        "(bundle.export_project, sharing.strip), so an older ENLENS would open it unwarned. Raise sync/formats.py "
+        "FORMAT, ZIP_NEEDS and OWNED_ZIP_NEEDS to the new format (and describe it in that module's list), then pin "
+        "the values that go with the new level here.")
+    assert formats.FORMAT >= max(formats.ZIP_NEEDS, formats.OWNED_ZIP_NEEDS)
+
+
+def test_a_zip_says_the_need_an_older_enlens_checks(loaded, tmp_path):
+    """The guard the test above keeps in step is the one a zip really carries: `bundle.json`'s `sync_needs` is
+    `formats.zip_needs` of the project, and a copy whose format is lower refuses it in words."""
+    from enlens_claims.sync import formats
+
+    out = tmp_path / "all.zip"
+    bundle.export_project(loaded, out, scope="all")
+    with zipfile.ZipFile(out) as zf:
+        meta = json.loads(zf.read("bundle.json"))
+    assert meta["sync_needs"] == formats.zip_needs(loaded._conn())
+    older = dict(meta, sync_needs=formats.FORMAT + 1)
+    assert "newer ENLENS" in (formats.problem(older) or "")
