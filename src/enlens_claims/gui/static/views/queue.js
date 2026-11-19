@@ -43,12 +43,12 @@ export function queueSection() {
       const model = L.model || base.model;
       if (L.gate !== "wait") return { ...base, model, memory: null, noun: L.noun || "task", running: { phase: m.who === "local" && m.phase !== "ready" ? m.phase || "waiting" : "waiting", seconds: m.seconds }, count: L.waiting,
         onStop: async () => { await api("POST", `/api/jobs/${P(gated.id)}/local/stop`, {}); draw(); } };
-      return { ...base, model, memory: L.memory || base.memory, problem: L.problem || base.problem, noun: L.noun || "task", count: L.waiting,
+      return { ...base, model, memory: L.memory || base.memory, problem: L.problem || base.problem, noun: L.noun || "task", count: L.waiting, waitKey: `job:${gated.id}`,
         sub: `For “${String(gated.title || "").replace(/[.?!]+$/, "")}”`,
         onStart: async (force) => { await api("POST", `/api/jobs/${P(gated.id)}/local/start`, { force: !!force }); draw(); } };
     }
     const limit = q && q.at_limit && q.at_limit.offer_local;
-    return { ...base, count: limit ? q.waiting : q.for_local, head: limit ? `${agentTitle()} stopped at your plan’s limit: ${base.model || "your local model"} can answer what waits` : null,
+    return { ...base, waitKey: `queue:${App.project}:${limit ? "limit" : "mix"}`, count: limit ? q.waiting : q.for_local, head: limit ? `${agentTitle()} stopped at your plan’s limit: ${base.model || "your local model"} can answer what waits` : null,
       onStart: () => runLocal(limit ? "limit" : "mix") };
   }
   function drawLocal(q = lastQ) {

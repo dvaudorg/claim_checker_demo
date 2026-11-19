@@ -536,6 +536,270 @@ await scenario("stop of an AI run whose cancel failed", async (t) => {
   return { stopped, buttons: t.buttons(run.el) };
 });
 
+// ---- review wave 6 --------------------------------------------------------------------------------------------
+const later = () => { const x = {}; x.promise = new Promise((r) => { x.release = r; }); return x; };
+// 1. a dialog whose save runs: Escape, Cancel and another action wait for it, and it ends with the save's outcome
+await scenario("wave6: a dialog cancelled while its save runs", async (t) => {
+  t.state({ settings: {} });
+  const slow = later();
+  let saves = 0, other = 0;
+  const out = t.LIB.dialog({ title: "Remove it?", body: t.LIB.h("p", {}, "x"),
+    actions: [{ text: "Cancel", value: false }, { text: "Other", value: "other", onClick: async () => { other += 1; return true; } },
+      { text: "Remove", value: "removed", primary: true, onClick: async () => { saves += 1; await slow.promise; return true; } }] });
+  await t.settle(10);
+  const d = t.dialog();
+  await t.click("Remove", { within: d });
+  await t.press("Escape");
+  await t.click("Cancel", { within: d });
+  await t.click("Other", { within: d });
+  await t.click("Close", { within: d });
+  const openWhileSaving = !!t.dialog();
+  slow.release();
+  const value = await out;
+  return { value, saves, other, openWhileSaving };
+});
+await scenario("wave6: theme removed with both buttons and Escape while it saves", async (t) => {
+  t.state({ settings: { backend: "baseline" } });
+  t.answer(`GET ${TH}/r1/1?*`, { theme: THEME(), others: [THEME({ theme_id: 2, name: "cafés · community" })], passages: [], total: 0, offset: 0 });
+  t.answer("GET /api/projects/Study/sharing/themes/r1", { shared: false });
+  t.answer("GET /api/projects/Study/shared-folder", { folder: null });
+  t.answer("GET /api/projects/Study/sync-poller", t.fail(404, "none"));
+  const slow = later();
+  t.answer(`PUT ${TH}/r1/edit`, () => slow.promise.then(() => ({})));
+  t.answer(`POST ${TH}/r1/new`, { job: { id: "jn" } });
+  await t.render("views/themes.js", "renderTheme", ["r1", "1"], {});
+  await t.click("Remove…");
+  const d = t.dialog();
+  await t.click("Just remove it", { within: d });
+  await t.click("Remove and find a new theme", { within: d });
+  await t.press("Escape");
+  slow.release();
+  await t.settle(50);
+  return { puts: t.calls.filter((c) => c.method === "PUT").length, news: t.calls.filter((c) => c.method === "POST").length, navs: t.navs, open: !!t.dialog() };
+});
+// 2a. the bar of new answers does not move the field being typed in
+await scenario("wave6: new answers bar keeps the field in place", async (t) => {
+  let now = RESULT([PX()], { status: "waiting" });
+  t.answer("GET /api/projects/Study/queue", { route: "claude_code", can_start: true, waiting: 3, being_answered: 0, runner: {} });
+  await result(t, () => now, { backend: "claude_code" });
+  await t.click("Judge differently…", { within: card(t, "p1") });
+  const input = card(t, "p1").querySelector(".judge-note input");
+  input.focus();
+  t.layout((el) => (el === input ? { top: el.ownerDocument.querySelector(".res-new-answers:not([hidden])") ? 548 : 500, left: 0, width: 300, height: 30 } : null));
+  now = RESULT([PX(), PX({ passage_id: "p4", title: "Third report" })], { status: "waiting" });
+  await t.settle(5200);
+  return { scrolls: t.scrolls.filter((x) => x.window), focus: document.activeElement === input };
+});
+// 2b. a held answer that no longer waits is drawn once the field is left
+await scenario("wave6: a finished answer held while typing is drawn after the field is left", async (t) => {
+  let now = RESULT([PX()], { status: "waiting" });
+  t.answer("GET /api/projects/Study/queue", { route: "claude_code", can_start: true, waiting: 3, being_answered: 0, runner: {} });
+  await result(t, () => now, { backend: "claude_code" });
+  await t.click("Judge differently…", { within: card(t, "p1") });
+  const input = card(t, "p1").querySelector(".judge-note input");
+  input.focus();
+  now = RESULT([PX(), PX({ passage_id: "p4", title: "Third report" })], { status: "supported" });
+  await t.settle(5200);
+  const held = t.text(t.view).includes("New answers") && !t.text(t.view).includes("Third report");
+  input.blur(); document.activeElement = document.body;
+  await t.settle(5200);
+  return { held, drawn: t.text(t.view).includes("Third report") };
+});
+// 3. latestPick: a slow first pick saved after a second pick was refused at once
+const SLOW_OK = () => new Promise((res) => setTimeout(() => res({}), 2000));
+await scenario("wave6: speed, slow pick saved after a refused one", async (t) => {
+  t.state({ settings: { backend: "claude_code" } });
+  let n = 0;
+  const el = t.LIB.speedPicker("normal", undefined, () => (++n === 1 ? SLOW_OK() : Promise.reject(new Error("refused"))));
+  document.getElementById("view").appendChild(el);
+  await t.click("Faster"); await t.click("Slower");
+  await t.settle(2500);
+  return { checked: t.allText(el.querySelector('[aria-checked="true"]')) };
+});
+await scenario("wave6: thought, slow pick saved after a refused one", async (t) => {
+  t.state({ settings: { backend: "claude_code" } });
+  let n = 0;
+  const el = t.LIB.thoughtPicker("balanced", () => (++n === 1 ? SLOW_OK() : Promise.reject(new Error("refused"))));
+  document.getElementById("view").appendChild(el);
+  await t.click("Intelligence"); await t.click("Energy efficient");
+  await t.settle(2500);
+  return { checked: t.allText(el.querySelector('[aria-checked="true"]')) };
+});
+await scenario("wave6: sharing the work, slow pick saved after a refused one", async (t) => {
+  t.state({ settings: { backend: "claude_code", allow_claude_code: true, restricted_server: "http://localhost:11434", restricted_model: "qwen3:8b", ai_mix: "best", threshold: 0.6 } });
+  t.answer(/.*/, {});
+  t.answer("GET /api/servers", { servers: [] });
+  let n = 0;
+  t.answer("PUT /api/settings", (body) => (body.ai_mix ? (++n === 1 ? new Promise((res) => setTimeout(() => res({ settings: { ...t.LIB.App.state.settings, ...body } }), 2000)) : t.fail(500, "refused")) : { settings: { ...t.LIB.App.state.settings, ...body } }));
+  await t.render("views/settings.js", "renderSettings", ["mix"]);
+  await t.settle(100);
+  const mix = t.view.querySelector("#s-mix");
+  await t.click("Mostly local", { within: mix });
+  await t.click("Balanced", { within: mix });
+  await t.settle(2500);
+  return { checked: t.allText(mix.querySelector('[aria-checked="true"]')) };
+});
+// 4. the same words selected at their second place while the first place's save runs
+await scenario("wave6: the same words at two places, the second while the first saves", async (t) => {
+  const puts = [];
+  const slow = later();
+  t.answer("PUT /api/projects/Study/claims/c1/judgements/p1", (body) => { puts.push(body); return puts.length === 1 ? slow.promise.then(() => ({ moved: null })) : { moved: null }; });
+  await result(t, RESULT([PX({ text: TWICE, user_verdict: "supports", my_verdict: "supports", reviewed: true })]));
+  await t.click("Edit judgement…", { within: card(t, "p1") });
+  const nodes = [];
+  const walk = (n) => { for (const c of n.childNodes) { if (c.nodeType === 3) nodes.push(c); else walk(c); } };
+  walk(card(t, "p1").querySelector(".passage"));
+  const first = nodes.find((n) => n.data.includes("fix toasters"));
+  t.select(first, first.data.indexOf("fix toasters"), first.data.indexOf("fix toasters") + 12);
+  await t.click("Use it", { within: card(t, "p1") });
+  t.select(...lastIn(t, "p1", "fix toasters"));
+  await t.click("Use it", { within: card(t, "p1") });
+  slow.release();
+  await t.settle(50);
+  return { starts: puts.map((b) => b.quote_start) };
+});
+// 5a. a download whose model is not the one chosen in Settings
+await scenario("wave6: first run, the download is not the model chosen", async (t) => {
+  t.state({ settings: { backend: "auto", threshold: 0.6, ollama_model: "llama3.1:8b" }, projects: [] }, { project: null });
+  const OLL = { kind: "ollama", url: "http://localhost:11434", version: "0.5", embedding_models: [] };
+  let pulled = false;
+  t.answer("GET /api/servers", () => ({ servers: [{ ...OLL, chat_models: pulled ? ["llama3.1:8b", "qwen3:8b"] : [] }], suggested: [{ use: "chat", name: "qwen3:8b", size: "5 GB" }] }));
+  t.answer("GET /api/jobs", { jobs: [] });
+  t.answer("POST /api/servers/pull", { job: { id: "pl", kind: "model-pull", state: "running", progress: {} } });
+  t.answer("GET /api/jobs/pl", () => (pulled ? { id: "pl", kind: "model-pull", state: "done", result: { models: ["qwen3:8b"], url: OLL.url, chosen: null } } : { id: "pl", kind: "model-pull", state: "running", progress: {} }));
+  await t.render("views/setup.js", "renderSetup", []);
+  await t.settle(50);
+  await t.click(/^Download qwen3:8b/);
+  pulled = true;
+  await t.settle(2500);
+  return { text: t.text(t.view), sent: t.calls.filter((c) => c.method !== "GET").map((c) => `${c.method} ${c.path}`) };
+});
+// 5b. a wait that ended without the side running: the next wait is nudged after its own 5 s
+await scenario("wave6: a new wait after one that ended is nudged after 5 s", async (t) => {
+  t.state({ settings: { backend: "claude_code" } });
+  const real = Date.now;
+  let now = real();
+  Date.now = () => now;
+  const wait = async (ms) => { now += ms; await t.settle(ms); };
+  try {
+    const o = { where: "local", model: "qwen3:8b", noun: "task", count: 3, onStart: () => {} };
+    const el = t.LIB.aiSide(o);
+    document.getElementById("view").appendChild(el);
+    await wait(3000);
+    t.LIB.redrawSide(el, { where: "local", model: "qwen3:8b", noun: "task", plain: { key: "done", what: "Judged by you" } });   // the wait ended
+    await wait(10000);
+    t.LIB.redrawSide(el, o);   // a new wait
+    await wait(2000);
+    const b = el.querySelector(".ar-start button");
+    return { nudgedEarly: !!b && b.classList.contains("ar-nudge") };
+  } finally { Date.now = real; }
+});
+// 6. (handed on by pagesb) the codebook of the themes' code grid picked twice quickly
+await scenario("wave6: themes codebook picked twice quickly", async (t) => {
+  t.state({ settings: { backend: "claude_code", profile_framework: "sdg" } });
+  const late = later();
+  const grid = (fw) => ({ framework: fw, codes: [fw === "a" ? "A1" : fw === "b" ? "B1" : "S1"], cells: {} });
+  t.answer(`GET ${TH}`, { runs: [{ run_id: "r1" }], frameworks: [] });
+  t.answer(`GET ${TH}/r1?*`, (b, path) => {
+    const fw = new URLSearchParams(path.split("?")[1]).get("framework");
+    const v = { run: { run_id: "r1", created_at: "2026-11-15T10:00:00Z", passages: 40, mode: "meaning" }, documents: [{ doc_id: "d1" }], removed: [], readers: null,
+      themes: [{ theme_id: 1, name: "Cafés", name_source: "model", size: 10, terms: ["repair"], passages: [], docs: 1 }], code_grid: grid(fw) };
+    return fw === "a" ? late.promise.then(() => v) : v;
+  });
+  t.answer("GET /api/projects/Study/frameworks", { frameworks: [{ name: "sdg", title: "SDG" }, { name: "a", title: "A" }, { name: "b", title: "B" }] });
+  t.answer(/^GET \/api\/projects\/Study\/frameworks\//, { framework: { items: [] } });
+  t.answer("GET /api/projects/Study/sharing/themes/r1", { shared: false });
+  t.answer("GET /api/projects/Study/shared-folder", { folder: null });
+  t.answer("GET /api/projects/Study/sync-poller", t.fail(404, "none"));
+  await t.render("views/themes.js", "renderThemes", [], { view: "codes" });
+  await t.settle(20);
+  const sel = () => t.view.querySelector(".th-fw select");
+  await t.type(sel(), "a");
+  await t.type(sel(), "b");
+  late.release();
+  await t.settle(50);
+  return { select: sel() && sel().value, text: t.text(t.view) };
+});
+// 7. "Delete this result?" and "Delete this set of themes?" refused: the reason stays
+await scenario("wave6: delete a result refused", async (t) => {
+  t.answer(`DELETE ${H}?*`, t.fail(500, "database is locked"));
+  t.answer(`DELETE ${H}`, t.fail(500, "database is locked"));
+  await result(t, RESULT([PX()]));
+  await t.click("Delete this result");
+  const d = t.dialog();
+  d.querySelector("textarea").value = "a duplicate of h2";
+  await t.click("Delete", { within: d });
+  await t.settle(50);
+  const again = t.dialog();
+  return { open: !!again, words: again ? again.querySelector("textarea").value : null, navs: t.navs };
+});
+await scenario("wave6: delete a set of themes refused", async (t) => {
+  await themeList(t);
+  t.answer(`DELETE ${TH}/r1?*`, t.fail(500, "database is locked"));
+  t.answer(`DELETE ${TH}/r1`, t.fail(500, "database is locked"));
+  const del = t.view.querySelector('[aria-label^="Delete the set of themes"]');
+  await t.click(del);
+  const d = t.dialog();
+  d.querySelector("textarea").value = "made before the new documents";
+  await t.click("Delete", { within: d });
+  await t.settle(50);
+  const again = t.dialog();
+  return { open: !!again, words: again ? again.querySelector("textarea").value : null, navs: t.navs };
+});
+// 8. a second press of Find themes / Read this again: the job given back, or a 409 in words
+await scenario("wave6: themes found while a run goes on (page opened meanwhile)", async (t) => {
+  t.state({ settings: { backend: "baseline" } });
+  t.answer(`GET ${TH}`, { runs: [], frameworks: [], k: 12, auto_mode: "words", auto_why: "no meaning search" });
+  const job = { id: "jt", project: "Study", kind: "themes", state: "running", progress: {} };
+  t.answer("GET /api/jobs", { jobs: [job] });
+  t.answer("GET /api/jobs/jt", job);
+  t.answer(`POST ${TH}`, { job });
+  await t.render("views/themes.js", "renderThemes", [], {});
+  await t.settle(100);
+  const find = t.find("Find themes");
+  return { disabled: !find || find.disabled, panels: t.view.querySelectorAll(".th-find-job, .simple-progress, [role=progressbar]").length, toasts: t.toasts(), posts: t.calls.filter((c) => c.method === "POST").length };
+});
+await scenario("wave6: find themes while other themes are being found (409)", async (t) => {
+  t.state({ settings: { backend: "baseline" } });
+  t.answer(`GET ${TH}`, { runs: [], frameworks: [], k: 12, auto_mode: "words", auto_why: "no meaning search" });
+  t.answer("GET /api/jobs", { jobs: [] });
+  t.answer(`POST ${TH}`, t.fail(409, "Themes are being found in this project already: wait until that has finished, or stop it in the sidebar, then start again."));
+  await t.render("views/themes.js", "renderThemes", [], {});
+  await t.click("Find themes");
+  await t.settle(50);
+  return { toasts: t.toasts(), find: t.buttons(t.view).find((b) => b.label === "Find themes") };
+});
+const rereadOnce = async (t, hint) => {
+  await t.click("Details", { within: card(t, "p1") });
+  await t.click("Read this again…", { within: card(t, "p1") });
+  const d = t.dialog();
+  d.querySelector("#reread-note").value = hint;
+  d.querySelector("#reread-note").dispatchEvent(new Event("input", { bubbles: true }));
+  await t.click("Read it again", { within: d });
+  await t.settle(100);
+};
+await scenario("wave6: read this again, pressed again while it runs", async (t) => {
+  const job = { id: "rr", project: "Study", kind: "reread", state: "running", progress: {} };
+  t.answer("GET /api/jobs/rr", job);
+  t.answer("PUT /api/projects/Study/claims/c1/judgements/p1", { moved: null });
+  t.answer("POST /api/projects/Study/claims/c1/reread/p1", { job });   // the app gives the first job back
+  await result(t, RESULT([PX({ user_verdict: "supports", my_verdict: "supports", reviewed: true })]));
+  await rereadOnce(t, "");
+  await t.click("Table"); await t.click("Cards");   // drawn again: its button can be pressed again
+  const again = [...card(t, "p1").querySelectorAll("button")].find((b) => /Read this again/.test(b.textContent));
+  let second = false;
+  if (again && !again.disabled) { second = true; await rereadOnce(t, ""); }
+  return { second, panels: card(t, "p1").querySelectorAll(".ab-run").length, toasts: t.toasts(), posts: t.calls.filter((c) => c.method === "POST").length };
+});
+await scenario("wave6: read this again with another hint while one runs (409)", async (t) => {
+  t.answer("PUT /api/projects/Study/claims/c1/judgements/p1", { moved: null });
+  t.answer("POST /api/projects/Study/claims/c1/reread/p1", t.fail(409, "This excerpt is being read again already: wait for its answer, then ask again."));
+  await result(t, RESULT([PX({ user_verdict: "supports", my_verdict: "supports", reviewed: true })]));
+  await rereadOnce(t, "the next sentence says the opposite");
+  const d = t.dialog();
+  return { open: !!d, hint: d ? d.querySelector("#reread-note").value : null, toasts: t.toasts(), panels: card(t, "p1").querySelectorAll(".ab-run").length };
+});
+
 // ---- item 2: a quote kept where it was selected ------------------------------------------------------------------
 // your own judgement exists; you select the SECOND "fix toasters" of the excerpt and press Use it
 await scenario("quote selected where its words stand twice", async (t) => {
@@ -1036,3 +1300,120 @@ def test_the_made_with_mark_names_the_engine_version_in_an_app_built_on_enlens(p
     names otherwise. Not a bug: the number is ENLENS's own version (Settings › Technical › This installation names it
     "ENLENS <version>" the same way), not the app's name, which appName() gives everywhere else."""
     assert "ENLENS 0.18.0" in page["made with an earlier version, in an app built on ENLENS"]["text"]
+
+
+# ---------------------------------------------------------------------------------------------
+# review wave 6 (reviews/wave6.md) and what the other page fixer handed on
+# ---------------------------------------------------------------------------------------------
+@needs_node
+def test_a_dialog_waits_for_the_save_it_runs_and_ends_with_its_outcome(page):
+    """Wave 6, 2: Cancel, Escape, the x and another action closed (or acted in) a dialog while its save ran: the save
+    went through and what follows it was skipped. They now wait, and the dialog ends with the save's value."""
+    r = page["wave6: a dialog cancelled while its save runs"]
+    assert r == {"value": "removed", "saves": 1, "other": 0, "openWhileSaving": True}, r
+
+
+@needs_node
+def test_removing_a_theme_with_both_buttons_and_escape_sends_one_removal_and_goes_on(page):
+    """Wave 6, 2: askRemove's two buttons had their own guards (two removals), and Escape during a slow removal
+    skipped the navigation after it."""
+    r = page["wave6: theme removed with both buttons and Escape while it saves"]
+    assert r["puts"] == 1 and r["news"] == 0 and r["navs"] and not r["open"], r
+
+
+@needs_node
+def test_the_new_answers_bar_keeps_the_field_in_place(page):
+    """Wave 6, 3a: the bar prepended above the answers moved the field being typed in down (no scroll anchoring):
+    the page scrolls by what it moved."""
+    r = page["wave6: new answers bar keeps the field in place"]
+    assert r["focus"] and {"window": True, "by": [0, 48]} in r["scrolls"], r
+
+
+@needs_node
+def test_a_finished_answer_held_while_typing_is_drawn_once_the_field_is_left(page):
+    """Wave 6, 3b: an answer that no longer waited was held and the looks stopped: the page showed "waiting" until
+    Show them. The look goes on while a result is held."""
+    r = page["wave6: a finished answer held while typing is drawn after the field is left"]
+    assert r["held"] and r["drawn"], r
+
+
+@needs_node
+@pytest.mark.parametrize("name,want", [("wave6: speed, slow pick saved after a refused one", "Faster"),
+                                       ("wave6: thought, slow pick saved after a refused one", "Intelligence"),
+                                       ("wave6: sharing the work, slow pick saved after a refused one", "Mostly local")])
+def test_a_slow_pick_saved_after_a_refused_later_pick_is_shown(page, name, want):
+    """Wave 6, 4 (the reviewer's probe): Faster (slow, saved) then Slower (refused at once) left the control on Normal
+    while the server held Faster."""
+    assert want in page[name]["checked"], page[name]
+
+
+@needs_node
+def test_the_same_words_at_another_place_are_not_dropped_as_a_double_press(page):
+    """Wave 6, 5: the double-send guard's key left out where the words were selected: the second place's save, made
+    while the first's ran, was dropped without a word."""
+    assert page["wave6: the same words at two places, the second while the first saves"]["starts"] == [11, SECOND]
+
+
+@needs_node
+def test_the_first_run_page_names_the_model_that_was_downloaded(page):
+    """Wave 6, note on PAGESA15-1: with `chosen` null (Settings changed meanwhile) the page named the model chosen
+    in the select, the person's other model, as downloaded."""
+    r = page["wave6: first run, the download is not the model chosen"]
+    assert "qwen3:8b is downloaded" in r["text"] and "llama3.1:8b is downloaded" not in r["text"], r["text"]
+    assert "POST /api/servers/test" not in r["sent"], r["sent"]
+
+
+@needs_node
+def test_a_new_wait_after_one_that_ended_is_nudged_after_its_own_five_seconds(page):
+    """Wave 6, note on PAGESA15-8: a wait that ended without the side running kept its start, so the next wait for
+    the same model was nudged at once."""
+    assert page["wave6: a new wait after one that ended is nudged after 5 s"]["nudgedEarly"] is False
+
+
+@needs_node
+def test_the_themes_code_grid_shows_the_codebook_picked_last(page):
+    """Handed on by pagesb (PAGESB15-24): themes.js reload() had no sequence check: A (slow) then B showed B in the
+    select over A's codes."""
+    r = page["wave6: themes codebook picked twice quickly"]
+    assert r["select"] == "b" and "B1" in r["text"] and "A1" not in r["text"], r
+
+
+@needs_node
+@pytest.mark.parametrize("name", ["wave6: delete a result refused", "wave6: delete a set of themes refused"])
+def test_a_refused_deletion_keeps_its_reason_in_the_dialog(page, name):
+    """Handed on: the askWhy callers of result.js and themes.js saved after the dialog closed: a refusal lost the
+    reason. They now pass `save` (as codebooks.js and sources.js do)."""
+    r = page[name]
+    assert r["open"] and r["words"] and r["navs"] == [], r
+
+
+@needs_node
+def test_a_page_opened_while_themes_are_found_follows_that_job(page):
+    """Still open (wave 6): a second start of the same themes gets the running job back; the page opened meanwhile
+    follows it, with one panel, no error, and Find themes held."""
+    r = page["wave6: themes found while a run goes on (page opened meanwhile)"]
+    assert r["disabled"] and r["posts"] == 0 and not r["toasts"], r
+
+
+@needs_node
+def test_finding_themes_while_others_are_found_says_the_apps_words(page):
+    """Still open (wave 6): clashing themes are a 409 in words; the page shows those words, keeps no panel and Find
+    themes can be pressed again."""
+    r = page["wave6: find themes while other themes are being found (409)"]
+    assert any("being found in this project already" in x for x in r["toasts"]) and r["find"]["disabled"] is False, r
+
+
+@needs_node
+def test_read_this_again_pressed_again_follows_one_job(page):
+    """Still open (wave 6): the re-read pressed again gets the first job back: one panel, no error."""
+    r = page["wave6: read this again, pressed again while it runs"]
+    assert r["panels"] == 1 and not r["second"] and r["posts"] == 1 and not r["toasts"], r
+
+
+@needs_node
+def test_read_this_again_with_another_hint_while_one_runs_says_the_apps_words(page):
+    """Still open (wave 6): another hint while one re-read runs is a 409 in words: said, the dialog keeps the hint,
+    and no second panel."""
+    r = page["wave6: read this again with another hint while one runs (409)"]
+    assert r["open"] and r["hint"] == "the next sentence says the opposite" and r["panels"] == 0, r
+    assert any("being read again already" in x for x in r["toasts"]), r

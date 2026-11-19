@@ -8,8 +8,8 @@
 ### Safer
 
 - **A model just downloaded on the first page waits for its own Start.** After *Download …* on the first-run page,
-  the model was tested at once, which loaded it without a press of yours. The page now says the model is there, and
-  *Save and test* loads it when you press it.
+  the model was tested at once, which loaded it without a press of yours. The page now says which model is there,
+  and *Save and test* loads it when you press it.
 - **The warning before quitting, updating or restarting is not dropped when the app cannot say what runs.** When the
   look at the work in progress failed, the dialog said nothing of a check or an add that might be running. It now says
   that this could not be checked, and that quitting or restarting stops whatever runs.
@@ -20,9 +20,14 @@
 ### Fixed
 
 - **A short text typed in a dialog is kept when its save fails.** Renaming a theme (in the list and on the theme's
-  page), the *Why?* of removing one, and the hint of *Read this again…* closed their dialog before saving, so a failed
-  save lost what you had typed. The dialog now stays open with your words, and a hint saved as your comment on a first
-  try is not saved twice.
+  page), the *Why?* of removing a theme, deleting a result or a set of themes, and the hint of *Read this again…*
+  closed their dialog before saving, so a failed save lost what you had typed. The dialog now stays open with your
+  words, and a hint saved as your comment on a first try is not saved twice.
+- **A dialog waits for the save it started.** While a save sent from a dialog runs, *Cancel*, Escape, the x and the
+  dialog's other buttons wait for it, so what follows a save that went through (its message, the page drawn again)
+  is never skipped, and *Remove a theme* cannot send two removals.
+- **The codes of the themes follow the codebook chosen last.** Two codebooks picked quickly on the themes' code grid
+  could show the second's name over the first's codes.
 - **A failed choice no longer undoes a later one.** The speed of Claude Code, how much thought it gives the tasks, and
   in Settings *Sharing the work* and *At your plan's usage limit*: a first choice whose save failed after a second
   choice was saved put the control back to the value before both. It now goes back only to what was saved last.
@@ -38,8 +43,8 @@
   its first look failed. *How often you agree* in Settings says when it could not be worked out. The sidebar keeps the
   work waiting for Claude Code when one look at it failed.
 - **New answers while you write.** While a check waits for Claude Code, a cursor left in a comment box stopped the
-  page from looking for new answers. The page now goes on looking, says *New answers came in* with *Show them*, and
-  draws them when you ask, without taking your field.
+  page from looking for new answers. The page now goes on looking, says *New answers came in* with *Show them*
+  (without moving the field you are in), and draws them when you ask or a few seconds after you leave the field.
 - **A judgement is saved once and said to be saved.** A double click on *Agree*, *Not about this* or a judgement sent
   it twice; and when the page could not be drawn again after a save, only the error showed, though the judgement was
   saved. The toast now says it was saved, and that the page could not show it yet.

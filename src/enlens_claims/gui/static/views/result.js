@@ -365,8 +365,16 @@ export async function renderResult(view, [hypId], query) {
       button({ sm: true, onMousedown: (e) => e.preventDefault(), onClick: () => { const r = heldResult; if (!r) return; heldResult = null; current = r; draw(r); } }, "Show them"))));
   function holdNew(r) {
     heldResult = r;
+    if (newBar.isConnected && !newBar.hidden) return;
+    // (review wave 6) the bar goes above the answers: the field in use stays where it is on the screen (a browser
+    // without scroll anchoring moved it down by the bar's height; one with it has moved nothing, so nothing is added)
+    const a = document.activeElement;
+    const ref = a && a !== document.body && box.contains(a) ? a : null;
+    const top = ref ? ref.getBoundingClientRect().top : 0;
     if (!newBar.isConnected) box.prepend(newBar);
     newBar.hidden = false;
+    const moved = ref ? ref.getBoundingClientRect().top - top : 0;
+    if (moved) window.scrollBy(0, moved);
   }
   // Hunt phase 1 (PAGESA-2, PAGESA-3): a redraw the person did not ask for (a job of this result ended, "Read more
   // excerpts" came back, the look while a check waits) never takes a field out from under their hands. The text field
@@ -420,7 +428,9 @@ export async function renderResult(view, [hypId], query) {
       if (waitsForClaude(r)) armWait();   // as draw() would: look again in a few seconds
       return;
     }
-    if (opts.hold) { holdNew(r); if (waitsForClaude(r)) armWait(); return; }   // a field is in use: said, not drawn
+    // a field is in use: said, not drawn; looked at again while it is held (review wave 6: a held answer that no longer
+    // waits was drawn only on "Show them"), so the next look with no field in use draws it
+    if (opts.hold) { holdNew(r); armWait(); return; }
     current = r;
     draw(r);
   }
@@ -2087,7 +2097,7 @@ export async function renderResult(view, [hypId], query) {
     // one (a comment saved on leaving its field, then a judgement picked) still goes
     const sending = new Set();
     const put = async (verdict, note, msg, opts = {}) => {
-      const same = JSON.stringify([verdict, note, opts.quote]);
+      const same = JSON.stringify([verdict, note, opts.quote, opts.quoteStart]);   // (wave 6) the same words at another place are another save
       if (sending.has(same)) return;
       sending.add(same);
       try { await putOnce(verdict, note, msg, opts); } finally { sending.delete(same); }
@@ -2445,10 +2455,12 @@ export async function renderResult(view, [hypId], query) {
   async function deleteHyp(r) {
     // 0.16 (F4): why the claim was dropped goes into the research log
     const ok = await askWhy({ title: "Delete this result?", confirmText: "Delete", placeholder: "For example: the claim was reworded, outside the scope, a duplicate",
-      message: h("div", {}, h("p", {}, "The hypothesis, the judgements and your notes are removed from the hypotheses of this project. The documents stay; the research log keeps a line about it."), h("p", { class: "serif" }, r.text)) });
+      message: h("div", {}, h("p", {}, "The hypothesis, the judgements and your notes are removed from the hypotheses of this project. The documents stay; the research log keeps a line about it."), h("p", { class: "serif" }, r.text)),
+      // hunt phase 1.5 (wave 6): sent from the dialog's button, so a refusal keeps the reason typed (it was lost)
+      save: (why) => api("DELETE", `/api/projects/${P(project)}/hypotheses/${P(hypId)}${why ? `?why=${encodeURIComponent(why)}` : ""}`) });
     if (!ok) return;
-    try { await api("DELETE", `/api/projects/${P(project)}/hypotheses/${P(hypId)}${ok.why ? `?why=${encodeURIComponent(ok.why)}` : ""}`); toast("Result deleted.", "ok"); navigate(r.batch_id ? `#/hypotheses?batch=${encodeURIComponent(r.batch_id)}` : "#/hypotheses"); }
-    catch (e) { showError(e); }
+    toast("Result deleted.", "ok");
+    navigate(r.batch_id ? `#/hypotheses?batch=${encodeURIComponent(r.batch_id)}` : "#/hypotheses");
   }
 
   await load();

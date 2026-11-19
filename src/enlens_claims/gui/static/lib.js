@@ -578,8 +578,13 @@ export function dialog({ title, body, actions, danger, onOpen, wide, lock, onDis
     // onDismiss(): asked before the dialog goes without an answer (Escape, the x, a click beside it); false keeps it
     // open (a set-up half done, with something pasted: a slip of the hand does not lose the place)
     let asking = false;
+    // hunt phase 1.5 (review wave 6): while any action's work runs (a save sent from the dialog's own button), the
+    // whole dialog waits for it: every other action, Cancel, Escape, the x and a click beside it do nothing, and the
+    // dialog then ends with that action's outcome (a save that went through, cancelled meanwhile, skipped what follows
+    // it; two buttons of one dialog sent two saves)
+    let working = false;
     const dismiss = async () => {
-      if (asking || (lock && lock.on)) return;
+      if (asking || working || (lock && lock.on)) return;
       if (onDismiss) { asking = true; let go; try { go = await onDismiss(); } finally { asking = false; } if (go === false) return; }
       close(null);
     };
@@ -595,12 +600,12 @@ export function dialog({ title, body, actions, danger, onOpen, wide, lock, onDis
         icon: a.icon,
         disabled: a.disabled,
         onClick: async () => {
-          if (running) return;
+          if (running || working) return;
           if (a.onClick) {
-            running = true;
+            running = true; working = true;
             b.setAttribute("aria-busy", "true");
             let r;
-            try { r = await a.onClick(dlg); } finally { running = false; b.removeAttribute("aria-busy"); }
+            try { r = await a.onClick(dlg); } finally { running = false; working = false; b.removeAttribute("aria-busy"); }
             if (r === false) return;
           }
           close(a.value);
@@ -2511,8 +2516,10 @@ function localSide(o, el) {
   let key = "wait";
   // hunt phase 1.5 (phase 0 P-5): without o.since, when this side began to wait is kept per model and noun, so a side
   // drawn again (a count changed, the queue's look) does not start its nudge over; a side that runs or is done forgets it
-  const waitKey = `${name}|${noun}`;
-  if (o.running || o.done) LOCAL_WAIT_SINCE.delete(waitKey);
+  // (review wave 6) `o.waitKey` names the wait (a job's id); a side drawn in any other state forgets it, so the next
+  // wait starts its 5 s afresh (a wait ended by judging by hand or a stop kept its time, and nudged the next at once)
+  const waitKey = o.waitKey || `${name}|${noun}`;
+  if (o.running || o.done || o.plain || o.problem || !o.onStart) LOCAL_WAIT_SINCE.delete(waitKey);
   const since = () => o.since || LOCAL_WAIT_SINCE.get(waitKey) || (LOCAL_WAIT_SINCE.set(waitKey, Date.now()), LOCAL_WAIT_SINCE.get(waitKey));
   if (o.plain) {   // one line and a state (not yet, stopped): nothing to press
     fillSide(el, o.plain.key, [arWhat(o.plain.what, o.plain.muted), o.plain.line || null]);
@@ -2577,7 +2584,7 @@ function localSide(o, el) {
       const hint = yourself ? `Judge ${them} yourself and the model is not needed.${asks ? " Starting it now asks first: the computer may become very slow." : ""}`
         : anyway ? "Start it once memory is free; it is checked again then. Start it anyway asks first: the computer may become very slow." : null;
       const row = aiStart({ where: "local", model: o.model, kind: yourself ? "standard" : "main", compact: o.compact, before: yourself,
-        also: [anyway], hint: hint || undefined, nudge: !yourself && !anyway && !short ? since() : false,
+        also: [anyway], hint: hint || undefined, nudge: !yourself && !anyway && !short ? since() : (LOCAL_WAIT_SINCE.delete(waitKey), false),
         onClick: async () => {
           if (!(yourself && short)) return go(row.start, false);
           const ok = o.confirm === false || await confirmDialog({ title: `Start ${name} anyway?`, danger: false, confirmText: "Start it anyway", confirmIcon: "play",
@@ -2881,12 +2888,23 @@ function choiceChanged(project, from) {
 // puts the control back to the value last saved, and only when no later pick was made (a first pick that failed after
 // a second was saved put the control back over the saved one). `now()` the value shown; `put(v)` shows v.
 // start() at each pick returns { saved(v), failed() } for its answer.
+// (review wave 6) A save answered after every later pick has failed shows its value: the control went back to the
+// value saved before, though the server then held this one.
 export function latestPick(now, put) {
-  let seq = 0, saved = now();
+  let seq = 0, saved = now(), savedSeq = 0;
+  const failed = new Set();
+  const laterAllFailed = (n) => { for (let k = n + 1; k <= seq; k += 1) if (!failed.has(k)) return false; return true; };
   return {
     start() {
       const n = ++seq;
-      return { saved: (v) => { saved = v; }, failed: () => { if (n === seq) put(saved); } };
+      return {
+        saved: (v) => {
+          if (n < savedSeq) return;   // a later pick was saved already: it holds
+          saved = v; savedSeq = n;
+          if (n !== seq && laterAllFailed(n)) put(v);
+        },
+        failed: () => { failed.add(n); if (n === seq) put(saved); },
+      };
     },
   };
 }

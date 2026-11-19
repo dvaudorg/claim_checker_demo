@@ -196,8 +196,15 @@ async function renderRun(view, runId, info, query) {
   const againFold = fold({ class: "th-again" }, "Find the themes again (more or fewer themes, or after adding documents)", h("div", { class: "th-run-again" }, again));
   view.append(head, notes, nameJob, newJob, againFold, tabs, tabBox, removedBox, runsBox);
 
+  // (handed on, PAGESB15-24) only the newest look is drawn: a codebook picked, then another, showed the second's name
+  // over the first's codes when the first answered last
+  let looks = 0;
   async function reload() {
-    try { v = await api("GET", `${base}?framework=${encodeURIComponent(framework)}`); } catch (e) { showError(e); return; }
+    const look = ++looks;
+    let got;
+    try { got = await api("GET", `${base}?framework=${encodeURIComponent(framework)}`); } catch (e) { if (look === looks) showError(e); return; }
+    if (look !== looks) return;
+    v = got;
     const y = window.scrollY;
     draw();
     window.scrollTo(0, y);  // stay where the person was
@@ -434,14 +441,13 @@ async function renderRun(view, runId, info, query) {
   }
 
   async function deleteRun(r) {
-    const ok = await askWhy({ title: "Delete this set of themes?", message: `The ${r.themes_now ?? r.k} themes found ${fmt.date(r.created_at)} are deleted, with the names the AI gave them. Your renames, merges and moves are kept for a new set with the same number of themes.`, confirmText: "Delete" });
+    const ok = await askWhy({ title: "Delete this set of themes?", message: `The ${r.themes_now ?? r.k} themes found ${fmt.date(r.created_at)} are deleted, with the names the AI gave them. Your renames, merges and moves are kept for a new set with the same number of themes.`, confirmText: "Delete",
+      // hunt phase 1.5 (wave 6): sent from the dialog's button, so a refusal keeps the reason typed (it was lost)
+      save: (why) => api("DELETE", `/api/projects/${P(project)}/themes/${P(r.run_id)}${why ? `?why=${encodeURIComponent(why)}` : ""}`) });
     if (!ok) return;
-    try {
-      await api("DELETE", `/api/projects/${P(project)}/themes/${P(r.run_id)}${ok.why ? `?why=${encodeURIComponent(ok.why)}` : ""}`);
-      toast("Set of themes deleted.", "ok", { small: true });
-      if (r.run_id === runId) navigate("#/themes");
-      else { const i = runs.indexOf(r); if (i >= 0) runs.splice(i, 1); drawRuns(); }
-    } catch (e) { showError(e); }
+    toast("Set of themes deleted.", "ok", { small: true });
+    if (r.run_id === runId) navigate("#/themes");
+    else { const i = runs.indexOf(r); if (i >= 0) runs.splice(i, 1); drawRuns(); }
   }
 
   // ---- editing
