@@ -194,8 +194,9 @@ def _main(argv: list[str] | None = None) -> int:
                         "local AI on this computer) or none (no AI; you judge them). Needed while the project has no "
                         "default; the first choice becomes the default")
     sub.add_parser("match-sources", help="link documents to the references cited in the VCA")
-    p = sub.add_parser("reset-corpus", help="remove all documents and what was made from them: hypotheses and checks "
-                                            "with their judgements, labels, themes, concepts (keeps the VCA and splits)")
+    p = sub.add_parser("reset-corpus", help="remove all documents and what was made from them: hypotheses and "
+                                            "checks with their judgements, labels, themes, concepts (keeps the VCA "
+                                            "and splits)")
     p.add_argument("--yes", action="store_true", help="confirm")
     sub.add_parser("coverage", help="which justified targets have their cited sources available")
     p = sub.add_parser("screen", help="mark passages worth sending to extraction")
@@ -627,17 +628,23 @@ def _main(argv: list[str] | None = None) -> int:
             print("Problem: nothing at " + ", ".join(missing) + ". Give the path of a folder, a zip or a file on this "
                   "computer. Nothing was added.", file=sys.stderr)
             return 1
-        # hunt phase 1.5 (the owner's rule): documents never become readable by an AI through silence. A project
-        # whose default was never chosen needs --ai-access (the app asks first, with nothing preselected)
-        from . import access
-
-        if a.ai_access is None and not access.default_chosen(ws):
+        # hunt phase 1.5 (the owner's rule, `ingest.adding_access`): documents never become readable by an AI through
+        # silence: a project whose default was never chosen needs --ai-access (the app asks first, with nothing
+        # preselected). The person's own command may set a looser one than the default. Earlier documents that follow
+        # an unchosen default keep following it: the answer is the new documents' own, and becomes the default only on
+        # a project without such documents
+        try:
+            plan = ingest.adding_access(ws, a.ai_access)
+        except ingest.AccessChoice:
             print("Problem: say who may read these documents with AI: add --ai-access cloud (a cloud model such as "
                   "Claude), --ai-access local (only a local AI on this computer) or --ai-access none (no AI; you judge "
                   "them). This project has no default yet. Nothing was added.", file=sys.stderr)
             return 1
         _print(ingest.ingest(ws, [str(Path(x).expanduser()) for x in a.inputs], a.exclude,
-                             ocr=ingest.OcrOptions(a.ocr, a.ocr_lang), ai_access=a.ai_access))
+                             ocr=ingest.OcrOptions(a.ocr, a.ocr_lang), ai_access=plan["ai_access"],
+                             set_default=plan["set_default"]))
+        if plan["earlier"]:
+            print(ingest.earlier_words(ws, plan["earlier"]), file=sys.stderr)
     elif a.cmd == "reset-corpus":
         if not a.yes:
             print("This deletes the documents and everything made from them: passages, claims, verifications, the "

@@ -334,7 +334,9 @@ def _check_path(path: str) -> Path:
 
 # hunt phase 1.5 (the owner's rule): documents never become readable by an AI through silence. Without `ai_access`,
 # a project whose default was never chosen is refused in words (the app asks first, with nothing preselected); a
-# chosen default applies. The rule sits here, at the connector's entry, not in `ingest.ingest`.
+# chosen default applies. After the review of wave 1 (the orchestrator's conservative decision, for the owner): an
+# `ai_access` looser than the project's chosen default is refused too, since the AI chose it; and earlier documents
+# that follow an unchosen default keep following it. The rule is `ingest.adding_access`, called at the entry here.
 _ASK_ACCESS = ("Ask the user who may read the new documents with AI, then call again with ai_access: cloud (Claude may "
                "read them), local (only a local AI on this computer) or none (no AI; the user judges them). This "
                "project has no default yet, so nothing was added.")
@@ -348,16 +350,31 @@ def _access_chosen(ws, ai_access: str | None) -> None:
                          "the user only. Call again with ai_access local or none.")
 
 
+def _plan_access(ws, ai_access: str | None) -> dict:
+    """`ingest.adding_access` for an AI's call, in the connector's words."""
+    try:
+        return ingest.adding_access(ws, ai_access, by_ai=True)
+    except ingest.AccessChoice as e:
+        if e.kind == "missing":
+            raise ValueError(_ASK_ACCESS) from None
+        raise ValueError(str(e) + " Ask the user before passing a looser ai_access.") from None
+
+
 def _ingest(ws, path: str, exclude: list[str] | None, ai_access: str | None = None) -> dict:
     p = _check_path(path)
     _access_chosen(ws, ai_access)
+    plan = _plan_access(ws, ai_access)
     before = {d["doc_id"] for d in document_overview(ws)}
-    stats = ingest.ingest(ws, [p], exclude=exclude or None, ai_access=ai_access)
+    stats = ingest.ingest(ws, [p], exclude=exclude or None, ai_access=plan["ai_access"],
+                          set_default=plan["set_default"])
     added = [d for d in document_overview(ws) if d["doc_id"] not in before]
     out = {"documents_added": len(added), "usable_documents_added": sum(1 for d in added if not d["check"]),
            "readable_passages_added": sum(d["passages"] for d in added), "already_in_project": stats["duplicates"],
            "without_text": stats["empty"]}
     out["ai_access"] = access.default(ws) if ai_access is None else ai_access
+    if plan["earlier"]:  # (they keep following the default nobody chose; the new ones have their own setting)
+        out["earlier_documents_without_a_chosen_setting"] = plan["earlier"]
+        out["note"] = ingest.earlier_words(ws, plan["earlier"])
     hidden = access.restricted_titles(ws)  # a No-AI document's title is not told to the chat (as list_documents)
     warn = [{"title": hidden.get(d["doc_id"], d["title"]), "warning": d["check"]} for d in added if d["check"]]
     if warn:
@@ -462,7 +479,9 @@ def build_server():
 
     @s.tool(description="Add sources to an existing project from a path on this computer (zip, folder or file). "
                         "ai_access as for create_project; without it the project's default applies, and a project "
-                        "whose default was never chosen adds nothing until you pass it.")
+                        "whose default was never chosen adds nothing until you pass it. An ai_access looser than the "
+                        "project's default (cloud where it is local or none, local where it is none) is refused: "
+                        "only the person can open documents wider, in the app's Documents page.")
     @_friendly
     def add_sources(project: str, sources_path: str, exclude: Optional[list[str]] = None,
                     ai_access: Optional[Literal["cloud", "local", "none"]] = None) -> dict:
@@ -472,10 +491,31 @@ def build_server():
     @s.tool(description="Use an existing ENLENS workspace folder (for example the pilot) as a project, without copying "
                         "it. A folder another person made is cleaned first, as a project from a zip is (its record of a "
                         "shared folder, file paths and cache go; the documents and the work stay): ask the user, then "
-                        "call again with clean=true.")
+                        "call again with clean=true. A folder whose default AI setting was never chosen (one made "
+                        "with the command line) needs ai_access (cloud, local or none), as for create_project: ask "
+                        "the user. A folder with a chosen setting keeps it; a looser ai_access is refused.")
     @_friendly
-    def use_folder_as_project(path: str, name: Optional[str] = None, clean: bool = False) -> dict:
-        return {"project": core.link_existing(path, name, clean=clean)}
+    def use_folder_as_project(path: str, name: Optional[str] = None, clean: bool = False,
+                              ai_access: Optional[Literal["cloud", "local", "none"]] = None) -> dict:
+        # hunt phase 1.5 (review of wave 1): a folder nobody chose an AI setting for was linked without asking, and
+        # its documents became readable through this connector by silence. The person's answer (asked by the AI)
+        # becomes the folder's default here: these documents are what is being added
+        from .store import Workspace
+
+        src = Path(path).expanduser()
+        if not (src / "enlens.sqlite").exists():
+            raise ValueError(f"No workspace (enlens.sqlite) in {src}.")
+        folder = Workspace(src)
+        chosen = access.default_chosen(folder)
+        if not chosen:
+            _access_chosen(None, ai_access)
+        elif ai_access is not None:
+            _plan_access(folder, ai_access)  # a looser setting than the folder's own is refused
+        project = core.link_existing(path, name, clean=clean)
+        ws = core.open_project(project)
+        if not chosen:
+            access.set_default(ws, ai_access)
+        return {"project": project, "ai_access": access.default(ws)}
 
     @s.tool(description="List a project's documents with pages, passages and warnings (unreadable or very short files).")
     @_friendly

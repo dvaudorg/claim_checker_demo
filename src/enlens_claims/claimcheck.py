@@ -1353,6 +1353,12 @@ def continue_check(ws: Workspace, cid: str, backend, model: str, k: int = 8, ter
     `doc_ids` limits the round to those documents (see `more_passages`)."""
     say = _adapt(progress)
     _stopper(should_stop)()
+    # hunt phase 1.5: the app's way to a further round says, in the person's words, why it cannot start yet
+    # (`more_passages` says it in the connector's, naming the tool a Claude chat calls)
+    groups = _rounds(ws, cid)
+    last = _main_part(groups[-1]) if groups else None
+    if last is not None and last["status"] not in ("done", "failed"):
+        raise ValueError(ROUND_WAITS)
     used = _used(backend, model)
     say("rank", "Looking for further excerpts not read yet", {})
     own = readers is None
@@ -1622,8 +1628,11 @@ def further_round_waits(ws: Workspace, hyp_id: str) -> str | None:
         groups = _rounds(ws, c["claim_id"])
         last = _main_part(groups[-1]) if groups else None
         if last is not None and last["status"] not in ("done", "failed"):
-            return "This check still has excerpts waiting to be judged: read further once they are judged."
+            return ROUND_WAITS
     return None
+
+
+ROUND_WAITS = "This check still has excerpts waiting to be judged: read further once they are judged."
 
 
 def read_unread_documents(ws: Workspace, hyp_id: str, backend, model: str, k: int = 8, embedder=None,

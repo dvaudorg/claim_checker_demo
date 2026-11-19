@@ -275,7 +275,9 @@ enlens --ws pilot requeue extract       # put exported tasks that got no answer 
 
 `check-results` applies every check the import applies (schema, quotes, passage numbers) without storing anything,
 and lists the problems per line, so a worker can fix its file before handing it back. The worker guide asks workers to
-judge every task themselves and use code only to write and check JSON.
+judge every task themselves and use code only to write and check JSON. `import-results` does not store an answer for a
+task put back with `requeue` that a Claude Code helper is answering now (`held_by_a_helper` counts them): the
+helper's answer counts.
 
 > [!WARNING]
 > Running several workers at once (the pilot ran up to 15 Claude agents in parallel): give each worker its own batch
@@ -396,7 +398,9 @@ dedicated classifier can replace the screen once it is benchmarked on reviewed p
 Every stored result records the model and the prompt version (`extract-v1`, `split-v2`, `verify-v2`, `verify-set-v2`;
 for hypotheses `decompose-v1`, `expand-v2`, `check-v5`). When you change a prompt in `prompts.py`, bump its version so
 old and new results stay distinguishable, then queue the affected tasks again with `enlens refresh KIND` (add
-`--model` to switch model at the same time). Earlier answers stay in the `results` table.
+`--model` to switch model at the same time). Earlier answers stay in the `results` table. Tasks still out in the file
+queue are left as they are: their answers are recorded under the instructions written beside their files (`requeue`
+them first to ask them again under the new ones).
 
 ## The pack's tables
 

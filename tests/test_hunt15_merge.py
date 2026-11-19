@@ -259,40 +259,53 @@ def _theory_codes_task(ws) -> str:
 
 
 def test_the_concepts_the_ai_drafted_from_a_theory_document_stay_but_its_codebook_travels(abc, tmp_path):
-    """Anna asks the AI to draft concepts from a theory document (`theory_codes` tasks) and makes a codebook of them,
-    which she shares. Her zip of what she shared and the shared folder's rows hold no `theory_codes` task or answer;
-    the shared folder's last look refuses one; Ben, from her zip, gets the codebook with its quoted definition."""
+    """Anna asks the AI to draft concepts from a theory document (`theory_codes` tasks, theorycodes.make_ai_tasks) and
+    makes a codebook of a drafted concept by the route the page takes (`codebooks.create(start="theory")` from
+    `theorycodes.ai_drafts`), which she shares. Her zip of what she shared and the shared folder's rows hold no
+    `theory_codes` task or answer; Ben, from her zip, gets the codebook with the definition quoted from the theory."""
     import zipfile
 
-    from enlens_claims import bundle, frameworks
+    from enlens_claims import bundle, codebooks, frameworks, theorycodes
 
     anna, ben, carol = abc
+    doc = _first_doc(anna)
     with anna:
-        tid = _theory_codes_task(anna.ws)
-        frameworks.save(anna.ws, "agency", "code,description\nAgency,\"Agency is the capacity to act, as the theory "
-                                           "defines it.\"\n", title="Agency codes")
-        sharing.share(anna.ws, [{"kind": "codebook", "key": "agency"}])
+        tids = theorycodes.make_ai_tasks(anna.ws, doc, "claude-sonnet-5-5")
+        payload = json.loads(anna.ws.scalar("SELECT payload_json FROM tasks WHERE task_id=?", (tids[0],)))
+        quote = " ".join(payload["passages"][0]["text"].split()[:10])
+        answer = {"concepts": [{"name": "Water stress", "reason": "the text defines it",
+                                "definition": {"passage": 1, "quote": quote}}]}
+        with anna.ws.connect() as cx:
+            cx.execute("UPDATE tasks SET status='done', attempts=1 WHERE task_id=?", (tids[0],))
+            cx.execute("INSERT INTO results(task_id, attempt, kind, model, prompt_version, raw_json, valid, "
+                       "errors_json, received_at) VALUES (?, 1, 'theory_codes', 'claude-sonnet-5-5', 'v1', ?, 1, "
+                       "'[]', ?)", (tids[0], json.dumps(answer), now()))
+        drafts = theorycodes.ai_drafts(anna.ws, tids, with_examples=False)
+        assert [d["term"] for d in drafts] == ["Water stress"]
+        codebooks.create(anna.ws, "stress", "Stress codes", start="theory",
+                         source={"codes": [drafts[0]["code"]], "doc_id": doc})
+        sharing.share(anna.ws, [{"kind": "codebook", "key": "stress"}])
         with anna.ws.connect() as cx:
             sent = {r[2][0] for r in sharing.ProjectRows(cx, anna.ws.root).scan(only=["tasks", "results"])
                     if r[0] in ("tasks", "results")}
         out = tmp_path / "anna-shared.zip"
         bundle.export_project(anna.ws, out, scope="shared")
-    assert tid not in sent
+    assert not set(tids) & sent
     work = tmp_path / "unpacked"
     with zipfile.ZipFile(out) as zf:
         zf.extract("enlens.sqlite", work)
     cx = sqlite3.connect(work / "enlens.sqlite")
     try:
         assert not cx.execute("SELECT COUNT(*) FROM tasks WHERE kind='theory_codes'").fetchone()[0]
-        assert not cx.execute("SELECT COUNT(*) FROM results WHERE task_id=?", (tid,)).fetchone()[0]
+        assert not cx.execute("SELECT COUNT(*) FROM results WHERE kind='theory_codes'").fetchone()[0]
     finally:
         cx.close()
     assert "theory_codes" in sharing.LOCAL_TASK_KINDS   # (so sync.folder._leaks refuses one: test_hunt1_merge)
     ben.bring_in(out)
     with ben:
-        assert sharing.exists(ben.ws._conn(), ben.ws.root, "codebook", "agency")
-        fw = frameworks.get("agency", ben.ws)
-        assert "capacity to act" in fw.codes["Agency"].description
+        assert sharing.exists(ben.ws._conn(), ben.ws.root, "codebook", "stress")
+        fw = frameworks.get("stress", ben.ws)
+        assert quote.split()[3] in fw.codes["Water stress"].description
         assert not ben.ws.scalar("SELECT COUNT(*) FROM tasks WHERE kind='theory_codes'")
 
 
@@ -473,11 +486,11 @@ def test_your_own_backup_keeps_your_local_drafts(abc, tmp_path):
 
 # ---- 7. a zip that says it is yours: provider consent ---------------------------------------------------------------
 def test_a_zip_that_says_it_is_yours_brings_no_consent_for_a_cloud_provider(abc, tmp_path):
-    """Carol's whole-project zip, with `bundle.json` "from" set to Anna and her own copy's consent that a cloud
-    provider may read a document: Anna makes a new copy from it, and the consent came along as Anna's (bundle.py
-    skips `_forget_folder` for a zip from oneself). Nothing in a zip proves whose it is, so no list of providers is
-    taken from any zip; the person is told in place to tick them again (access.PROVIDERS_RESET)."""
-    from enlens_claims import access
+    """Carol's whole-project zip, with `bundle.json` "from" set to Anna and a list that allows OpenAI, a provider Anna
+    never allowed: Anna makes a new copy from it. Nothing in a zip proves whose it is, so a list in it may only narrow
+    what this copy's own default allows (Anthropic): OpenAI is not allowed, and Anthropic is not either (the list said
+    only OpenAI). The person is told in place to tick again (access.PROVIDERS_RESET, "from": "import")."""
+    from enlens_claims import access, bundle
 
     anna, ben, carol = abc
     doc = _first_doc(carol)
@@ -487,35 +500,68 @@ def test_a_zip_that_says_it_is_yours_brings_no_consent_for_a_cloud_provider(abc,
         meta["from"] = {"id": anna.id, "name": "Anna"}
 
     f = _rezip(carol.send(), tmp_path / "carol-as-anna.zip", as_anna)
-    from enlens_claims import bundle
-
     with anna:
         ws = bundle.import_project(f, tmp_path / "anna-from-carol")
         try:
-            assert ws.scalar("SELECT ai_providers FROM documents WHERE doc_id=?", (doc,)) is None
-            assert ws.meta(access.PROVIDERS_RESET)
+            assert json.loads(ws.scalar("SELECT ai_providers FROM documents WHERE doc_id=?", (doc,))) == []
+            for prov in ("openai", "anthropic"):
+                assert access.levels(ws, [doc], provider=prov) == {doc: "local"}, prov
+            assert (ws.meta(access.PROVIDERS_RESET) or {}).get("from") == "import"
+            assert access.project_info(ws)["providers_reset"]   # shown, shared or not
         finally:
             ws.close_all()
 
 
-def test_your_own_backup_asks_for_its_providers_again(abc, tmp_path):
-    """The honest case pays the price, as the owner chose: Anna's own backup comes back without her lists of
-    providers, and with the line that asks her to tick them again; her other work is as it was."""
+def test_your_own_backup_keeps_a_document_kept_from_anthropic_kept_from_it(abc, tmp_path):
+    """The review's case (wave 2): Anna allows only OpenAI for a document (she works through Codex and does not want
+    Anthropic to read it), makes a zip of her own project and opens it. The first fix cleared the list, which meant
+    the project default, Anthropic: the document became readable by Claude. It must stay kept from Anthropic."""
     from enlens_claims import access, bundle
 
     anna, ben, carol = abc
     doc = _first_doc(anna)
     with anna:
-        with anna.ws.connect() as cx:
-            cx.execute("UPDATE documents SET ai_providers=? WHERE doc_id=?", (json.dumps(["openai"]), doc))
+        access.set_documents(anna.ws, [doc], setting="cloud", allow=["openai"])
+        before = access.levels(anna.ws, [doc], provider="anthropic")
         nid = notes.add(anna.ws, doc, *_words(anna, doc), text="Mine")["note_id"]
         f = tmp_path / "anna-all.zip"
         bundle.export_project(anna.ws, f, scope="all")
         ws = bundle.import_project(f, tmp_path / "anna-again")
         try:
-            assert ws.scalar("SELECT ai_providers FROM documents WHERE doc_id=?", (doc,)) is None
-            assert (ws.meta(access.PROVIDERS_RESET) or {}).get("documents") == 1
+            assert before == {doc: "local"}
+            assert access.levels(ws, [doc], provider="anthropic") == before
+            assert access.levels(ws, [doc], provider="openai") == {doc: "local"}   # narrowed: tick it again
+            info = access.project_info(ws)
+            assert info["providers_reset"] and info["providers_reset"]["documents"] == 1
             assert ws.scalar("SELECT person_id FROM notes WHERE note_id=?", (nid,)) == anna.id
+        finally:
+            ws.close_all()
+
+
+def test_a_move_keeps_what_each_document_allowed_within_this_copys_default(abc, tmp_path, monkeypatch):
+    """*Move ENLENS to another computer* opens each project with `import_project` under the same person: a document
+    that allowed Anthropic and OpenAI keeps Anthropic (this copy's default) and loses only OpenAI, to tick again; one
+    that followed a project default of OpenAI only (dropped with the zip's config) is kept from Anthropic too."""
+    from enlens_claims import access, bundle, home
+
+    anna, ben, carol = abc
+    with anna:
+        docs = [r[0] for r in anna.ws.query("SELECT doc_id FROM documents ORDER BY doc_id")]
+        two, by_default = docs[0], docs[1]
+        access.set_documents(anna.ws, [two], setting="cloud", allow=["anthropic", "openai"])
+        access.set_documents(anna.ws, [by_default], setting="cloud")
+        access.set_providers_default(anna.ws, ["openai"])
+        assert access.levels(anna.ws, [by_default], provider="anthropic") == {by_default: "local"}
+        f = tmp_path / "anna-all.zip"
+        bundle.export_project(anna.ws, f, scope="all")
+    moved = Person(tmp_path, "Anna moved", monkeypatch)
+    with moved:
+        home.update_settings({"person_id": anna.id})   # (moving: the person's id comes first)
+        ws = bundle.import_project(f, tmp_path / "anna-moved")
+        try:
+            assert access.levels(ws, [two], provider="anthropic") == {two: "cloud"}
+            assert access.levels(ws, [two], provider="openai") == {two: "local"}
+            assert access.levels(ws, [by_default], provider="anthropic") == {by_default: "local"}
         finally:
             ws.close_all()
 
@@ -758,14 +804,21 @@ def test_the_team_tab_says_what_to_do_about_a_refused_removal(tmp_path):
     (tmp_path / "run.mjs").write_text(
         'import * as O from "./owner-state.js";\n'
         'const v = { me: "panna", people: [{ id: "panna", name: "Anna", me: true }] };\n'
-        'const r = { kind: "removal", key: "document|d1", via: "panna", what: { title: "Interview" } };\n'
-        'console.log(JSON.stringify(O.refusedWords(r, v)));\n', encoding="utf-8")
+        'const say = (kind, held) => O.refusedWords({ kind: "removal", key: kind + "|k1", via: "panna", '
+        'what: { kind, key: "k1", title: "Interview", held } }, v).text;\n'
+        'console.log(JSON.stringify({ doc: say("document", true), check: say("check", true), '
+        'themes: say("themes", true), gone: say("check", false) }));\n', encoding="utf-8")
     out = subprocess.run([shutil.which("node"), str(tmp_path / "run.mjs")], capture_output=True, text=True,
                          env={**os.environ, "TZ": "Europe/Amsterdam"}, timeout=60)
     assert out.returncode == 0, out.stderr
     got = json.loads(out.stdout)
-    assert "“Interview”" in got["text"] and "menu on Documents" in got["text"] and "stays" in got["text"], got
-    assert "your own word was sent again" not in got["text"]
+    assert "the document “Interview”" in got["doc"] and "menu on Documents" in got["doc"] and "stays" in got["doc"]
+    assert "the check “Interview”" in got["check"] and "Delete on its result page" in got["check"]
+    assert "Documents" not in got["check"]
+    assert "the set of themes" in got["themes"] and "Delete on the Themes page" in got["themes"]
+    # (review, wave 2) an item not held here: never "in your copy now"
+    assert "in your copy now" not in got["gone"] and "nothing was removed here" in got["gone"], got
+    assert all("your own word was sent again" not in t for t in got.values())
 
 
 # ---- notes/merge.md "Not proven" 5: a note or entry with no author ------------------------------------------------
@@ -797,3 +850,207 @@ def test_a_colleagues_note_or_entry_without_an_author_is_shown_as_a_colleagues_a
             researchlog.update(ben.ws, "e00000000000000aa", text="mine now")
         assert ben.ws.scalar("SELECT text FROM notes WHERE note_id=?", (mine,)) == "Ben's own"
         assert ben.ws.scalar("SELECT person_id FROM notes WHERE note_id=?", (mine,)) == ben.id
+
+
+# ---- review of hunt phase 1.5, wave 2 ---------------------------------------------------------------------------
+def test_a_copy_made_from_a_zip_with_a_withdrawal_dated_ahead_takes_its_owners_later_share(abc, tmp_path, monkeypatch):
+    """The review's case (MERGE15-1): Dan makes his copy from Carol's zip, whose marks say Anna took her shared note
+    back in 2999. `import_project` kept the date, so Anna's later re-share never counted in Dan's copy."""
+    from enlens_claims import bundle
+
+    anna, ben, carol = abc
+    nid = _note(anna)
+    carol.bring_in(anna.send())
+    forged = _forge(carol.send(), tmp_path / "carol-forged.zip",
+                    ("UPDATE shares SET state='withdrawn', at=?, title=NULL WHERE kind='note' AND key=?", (FAR, nid)))
+    dan = Person(tmp_path, "Dan", monkeypatch)
+    with dan:
+        dan.ws = bundle.import_project(forged, tmp_path / "dan-project")
+        assert dan.ws.scalar("SELECT at FROM shares WHERE kind='note' AND key=?", (nid,)) < "2100"
+    with anna:
+        sharing.unshare(anna.ws, [{"kind": "note", "key": nid}])
+        sharing.share(anna.ws, [{"kind": "note", "key": nid}])
+    dan.bring_in(anna.send())
+    assert _state(dan, "note", nid) == "shared"
+
+
+def test_a_project_that_already_holds_a_mark_dated_ahead_is_mended_once_when_opened(abc):
+    """A copy that took a mark dated 2999 before this version: opening the project clamps it (store.py
+    `_clamp_share_dates`), so Anna's later share counts."""
+    from enlens_claims.store import Workspace
+
+    anna, ben, carol = abc
+    nid = _note(anna)
+    ben.bring_in(anna.send())
+    with ben:
+        with ben.ws.connect() as cx:   # as an earlier version left it
+            cx.execute("UPDATE shares SET state='withdrawn', at=? WHERE kind='note' AND key=?", (FAR, nid))
+        root = ben.ws.root
+        ben.ws.close_all()
+        ben.ws = Workspace.open(root)
+        assert ben.ws.scalar("SELECT at FROM shares WHERE kind='note' AND key=?", (nid,)) < "2100"
+    with anna:
+        sharing.unshare(anna.ws, [{"kind": "note", "key": nid}])
+        sharing.share(anna.ws, [{"kind": "note", "key": nid}])
+    ben.bring_in(anna.send())
+    assert _state(ben, "note", nid) == "shared"
+
+
+def _check_of(p: Person, text: str) -> str:
+    from owner_helpers import check
+
+    return check(p, text)
+
+
+@pytest.mark.parametrize("held", [True, False])
+def test_a_refused_removal_of_a_check_is_worded_for_a_check(abc, tmp_path, held):
+    """MERGE15-17 after review: a file that says it is Anna's own holds her note that she removed a check. Its words
+    name a check and where a check is deleted, and say "in your copy now" only when the check is here."""
+    from enlens_claims import ownership
+
+    anna, ben, carol = abc
+    hid = _check_of(anna, "Desalination raises the price of water")
+    if not held:
+        with anna:
+            with anna.ws.connect() as cx:
+                cx.execute("DELETE FROM hypotheses WHERE hyp_id=?", (hid,))
+
+    def as_anna(work: Path, cx: sqlite3.Connection, meta: dict) -> None:
+        cx.execute("INSERT OR REPLACE INTO sync_removed(kind, key, title, at, person_id) VALUES ('check', ?, "
+                   "'Desalination raises the price of water', ?, ?)", (hid, now(), anna.id))
+        meta["from"] = {"id": anna.id, "name": "Anna"}
+
+    anna.bring_in(_rezip(carol.send(), tmp_path / "carol-as-anna.zip", as_anna))
+    with anna:
+        rows = [r for r in ownership.refused(anna.ws._conn()) if r["kind"] == "removal"]
+    assert rows
+    text = rows[0]["text"]
+    assert "the check" in text and "Documents" not in text, text
+    if held:
+        assert "in your copy now" in text and "Delete on its result page" in text, text
+    else:
+        assert "in your copy now" not in text and "nothing was removed here" in text, text
+
+
+def test_a_member_who_left_the_space_is_no_longer_a_signer_and_their_marks_are_relayed(trio):
+    """MERGE15-3 after review (the removed-member case, settled): once Anna removes Dan, Dan is no longer among the
+    space's signers, and a mark in his name is taken from anyone's file again. Refusing it would be unsound: his
+    honest marks made while he was a member reach a copy that had not read them only through others now (his part is
+    no longer read), so refusing them would lose an item he shared or bring one he took back."""
+    from enlens_claims.sync import space
+
+    anna, carol, dan = trio
+    with dan:
+        part = space.configured(dan.ws)["part"]
+    with carol:
+        assert dan.id in sharing.signers(carol.ws)
+    with anna:
+        space.remove_member(anna.ws, part)
+    for p in (anna, carol):
+        _round(p, ok_kinds=("documents", "set_aside"))
+    with carol:
+        signed = sharing.signers(carol.ws)
+        assert dan.id not in signed and anna.id in signed
+        with carol.ws.connect() as cx:
+            got = sharing.receive(cx, "check", "hdan00000001", {"state": "withdrawn", "owner": dan.id, "by": dan.id,
+                                                                "at": now(), "title": None},
+                                  carol.id, False, had=False, sender=anna.id, first_hand=True, signed=signed)
+    assert got == "withdrawn"
+
+
+def test_an_item_relayed_in_a_storage_space_before_its_owner_wrote_it_there_arrives_shared(trio, tmp_path):
+    """Note 6a of the review: Dan shares a check and gives it to Anna in a zip, but never writes it in the space; Anna's
+    round relays it. Carol's copy kept it as Dan's private placeholder, which only Dan's own file could lift: lost for
+    good once Dan is removed. A relayed Share of an item new to a copy is taken."""
+    from enlens_claims import bundle
+    from enlens_claims.sync import space
+
+    anna, carol, dan = trio
+    hd = _check(dan, "Hydrogen storage is cheap.")
+    with dan:
+        sharing.share(dan.ws, [{"kind": "check", "key": hd}])
+        part = space.configured(dan.ws)["part"]
+        f = tmp_path / "dan-shared.zip"
+        bundle.export_project(dan.ws, f, scope="shared")
+    anna.bring_in(f)
+    with anna:
+        space.remove_member(anna.ws, part)
+    for p in (anna, carol):
+        _round(p, ok_kinds=("documents", "set_aside"))
+    with carol:
+        assert _has(carol.ws, hd)
+    assert _state(carol, "check", hd) == "shared"
+
+
+def test_a_zip_brought_by_hand_in_a_space_project_says_why_a_members_unshare_waits(trio, tmp_path):
+    """Note 6b of the review: in a project with a storage space a zip brought by hand is not signed, so a member's
+    Unshare in it waits for that member's own signed file; the bring-in report says so (it said nothing), and the next
+    round of the space brings it."""
+    from enlens_claims.sync import report
+
+    anna, carol, dan = trio
+    hd = _check(dan, "Hydrogen storage is cheap.")
+    with dan:
+        sharing.share(dan.ws, [{"kind": "check", "key": hd}])
+    for p in (dan, anna):
+        _round(p)
+    assert _state(anna, "check", hd) == "shared"
+    with dan:
+        sharing.unshare(dan.ws, [{"kind": "check", "key": hd}])
+    r = anna.bring_in(dan.send())
+    assert _state(anna, "check", hd) == "shared"
+    assert r["shares"].get("unsigned") == 1
+    assert any("signed files" in line for line in report.summary(r)), report.summary(r)
+    for p in (dan, anna):
+        _round(p)
+    assert _state(anna, "check", hd) == "withdrawn"
+
+
+def test_an_unreadable_record_of_the_spaces_members_takes_no_relayed_mark(trio):
+    """Note 6c of the review: `sharing.signers` failed open (an unreadable `.space-state.json` gave the plain relay
+    rules). It fails closed: everyone counts as a signer until the record reads again."""
+    from enlens_claims.sync import space
+
+    anna, carol, dan = trio
+    with carol:
+        f = space.mirror_of(carol.ws) / ".space-state.json"
+        good = f.read_bytes()
+        f.write_text("{ not json", encoding="utf-8")
+        try:
+            signed = sharing.signers(carol.ws)
+            assert dan.id in signed and "anyone" in signed and signed
+            assert not sharing.trusted(dan.id, anna.id, True, signed)
+            assert sharing.trusted(dan.id, dan.id, True, signed)
+        finally:
+            f.write_bytes(good)
+        assert sharing.signers(carol.ws) == {anna.id, carol.id, dan.id}
+
+
+def test_archiving_in_a_large_project_resolves_only_paths_of_the_same_file_name(abc, monkeypatch):
+    """Note 6d of the review: `removed._used_by_another` resolved every other document's path for each document
+    archived (quadratic in a bulk removal, inside the write transaction). With 300 other documents it resolves at
+    most the paths that share the file's name."""
+    from enlens_claims import removed
+
+    anna, ben, carol = abc
+    doc = _first_doc(ben)
+    with ben:
+        cols = [r[1] for r in ben.ws._conn().execute("PRAGMA table_info(documents)")]
+        with ben.ws.connect() as cx:
+            row = dict(zip(cols, cx.execute("SELECT * FROM documents WHERE doc_id=?", (doc,)).fetchone()))
+            for i in range(300):
+                r = {**row, "doc_id": f"dz{i:09d}", "sha1": f"{i:040x}", "path": f"/nowhere/other-{i}.txt"}
+                cx.execute(f"INSERT INTO documents({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",
+                           [r[c] for c in cols])
+        calls = []
+        real = Path.resolve
+
+        def counting(self, *a, **k):
+            calls.append(str(self))
+            return real(self, *a, **k)
+
+        monkeypatch.setattr(Path, "resolve", counting)
+        with ben.ws.connect() as cx:
+            assert not removed._used_by_another(cx, doc, Path(row["path"]))
+        monkeypatch.setattr(Path, "resolve", real)
+    assert len(calls) <= 3, len(calls)

@@ -113,8 +113,11 @@ when nothing was graded. `who` lists the same documents by side (see the hypothe
  "statuses": [{"status": "supported", "text": "Supported by a source", "help": "…"}, …],
  "jobs": [Job summaries of queued/running jobs],
  "brand": {"name": "ENLENS", "tagline": "explore and check your documents", "welcome_title": "…", "welcome_text": "…",
-           "description": "…", "logo": "/static/logo.svg"}}
+           "description": "…", "logo": "/static/logo.svg"},
+ "addon_problems": [{"addon": "fieldnotes", "error": "its tables could not be set up: …", "project": "Demo"}]}
 ```
+`addon_problems`: add-ons that could not be loaded (no `project`), and those left out of the open project because
+their tables could not be set up there (`project`); an add-on route called in such a project answers 409 in words.
 `brand` (0.13.5): the app's name and words, from `static/brand.json` and any add-on's `BRAND` (docs/EXTENDING.md).
 0.13.6: an add-on may add keys of its own (its `state(app)`); they never replace one of these. Its routes are documented
 in `docs/ADDON_API.md` and come after ENLENS's own (docs/EXTENDING.md). `GET /api/projects/<p>/overview` may carry an
@@ -528,8 +531,9 @@ password is asked nothing more until `PUT …/space/drive-password` or `POST …
 folder is not where this copy has it: looked for again by its contents every half hour), `full` (the service's cap or
 billing), `set_aside` (a file or the list of members not signed as it must be: nothing of it came in), `no_keys` (this
 computer has not got the space's keys: a project copied from elsewhere; ask for a new invite), `other_project_here`
-(another project on this computer came to work in the same space before such joins were refused, and this copy's keys
-or its part are not the team's: the round does nothing; the message says what to do), `busy` (a file of the copy on
+(another project on this computer works in the same space: one that joined before such joins were refused, or a
+folder duplicated by hand; only the project that last connected to the space here runs, and only with the keys the team
+knows; the round does nothing; the message says what to do), `busy` (a file of the copy on
 this computer could not be written, on Windows one another program held open: what was not written is fetched again
 next round).
 - `GET …/shared-folder` → as above, with `"space": null | {"id", "service": "b2" | "r2" | "webdav" | "dir", "where",

@@ -177,6 +177,7 @@ def test_an_add_on_with_a_bad_schema_is_left_out_and_named(monkeypatch, tmp_path
                   MIGRATIONS=[("broken_a", "extra", "TEXT")])
     monkeypatch.setattr(addons, "_loaded", [bad, good])
     monkeypatch.setattr(addons, "_errors", [])
+    monkeypatch.setattr(addons, "_failed_in", {})
     ws = Workspace.create(tmp_path / "project")
     ws = Workspace.open(tmp_path / "project")  # and again: an existing project opens too
     names = _tables(ws)
@@ -198,6 +199,7 @@ def test_an_add_on_with_a_bad_column_name_is_left_out_and_named(monkeypatch, tmp
                  MIGRATIONS=[("drafts", "ai_note\n", "TEXT")])
     monkeypatch.setattr(addons, "_loaded", [bad])
     monkeypatch.setattr(addons, "_errors", [])
+    monkeypatch.setattr(addons, "_failed_in", {})
     ws = Workspace.create(tmp_path / "project")
     assert "drafts" not in _tables(ws)
     errs = addons.errors()
@@ -689,16 +691,23 @@ def test_windows_the_connector_answers_initialize_with_the_plugins_python(tmp_pa
     msg = {"jsonrpc": "2.0", "id": 1, "method": "initialize",
            "params": {"protocolVersion": "2024-11-05", "capabilities": {},
                       "clientInfo": {"name": "test", "version": "0"}}}
+    import threading
+
     p = subprocess.Popen([cfg["command"], *cfg["args"]], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                          stderr=subprocess.DEVNULL, env={**os.environ, **cfg["env"]})
+    lines: list = []
     try:
         p.stdin.write((json.dumps(msg) + "\n").encode())
         p.stdin.flush()
-        line = p.stdout.readline()
+        # read on a thread with a limit: a connector that starts and stays silent must not hold the Windows job
+        reader = threading.Thread(target=lambda: lines.append(p.stdout.readline()), daemon=True)
+        reader.start()
+        reader.join(90)
     finally:
         p.kill()
         p.wait(30)
-    got = json.loads(line)
+    assert lines, "the connector did not answer initialize within 90 s"
+    got = json.loads(lines[0])
     assert got["id"] == 1 and "serverInfo" in got["result"], got
 
 
@@ -1010,30 +1019,75 @@ def test_post_install_exits_0_and_says_so_when_claude_code_refuses(monkeypatch, 
 # ---------------------------------------------------------------------------------------------
 # 16. the rest of the phase 1 notes
 # ---------------------------------------------------------------------------------------------
-def test_claude_code_answering_already_added_counts_as_taken(monkeypatch):
-    """INSTALL15-16 (notes "Not proven": `plugin marketplace add` twice): repair() and set-up assume Claude Code's add
-    and install may be run again. Should Claude Code answer a second add with an error that says it is already
-    there, the plugin is not "refused": the refresh that follows brings the new files."""
+def _claude_says_already(monkeypatch, listed_from: str | None, calls: list):
+    """A fake `claude` whose marketplace is already registered, from `listed_from` (its `marketplace list` names that
+    folder; None: the list cannot be read). After a `marketplace remove`, an add succeeds."""
     from enlens_claims import claude_setup
 
-    _older_plugin()
-    monkeypatch.setattr(claude_setup, "find_claude", lambda: "/opt/claude/bin/claude")
-    calls: list = []
+    state = {"removed": False}
 
     def run(args, timeout=60):
         calls.append(args[1:])
-        if args[1:3] == ["plugin", "marketplace"] and args[3] == "add":
-            return 1, "Error: Marketplace 'enlens-local' is already installed."
-        if args[1:3] == ["plugin", "install"]:
+        a = args[1:]
+        if a[:3] == ["plugin", "marketplace", "add"]:
+            return (0, "Added") if state["removed"] else (1, "Error: Marketplace 'enlens-local' is already installed.")
+        if a[:3] == ["plugin", "marketplace", "list"]:
+            return (1, "unknown command") if listed_from is None else \
+                (0, f"Configured marketplaces:\n  ❯ {claude_setup.MARKETPLACE}\n    Source: Directory ({listed_from})\n")
+        if a[:3] == ["plugin", "marketplace", "remove"]:
+            state["removed"] = True
+            return 0, "Removed"
+        if a[:2] == ["plugin", "install"]:
             return 1, "Plugin 'enlens-run@enlens-local' is already installed"
-        return (0, "2.1.0 (Claude Code)") if args[1:] == ["--version"] else (0, "")
+        return (0, "2.1.0 (Claude Code)") if a == ["--version"] else (0, "")
 
+    monkeypatch.setattr(claude_setup, "find_claude", lambda: "/opt/claude/bin/claude")
     monkeypatch.setattr(claude_setup, "_run", run)
+
+
+def test_claude_code_answering_already_added_counts_as_taken(monkeypatch):
+    """INSTALL15-16m (notes "Not proven": `plugin marketplace add` twice): should Claude Code answer a second add that
+    the marketplace is already there, and its list names THIS data folder's plugin folder, the plugin is not
+    "refused": the refresh that follows brings the new files."""
+    from enlens_claims import claude_setup
+
+    _older_plugin()
+    calls: list = []
+    _claude_says_already(monkeypatch, str(claude_setup.folder()), calls)
     r = claude_setup.repair()
     assert r["repaired"] is True, r
     assert ["plugin", "marketplace", "update", claude_setup.MARKETPLACE] in calls  # the files reach Claude Code
+    assert not [c for c in calls if c[:3] == ["plugin", "marketplace", "remove"]]
     steps = claude_setup.install()["steps"]
     assert all(s["ok"] for s in steps), steps
+
+
+def test_a_marketplace_registered_from_another_folder_is_registered_again(monkeypatch, tmp_path):
+    """INSTALL15-22 (review wave 1, note c): "already installed" for a marketplace Claude Code has from ANOTHER folder
+    (the data folder moved) counted as taken, and the refresh then updated from the old folder. Now the list is read:
+    another folder's marketplace is removed and added again from this one."""
+    from enlens_claims import claude_setup
+
+    _older_plugin()
+    calls: list = []
+    _claude_says_already(monkeypatch, str(tmp_path / "old-data-folder" / "claude-plugin"), calls)
+    r = claude_setup.repair()
+    assert r["repaired"] is True, r
+    adds = [c for c in calls if c[:3] in (["plugin", "marketplace", "add"], ["plugin", "marketplace", "remove"])]
+    assert adds[-2:] == [["plugin", "marketplace", "remove", claude_setup.MARKETPLACE],
+                         ["plugin", "marketplace", "add", str(claude_setup.folder())]], calls
+
+
+def test_an_unreadable_marketplace_list_is_no_proof(monkeypatch):
+    """INSTALL15-22: when Claude Code's list cannot be read, "already installed" proves nothing about the folder: the
+    marketplace is registered again from this folder (remove, add), never counted as taken on trust."""
+    from enlens_claims import claude_setup
+
+    _older_plugin()
+    calls: list = []
+    _claude_says_already(monkeypatch, None, calls)
+    assert claude_setup.repair()["repaired"] is True
+    assert ["plugin", "marketplace", "remove", claude_setup.MARKETPLACE] in calls
 
 
 def test_prepare_queues_nothing_for_a_folder_claude_code_cannot_reach(monkeypatch, tmp_path, capsys, corpus):
@@ -1172,3 +1226,235 @@ def test_the_command_line_counts_at_settings_strictness_and_threshold_wins(monke
     assert cli.main(["--ws", str(ws.root), "check", claim, "--backend", "baseline", "--no-expand",
                      "--threshold", "0.5"]) == 0
     assert json.loads(capsys.readouterr().out)["confidence_threshold"] == 0.5
+
+
+# ---------------------------------------------------------------------------------------------
+# review of wave 1: who may read documents an AI adds, and documents already there
+# ---------------------------------------------------------------------------------------------
+@pytest.mark.parametrize("default,given,taken", [
+    ("local", "cloud", False), ("none", "cloud", False), ("none", "local", False),
+    ("local", "local", True), ("local", "none", True), ("cloud", "cloud", True), ("cloud", "none", True),
+    ("cloud", "local", True), ("none", "none", True)])
+def test_the_connector_never_adds_documents_looser_than_the_projects_default(tmp_path, corpus, default, given, taken):
+    """INSTALL15-17 (review wave 1, STILL OPEN; the orchestrator's conservative decision, for the owner): through the
+    connector an `ai_access` looser than the project's chosen default is refused in words (the project's setting, and
+    where the person can change it); the same or a stricter one is taken."""
+    from enlens_claims import access, home
+
+    ws = home.create_project("Demo")
+    access.set_default(ws, default)
+    err, text = _tool("add_sources", {"project": "Demo", "sources_path": str(corpus), "ai_access": given})
+    if taken:
+        assert not err, text
+        assert set(access.levels(ws).values()) == {given}
+    else:
+        assert err, text
+        assert access.LABEL[default] in text and "Documents page" in text
+        assert ws.scalar("SELECT COUNT(*) FROM documents") == 0
+    assert access.default(ws) == default
+
+
+def test_the_command_line_may_add_documents_looser_than_the_default(ws, corpus, capsys):
+    """INSTALL15-17: the command line is the person's own hands: `enlens ingest --ai-access cloud` on a project whose
+    default is `local` adds the documents as cloud, and leaves the default."""
+    from enlens_claims import access, cli
+
+    access.set_default(ws, "local")
+    assert cli.main(["--ws", str(ws.root), "ingest", "--ai-access", "cloud", str(corpus)]) == 0, capsys.readouterr()
+    assert set(access.levels(ws).values()) == {"cloud"} and access.default(ws) == "local"
+
+
+def _earlier_project(ws, tmp_path):
+    """A project made before the rule (or by the command line since 0.11): documents, and no default chosen."""
+    from enlens_claims import ingest
+
+    a = tmp_path / "a"
+    a.mkdir()
+    (a / "earlier.txt").write_text("Electrolysers need large amounts of fresh water in dry regions. " * 20,
+                                   encoding="utf-8")
+    ingest.ingest(ws, [a])
+    b = tmp_path / "b"
+    b.mkdir()
+    (b / "newer.txt").write_text("Desalination adds to the cost of green hydrogen in coastal plants. " * 20,
+                                 encoding="utf-8")
+    return a, b
+
+
+def test_enlens_ingest_leaves_earlier_documents_as_they_were(ws, tmp_path, capsys):
+    """INSTALL15-18 (review wave 1, should fix, proved): on a project with documents and no chosen default,
+    `enlens ingest --ai-access none new/` made `none` the default, so every earlier document became No AI unseen. The
+    new documents now get the setting as their own, the default is left alone, and the command says how many earlier
+    documents still follow a default nobody chose."""
+    from enlens_claims import access, cli
+
+    _a, b = _earlier_project(ws, tmp_path)
+    earlier = set(access.levels(ws))
+    assert cli.main(["--ws", str(ws.root), "ingest", "--ai-access", "none", str(b)]) == 0
+    out = capsys.readouterr()
+    lv = access.levels(ws)
+    assert not access.default_chosen(ws)
+    assert {lv[d] for d in earlier} == {"cloud"} and {v for d, v in lv.items() if d not in earlier} == {"none"}
+    assert "1 earlier document" in out.err and "default" in out.err
+
+
+def test_the_connector_leaves_earlier_documents_as_they_were(ws, tmp_path):
+    """INSTALL15-18, the connector's add_sources: the same."""
+    from enlens_claims import access, home
+
+    _a, b = _earlier_project(ws, tmp_path)
+    name = home.link_existing(str(ws.root), "Earlier")
+    earlier = set(access.levels(ws))
+    err, text = _tool("add_sources", {"project": name, "sources_path": str(b), "ai_access": "local"})
+    assert not err, text
+    ws = home.open_project(name)
+    lv = access.levels(ws)
+    assert not access.default_chosen(ws)
+    assert {lv[d] for d in earlier} == {"cloud"} and {v for d, v in lv.items() if d not in earlier} == {"local"}
+    assert json.loads(text)["earlier_documents_without_a_chosen_setting"] == 1
+
+
+def test_on_a_project_without_documents_the_first_answer_becomes_the_default(ws, corpus, capsys):
+    """INSTALL15-18: as in the app, a project's first documents' answer is its default."""
+    from enlens_claims import access, cli
+
+    assert cli.main(["--ws", str(ws.root), "ingest", "--ai-access", "local", str(corpus)]) == 0
+    assert access.default_chosen(ws) and access.default(ws) == "local"
+    assert "earlier document" not in capsys.readouterr().err
+
+
+def _cli_folder(tmp_path, chosen: str | None = None):
+    from enlens_claims import access
+    from enlens_claims.store import Workspace
+
+    ws = Workspace.create(tmp_path / "pilot")
+    _earlier_project(ws, tmp_path)
+    if chosen:
+        access.set_default(ws, chosen)
+    return ws
+
+
+def test_use_folder_as_project_asks_who_may_read_a_folder_nobody_chose_for(tmp_path):
+    """INSTALL15-19 (review wave 1, note a): `use_folder_as_project` linked a folder whose default was never chosen (a
+    command-line project) without asking; its documents became Claude's to read through the connector by silence. Now
+    it is refused in words naming `ai_access`, nothing is linked; given, the answer becomes the folder's default."""
+    from enlens_claims import access, home
+
+    ws = _cli_folder(tmp_path)
+    err, text = _tool("use_folder_as_project", {"path": str(ws.root)})
+    assert err and "ai_access" in text
+    assert home.list_projects() == []
+    err, text = _tool("use_folder_as_project", {"path": str(ws.root), "ai_access": "local"})
+    assert not err, text
+    linked = home.open_project(json.loads(text)["project"])
+    assert access.default_chosen(linked) and set(access.levels(linked).values()) == {"local"}
+
+
+def test_use_folder_as_project_keeps_a_chosen_default_and_refuses_a_looser_one(tmp_path):
+    """INSTALL15-19: a folder whose default was chosen links as it is; an AI's looser `ai_access` is refused."""
+    from enlens_claims import access, home
+
+    ws = _cli_folder(tmp_path, "none")
+    err, text = _tool("use_folder_as_project", {"path": str(ws.root), "ai_access": "cloud"})
+    assert err and access.LABEL["none"] in text
+    err, text = _tool("use_folder_as_project", {"path": str(ws.root)})
+    assert not err, text
+    assert access.default(home.open_project(json.loads(text)["project"])) == "none"
+
+
+# ---------------------------------------------------------------------------------------------
+# review of wave 1: an add-on that fails in one project is left out of THAT project, and a person can see it
+# ---------------------------------------------------------------------------------------------
+from test_app import api, home  # noqa: E402,F401  (fixtures)
+
+
+def _addon_fails_in(name: str):
+    """Make the stand-in add-on's INDEXES fail in project `name` only (a table holds the index's name there), then
+    open the project again."""
+    import sqlite3
+
+    from enlens_claims import home as homemod
+
+    root = homemod.project_path(name)
+    homemod.close_project(root)
+    cx = sqlite3.connect(root / "enlens.sqlite")
+    cx.execute("DROP INDEX IF EXISTS ix_fake_notes_colour")
+    cx.execute("CREATE TABLE ix_fake_notes_colour(x TEXT)")
+    cx.commit()
+    cx.close()
+    homemod._OPEN.clear()
+    return homemod.open_project(name)
+
+
+def test_an_add_on_failing_in_one_project_is_left_out_there_only(addon, api, monkeypatch):
+    """INSTALL15-20 (review wave 1, should fix): an add-on whose tables failed in one project kept its routes, kinds and
+    hooks there (its pages answered 500), was listed as failed in every project, and `addons.errors()` had no caller.
+    Now the failure is that project's: its routes answer 409 in words there and work elsewhere, its overview hook is
+    left out there, an answer of its kind of task is not stored there, and GET /api/state lists the failure (the
+    load errors and the current project's) as `addon_problems`."""
+    from enlens_claims import addons, tasks
+    from enlens_claims import home as homemod
+
+    monkeypatch.setattr(addons, "_errors", [])
+    monkeypatch.setattr(addons, "_failed_in", {})
+    a = homemod.create_project("Alpha")
+    homemod.create_project("Beta")
+    b = _addon_fails_in("Beta")
+    assert [e["addon"] for e in addons.errors(b)] == ["fake"]
+    assert addons.errors(a) == []
+    st, body = api("POST", "/api/projects/Alpha/fake/notes", {"note_id": "n1", "text": "kept"})
+    assert st == 200, body
+    st, body = api("POST", "/api/projects/Beta/fake/notes", {"note_id": "n1", "text": "kept"})
+    assert st == 409 and "fake" in body["error"] and "Beta" in body["error"], (st, body)
+    assert "fake_notes" in addons.overview(a, set()) and "fake_notes" not in addons.overview(b, set())
+    with b.connect() as cx:
+        ok, problems = tasks._store_answer(cx, {"kind": "fake_tag", "task_id": "t"}, {}, {}, "m")
+    assert ok is False and "fake" in " ".join(problems)
+    # its privacy hooks stay in force there: they only restrict, and leaving them out would open the add-on's text
+    from enlens_claims import access
+
+    with b.connect() as cx:
+        cx.execute("INSERT INTO fake_notes(note_id, text, ai_access) VALUES ('kept', 'private words', 'none')")
+        assert access.floor(cx, {"fake_note_id": "kept"}) == "none"
+    homemod.update_settings({"project": "Beta"})
+    st, s = api("GET", "/api/state")
+    assert [(p["addon"], p.get("project")) for p in s["addon_problems"]] == [("fake", "Beta")]
+    homemod.update_settings({"project": "Alpha"})
+    assert api("GET", "/api/state")[1]["addon_problems"] == []
+
+
+def test_a_mended_add_on_comes_back_in_its_project(addon, monkeypatch):
+    """INSTALL15-20: once the cause is gone, the next opening sets the add-on up and its failure is forgotten."""
+    import sqlite3
+
+    from enlens_claims import addons
+    from enlens_claims import home as homemod
+
+    monkeypatch.setattr(addons, "_failed_in", {})
+    homemod.create_project("Beta")
+    b = _addon_fails_in("Beta")
+    assert addons.errors(b)
+    homemod.close_project(b.root)
+    cx = sqlite3.connect(b.root / "enlens.sqlite")
+    cx.execute("DROP TABLE ix_fake_notes_colour")
+    cx.commit()
+    cx.close()
+    homemod._OPEN.clear()
+    assert addons.errors(homemod.open_project("Beta")) == []
+
+
+@pytest.mark.parametrize("stmt", ["BEGIN;", "COMMIT;", "VACUUM;", "PRAGMA journal_mode=DELETE;", "begin transaction;"])
+def test_an_add_on_whose_sql_manages_transactions_is_refused_naming_the_statement(monkeypatch, tmp_path, stmt):
+    """INSTALL15-21 (review wave 1, note d): add-on SQL runs inside a savepoint now; a SCHEMA with BEGIN/COMMIT, VACUUM
+    or PRAGMA journal_mode (which `executescript` ran) is refused with words that name the statement, as EXTENDING.md
+    says, and the words reach `addons.errors()` (and so the page's state)."""
+    from enlens_claims import addons
+    from enlens_claims.store import Workspace
+
+    bad = _addon("drafts", SCHEMA=f"{stmt}\nCREATE TABLE IF NOT EXISTS drafts(id TEXT);")
+    monkeypatch.setattr(addons, "_loaded", [bad])
+    monkeypatch.setattr(addons, "_errors", [])
+    monkeypatch.setattr(addons, "_failed_in", {})
+    ws = Workspace.create(tmp_path / "p")
+    errs = addons.errors(ws)
+    assert errs and errs[0]["addon"] == "drafts" and stmt.rstrip(";").split()[0].upper() in errs[0]["error"].upper()
+    assert "savepoint" in errs[0]["error"].lower() or "must not" in errs[0]["error"].lower()

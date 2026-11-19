@@ -157,6 +157,10 @@ def summary(r: dict) -> list[str]:
     if sh.get("withheld"):
         out.append(f"{_n(len(sh['withheld']), 'item')} in {who}'s file had been taken back by the person who shared "
                    "it, so it did not come in.")
+    if sh.get("unsigned"):  # hunt phase 1.5 (review, wave 2): a zip brought by hand into a project with a storage space
+        out.append(f"{_n(sh['unsigned'], 'share mark')} in {who}'s file {'was' if sh['unsigned'] == 1 else 'were'} "
+                   "not taken: in this project's storage space a member's Share and Unshare count only from their own "
+                   "signed files there, and the next round of the space brings them.")
     # roles (DESIGN-roles §4.8, §4.9): rows of a third person, and a codebook's changes that wait
     if r.get("via"):
         out.append(f"{_n(r['via'], 'row')} of other people came in through {who}'s file, not from their own: each is "

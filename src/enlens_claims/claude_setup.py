@@ -346,9 +346,8 @@ def install(check: bool = False) -> dict:
         again = False
         for line, args in zip(commands(root), ([path, "plugin", "marketplace", "add", str(root)],
                                                [path, "plugin", "install", f"{PLUGIN}@{MARKETPLACE}"])):
-            code, text = _run(args, timeout=120)
-            ok = _took(code, text)
-            again |= ok and code != 0
+            ok, text = _step(path, args, root)
+            again |= ok and bool(_ALREADY.search(text or ""))
             steps.append({"step": line, "ok": ok, "text": re.sub(r"\x1b\[[0-9;]*m", "", text)[-600:]})
             if not ok:
                 break
@@ -704,8 +703,34 @@ _ALREADY = re.compile(r"\balready\b.{0,40}\b(installed|exists|added|present|regi
 
 
 def _took(code: int, text: str) -> bool:
-    """Whether Claude Code took an add or install step: it succeeded, or said the thing is already there."""
+    """Whether Claude Code took an add or install step: it succeeded, or said the thing is already there (for the
+    marketplace, `_step` also checks it is there from THIS folder)."""
     return code == 0 or bool(_ALREADY.search(text or ""))
+
+
+def _same_folder_named(text: str, root: Path) -> bool:
+    """Whether Claude Code's `plugin marketplace list` names `root` (any slash, any case on Windows)."""
+    norm = (lambda s: s.replace("\\", "/").rstrip("/").casefold()) if os.name == "nt" else \
+        (lambda s: s.replace("\\", "/").rstrip("/"))
+    return norm(str(root)) in norm(text or "")
+
+
+def _step(path: str, args: list[str], root: Path) -> tuple[bool, str]:
+    """Run one add or install step; (taken, what Claude Code said). After the review of wave 1: a marketplace "already
+    installed" counts only when Claude Code's list names this data folder's plugin folder. One registered from another
+    folder (the data folder moved), or a list that cannot be read, is removed and added again from this one: the
+    refresh that follows would otherwise update the plugin from the old folder."""
+    code, text = _run(args, timeout=120)
+    if code == 0 or not _took(code, text):
+        return code == 0, text
+    if args[1:4] != ["plugin", "marketplace", "add"]:
+        return True, text  # the plugin "already installed": from this marketplace, checked in the step before
+    lc, listed = _run([path, "plugin", "marketplace", "list"], timeout=60)
+    if lc == 0 and _same_folder_named(listed, root):
+        return True, text
+    _run([path, "plugin", "marketplace", "remove", MARKETPLACE], timeout=120)
+    code, again = _run(args, timeout=120)
+    return code == 0, (text + "\n" + again).strip() if code else again
 
 
 def _claude_version(path: str) -> str:
@@ -846,8 +871,7 @@ def repair(run_claude: bool = True, patient: bool = False) -> dict:
     path = find_claude() if run_claude else ""
     if path:
         for args in ([path, "plugin", "marketplace", "add", str(root)], [path, "plugin", "install", f"{PLUGIN}@{MARKETPLACE}"]):
-            code, text = _run(args, timeout=120)
-            ok = _took(code, text)
+            ok, text = _step(path, args, root)
             out["steps"].append({"args": args[1:], "ok": ok, "text": re.sub(r"\x1b\[[0-9;]*m", "", text)[-300:]})
             if not ok:
                 break

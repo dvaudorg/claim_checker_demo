@@ -25,6 +25,8 @@ export function providersResetWords(info = {}) {
   const r = info.providers_reset;
   if (!r) return "";
   const n = r.documents || 0;
+  // hunt phase 1.5: narrowed when the project was opened from a zip (bundle.py), in any project
+  if (r.from === "import") return `When this project was opened from a zip, the provider ticks of ${n} ${n === 1 ? "document" : "documents"} were narrowed to what this copy allows: a zip never adds a provider. Tick again the ones you want.`;
   return `Your provider ticks for ${n} ${n === 1 ? "document" : "documents"} of this shared project were cleared: they had come with a colleague’s copy, and each person now chooses their own. Tick again the ones you want.`;
 }
 

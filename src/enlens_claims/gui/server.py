@@ -291,6 +291,8 @@ class App(LibraryMixin, QueueMixin):
         out = {"version": __version__, "installed_version": _installed_version(), "home": str(home.home()), "settings": s,
                "brand": addons.brand(),   # 0.13.5: the app's name and words (static/brand.json and add-ons)
                "addon_pages": addons.page_modules(),   # 0.13.6: add-on packages' page modules
+               # hunt phase 1.5: add-ons that could not be loaded, and those left out of the open project
+               "addon_problems": self._addon_problems(current),
                "backend_label": home.backend_label(s), "backend_labels": home.BACKEND_LABELS,
                "projects": projects, "project": current, "local_only": home.local_only(),
                "launcher": self.launcher, "can_quit": self.stop is not None,
@@ -311,6 +313,14 @@ class App(LibraryMixin, QueueMixin):
                "profile_framework_team": self._team_framework(current)}
         out.update(addons.state(self, set(out)))  # 0.13.6: an add-on's keys, never in place of ENLENS's
         return out
+
+    def _addon_problems(self, current: str | None) -> list[dict]:
+        """[{"addon", "error", "project"?}]: add-ons that could not be loaded, and those left out of `current`."""
+        try:
+            return addons.errors(home.project_path(current) if current else None) if current else \
+                [e for e in addons.errors() if "project" not in e]
+        except (OSError, ValueError, KeyError):
+            return [e for e in addons.errors() if "project" not in e]
 
     def providers_state(self, s: dict | None = None) -> dict:
         """The cloud providers for Settings and the Documents page: the table, whether a key is stored for each (yes
@@ -1199,8 +1209,11 @@ class App(LibraryMixin, QueueMixin):
         limit = teamproviders.note(ws._conn(), prov) if any(h["why"] == "limit" for h in waiting) else None
         text = limit or (f"{title} reads only documents that allow {company}, and this project's do not: allow "
                          f"{company} for this project and the check goes on by itself")
-        if not limit and ws.meta(access.PROVIDERS_RESET):  # I7 stage 3: the ticks that came from colleagues went
-            text += (". Your provider ticks that had come with a colleague's copy were cleared: each person now "
+        reset = ws.meta(access.PROVIDERS_RESET)
+        if not limit and reset:  # I7 stage 3: the ticks that came from colleagues went
+            text += (". When this project was opened from a zip, its provider ticks were narrowed to what this copy "
+                     "allows: tick again the ones you want" if isinstance(reset, dict) and reset.get("from") == "import"
+                     else ". Your provider ticks that had come with a colleague's copy were cleared: each person now "
                      "chooses their own")
         tracker.model_report({"phase": "held", "seconds": time.time() - t0, "text": text, "agent": route,
                               "agent_title": title, "provider": prov, "company": company, "excerpts": n,
@@ -2201,6 +2214,15 @@ class Handler(BaseHTTPRequestHandler, DocumentsApi, ExploreApi, ChecksApi, Setup
                     if self.headers.get("X-Enlens-Seen") == "1":  # a tab in front of the person (gui/notify.py)
                         self.app.seen = time.time()
                     args = [unquote(g) for g in mt.groups()]
+                    if not isinstance(name, str) and args and path.startswith("/api/projects/"):
+                        # hunt phase 1.5: an add-on left out of this project (its tables failed here) answers in
+                        # words, not with a 500 from a table that is not there
+                        try:
+                            why = addons.refused_here(name, home.project_path(args[0]))
+                        except (OSError, ValueError, KeyError):
+                            why = ""
+                        if why:
+                            raise ApiError(409, why)
                     out = getattr(self, name)(*args, q=q) if isinstance(name, str) else name(self, *args, q=q)
                     if method != "GET" and args and path.startswith("/api/projects/") and path.count("/") > 3 \
                             and name not in NOT_A_CHANGE:  # 0.18 (L3): a change in the project: a round soon

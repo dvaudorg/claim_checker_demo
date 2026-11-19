@@ -44,8 +44,11 @@ Nothing is sent to Claude until the researcher runs a feature that uses the AI. 
 the work then waits until the researcher starts Claude Code
 ([Start Claude Code](manual/claude-code.md#start-claude-code)). In the app, the first documents added to a new
 project ask who may read them, with nothing preselected (`access.default_chosen`). The command line (`enlens ingest
---ai-access`) and the connector (`create_project`, `add_sources`: `ai_access`) ask too: without a setting they add
-nothing to a project whose default was never chosen, and take the default once it is chosen.
+--ai-access`) and the connector (`create_project`, `add_sources`, `use_folder_as_project`: `ai_access`) ask too
+(`ingest.adding_access`): without a setting they add nothing to a project whose default was never chosen, and take
+the default once it is chosen. The connector refuses a setting looser than the chosen default (only the person opens
+documents wider). A setting given for new documents becomes the default only when no earlier document follows an
+unchosen one; otherwise it is the new documents' own.
 
 ## Each document's AI setting
 
@@ -97,8 +100,10 @@ consecutive passages of one document (references), the passages that hold a code
 group (a draft definition, `codedefine.py`), and, when a person asks for an excerpt to be read again, their
 comment. A document linked to a bibliography entry is titled by that work's title
 (`bibliography.py`). Tasks of documents marked *Only a local AI* or *No AI* are never among them. Words of the
-documents that a task sends without their passages (the concepts named in *Name the groups* and *Other wordings*, the
-titles of the researcher's own documents in a framework from theory) follow the same rule: only those found in a
+documents that a task sends without their passages (the concepts named in *Name the groups* and *Other wordings*, a
+concept named "long form (SHORT)" by all its wordings, the name drafted before in *Name the groups again* by the
+documents it was drafted from, the titles of the researcher's own documents in a framework from theory) follow the
+same rule: only those found in a
 document the reader may read are sent, and a document made stricter while such a task waits takes the task out of the
 queue (`access.words_floor`). A code's
 definition, *when to use it* and *when not* go with every label task of its codebook, whatever document it labels: a

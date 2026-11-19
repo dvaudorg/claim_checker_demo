@@ -258,6 +258,20 @@ def order(ws: Workspace) -> tuple[list[str], list[str]]:
     return o, held
 
 
+def held_note(kind: str) -> str:
+    """What a kind on Hold says where its tasks would otherwise be handed out (hunt phase 1.5: Hold keeps every task
+    of the kind back, from every helper and every command, until the person presses *Go on*)."""
+    return (f"“{KIND_TITLE.get(kind, kind)}” is on Hold in the queue: nothing of it is handed out until you press "
+            f"Go on in the queue panel (or type: enlens --ws <project> queue go {kind}).")
+
+
+def refuse_held(ws: Workspace, kind: str) -> None:
+    """ValueError(held_note) when `kind` is on Hold: the command line's way of handing tasks out (`enlens run`,
+    `enlens export-tasks`) keeps to Hold as the queue does."""
+    if kind in order(ws)[1]:
+        raise ValueError(held_note(kind))
+
+
 def set_order(ws: Workspace, kind: str, action: str) -> dict:
     """`first`: hand this kind out before the others; `hold` / `go`: stop or resume handing it out; `reset`."""
     if action == "reset":
@@ -705,6 +719,10 @@ def next_tasks(ws: Workspace, kind: str | None = None, n: int | None = None, mod
     me = access.sender()   # I7 stage 3: who sends, for the ledger, looked up once for the batch
     if kind and kind not in KINDS:
         raise ValueError(f"Unknown kind of task {kind!r}. Kinds: {', '.join(KINDS)}.")
+    if kind in held:
+        # hunt phase 1.5 (the owner's): Hold keeps the kind back from every helper, also one started before the
+        # person pressed it, which goes on asking for its kind by name
+        return {"claim": None, "note": held_note(kind)}
     for k in kinds:
         # the first PAGE tasks that wait, in order: a batch is nearly always filled from them; the others are read
         # only when it is not (a queue of a hundred thousand tasks is not read whole for a batch of five)
@@ -843,6 +861,9 @@ def preview(ws: Workspace, kind: str | None = None, start: int = 0, route: str |
     o, held = order(ws)
     lent = mix_kinds()
     start = max(0, int(start or 0))
+    if kind in held:   # hunt phase 1.5: nothing of a kind on Hold is about to be sent (`next_tasks`)
+        return {"kind": kind, "title": KIND_TITLE.get(kind, kind), "held": True, "tasks": [], "start": start,
+                "more": False, "note": held_note(kind)}
     for k in [kind] if kind else [k for k in o if k not in held]:
         cand = [t for t in _waiting_rows(ws, k) if not _lent(t, lent)]
         if not cand:
@@ -1293,7 +1314,10 @@ def queue_info(ws: Workspace, kind: str) -> dict:
     text = f"Waiting for {title}: {noun(kind, n)}" if n else f"Waiting for {title}"
     if not n and lent.get(kind):   # only the local model's share waits: the line says whose it is
         text = f"Waiting for your local model: {noun(kind, lent[kind])}"
-    if est:
+    is_held = kind in order(ws)[1]
+    if is_held and n:   # hunt phase 1.5: no helper is handed a kind on Hold, so the wait says why it does not move
+        text = f"On Hold: {noun(kind, n)}. Press Go on in the queue panel to hand them to {title}"
+    elif est:
         text += f" · {_duration(est)}"
     waiting = sum(total.values()) - sum(held.values())
     newest = max((f or "" for f in first.values()), default="")
@@ -1301,11 +1325,11 @@ def queue_info(ws: Workspace, kind: str) -> dict:
     paused_text = None
     if paused:
         o, _held = order(ws)
-        k = next((x for x in _kind_order(ws, o, total) if total[x] - held.get(x, 0) > 0), None)
+        k = next((x for x in _kind_order(ws, o, total) if total[x] - held.get(x, 0) > 0 and x not in _held), None)
         if k:
             run_total, run_done = _run_counts(ws, k, first[k]) if first[k] else (0, 0)
             paused_text = _paused_text(k, run_done, run_total, command, route)
-    return {"text": text, "waiting": n, "being_answered": being, "for_local": lent.get(kind, 0),
+    return {"text": text, "waiting": n, "being_answered": being, "for_local": lent.get(kind, 0), "held": is_held,
             "paused": paused, "paused_text": paused_text,
             "command": command, "estimate": estimate, "privacy": privacy_line(route), "kind": kind,
             "agent_route": route, "agent_title": title}
@@ -1318,9 +1342,12 @@ def run_here(ws: Workspace, backend, kinds: list[str] | None = None, limit: int 
              should_stop=None, progress=None, model: str | None = None) -> dict:
     """Answer the tasks waiting in the queue with this backend, kind by kind (so each model is loaded once), with
     the backend's routed models. For a shared installation with the team's Claude API key, or a local server."""
-    from .tasks import run_one, run_stepups
+    from .tasks import _answers_again_now, run_one, run_stepups
 
     o, held = order(ws)
+    # hunt phase 1.5: a second reading a local server gives after the run (`run_stepups`, each model loaded once) is
+    # not asked in the run: counted "answered" there, it was counted twice and before any model read it
+    later = not _answers_again_now(backend)
     todo_kinds = [k for k in o if k not in held and (not kinds or k in kinds)]
     out: dict = {"answered": 0, "failed": 0, "kinds": {}}
     may = access.backend_levels(backend)
@@ -1329,7 +1356,8 @@ def run_here(ws: Workspace, backend, kinds: list[str] | None = None, limit: int 
     total = sum(_waiting_count(ws, k, with_local=True) for k in todo_kinds)
     i = 0
     for k in todo_kinds:
-        ids = [t["task_id"] for t in _waiting_rows(ws, k)]
+        ids = [t["task_id"] for t in _waiting_rows(ws, k)
+               if not (later and t["status"] == "done" and t["again"])]
         if limit:
             ids = ids[: max(0, limit - out["answered"] - out["failed"])]
         for tid in ids:

@@ -94,15 +94,20 @@ log in 0.20.1)
 **Signed share marks** · Level 0 · hunt phase 1.5, 19 November 2026 (the owner's item; feature freeze)
 - What is signed today: in a storage space every file a member writes in their own part (`sync/seal.py`: Ed25519, the
   member's own key, checked against the roster the keeper signs). So a copy knows which member wrote each bundle, and
-  since this hunt a mark (*Share*, *Unshare*) in a member's name counts only from that member's own file
-  (`sharing.signers`, `sharing.trusted`); a member's own part always carries their marks.
+  since this hunt a withdrawal (*Unshare*), or any change of a mark held here, in a member's name counts only from that
+  member's own file (`sharing.signers`, `sharing.trusted`); a member's own part always carries their marks. A relayed
+  *Share* of an item new to a copy is still taken (so an honestly relayed item is never lost), and while a copy cannot
+  read the space's list of members no relayed mark is taken but those.
 - What it cannot cover: a zip brought by hand and a plain shared folder carry no signature, and the people who use only
   them have no keys (keys exist per storage space, in its members' keychains). There a mark is data relayed by design:
-  a colleague's file can still say, in an item's owner's name, that the owner took it back. Since this hunt such a mark
-  dated ahead counts as made when it arrived (`sharing.mark_at`), so the owner's own later *Share* counts over it; one
-  that arrives before the owner's own earlier mark still keeps the item out of that copy until the owner shares it
-  again. Nor can a mark relayed in a storage space by a member, in the name of someone who is not a member (a colleague
-  who sends zips only), be checked.
+  a colleague's file can still say, in an item's owner's name, that the owner took it back, or relay a *Share* of an
+  item its owner keeps private. Since this hunt a mark dated ahead counts as made when it arrived (`sharing.mark_at`,
+  on import and once in every project held), so the owner's own next mark counts over it; but a forged withdrawal
+  dated between the owner's latest real mark and now wins whenever it arrives, before or after the owner's own mark,
+  until the owner marks the item again. A member who has left the space is no longer among the signers: marks in
+  their name are again taken from anyone's file (refusing them would lose their honest marks made while they were a
+  member, which after they leave reach a copy only through others). Nor can a mark relayed in a storage space in the
+  name of someone who is not a member (a colleague who sends zips only) be checked.
 - To build: each person a signing key of their own (not one per space), the public keys known to the team (in the
   project, by the owner's word), and every mark signed by its maker, with its item, state and time, so it can be
   checked whichever file carries it. The same keys would sign the owner's settings (*Open decisions*).

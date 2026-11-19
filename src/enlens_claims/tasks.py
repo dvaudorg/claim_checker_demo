@@ -134,14 +134,19 @@ def _insert_task(cx, task_id: str, kind: str, model: str, payload: dict) -> bool
 def replace_task(cx, task_id: str, kind: str, model: str, payload: dict) -> bool:
     """Create a task, or give a task not answered yet this payload (and the setting that goes with it): a feature
     that chose its passages again for another reader (0.11). An answered task is left as it is."""
-    row = cx.execute("SELECT status FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+    row = cx.execute("SELECT status, payload_json FROM tasks WHERE task_id=?", (task_id,)).fetchone()
     if row is None:
         return _insert_task(cx, task_id, kind, model, payload)
     if row[0] == "done":
         return False
     level = access.label_payload(cx, payload, provider=access.labels_provider(cx))
+    text = json.dumps(payload, ensure_ascii=False)
     cx.execute("UPDATE tasks SET payload_json=?, model=?, access=?, status='pending', attempts=0 WHERE task_id=?",
-               (json.dumps(payload, ensure_ascii=False), model, level, task_id))
+               (text, model, level, task_id))
+    if text != row[1]:
+        # hunt phase 1.5: a helper holding the task was given the old text; its answer would be checked against the
+        # new one (quotes refused, attempts used up). The task is taken from it and handed out again with this text
+        cx.execute("UPDATE tasks SET claimed_by=NULL, claimed_at=NULL WHERE task_id=?", (task_id,))
     if level != "cloud":
         cx.execute("UPDATE tasks SET queued=0, queued_at=NULL, claimed_by=NULL WHERE task_id=?", (task_id,))
     elif queue_mode():
@@ -508,7 +513,8 @@ def mark_suggestions(cx, t, payload: dict, route: str | None) -> None:
 def ingest_result(ws: Workspace, task_id: str, raw: Any, model: str | None = None,
                   provenance: dict | None = None, route: str | None = None, helper: str | None = None,
                   claimed_at: str | None = None, problem: str | None = None, claim: str | None = None,
-                  free: bool = False, cached: bool = False, as_kind: str | None = None) -> tuple[bool, list[str]]:
+                  free: bool = False, cached: bool = False, as_kind: str | None = None,
+                  unheld: bool = False) -> tuple[bool, list[str]]:
     """Validate and store one answer. `provenance` (0.7): the model's digest, the seed and the settings that
     produced it (`llm.provenance`), kept with the raw answer. 0.8: `route` (Claude Code, Claude API, local model
     server, file queue), the plugin's `helper` agent and when its batch was claimed, kept with it too.
@@ -525,7 +531,9 @@ def ingest_result(ws: Workspace, task_id: str, raw: Any, model: str | None = Non
     `claim`: the answer comes from that claim of the queue, and is stored only while the claim holds the task and
     the task waits for an answer; `free`: the answer comes from outside the queue (a Claude chat), and is stored only
     while the task is neither in the queue nor held by a claim. Both are checked in the transaction that stores the
-    answer, so two callers never both store one; otherwise `NotHeld` is raised and nothing is stored.
+    answer, so two callers never both store one; otherwise `NotHeld` is raised and nothing is stored. `unheld` (hunt
+    phase 1.5): the answer comes from a file brought back for a task no longer out in the file queue, and is stored
+    only while no claim of the queue holds the task (a helper answering it now).
 
     I6: `as_kind` ("point"): the answer is in another kind's form than the task's (the small local model answers a check
     by pointing at sentences); it is stored, versioned and recorded as that kind. An excerpt judgement a local model on
@@ -537,8 +545,8 @@ def ingest_result(ws: Workspace, task_id: str, raw: Any, model: str | None = Non
         if as_kind:
             t = {**dict(t), "kind": as_kind}
         again = t["status"] == "done" and bool(t["again"])
-        if claim is not None or free:
-            _check_holder(t, again, claim, free)
+        if claim is not None or free or unheld:
+            _check_holder(t, again, claim, free, unheld)
         payload = json.loads(t["payload_json"])
         model = model or t["model"]
         attempt = int(t["attempts"]) + 1
@@ -604,8 +612,13 @@ class NotHeld(Exception):
         self.reason = reason
 
 
-def _check_holder(t, again: bool, claim: str | None, free: bool) -> None:
+def _check_holder(t, again: bool, claim: str | None, free: bool, unheld: bool = False) -> None:
     open_ = t["status"] in ("pending", "retry") or again
+    if unheld:
+        from .taskqueue import _cutoff
+
+        if t["claimed_by"] and (t["claimed_at"] or "") >= _cutoff():
+            raise NotHeld("queued")
     if claim is not None:
         if t["claimed_by"] != claim:
             raise NotHeld("answered" if t["status"] == "done" and not again else "lapsed")
@@ -630,11 +643,17 @@ def _store_answer(cx, t, payload, obj, model) -> tuple[bool, list[str]]:
     if problems:
         return False, problems
     if not kind.core:
+        from .addons import kind_left_out  # hunt phase 1.5: not in a project its add-on is left out of
+
+        why = kind_left_out(cx, kind)
+        if why:
+            return False, [why]
         if kind.schema is not None:
             obj = kind.schema.model_validate(obj).model_dump()
         problems = taskkinds.check_quotes(kind, payload, obj)
         if problems:
             return False, problems
+        obj = taskkinds.own_words(kind, payload, obj)   # hunt phase 1.5: each quote as the passage writes it
     return kind.store(cx, t, payload, obj, model)
 
 
@@ -1792,6 +1811,9 @@ def _provenance(backend, model: str) -> dict:
 
 
 def run(ws: Workspace, kind: str, backend, limit: int | None = None, model: str | None = None) -> dict[str, int]:
+    from .taskqueue import refuse_held
+
+    refuse_held(ws, kind)   # hunt phase 1.5: a kind the person put on Hold is asked of no model, here either
     _sync_thresholds(ws)
     stats = {"done": 0, "retry": 0, "failed": 0}
     left: set[str] = set()   # tasks this backend may not read: they wait for a model that may, or the person
@@ -1885,6 +1907,9 @@ _EXPORT_CHUNK = 200  # tasks whose payloads are read at once while the file queu
 
 def export(ws: Workspace, kind: str, batch_size: int = 25, limit: int | None = None,
            report: dict | None = None) -> list[Path]:
+    from .taskqueue import refuse_held
+
+    refuse_held(ws, kind)   # hunt phase 1.5: a kind on Hold is written to no file either (Hold: to no one)
     _sync_thresholds(ws)
     # 0.11: the file queue hands tasks to a worker outside this program, so only tasks whose documents Claude may
     # read are written; the others stay pending for a local model or a person. 0.17.2: only the ids are listed; a
@@ -1969,7 +1994,7 @@ def _write_batches(ws: Workspace, kind: str, todo: list[str], batch_size: int) -
 
 def import_results(ws: Workspace, paths: Iterable[str | Path], model: str | None = None) -> dict[str, int]:
     _sync_thresholds(ws)
-    stats = {"lines": 0, "ok": 0, "invalid": 0, "unknown": 0, "skipped_done": 0}
+    stats = {"lines": 0, "ok": 0, "invalid": 0, "unknown": 0, "skipped_done": 0, "held_by_a_helper": 0}
     files: list[Path] = []
     for p in paths:
         p = Path(p)
@@ -1997,9 +2022,15 @@ def import_results(ws: Workspace, paths: Iterable[str | Path], model: str | None
                 continue
             raw = rec.get("output", rec.get("text", ""))
             used = rec.get("model") or model
-            ok, _errs = ingest_result(ws, tid, raw, model=used, provenance={
-                "digest": rec.get("digest") or (f"name:{used}" if used else None), "seed": rec.get("seed"),
-                "settings": {"backend": "file queue"}})
+            try:
+                # hunt phase 1.5: a task no longer out in the file queue (requeued since) may be in a helper's hands:
+                # its answer counts, and a late file answer for it is not stored beside it
+                ok, _errs = ingest_result(ws, tid, raw, model=used, provenance={
+                    "digest": rec.get("digest") or (f"name:{used}" if used else None), "seed": rec.get("seed"),
+                    "settings": {"backend": "file queue"}}, unheld=st != "exported")
+            except NotHeld:
+                stats["held_by_a_helper"] += 1
+                continue
             stats["ok" if ok else "invalid"] += 1
     return stats
 
@@ -2055,15 +2086,18 @@ def check_results(ws: Workspace, paths: Iterable[str | Path]) -> dict[str, Any]:
 
 
 def refresh(ws: Workspace, kind: str, model: str | None = None) -> int:
-    """Queue tasks again under the current prompt version (and optionally another model). Old results are kept."""
+    """Queue tasks again under the current prompt version (and optionally another model). Old results are kept.
+    Hunt phase 1.5: a task out in the file queue (`exported`) is left as it is: its worker answers the instructions
+    written beside its file, and its answer is recorded under them (`requeue` first takes it back)."""
     version = prompts.VERSIONS[kind]
+    out = "status != 'exported'"
     with ws.connect() as cx:
         if model:
             # second opinions (audits of VCA checks, second checks of extracted claims) are about their own model:
             # they are queued again under the new prompt but keep the model they were made for
             own = ("COALESCE(json_extract(payload_json, '$.subject_kind'), '') IN ('vca_claim_audit', 'claim')")
-            mine = f"WHERE kind=? AND NOT {own} AND (prompt_version != ? OR model != ?)"
-            theirs = f"WHERE kind=? AND {own} AND prompt_version != ?"
+            mine = f"WHERE kind=? AND {out} AND NOT {own} AND (prompt_version != ? OR model != ?)"
+            theirs = f"WHERE kind=? AND {out} AND {own} AND prompt_version != ?"
             ids = [r[0] for r in cx.execute("SELECT task_id FROM tasks " + mine, (kind, version, model))]
             ids += [r[0] for r in cx.execute("SELECT task_id FROM tasks " + theirs, (kind, version))]
             cx.execute("UPDATE tasks SET status='pending', attempts=0, prompt_version=?, model=? " + mine,
@@ -2071,9 +2105,9 @@ def refresh(ws: Workspace, kind: str, model: str | None = None) -> int:
             cx.execute("UPDATE tasks SET status='pending', attempts=0, prompt_version=? " + theirs,
                        (version, kind, version))
         else:
-            ids = [r[0] for r in cx.execute("SELECT task_id FROM tasks WHERE kind=? AND prompt_version != ?",
+            ids = [r[0] for r in cx.execute(f"SELECT task_id FROM tasks WHERE kind=? AND {out} AND prompt_version != ?",
                                             (kind, version))]
-            cx.execute("UPDATE tasks SET status='pending', attempts=0, prompt_version=? WHERE kind=? AND "
+            cx.execute(f"UPDATE tasks SET status='pending', attempts=0, prompt_version=? WHERE kind=? AND {out} AND "
                        "prompt_version != ?", (version, kind, version))
         _relabel(cx, ids)
         return len(ids)

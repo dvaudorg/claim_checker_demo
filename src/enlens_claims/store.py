@@ -546,6 +546,20 @@ AI_ACCESS_UPGRADE_DUE = "ai_access_upgrade_due"    # access.upgrade: made before
 META_TABLE = "CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)"  # as in SCHEMA
 
 
+# hunt phase 1.5 (MERGE15-1): a share mark dated ahead of this computer's clock (a forged "withdrawn" dated 2999,
+# taken before this version clamped marks as they come in) is clamped to now whenever a project opens: a mark is timed
+# when it is made, so one from the future can always be told, and its owner's own later marks then count over it. Not
+# a one-time step with a mark of being done: the step is its own test (no row later than now is left), costs one
+# UPDATE of a small table, and a mark of being done in `meta` travelled in the shared folder's bundles
+# (whose databases are copies of an empty one). `bundle.import_project` clamps a zip's marks itself.
+def _clamp_share_dates(cx: sqlite3.Connection) -> None:
+    """Every `shares.at` later than now becomes now."""
+    import datetime as _dt
+
+    at = _dt.datetime.now(_dt.timezone.utc).isoformat()
+    cx.execute("UPDATE shares SET at=? WHERE typeof(at)='text' AND at > ?", (at, at))
+
+
 def _due(cx: sqlite3.Connection, key: str) -> bool:
     """Whether the one-time step noted as `key` is still to do."""
     return cx.execute("SELECT 1 FROM meta WHERE key=?", (key,)).fetchone() is not None
@@ -649,15 +663,24 @@ def _vacuum_after_drop(cx: sqlite3.Connection, folder: Path) -> bool:
     return True
 
 
-def _setup_addons(cx: sqlite3.Connection) -> None:
+def _setup_addons(cx: sqlite3.Connection, root: Path | None = None) -> None:
     """0.13.6: each add-on's tables, columns and indexes, after ENLENS's own and in the add-ons' order, the same
     idempotent way (docs/EXTENDING.md). Hunt phase 1.5 (the owner's rule): an add-on whose SQL fails stopped every
     project from opening, in SQLite's words that named no add-on. Each add-on now runs inside a savepoint: if any of
     its statements fails, all of its tables, columns and indexes of this opening are taken back, the add-on is named
-    in `addons.errors()` (and the terminal), and the project opens without it."""
-    from .addons import database, failed, statements
+    in `addons.errors()` (and the terminal), and the project opens without it. After the review of wave 1: for THIS
+    project (`root`): its routes, overview and kinds of task are left out here only (addons.left_out), and a later
+    opening that sets it up forgets the failure. SQL that manages the transaction itself (BEGIN, COMMIT, VACUUM, PRAGMA
+    journal_mode...) cannot run in the savepoint: such an add-on is refused, naming the statement."""
+    from .addons import database, failed, set_up, statements, transaction_statement
 
     for db in database():
+        sql = statements(db["schema"]) + statements(db["indexes"])
+        own = next((w for w in map(transaction_statement, sql) if w), "")
+        if own:
+            failed(db["addon"], f"its SQL holds {own}, which an add-on's SCHEMA and INDEXES must not: ENLENS runs them "
+                                "inside a savepoint of its own (docs/EXTENDING.md). Remove that statement.", root)
+            continue
         cx.execute("SAVEPOINT enlens_addon")
         try:
             for stmt in statements(db["schema"]):
@@ -668,9 +691,11 @@ def _setup_addons(cx: sqlite3.Connection) -> None:
         except sqlite3.Error as e:
             cx.execute("ROLLBACK TO enlens_addon")
             cx.execute("RELEASE enlens_addon")
-            failed(db["addon"], f"its tables could not be set up: {type(e).__name__}: {e}")
+            failed(db["addon"], f"its tables could not be set up: {type(e).__name__}: {e}", root)
             continue
         cx.execute("RELEASE enlens_addon")
+        if root is not None:
+            set_up(db["addon"], root)
 
 
 def fast_tests() -> bool:
@@ -952,12 +977,14 @@ class Workspace:
             _roles_upgrade(cx)
             dropped = _drop_old_places(cx)
             cx.executescript(begin + INDEXES)  # (executescript saves what came before it)
-            _setup_addons(cx)
+            _setup_addons(cx, self.root)
             if _due(cx, SHARES_UPGRADE_DUE):  # 0.18 (L1): a project exchanged before counts as shared; one never
                 from .sharing import upgrade      # sent starts private
 
                 upgrade(cx, self.root)
                 cx.execute("DELETE FROM meta WHERE key=?", (SHARES_UPGRADE_DUE,))  # (saved with the rows it made)
+            if not self.scratch:  # (a scratch copy is a colleague's file or a bundle: a merge clamps what it reads)
+                _clamp_share_dates(cx)
             cx.commit()
             ai_access_due = _due(cx, AI_ACCESS_UPGRADE_DUE)
             if dropped:

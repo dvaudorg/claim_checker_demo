@@ -649,7 +649,13 @@ def _words_before(cx, payload: dict) -> dict | None:
     as No AI). None for any other payload."""
     ids, shown = payload.get("concept_ids"), payload.get("concepts")
     if isinstance(ids, list) and isinstance(shown, list) and "map_groups" in payload:
-        return {"terms": [t for t in ids[:len(shown)] if isinstance(t, str)]}
+        out = [t for t in ids[:len(shown)] if isinstance(t, str)]
+        # hunt phase 1.5: a concept named by none of its wordings ("long form (SHORT)") holds the words of all of them
+        more = [r[0] for t in out for r in cx.execute(
+            "SELECT m.term_id FROM concept_terms c JOIN concepts k ON k.concept_id=c.concept_id JOIN terms w ON "
+            "w.term_id=c.term_id JOIN concept_terms m ON m.concept_id=c.concept_id WHERE c.term_id=? AND "
+            "k.label != w.label", (t,))]
+        return {"terms": list(dict.fromkeys(out + more))}
     term, claim = payload.get("concept"), payload.get("claim")
     if isinstance(term, str) and isinstance(claim, str) and claim.startswith("the concept: "):
         members = [r[0] for r in cx.execute("SELECT term_id FROM concept_terms WHERE concept_id=(SELECT concept_id "
@@ -1779,8 +1785,10 @@ def project_info(ws: Workspace) -> dict:
             # stage 1 of other cloud providers: who may read the `cloud` documents without their own choice (this
             # person's own, also in a shared project: I7 stage 3), and the team's limit when its owner set one
             "providers_default": providers_default(ws), "shared": shared, "team_limit": team_limit,
-            # I7 stage 3: the provider lists that came from colleagues and were cleared once (settle_own_providers)
-            "providers_reset": ws.meta(PROVIDERS_RESET) if shared else None,
+            # I7 stage 3: the provider lists that came from colleagues and were cleared once (settle_own_providers);
+            # hunt phase 1.5: or narrowed when the project was opened from a zip ("from": "import", bundle.py), in
+            # any project, shared or not
+            "providers_reset": ws.meta(PROVIDERS_RESET) or None,
             "providers_note": team_limit["note"] if team_limit else None, **_route_allows(ws, lv)}
 
 

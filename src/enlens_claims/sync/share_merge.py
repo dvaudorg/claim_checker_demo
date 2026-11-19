@@ -88,6 +88,8 @@ class ShareRules:
         from .. import sharing
 
         there = sharing.rows(self.icx)
+        marked_there = set(there)   # (the file's own marks, before the defaults for items without one are added)
+        held_marks = sharing.rows(cx)
         sender = self.sender["id"]
         default = "shared" if self.format_in < 2 else "private"  # before 0.18 everything exchanged was shared
         for kind, keys in sharing.items(self.icx, self.inc.root).items():
@@ -105,6 +107,12 @@ class ShareRules:
             had = (kind, local) in self.items_before
             got = sharing.receive(cx, kind, local, r, self.me, present, had=had, sender=sender,
                                   first_hand=self.first_hand, signed=self._signed())
+            if got is None and not self.first_hand and not self._trusted(r.get("by")) and r.get("by") != self.me \
+                    and (kind, key) in marked_there \
+                    and (held_marks.get((kind, local)) or {}).get("state") != r.get("state"):
+                # a zip brought by hand into a project with a storage space: its marks in members' names wait for their
+                # own signed files (the report says so; review of hunt phase 1.5, wave 2)
+                self.r["shares"]["unsigned"] = self.r["shares"].get("unsigned", 0) + 1
             if got in ("shared", "withdrawn") and present:
                 self.r["shares"][got].append(self._title_here(cx, kind, local, r.get("title")))
             elif got is None and present and not had and r.get("owner") != self.me:

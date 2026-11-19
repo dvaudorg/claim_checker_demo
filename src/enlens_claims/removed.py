@@ -72,16 +72,20 @@ def _quote(name: str) -> str:
 
 
 def _used_by_another(cx: sqlite3.Connection, doc_id: str, f: Path) -> bool:
-    """Whether another document held here reads the file `f`."""
+    """Whether another document held here reads the file `f`. The stored paths are compared first, and only a path
+    with the same file name is resolved (review of hunt phase 1.5, wave 2: every other document's path was resolved for
+    each document archived, inside the transaction of a bulk removal)."""
+    if cx.execute("SELECT 1 FROM documents WHERE doc_id != ? AND path=?", (doc_id, str(f))).fetchone():
+        return True
     try:
         mine = f.resolve()
     except OSError:
         return False
     for (p,) in cx.execute("SELECT path FROM documents WHERE doc_id != ? AND path IS NOT NULL", (doc_id,)):
         try:
-            if Path(p).resolve() == mine:
+            if Path(p).name == f.name and Path(p).resolve() == mine:
                 return True
-        except (OSError, ValueError):
+        except (OSError, ValueError, TypeError):
             continue
     return False
 

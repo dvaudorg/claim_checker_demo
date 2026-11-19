@@ -79,8 +79,8 @@ interview transcript.
   changed together with the bar at the bottom of the window, and the message after a change has *Undo*. A note
   (*Why*, for example "publisher licence") is kept with the document and exported with the project; it changes
   nothing.
-- **From the command line or a Claude chat**, `enlens ingest --ai-access cloud|local|none` and the connector's
-  `ai_access` ask the same question: until the project has a default, nothing is added without an answer.
+- **From the command line or a Claude chat** (`--ai-access`, `ai_access`): no answer, nothing added until a default
+  exists. Earlier documents stay as they were; Claude cannot add documents more open than the default.
 - **For large corpora**, a `manifest.csv` may have `ai_access` (`cloud`, `local` or `none`) and `ai_note` columns.
 
 Projects made before 0.11 keep *Claude may read it* for every document until you change it; a project zip made before

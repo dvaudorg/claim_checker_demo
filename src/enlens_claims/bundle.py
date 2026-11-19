@@ -452,29 +452,71 @@ def import_project(zip_path: str | Path, dest: str | Path, merge_only: bool = Fa
         cx.execute("DELETE FROM removed_docs")
         # roles (§4.11): whose copy this is, so linking its folder later does not take it for another person's
         ws.set_meta(COPY_FOR, me(), cx)
+        # hunt phase 1.5 (MERGE15-1): a share mark the zip dates ahead of this clock counts as made now, as a mark that
+        # comes in a merge does (sharing.mark_at): a "withdrawn" dated 2999 in a zip a copy is made from kept its owner's
+        # later marks from counting here for good (store.py clamps them too when a project opens)
+        at = sharing_now()
+        cx.execute("UPDATE shares SET at=? WHERE typeof(at)='text' AND at > ?", (at, at))
     _forget_folder(ws, sender)
-    _providers_asked_again(ws)
+    # (a colleague's lists and project default are their consent, not this person's: `_forget_folder` cleared the
+    # lists, and the project default is this copy's own; a zip that names this person may only narrow theirs)
+    own = bool(sender) and sender == (_my_id() or "")
+    _providers_asked_again(ws, sent if own and isinstance(sent, dict) else None)
     if not merge_only:
         _adopt(ws, sender)
     _no_local_drafts(ws, sender)
     return ws
 
 
-def _providers_asked_again(ws: Workspace) -> None:
-    """Hunt phase 1.5 (MERGE15-7): which cloud providers may read each document is consent, and a zip never carries it,
-    not even one that says it is this person's own. Nothing in a zip can tell this person's own backup from a zip a
-    colleague made and named them in (bundle.json "from", the project's rows and its research log are all written by
-    whoever made the zip; no secret of the person's goes into one), and a list taken from it would let text go to a
-    provider they never allowed. So every list is cleared and the person is told in place (`access.PROVIDERS_RESET`,
-    the line on the Documents page) to tick them again. A colleague's lists were cleared already (`_forget_folder`)."""
-    from .access import PROVIDERS_RESET, relabel
+def sharing_now() -> str:
+    """Now, as a share mark is timed (sharing._at)."""
+    from .sharing import _at
 
+    return _at()
+
+
+def _my_id() -> str | None:
+    from .home import load_settings
+
+    return load_settings().get("person_id")
+
+
+def _providers_asked_again(ws: Workspace, sent: dict | None = None) -> None:
+    """Hunt phase 1.5 (MERGE15-10): which cloud providers may read each document is consent, and a zip never adds to
+    it, not even one that says it is this person's own. Nothing in a zip can tell this person's own backup from a zip a
+    colleague made and named them in (bundle.json "from", the project's rows and its research log are all written by
+    whoever made the zip; no secret of the person's goes into one), so a list in it may only narrow: each document's
+    list becomes what it allowed AND what this copy's project default allows (`_clean_config` dropped the zip's own
+    default, so that is `access.providers_default`, Anthropic alone). A document that followed the zip's project
+    default (no list of its own) keeps that default's narrowing the same way. Nothing left: an empty list, which allows
+    no provider (`access._own_list`). So an honest exclusion survives a backup or a move (a document kept from Anthropic
+    stays kept from it), and a forged list adds nothing. The person is told in place, in every project
+    (`access.PROVIDERS_RESET`, "from": "import"), to tick again what they want. A colleague's lists were cleared already
+    (`_forget_folder`: their consent is not this person's; the document's AI setting itself is the team's)."""
+    from .access import PROVIDERS_RESET, _own_list, providers_default, relabel
+
+    here = providers_default(ws)
+    theirs_default = None
+    if isinstance(sent, dict) and sent.get("ai_providers_default") is not None:
+        theirs_default = _own_list(json.dumps(sent.get("ai_providers_default")))
+    changed: list[tuple[str, str]] = []
     with ws.connect() as cx:
-        n = cx.execute("SELECT COUNT(*) FROM documents WHERE ai_providers IS NOT NULL").fetchone()[0]
-        if not n:
+        for doc, raw in cx.execute("SELECT doc_id, ai_providers FROM documents").fetchall():
+            had = _own_list(raw)
+            if had is None:
+                if theirs_default is None:
+                    continue  # (the project's default there was this copy's default too)
+                had = theirs_default
+            keep = [p for p in had if p in here]
+            if raw is not None and sorted(keep) == sorted(had) and _own_list(raw) is not None:
+                continue  # (already within this copy's default: nothing to ask again)
+            if raw is None and sorted(keep) == sorted(here):
+                continue
+            changed.append((json.dumps(keep), doc))
+        if not changed:
             return
-        cx.execute("UPDATE documents SET ai_providers=NULL")
-        ws.set_meta(PROVIDERS_RESET, {"documents": n, "at": now()}, cx)
+        cx.executemany("UPDATE documents SET ai_providers=? WHERE doc_id=?", changed)
+        ws.set_meta(PROVIDERS_RESET, {"documents": len(changed), "at": now(), "from": "import"}, cx)
         relabel(cx)
 
 

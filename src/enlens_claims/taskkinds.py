@@ -400,6 +400,34 @@ def long_quote_problems(obj: Any, extra_fields: tuple[str, ...] = ()) -> list[st
     return seen
 
 
+def own_words(kind: TaskKind, payload: dict, obj: Any) -> Any:
+    """The answer with each quote (a string under one of `quote_fields`, at any depth) replaced by the words of the
+    text `quote_from` gives where the quote check found it. Hunt phase 1.5: the check reads case, spacing and
+    typography alike, and NFKC reads "10³ tonnes" as "103 tonnes"; ENLENS's own kinds store the passage's own slice,
+    and an add-on's store function is handed the same, never a number the model flattened. A quote not found is left
+    as it is (the check has sent such an answer back already)."""
+    from .textutil import find_quote
+
+    src = kind.quote_from(payload)
+    texts = [src] if isinstance(src, str) else [t for t in (src or []) if isinstance(t, str)]
+
+    def put(v):
+        if isinstance(v, dict):
+            return {k: (_slice(x) if k in kind.quote_fields and isinstance(x, str) else put(x)) for k, x in v.items()}
+        if isinstance(v, list):
+            return [put(x) for x in v]
+        return v
+
+    def _slice(q: str) -> str:
+        for t in texts:
+            hit = find_quote(t, q)
+            if hit is not None:
+                return t[hit[0]:hit[1]]
+        return q
+
+    return put(obj)
+
+
 def check_quotes(kind: TaskKind, payload: dict, obj: Any) -> list[str]:
     """The problems with an answer's quotes: each must be found in the text `quote_from` gives (whitespace, case and
     typography aside, as for every quote ENLENS checks)."""

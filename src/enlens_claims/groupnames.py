@@ -759,6 +759,52 @@ def _passages_of(ws: Workspace, f, nodes: list[str], g, allowed: set[str], lv: d
     return picked
 
 
+def _name_terms(g, t: str, lab: dict[str, str]) -> list[str]:
+    """The wordings whose words a concept's name on the map holds: the wording `t` itself when the name is its own
+    (the map shows a concept by the wording that bears its name), else every wording of the concept (a name made of
+    two of them, "long form (SHORT)" for an abbreviation)."""
+    ms = g.members.get(g.node(t))
+    if not ms or g.labels.get(t) == lab.get(t):
+        return [t]
+    return sorted(ms)
+
+
+def _drafted_from(ws: Workspace) -> dict[str, set[str]]:
+    """The documents each answered group-name task of this copy showed, by the group's concepts (as `apply` writes
+    them on the name it drafted): the documents an AI-drafted name may hold words of."""
+    out: dict[str, set[str]] = {}
+    for (raw,) in ws.query("SELECT payload_json FROM tasks WHERE kind=? AND status='done'", (KIND,)):
+        try:
+            p = json.loads(raw or "{}")
+            key = json.dumps(sorted(str(c) for c in p.get("concept_ids") or []))
+            out.setdefault(key, set()).update(str(d) for d in p.get("docs") or [])
+        except (ValueError, TypeError, AttributeError):
+            continue
+    return out
+
+
+def _before(ws: Workspace, gr: dict, docs_ok: set[str], drafted: dict[str, set[str]]) -> tuple[str | None, list[str]]:
+    """(the name the AI drafted before for this group, the documents it may hold words of), or (None, []) when it
+    is not sent: the group was not named by the AI, a document it was drafted from may not be read by this task's
+    reader now, or this copy does not know which documents it came from (a colleague's draft: the task that made it
+    stays on their computer). When in doubt the name stays here; the AI is then only not told which name to avoid."""
+    if gr.get("name_source") not in ("ai", "ai_draft") or not gr.get("name_id"):
+        return None, []
+    rec = ws.query("SELECT concepts_json FROM concept_group_names WHERE name_id=?", (gr["name_id"],))
+    try:
+        key = json.dumps(sorted(str(c) for c in json.loads(rec[0][0] or "[]"))) if rec else None
+    except (ValueError, TypeError):
+        key = None
+    docs = set(drafted.get(key) or ()) if key else set()
+    if not docs:
+        return None, []
+    docs |= {r[0] for r in ws.query("SELECT doc_id FROM concept_group_quotes WHERE name_id=?", (gr["name_id"],))
+             if r[0]}
+    if not docs <= docs_ok:
+        return None, []
+    return gr["name"], sorted(docs)
+
+
 def payloads(ws: Workspace, f, n: int, which: str, allowed: set[str], settings: dict | None = None) -> dict:
     """The tasks *Name the groups* asks for, from the map as it is now: {"tasks": [(group, payload)], "skipped":
     groups with no passage the reader may read, "person": groups named by the researcher (never asked)}. `which`:
@@ -777,6 +823,7 @@ def payloads(ws: Workspace, f, n: int, which: str, allowed: set[str], settings: 
     lv = access.levels(ws, provider=access.route_provider(s))   # for the main route's provider
     dflt = access.default(ws)
     out: dict = {"tasks": [], "skipped": 0, "person": 0, "map": m}
+    drafted: dict | None = None
     for gr in m["groups"]:
         if gr["name_source"] == "person":
             out["person"] += 1
@@ -794,18 +841,32 @@ def payloads(ws: Workspace, f, n: int, which: str, allowed: set[str], settings: 
         shown: list[str] = []
         if ps:
             ok = {"cloud"} if access.most(lv.get(p["doc_id"]) or dflt for p in ps) == "cloud" else {"cloud", "local"}
-            named = terms.terms_in_docs(ws, ms, {d for d, x in lv.items() if (x or dflt) in ok})
+            docs_ok = {d for d, x in lv.items() if (x or dflt) in ok}
+            # hunt phase 1.5: a concept's name is the words of the wordings it is made of. A concept joined by an
+            # abbreviation is named "long form (SHORT)", none of its wordings, and its map id is one wording only:
+            # such a name goes only when every wording of the concept is found in a document the reader may read
+            words = {t: _name_terms(g, t, lab) for t in ms}
+            named = terms.terms_in_docs(ws, sorted({w for ws_ in words.values() for w in ws_}), docs_ok)
+            named = {t for t in ms if set(words[t]) <= named}
             shown = [t for t in ms if t in named][:MAX_CONCEPTS]
         if not ps or not shown:
             out["skipped"] += 1
             continue
         in_ps = [[ms[i] for i in p["nodes"] if i < len(ms) and ms[i] in named][:8] for p in ps]
+        sent = set(shown) | {t for x in in_ps for t in x}
+        # hunt phase 1.5: the name the AI drafted before ("Name the groups again") is words of the documents its task
+        # showed: it goes only when the reader may read every one of them now, and they are named for the guard, so a
+        # document made stricter while the task waits takes the task out of the queue
+        if drafted is None:
+            drafted = _drafted_from(ws)
+        before, before_docs = _before(ws, gr, docs_ok, drafted)
         payload = {"concepts": [lab[t] for t in shown], "concept_ids": ms,
                    "labels": {t: lab[t] for t in ms},
-                   access.WORDS_KEY: {"terms": sorted(set(shown) | {t for x in in_ps for t in x})},
+                   access.WORDS_KEY: {"terms": sorted({w for t in sent for w in words[t]}),
+                                      **({"docs": before_docs} if before else {})},
                    "docs": sorted({p["doc_id"] for p in ps}), "filters": m["filters"], "n": m["n"],
                    "name_id": gr["name_id"],
-                   "before": gr["name"] if gr["name_source"] in ("ai", "ai_draft") else None,
+                   "before": before,
                    # the whole map's groups (term ids) and this one's place: `apply` finds the name this group has on
                    # the map, never one another group holds (a name whose concepts span two groups)
                    "map_groups": [x["concepts"] for x in m["groups"]], "group_index": m["groups"].index(gr),

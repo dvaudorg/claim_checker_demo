@@ -1821,9 +1821,67 @@ class _Readings:
             shutil.rmtree(self.stop_dir, ignore_errors=True)
 
 
+class AccessChoice(ValueError):
+    """Hunt phase 1.5: why documents cannot be added with the AI setting asked for (`adding_access`). `kind`:
+    "missing" (no setting given, and the project's default was never chosen) or "looser" (an AI asked for more than
+    the project's chosen default); `default`: the project's default then."""
+
+    def __init__(self, kind: str, default: str | None, message: str):
+        super().__init__(message)
+        self.kind, self.default = kind, default
+
+
+def adding_access(ws: Workspace, ai_access: str | None, by_ai: bool = False) -> dict:
+    """Hunt phase 1.5: THE rule for who may read documents being added, for every route that adds them (the connector,
+    the command line; the app's routes should call it too). Returns {"ai_access": the setting to pass to `ingest`,
+    "set_default": whether this answer becomes the project's default, "earlier": how many documents of the project
+    follow a default nobody chose}. Raises AccessChoice:
+    - no setting given while the project's default was never chosen ("missing": documents never become readable by an
+      AI through silence; with a chosen default, it applies);
+    - `by_ai` (the connector) and a setting looser than the project's chosen default ("looser": an AI does not open
+      documents wider than the person chose; the person can, in the app's Documents page or the command line).
+    A given setting becomes the project's default only when no document follows an unchosen default (a project
+    without documents, as the app's first Add); otherwise it is the new documents' own, and the earlier ones keep
+    following the default nobody chose: one answer about new files must not change who may read the others."""
+    from . import access
+
+    chosen = access.default_chosen(ws)
+    dflt = access.default(ws) if chosen else None
+    if ai_access is None:
+        if not chosen:
+            raise AccessChoice("missing", None, "Say who may read these documents with AI: cloud (a cloud model such "
+                               "as Claude), local (only a local AI on this computer) or none (no AI). This project "
+                               "has no default yet, so nothing was added.")
+        return {"ai_access": None, "set_default": False, "earlier": 0}
+    v = access.clean(ai_access)
+    if v == "cloud" and access._local_only():
+        raise ValueError("Cloud models are switched off on this computer: documents can be read by a local AI or by "
+                         "you only.")
+    if chosen:
+        if by_ai and access.RANK[v] < access.RANK[dflt]:
+            raise AccessChoice("looser", dflt, f"This project's documents are set to \"{access.LABEL[dflt]}\", "
+                               f"and \"{access.LABEL[v]}\" would let more AI read the new ones. Nothing was added. "
+                               "Add them with that setting or a stricter one; the person can change it for a "
+                               "document or for the project in the app's Documents page.")
+        return {"ai_access": v, "set_default": False, "earlier": 0}
+    earlier = int(ws.scalar("SELECT COUNT(*) FROM documents WHERE ai_access IS NULL") or 0)
+    return {"ai_access": v, "set_default": earlier == 0, "earlier": earlier}
+
+
+def earlier_words(ws: Workspace, n: int) -> str:
+    """What to say when `n` earlier documents still follow a default nobody chose (`adding_access`)."""
+    from . import access
+
+    if not n:
+        return ""
+    return (f"{n} earlier document{'s' if n != 1 else ''} of this project still follow{'s' if n == 1 else ''} a "
+            f"default nobody chose (\"{access.LABEL[access.default(ws)]}\" until it is chosen). The new documents "
+            "have their own setting. Choose the project's default in the app: its Documents page asks.")
+
+
 def ingest(ws: Workspace, inputs: list[str | Path], exclude: list[str] | None = None,
            progress=None, should_stop=None, ocr: OcrOptions | None = None, ai_access: str | None = None,
-           ai_note: str | None = None, workers: int | None = None) -> dict:
+           ai_note: str | None = None, workers: int | None = None, set_default: bool = True) -> dict:
     """Add documents. `exclude` holds file-name patterns (e.g. 'A_18_*') to leave out, such as a wrong download.
 
     `progress(done, total, file_name)` is called before each file is read (for a progress bar). Each document is
@@ -1848,9 +1906,9 @@ def ingest(ws: Workspace, inputs: list[str | Path], exclude: list[str] | None = 
         if ai_access == "cloud" and access._local_only():
             raise ValueError("Cloud models are switched off on this computer: documents can be read by a local AI or "
                              "by you only.")
-        if not access.default_chosen(ws):
-            access.set_default(ws, ai_access)
-        if ai_access == access.default(ws):
+        if not access.default_chosen(ws) and set_default:  # (hunt phase 1.5: `set_default` False, from
+            access.set_default(ws, ai_access)                # `adding_access`: the earlier documents keep theirs)
+        if access.default_chosen(ws) and ai_access == access.default(ws):
             ai_access = None  # follows the project's default
 
     cfg = ws.config["passages"]

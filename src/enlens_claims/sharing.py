@@ -513,10 +513,22 @@ def signers(ws) -> frozenset[str]:
         state = json.loads((base / ".space-state.json").read_text(encoding="utf-8"))
         roster = state.get("roster") if isinstance(state, dict) else None
         if not isinstance(roster, dict):
-            return frozenset()
+            return EVERYONE   # (a space whose list of members this copy has not read yet: closed, see `_Everyone`)
         return frozenset(str(m.get("person")) for m in space._active(roster).values() if m.get("person"))
     except (OSError, ValueError, TypeError, AttributeError):
-        return frozenset()
+        return EVERYONE
+
+
+class _Everyone(frozenset):
+    """Everyone counts as a signer (`signers` when the storage space's record of its members cannot be read): no mark
+    is taken but from its own maker's file until the record reads again. Fails closed (review of hunt phase 1.5, wave
+    2): an unreadable record gave the plain relay rules. Not empty, so `bool()` says a space is there."""
+
+    def __contains__(self, item) -> bool:
+        return True
+
+
+EVERYONE = _Everyone({"*"})
 
 
 def trusted(by: str | None, sender: str | None, first_hand: bool, signed: Iterable[str]) -> bool:
@@ -541,11 +553,16 @@ def receive(cx: sqlite3.Connection, kind: str, key: str, r: dict, me: str, prese
     if kind not in KINDS or r.get("state") not in STATES or not plain_key(kind, key):
         return None
     by = r.get("by")
-    if not trusted(by, sender, first_hand, signed):
-        return None
     r = {**r, "at": mark_at(r)}
     here = cx.execute("SELECT state, owner, by, at FROM shares WHERE kind=? AND key=?", (kind, key)).fetchone()
     had = present if had is None else had
+    if not trusted(by, sender, first_hand, signed):
+        # a relayed "shared" for an item that came in now and that this copy knows nothing of is taken, as everywhere
+        # (review of hunt phase 1.5, wave 2: an honestly relayed item stayed private for good when its owner left the
+        # space before this copy read her part, or her own mark reached this copy before the item); anything else in a
+        # member's name only from their own signed file: a withdrawal, a change of a mark held here
+        if not (r["state"] == "shared" and present and not had and here is None):
+            return None
     if (here is None and had) or (here is not None and here[1] == me):
         return None  # yours: only you decide
     if not present and here is None and r["state"] != "withdrawn":

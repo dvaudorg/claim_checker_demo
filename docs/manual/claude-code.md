@@ -129,7 +129,8 @@ You follow the progress in ENLENS: on the page that waits, and at the foot of th
 place of the line that says where your text goes: what runs, for how long, how many tasks wait and the AI's name.
 *Settings → AI → Work waiting for Claude Code* lists what waits, per kind (waiting, being answered, done, the model
 and helper, the estimate), and lets you put a task first (*Do first*), keep it back (*Hold*) or take it out
-(*Remove*).
+(*Remove*). A kind on *Hold* is handed to no one until you press *Go on*: not to a helper already at work, not to
+`enlens run` or `enlens export-tasks`; a page that waits for it says it is on Hold.
 
 | The foot of the sidebar says | Meaning |
 | --- | --- |
@@ -197,7 +198,11 @@ Write in the chat as you would to a colleague:
 <summary>The connector's tools</summary>
 
 `list_projects`, `create_project` and `add_sources` (Claude asks you who may read the new documents with AI and passes
-it as `ai_access`; until the project has a default, nothing is added without it), `use_folder_as_project`, `list_documents`, `list_frameworks`,
+it as `ai_access`; until the project has a default, nothing is added without it; a setting looser than the project's
+default, such as *Claude may read it* where it is *Only a local AI*, is refused: only you can open documents wider, in
+the Documents page; earlier documents that follow a default nobody chose are left as they were),
+`use_folder_as_project` (a folder made with the command line, whose default was never chosen, asks the same question
+first), `list_documents`, `list_frameworks`,
 `suggest_targets`, `start_check`, `submit_grades`, `more_passages`, `get_check`, `list_checks`, `search_corpus`
 (concordance lines, so Claude can look around before proposing a hypothesis), `document_profile` (a document's codes
 with their passages) and `find_concept` (a concept's wordings and documents). A recorded demo of a session is in
