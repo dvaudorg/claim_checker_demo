@@ -175,10 +175,14 @@ def test_an_addon_table_and_migration_in_a_new_and_an_old_project(addon, tmp_pat
     assert [r[1] for r in again.query("PRAGMA table_info(fake_notes)")].count("colour") == 1
 
 
-def test_an_addon_cannot_add_a_column_with_a_strange_name(local_addon, tmp_path):
-    with pytest.raises(ValueError, match="names a column ENLENS cannot add"):
-        local_addon.set(MIGRATIONS=[("hypotheses", "x; DROP TABLE documents", "TEXT")])
-        Workspace.create(tmp_path / "w")
+def test_an_addon_cannot_add_a_column_with_a_strange_name(local_addon, tmp_path, monkeypatch):
+    # hunt phase 1.5 (the owner's rule): the add-on is left out and named; the project still opens
+    monkeypatch.setattr(addons, "_errors", [])
+    monkeypatch.setattr(addons, "_failed_in", {})
+    local_addon.set(MIGRATIONS=[("hypotheses", "x; DROP TABLE documents", "TEXT")])
+    ws = Workspace.create(tmp_path / "w")
+    assert ws.scalar("SELECT COUNT(*) FROM documents") == 0
+    assert any("names a column ENLENS cannot add" in e["error"] for e in addons.errors())
 
 
 def test_a_hypothesis_says_where_it_comes_from(loaded):

@@ -12,8 +12,8 @@ from typing import Any
 from .. import people
 from ..store import Workspace, now
 from .codebook_merge import CodebookRules
-from .common import (DOC_ID, ID_COLS, LOCAL_ONLY, OWN_RULES, READING_TABLES, UNFINISHED, _TEXT_COLS, _TOKEN, _cols,
-                     _pk, _rows, _sha, _tokens, base_id, text_fps)
+from .common import (ALSO_REMOVED, DOC_ID, ID_COLS, LOCAL_ONLY, OWN_RULES, READING_TABLES, UNFINISHED, _TEXT_COLS,
+                     _TOKEN, _cols, _pk, _rows, _sha, _tokens, base_id, text_fps)
 from .fingerprints import (_canon, _check_unit, _fingerprints, _known, _plain, _running, _themes_unit,
                            record_seen)
 from .owner_merge import OwnerRules
@@ -259,6 +259,9 @@ class _Merge(CodebookRules, ReadingRules, ShareRules, OwnerRules):
         inc_levels = access.levels(self.icx, budget=False)
         levels_here = access.levels(cx, budget=False)
         default_here = access._default_from_cx(cx)
+        # every id held here (or removed here: restoring it makes its folder again) or coming in now, as a file system
+        # that ignores case sees it
+        folded = {d.casefold() for d in (*here, *removed)}
         for d in inc_docs:
             iid, fp, title = d["doc_id"], d["text_fp"], d["title"] or "untitled"
             if not isinstance(iid, str) or not DOC_ID.fullmatch(iid):  # never a path, whatever the file says
@@ -290,6 +293,13 @@ class _Merge(CodebookRules, ReadingRules, ShareRules, OwnerRules):
             if not DOC_ID.fullmatch(local):
                 self.skip_docs.add(iid)
                 continue
+            if local not in here and local.casefold() in folded:
+                # another document's id in other capitals (this app's ids are lower case; only a changed file has
+                # these): its originals folder would be that document's on a file system that ignores case (macOS,
+                # Windows), and its file would replace that one (hunt phase 1, MERGE-7). Not brought in
+                self.skip_docs.add(iid)
+                continue
+            folded.add(local.casefold())
             if stub is not None and local not in here:
                 # 0.18: no reading of it came (they keep the file out of the shared folder): it stays out until you
                 # add the file yourself; what of theirs names it keeps its excerpts as records
@@ -396,6 +406,8 @@ class _Merge(CodebookRules, ReadingRules, ShareRules, OwnerRules):
             dest = (root / "originals" / local / f.name).resolve()
             if not dest.is_relative_to(root / "originals"):
                 continue  # never outside the project's originals
+            if dest.exists() and _sha1(dest) != plain:
+                continue  # never over another file that is here already (MERGE-7: on a case-blind file system)
             self.files.append((f, dest))
             cx.execute("UPDATE documents SET path=? WHERE doc_id=?", (str(dest), local))
 
@@ -490,7 +502,18 @@ class _Merge(CodebookRules, ReadingRules, ShareRules, OwnerRules):
         canon_in = {**canon_in, **{d: canon_here[d] for d in kept_out - held if d in canon_here}}
         seen_here, seen_there = self._seen(cx, kind), self._seen(self.icx, kind)
         copies_here, copies_there = self._copies(cx, kind), self._copies(self.icx, kind)
-        removed = {r[0] for r in cx.execute("SELECT key FROM sync_removed WHERE kind=?", (kind,))}
+        # what was removed keeps it out, unless the removal is known to be someone else's than its owner's (and not
+        # this person's): a colleague who removed their own copy of another person's check or set of themes, a copy
+        # this one did not hold yet, kept the owner's own from coming here at all (hunt phase 1, the sweep after
+        # MERGE-6; as `_removed_by_owner` says, such a removal decides nothing). Without a known owner (made before
+        # 0.18) or a name on the removal (before 0.14): kept out, as before
+        owners = {k: o for k, o in cx.execute("SELECT key, owner FROM shares WHERE kind=?", (kind,)) if o}
+        if self.icx.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='shares'").fetchone():
+            for k, o in self.icx.execute("SELECT key, owner FROM shares WHERE kind=?", (kind,)).fetchall():
+                if o:
+                    owners.setdefault(k, o)
+        removed = {k for k, by in cx.execute("SELECT key, person_id FROM sync_removed WHERE kind=?", (kind,))
+                   if not by or by == self.me or k not in owners or owners[k] == by}
         if kind == "check":
             keys = self.icx.execute("SELECT hyp_id, text, queue FROM hypotheses ORDER BY created_at").fetchall()
             here = {r[0] for r in cx.execute("SELECT hyp_id FROM hypotheses")}
@@ -847,7 +870,12 @@ class _Merge(CodebookRules, ReadingRules, ShareRules, OwnerRules):
         and counted)."""
         sender = self.sender["id"]
         gone_here = {r[0] for r in cx.execute("SELECT key FROM sync_removed WHERE kind='review'")}
-        have = {people.review_key(dict(r)) for r in _rows(cx, "SELECT * FROM reviews")}
+        held_rows = _rows(cx, "SELECT * FROM reviews")
+        have = {people.review_key(dict(r)) for r in held_rows}
+        # each review held here by its key, with the person who wrote it (one without a name is this copy's own,
+        # from before 0.14: people.review_order): a note that names a review by its key alone is read by these
+        held = {people.review_key(dict(r)): {c: (r.get(c) if c != "person_id" else r.get(c) or self.me)
+                                             for c in people.REVIEW_KEY} for r in held_rows}
         for r in _rows(self.icx, "SELECT * FROM sync_removed WHERE kind='review'"):
             try:  # the review's own fields, named as here (a label's id may differ in this copy)
                 f = json.loads(r["title"] or "")
@@ -857,39 +885,70 @@ class _Merge(CodebookRules, ReadingRules, ShareRules, OwnerRules):
                 f = {c: self._id(c, f.get(c)) for c in people.REVIEW_KEY}
                 key = people.review_key(f)
             else:
-                f, key = None, r["key"]
+                # a note without the review's fields (the app always writes them: people.forget_reviews): whose review
+                # it takes back is the review held here under that key. Taken as it came, it removed any review with
+                # that key, this person's own included (hunt phase 1, MERGE-2); one not held here takes nothing back
+                key = r["key"]
+                f = held.get(key)
+                if f is None:
+                    continue
             if key in gone_here:
                 continue
-            # relayed (or a note that one person took back another's review): not applied
-            if r["person_id"] != sender or (f and f.get("person_id") not in (None, sender)):
+            # relayed (or a note that one person took back another's review): not applied. Never one in this
+            # person's own name: their reviews are taken back here, by them, and from nowhere else (ownership.py,
+            # "What a file cannot do", 3)
+            if r["person_id"] != sender or r["person_id"] == self.me or f.get("person_id") not in (None, sender):
                 if key in have:
                     self.r["held_back"] += 1
                 continue
-            people.forget_reviews(cx, keys=[] if f else [key], reviews=[f] if f else [], at=r["at"],
-                                  person_id=r["person_id"])
+            people.forget_reviews(cx, reviews=[f], at=r["at"], person_id=r["person_id"])
             gone_here.add(key)
             have.discard(key)
             people.first_hand(cx, "review", [key])  # gone, whoever had relayed it
         via_here = people.relayed(cx, "review")
+        # what each person decided of each item, as this copy holds it from that person's own file: a relayed review
+        # never comes in beside it. Reviews are a log whose latest row counts (profile._decisions), so a relayed one,
+        # dated later, overruled the author's own decision, and the author's own files never ended it (hunt phase 1,
+        # MERGE-5); judgements keep to the same rule (`_judgements`)
+        def item(x: dict) -> tuple:
+            return x.get("item_kind"), x.get("item_id"), x.get("field")
+
+        held_rows = _rows(cx, "SELECT * FROM reviews")
+        first_hand_of = {(*item(x), x.get("person_id") or self.me) for x in held_rows
+                         if people.review_key(x) not in via_here}
         rows, own, relayed = [], [], []
+        theirs: set[str] = set()      # the sender's own reviews in their file, and the items they are of
+        their_items: set[tuple] = set()
         for r in _rows(self.icx, "SELECT * FROM reviews ORDER BY review_id"):
             r.pop("review_id", None)
             r["person_id"] = r.get("person_id") or self.sender["id"]
             if r["person_id"] == self.me:
                 continue  # 0.14.3: yours are here already (or you took them back): a file cannot add one in your name
-            k = people.review_key({c: self._id(c, v) for c, v in r.items()})
-            if r["person_id"] == sender and k in via_here:
-                own.append(k)
+            named = {c: self._id(c, v) for c, v in r.items()}
+            k = people.review_key(named)
+            if r["person_id"] == sender:
+                theirs.add(k)
+                their_items.add(item(named))
+                if k in via_here:
+                    own.append(k)
+            elif (*item(named), r["person_id"]) in first_hand_of:
+                continue  # relayed, and this copy has the author's own word on it: left as it is
             if k not in have and k not in gone_here:
                 have.add(k)
                 rows.append(r)
                 if r["person_id"] != sender:
                     relayed.append((k, r["person_id"]))
+        # the author's own file ends what was relayed in their name of the items it holds: a relayed review it does not
+        # hold is the word of whoever relayed it (as a relayed judgement gives way to the author's own row)
+        ended = [x["review_id"] for x in held_rows if x.get("person_id") == sender and item(x) in their_items
+                 and people.review_key(x) in via_here and people.review_key(x) not in theirs]
+        for rid in ended:
+            cx.execute("DELETE FROM reviews WHERE review_id=?", (rid,))
         self.r["reviews"] = self._insert(cx, "reviews", rows, verb="")
         for k, author in relayed:
             people.note_via(cx, "review", k, author, sender)
         self.r["via"] += len(relayed)
-        people.first_hand(cx, "review", own)
+        people.first_hand(cx, "review", own + [people.review_key(x) for x in held_rows if x["review_id"] in ended])
 
     def _links(self, cx: sqlite3.Connection) -> int:
         n = self._insert(cx, "concept_links", _rows(self.icx, "SELECT * FROM concept_links"))
@@ -975,6 +1034,8 @@ class _Merge(CodebookRules, ReadingRules, ShareRules, OwnerRules):
             if table not in here:
                 continue
             row = cx.execute(f"SELECT person_id FROM {table} WHERE {col}=?", (r["key"],)).fetchone()
+            if r["person_id"] == self.me:
+                continue  # this person's own removals are made here, never taken from a file (ownership.py, rule 3)
             if r["person_id"] != self.sender["id"]:
                 if row is not None and row[0] != self.me and row[0] == r["person_id"]:
                     self.r["held_back"] += 1
@@ -982,9 +1043,24 @@ class _Merge(CodebookRules, ReadingRules, ShareRules, OwnerRules):
             if row is not None and row[0] != self.me and row[0] == r["person_id"]:
                 cx.execute(f"DELETE FROM {table} WHERE {col}=?", (r["key"],))
                 people.first_hand(cx, r["kind"], [r["key"]])  # gone, whoever had relayed it
-            if row is None or row[0] == r["person_id"]:
-                cx.execute("INSERT OR IGNORE INTO sync_removed(kind, key, title, at, person_id) VALUES (?,?,?,?,?)",
+                # its author's removal, proven by the row it removed: in place of a note of removal that someone
+                # else wrote of it before (that one kept out only a row of theirs: notes.merge, researchlog.merge)
+                cx.execute("INSERT OR REPLACE INTO sync_removed(kind, key, title, at, person_id) VALUES (?,?,?,?,?)",
                            (r["kind"], r["key"], r["title"], r["at"], r["person_id"]))
+            elif row is None:
+                # one not held here: noted under the name of whoever removed it, so it keeps out only a row of theirs
+                # (notes.merge and researchlog.merge read the name; hunt phase 1, MERGE-6)
+                held = cx.execute("SELECT person_id FROM sync_removed WHERE kind=? AND key=?",
+                                  (r["kind"], r["key"])).fetchone()
+                if held is None:
+                    cx.execute("INSERT INTO sync_removed(kind, key, title, at, person_id) VALUES (?,?,?,?,?)",
+                               (r["kind"], r["key"], r["title"], r["at"], r["person_id"]))
+                elif held[0] and r["person_id"] and held[0] != r["person_id"]:
+                    # someone else said first that they removed it: this one is kept beside it, so the author's own
+                    # removal keeps the note out whichever came first (hunt phase 1.5, MERGE-6; common.ALSO_REMOVED)
+                    cx.execute("INSERT OR IGNORE INTO sync_removed(kind, key, title, at, person_id) VALUES (?,?,?,?,?)",
+                               (ALSO_REMOVED[r["kind"]], f"{r['key']}|{r['person_id']}", None, r["at"],
+                                r["person_id"]))
 
     def _other_tables(self, cx: sqlite3.Connection) -> None:
         """The SDG pack's tables, an add-on's, the record of model runs: rows not here yet come in (yours are kept)."""
@@ -1012,7 +1088,9 @@ class _Merge(CodebookRules, ReadingRules, ShareRules, OwnerRules):
         removed, so it does not come back with someone else's work either. A note in this copy's own name that this
         copy does not hold is not taken: it would make this copy remove the document as its person's own word (in an
         Owner's or a Co-owner's copy, from the project). It is recorded, as a row in this copy's name (roles-p1,
-        review H3; DESIGN-roles §4.10)."""
+        review H3; DESIGN-roles §4.10). So whoever the file says sent it: in a zip, `bundle.json` "from" proves
+        nothing, and a file that said it was this person's own took the note as their word (hunt phase 1, MERGE-1).
+        This person's own honest backup loses nothing by it: its notes in their name are held here already."""
         from ..ownership import record_refused
 
         have_docs = {r[0] for r in cx.execute("SELECT doc_id FROM documents")}
@@ -1020,7 +1098,7 @@ class _Merge(CodebookRules, ReadingRules, ShareRules, OwnerRules):
         mine = {(r[0], r[1]) for r in cx.execute("SELECT kind, key FROM sync_removed WHERE person_id=?", (self.me,))}
         for r in _rows(self.icx, "SELECT * FROM sync_removed WHERE kind IN ('document', 'check', 'themes')"):
             key = r["key"]
-            if r["person_id"] == self.me and self.sender["id"] != self.me:
+            if r["person_id"] == self.me:
                 if (r["kind"], key) not in mine:
                     record_refused(cx, "removal", f"{r['kind']}|{key}", r, self.sender["id"], None)
                 continue

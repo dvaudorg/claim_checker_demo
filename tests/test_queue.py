@@ -32,7 +32,7 @@ def _project(api, corpus, name="P"):
     assert api("POST", "/api/projects", {"name": name})[0] == 200
     for f in sorted(corpus.iterdir()):
         assert api("POST", f"/api/projects/{name}/uploads?batch=b1&name={f.name}", raw=f.read_bytes())[0] == 200
-    st, r = api("POST", f"/api/projects/{name}/ingest", {"batch": "b1"})
+    st, r = api("POST", f"/api/projects/{name}/ingest", {"ai_access": "cloud", "batch": "b1"})
     assert api.wait(r["job"]["id"])["state"] == "done"
     return {d["file"]: d["doc_id"] for d in api("GET", f"/api/projects/{name}/documents")[1]["documents"]}
 
@@ -98,7 +98,7 @@ def test_every_ai_button_waits_for_claude_code_and_gets_its_answers(api, corpus)
         j = api.wait(r["job"]["id"])
         assert j["state"] == "done" and j["result"]["judged"] == 1, j
         # theme names (on more text)
-        r = api("POST", "/api/projects/P/ingest", {"path": str(ROOT / "tools" / "demo_corpus")})[1]
+        r = api("POST", "/api/projects/P/ingest", {"ai_access": "cloud", "path": str(ROOT / "tools" / "demo_corpus")})[1]
         assert api.wait(r["job"]["id"])["state"] == "done"
         r = api("POST", "/api/projects/P/themes", {"k": 4})[1]
         rid = api.wait(r["job"]["id"])["result"]["run_id"]
@@ -624,6 +624,25 @@ def test_an_acceptance_run_is_scored(home, corpus, tmp_path):
     assert out["chosen"]["label"]["claude"] == "haiku" and (folder / "MODEL_CHOICE.md").exists()
     assert home.load_settings()["task_models"]["claude"]["label"] == "haiku"
     assert "not measured yet" in (folder / "MODEL_CHOICE.md").read_text()   # the kinds not run
+
+
+def test_a_link_pair_no_ai_may_read_is_not_a_task(home, corpus, tmp_path):
+    """18 November 2026 (hunt P1-4): `make_link_task` gives None for a pair whose terms occur only in documents no AI
+    may read; `prepare` listed that None among the task ids (and counted it)."""
+    from enlens_claims import access, acceptance, evaluation, ingest, terms
+
+    ref = home.create_project("Ref")
+    ingest.ingest(ref, [corpus])
+    terms.ensure(ref)
+    a, b = [r[0] for r in ref.query("SELECT term_id FROM terms ORDER BY term_id LIMIT 2")]
+    access.set_documents(ref, [r[0] for r in ref.query("SELECT doc_id FROM documents")], "none")
+    folder = tmp_path / "acceptance"
+    folder.mkdir()
+    acceptance._write(folder / "f3_pairs.csv", [{"a": a, "b": b}])
+    home.update_settings({"allow_claude_code": True, "backend": "claude_code"})
+    p = evaluation.prepare(ref, folder, "link", "haiku")
+    meta = home.open_project(p["project"]).meta("evaluation")
+    assert None not in meta["tasks"] and p["tasks"] == 0
 
 
 # ---------------------------------------------------------------------------------------------

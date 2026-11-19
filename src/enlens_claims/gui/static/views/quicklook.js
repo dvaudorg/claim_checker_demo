@@ -31,11 +31,17 @@ export function quickLookBanner(box) {
       replace(box);
       toast("The quick look was discarded.", "ok");
       navigate("#/");
-    } catch (e) { showError(e); discard.disabled = false; }
+    } catch (e) {
+      discard.disabled = false;
+      // hunt phase 1: refused while a job of the quick look runs: said here, beside Discard, not only in a toast
+      if (e && e.kind === "busy") replace(busyNote, notice({ kind: "attention", live: "polite" }, h("p", {}, e.message)));
+      else showError(e);
+    }
   });
+  const busyNote = h("div", { class: "ql-busy" });
   replace(box, notice({ kind: "info", icon: "eye", class: "ql-banner", role: "status" },
     h("p", {}, h("strong", {}, "A quick look"), ` at ${t.file || "one document"}, in a temporary project of its own. It is moved to the trash on ${fmt.dateShort(until.toISOString())} unless you keep it.`),
-    h("div", { class: "btn-row" }, keep, discard)));
+    h("div", { class: "btn-row" }, keep, discard), busyNote));
 }
 
 // "Quick look at one document": choose a file, it is read into a temporary project and opened.

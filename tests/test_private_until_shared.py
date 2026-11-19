@@ -366,3 +366,87 @@ def test_sets_of_themes_and_links_between_terms_travel_only_when_shared(anna_and
     assert rep["themes"]["new"] == 1
     with ben:
         assert _state(ben.ws, "themes", r1) == "shared" and _state(ben.ws, "link", f"{a}|{b}") == "shared"
+
+
+# --- a colleague's marks are data: a key is never a path out of the project (hunt phase 0, CQ-1) -----------------------
+def _with_row(f: Path, row: tuple) -> Path:
+    """The zip with one more row in its `shares` table (a colleague's database is theirs to fill as they like)."""
+    out = f.with_name(f"forged-{f.name}")
+    db = f.with_name(f"{f.stem}.sqlite")
+    with zipfile.ZipFile(f) as zf:
+        db.write_bytes(zf.read("enlens.sqlite"))
+        cx = sqlite3.connect(db)
+        cx.execute("INSERT INTO shares(kind, key, state, owner, by, at, title) VALUES (?,?,?,?,?,?,?)", row)
+        cx.commit()
+        cx.close()
+        with zipfile.ZipFile(out, "w") as zo:
+            for info in zf.infolist():
+                zo.writestr(info, db.read_bytes() if info.filename == "enlens.sqlite" else zf.read(info.filename))
+            if not any(i.filename.startswith("frameworks/") for i in zf.infolist()):
+                zo.writestr("frameworks/readme.txt", "a folder a path can climb out of")  # `..` needs the folder to exist
+    return out
+
+
+def test_a_withdrawn_codebook_key_that_climbs_out_of_the_folder_deletes_nothing(anna_and_ben, tmp_path, monkeypatch):
+    import os
+    import tempfile
+
+    anna, ben = anna_and_ben
+    base = tmp_path / "scratch-base"  # where the merge makes its scratch copy: tempfile's folder
+    base.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(base))
+    victims = tmp_path / "victims"
+    victims.mkdir()
+    for ext in ("csv", "json"):
+        (victims / f"victim.{ext}").write_text("precious")
+    # the scratch copy is <base>/enlens-bring-in-XXXX/work: the same depth as this stand-in
+    key = os.path.relpath(victims / "victim", base / "enlens-bring-in-x" / "work" / "frameworks")
+    assert ".." in key
+    sent = _with_row(_send_shared(ben), ("codebook", key, "withdrawn", ben.id, ben.id, "2999-01-01T00:00:00+00:00", None))
+    rep = anna.bring_in(sent)
+    for ext in ("csv", "json"):
+        assert (victims / f"victim.{ext}").read_text() == "precious"
+    with anna:
+        keys = [r[0] for r in anna.ws._conn().execute("SELECT key FROM shares")]
+    assert not [k for k in keys if "/" in k or "\\" in k or ".." in k]
+    assert not any(key in str(v) for v in rep["shares"].values())
+
+
+def test_a_codebook_key_must_be_a_plain_file_name():
+    for bad in ("", ".", "..", "../x", "a/b", "a\\b", "c:x", "a\x00b", "a\nb", "x.", "x "):
+        assert not sharing.plain_key("codebook", bad), bad
+    for good in ("my-book", "Own Book 2", "a.b", "über"):
+        assert sharing.plain_key("codebook", good), good
+    assert sharing.plain_key("check", "../anything")
+
+
+def test_a_bundles_item_key_that_climbs_out_of_the_folder_deletes_nothing(tmp_path):
+    from enlens_claims.sync import folder
+
+    scratch = Workspace.create(tmp_path / "work", scratch=True)
+    (Path(scratch.root) / "frameworks").mkdir(exist_ok=True)
+    victims = tmp_path / "victims"
+    victims.mkdir()
+    for ext in ("csv", "json"):
+        (victims / f"victim.{ext}").write_text("precious")
+    unpacked = tmp_path / "unpacked"
+    unpacked.mkdir()
+    sqlite3.connect(unpacked / "rows.sqlite").close()
+    key = "../../victims/victim"
+    assert (Path(scratch.root) / "frameworks" / f"{key}.csv").resolve() == (victims / "victim.csv").resolve()
+    with scratch.connect() as scx:
+        folder._apply_bundle(scx, scratch, unpacked, {"items": [{"kind": "codebook", "key": key}]})
+    for ext in ("csv", "json"):
+        assert (victims / f"victim.{ext}").read_text() == "precious"
+
+
+def test_a_label_naming_a_codebook_by_a_path_sends_no_file_from_outside_the_codebook_folder(loaded, tmp_path, monkeypatch):
+    from enlens_claims.home import home
+
+    monkeypatch.setenv("ENLENS_HOME", str(tmp_path / "home-x"))
+    (home() / "frameworks").mkdir(parents=True, exist_ok=True)
+    (home() / "secret.csv").write_text("not a codebook")
+    _check(loaded, CLAIM)
+    with loaded.connect() as cx:
+        assert cx.execute("UPDATE hypotheses SET framework=?", ("../secret",)).rowcount
+    assert sync.home_codebooks(loaded) == []

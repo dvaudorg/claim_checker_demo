@@ -7,7 +7,7 @@ part adds, kept out of server.py so the two parts of 0.18.1, built side by side,
 the changes after which the shared folder's poller does not bring a round forward."""
 from __future__ import annotations
 
-from .api_common import ApiError, _int, _list, _str
+from .api_common import ApiError, _int, _list, _str, once, restricted
 
 P = r"([^/]+)"  # one path segment, as in server.py
 
@@ -282,6 +282,8 @@ class CorpusApi:
             lambda job, be, model, prog: theoryframe.read(ws, be, model, prog, job.cancel.is_set, job=job.id),
             withdraw=(theorycodes.AI_KIND, theoryframe.KIND))
         job.scope = "theory-draft"
+        if restricted(ws, d["doc_ids"]):   # hunt phase 1.5: a notification does not name the theory's document
+            job.note_title = "The AI reads the theory of a framework"
         theoryframe.mark_running(ws, job.id)
         return {"job": job.view()}
 
@@ -462,12 +464,20 @@ class CorpusApi:
             raise ApiError(400, "No two concepts on this map are mentioned together often enough to form a group.")
         if not m["can_name"]["offered"]:
             raise ApiError(400, m["can_name"]["why"] or groupnames.NONE_MAY_READ)
-        job = self.app.start_queued_job(
-            "group-names", "The AI names the groups of the concept map", name,
-            lambda job, be, model, prog: groupnames.name_groups(ws, f, n, which, be, model, prog, job.cancel.is_set,
-                                                                settings=settings),
-            withdraw=(groupnames.KIND,))
-        job.scope = "concept-map"
+        def start():
+            job = self.app.start_queued_job(
+                "group-names", "The AI names the groups of the concept map", name,
+                lambda job, be, model, prog: groupnames.name_groups(ws, f, n, which, be, model, prog, job.cancel.is_set,
+                                                                    settings=settings),
+                withdraw=(groupnames.KIND,))
+            job.scope = "concept-map"
+            return job
+
+        # hunt phase 1.5: pressed twice (or in two tabs), the same names are the job already there; names for other
+        # groups of the map wait for its end (both would name the same groups)
+        job = once(self.app, name, "group-names", ("group-names", repr(sorted(vars(f).items())), n, which),
+                   start, clash=lambda j: True, words="The AI names the groups of the concept map already: wait until "
+                                                      "it has finished, or stop it in the sidebar, then start again.")
         return {"job": job.view()}
 
     def get_codebook_theory(self, name, doc_id, q):
@@ -507,6 +517,8 @@ class CorpusApi:
             lambda job, be, model, prog: theorycodes.draft_with_ai(ws, doc_id, be, model, prog, job.cancel.is_set),
             withdraw=(theorycodes.AI_KIND,))
         job.scope = doc_id
+        if restricted(ws, [doc_id]):   # hunt phase 1.5: a notification does not name it
+            job.note_title = "The AI drafts the concepts of a document"
         return {"job": job.view()}
 
     # ---- A7 (reader 5): a figure's picture ------------------------------------------------------------------------

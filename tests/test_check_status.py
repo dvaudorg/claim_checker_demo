@@ -274,8 +274,11 @@ def test_a_comment_of_yours_does_not_hide_a_colleagues_verdict(mixed, monkeypatc
         return next(y for y in claimcheck.result(ws, cid)["passages"] if y["passage_id"] == pid)
 
     assert (item()["verdict"], item()["judged_by"], item()["my_verdict"]) == ("refutes", "Anna", None)
+    # hunt phase 1 (PAGESA-1): where you wrote nothing, the comment in force is Anna's, and `my_note` says you have none
+    assert (item()["user_note"], item()["my_note"]) == ("Anna's reason", None)
     claimcheck.set_judgement(ws, cid, pid, None, note="Check the year of this study")
     got = item()
+    assert got["my_note"] == "Check the year of this study"
     # before 0.14.3: "supports" (the AI's), judged_by you, user_verdict None
     assert (got["verdict"], got["user_verdict"], got["judged_by"]) == ("refutes", "refutes", "Anna")
     assert got["user_note"] == "Check the year of this study"  # your own comment, yours to edit
@@ -313,9 +316,11 @@ def test_a_comment_of_yours_does_not_hide_a_colleagues_verdict(mixed, monkeypatc
 def test_the_result_page_saves_your_comment_with_your_own_verdict():
     js = (Path(__file__).parent.parent / "src" / "enlens_claims" / "gui" / "static" / "views" / "result.js").read_text(
         encoding="utf-8")
-    assert "put(p.my_verdict || null, note.value.trim()," in js        # the comment field
-    assert "{ verdict: p.my_verdict || null, note: hint }" in js         # the hint of "Ask the AI to read this again"
-    assert "const prev = { verdict: p.my_verdict || null," in js        # Undo
+    # hunt phase 1 (PAGESA-1): the card's own verdict is `mine` (myVerdict: `my_verdict`), for every save of the card
+    assert "const mine = myVerdict(p)" in js and "(p.my_verdict !== undefined ? p.my_verdict" in js
+    assert "put(mine || null, note.value.trim()," in js                 # the comment field
+    assert "{ verdict: myVerdict(p) || null, note: hint }" in js         # the hint of "Ask the AI to read this again"
+    assert "const prev = { verdict: mine || null," in js                # Undo
     assert "put(current || null, note.value.trim()" not in js and "{ verdict: p.user_verdict || null, note: hint }" not in js
 
 

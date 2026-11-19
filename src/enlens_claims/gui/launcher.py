@@ -34,7 +34,7 @@ import sys
 import time
 from pathlib import Path
 
-from ..procs import no_window
+from ..procs import CMD_LITERAL_BANG, cmd_quote, no_window
 
 APP_NAME = "ENLENS"
 LOG_MAX = 5 * 1024 ** 2
@@ -51,24 +51,134 @@ def info_path() -> Path:
     return home.home() / "app.json"
 
 
-def running(timeout: float = 1.5) -> dict | None:
-    """The ENLENS app already running for this data folder ({"url", "port", "pid", …}), or None."""
-    from urllib.request import urlopen
+def local_opener():
+    """An opener for requests to this computer's own ENLENS that never goes through a proxy (hunt phase 1): with
+    HTTP_PROXY set (a company network), urllib sent the request for http://127.0.0.1:… to the proxy, which cannot
+    reach this computer, so a running ENLENS looked gone, or the proxy's own answer was read as ENLENS's."""
+    from urllib.request import ProxyHandler, build_opener
 
+    return build_opener(ProxyHandler({}))
+
+
+def _ask(url: str, token: str | None = None, timeout: float = 1.5) -> bytes:
+    """GET `url` from an ENLENS app on this computer (with its token when given); raises OSError (HTTPError too)."""
+    from urllib.request import Request
+
+    req = Request(url, headers={"X-Enlens-Token": token} if token else {})
+    with local_opener().open(req, timeout=timeout) as r:
+        return r.read(65536)
+
+
+def _pid_is_enlens_app(pid) -> bool:
+    """Whether process `pid` runs, is this account's, and is an ENLENS app (`enlens-gui`, or the icon's
+    `-m enlens_claims.gui.launch`), by its command line: a number alone proves nothing (another program may have it
+    now). Used only for a copy older than 0.17.2, which writes no token file."""
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    from ..procs import command_line  # (hunt phase 1.5: Windows' interface, ps, then /proc where there is no ps)
+
+    cmd = command_line(pid)
+    return bool(cmd) and ("enlens_claims.gui.launch" in cmd or "enlens-gui" in cmd)
+
+
+def _answers(url: str) -> bool:
+    """Whether anything accepts a connection at `url`'s address (127.0.0.1:port)."""
+    import socket
+
+    port = _port_of(url)
+    if not port:
+        return False
+    try:
+        with socket.create_connection(("127.0.0.1", int(port)), timeout=1.0):
+            return True
+    except OSError:
+        return False
+
+
+def _timed_out(e: BaseException) -> bool:
+    """Whether a request failed because the address did not answer in time (a busy app), not because it refused."""
+    return isinstance(e, TimeoutError) or isinstance(getattr(e, "reason", None), TimeoutError)
+
+
+def proven(url: str, port: int, pid=None, timeout: float = 1.5) -> bool:
+    """Hunt phase 1 (INSTALL-2): whether THIS data folder's ENLENS answers at `url`. The proof is a request made with
+    the token this data folder's token file holds for `port` (read_token: written by every copy at its start, and
+    only for its own data folder): an ENLENS of another data folder or another account, which took the port after
+    this one ended without Quit (a crash, a logout), answers it with 401. A copy older than 0.17.2 writes no token
+    file but shows its token on its page: it counts only when the record's process is an ENLENS app of this account
+    (by its command line) as well. A page that merely looks like ENLENS's, or a process number that runs, proves
+    nothing."""
+    return _prove(url, port, pid, timeout) == "yes"
+
+
+def _prove(url: str, port: int, pid=None, timeout: float = 1.5) -> str:
+    """`proven`, with a third answer: "busy" when the address keeps silent past a second, longer try and the record's
+    process is still an ENLENS app of this account (hunt phase 1.5: a timeout proves nothing; the record of a busy
+    app was removed and the icon started a second copy of the same data folder on the next port)."""
+    if not url.startswith("http://127.0.0.1:"):
+        return "no"
+    base = url.split("#", 1)[0].rstrip("/")
+    token = read_token(port)
+    if token:
+        for wait in (timeout, max(3.0, 4 * timeout)):  # a busy app: asked once more, with longer to answer
+            try:
+                _ask(base + "/api/jobs", token, wait)
+                return "yes"
+            except OSError as e:  # 401: not the copy that wrote the file (a file left by a crash); or nothing answers
+                if not _timed_out(e):
+                    break
+        else:
+            return "busy" if _pid_is_enlens_app(pid) else "no"
+    if not _pid_is_enlens_app(pid):
+        return "no"
+    try:
+        page = _ask(base + "/", None, timeout).decode("utf-8", errors="replace")
+        m = re.search(r'name="enlens-token" content="([^"]+)"', page)
+        if not (m and 'name="enlens-version"' in page):
+            return "no"
+        _ask(base + "/api/jobs", m.group(1), timeout)
+        return "yes"
+    except OSError as e:
+        return "busy" if _timed_out(e) else "no"  # (its process is an ENLENS app, checked above)
+
+
+def running(timeout: float = 1.5) -> dict | None:
+    """The ENLENS app already running for this data folder ({"url", "port", "pid", …}), or None. Hunt phase 1
+    (INSTALL-2): only one that proves it is this data folder's (`proven`). It trusted any page that looked like
+    ENLENS's at the recorded address, so after a crash or a logout (app.json stays: no Quit) the icon opened another
+    data folder's or another account's ENLENS that had taken the port, and never started this one. A record that
+    proves nothing is stale: it is removed. Hunt phase 1.5: a busy app (silent past a second try, its process still an
+    ENLENS app) is no stale record: it is kept and given back with "busy": True, so the icon opens it rather than
+    start a second copy of the same data folder."""
     p = info_path()
     try:
         info = json.loads(p.read_text(encoding="utf-8"))
         url = str(info["url"])
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return None
-    if not url.startswith("http://127.0.0.1:"):
-        return None
+    got = _prove(url, info.get("port") or _port_of(url), info.get("pid"), timeout)
+    if got == "yes":
+        return info
+    if got == "busy":
+        return {**info, "busy": True}
+    # hunt phase 1.5 (CI run 4): a record is removed only when its process is gone or is another program. While it
+    # is a live ENLENS app, the record stays: an address that does not answer yet is an app still starting (given
+    # back as busy, so the icon opens it rather than start a second copy); one that answers but does not prove it is
+    # left alone (a record removed while its app ran was never found again)
+    if _pid_is_enlens_app(info.get("pid")):
+        return {**info, "busy": True} if not _answers(url) else None
+    _forget_info(info)
+    return None
+
+
+def _forget_info(stale: dict) -> None:
+    """Remove app.json when it still is the record `stale` (a copy starting this moment may have written its own)."""
+    p = info_path()
     try:
-        with urlopen(url, timeout=timeout) as r:
-            page = r.read(4096).decode("utf-8", errors="replace")
-    except OSError:
-        return None
-    return info if 'name="enlens-version"' in page else None
+        if json.loads(p.read_text(encoding="utf-8")) == stale:
+            p.unlink()
+    except (OSError, ValueError):
+        pass
 
 
 def write_info(url: str, port: int) -> None:
@@ -126,15 +236,31 @@ def write_token(url: str, port: int, token: str) -> Path:
     from .. import home
 
     p = token_path(port)
-    home._write_whole(p, json.dumps({"url": url, "port": int(port), "pid": os.getpid(), "token": token}), private=True)
+    # hunt phase 1 (INSTALL-2): with the data folder, since on Windows the files of several data folders outside the
+    # profile share one folder (token_dir)
+    home._write_whole(p, json.dumps({"url": url, "port": int(port), "pid": os.getpid(), "token": token,
+                                     "home": str(home.home())}), private=True)
     return p
 
 
-def read_token(port) -> str | None:
-    """The token of the app running on `port`, from its file; None when there is none."""
+def same_folder(a, b) -> bool:
     try:
-        tok = json.loads(token_path(int(port)).read_text(encoding="utf-8")).get("token")
+        return os.path.normcase(os.path.abspath(str(a))) == os.path.normcase(os.path.abspath(str(b)))
+    except (OSError, ValueError):
+        return False
+
+
+def read_token(port) -> str | None:
+    """The token of the app running on `port`, from its file; None when there is none, or when the file was written
+    by the copy of another data folder (it names its own; a file of before that names none)."""
+    from .. import home
+
+    try:
+        data = json.loads(token_path(int(port)).read_text(encoding="utf-8"))
+        tok = data.get("token")
     except (OSError, ValueError, TypeError, AttributeError):
+        return None
+    if data.get("home") and not same_folder(data["home"], home.home()):
         return None
     return tok if isinstance(tok, str) and re.fullmatch(r"[A-Za-z0-9_-]{16,}", tok) else None
 
@@ -204,14 +330,15 @@ def is_older(live: dict) -> bool:
 
 def stop_older(live: dict, wait: float = 25.0, fetch=None) -> str:
     """Quit the running copy so this version can start, as "Quit ENLENS" would. Returns "stopped"; "busy" when a
-    check or another job runs in it (it is left alone: quitting would stop that work); "failed" otherwise."""
+    check or another job runs in it (it is left alone: quitting would stop that work); "failed" otherwise. `live` is
+    what running() gave: a copy proven to be this data folder's (hunt phase 1), never a record taken on trust."""
     from urllib.error import HTTPError
-    from urllib.request import Request, urlopen
+    from urllib.request import Request
 
     def call(method: str, path: str, token: str | None = None) -> bytes:
         req = Request(live["url"].rstrip("/") + path, method=method, data=b"{}" if method == "POST" else None,
                       headers={"X-Enlens-Token": token, "Content-Type": "application/json"} if token else {})
-        with urlopen(req, timeout=5) as r:
+        with local_opener().open(req, timeout=5) as r:  # (never through a proxy)
             return r.read()
 
     call = fetch or call
@@ -512,15 +639,19 @@ def _windows_shortcut(folder: Path, python: str, args: list[str]) -> Path:
     cmd = folder / f"{APP_NAME}.cmd"  # no PowerShell: a command file that starts it without waiting
     # 0.14.3: cmd.exe reads a command file in the computer's OEM code page, so a path with an accent (C:\Users\Kovács)
     # was misread; the file is UTF-8, and its second line switches cmd.exe to UTF-8 for the rest
-    cmd.write_text("@echo off\r\nchcp 65001 >nul\r\n"
+    # hunt phase 1 (INSTALL-7): each argument quoted for cmd.exe (cmd_quote), not with list2cmdline, which is right
+    # for the shortcut's Arguments above (no cmd.exe) and cut a data folder such as D:\R&D\enlens at "&" here
+    line = " ".join(cmd_quote(x) for x in [str(target), *args])
+    cmd.write_text("@echo off\r\nchcp 65001 >nul\r\n" + CMD_LITERAL_BANG +
                    "rem Starts ENLENS and opens it in the browser (made by enlens-gui --make-launcher).\r\n"
-                   f'start "" {subprocess.list2cmdline([str(target)])} {arg_line}\r\n', encoding="utf-8",
+                   f'start "" {line}\r\n', encoding="utf-8",
                    newline="")  # 0.15.7: the line ends as written (Windows turned "\r\n" into "\r\r\n")
     return cmd
 
 
 def _desktop_entry(path: Path, python: str, args: list[str]) -> Path:
-    def q(a: str) -> str:  # quoting of the freedesktop Exec key
+    def q(a: str) -> str:  # quoting of the freedesktop Exec key; % is a field code there (%f, %u): a literal one is %%
+        a = a.replace("%", "%%")  # (hunt phase 1.5: a data folder "100% sure")
         if not any(c in a for c in ' \t\n"\'\\><~|&;$*?#()`'):
             return a
         return '"' + a.replace("\\", "\\\\").replace('"', '\\"').replace("`", "\\`").replace("$", "\\$") + '"'

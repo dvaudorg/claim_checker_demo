@@ -81,6 +81,10 @@ def summary(r: dict) -> list[str]:
                    "owner” in the Team tab.")
     if pr.get("decided"):
         out.append(f"The owner's answer to {_n(pr['decided'], 'proposal')} came in.")
+    if pr.get("taken_back_held"):  # hunt phase 1 (MERGE-4): only its maker takes a proposal back
+        out.append(f"{who}'s file says that {_n(pr['taken_back_held'], 'proposal')} of other people "
+                   f"{'was' if pr['taken_back_held'] == 1 else 'were'} taken back. Only the person who made a proposal "
+                   "can take it back, so it still waits until their own file says so.")
     not_here = d.get("not_here") or []  # 0.18 (the shared folder)
     if not_here:
         names = ", ".join(f"“{x['title']}”" for x in not_here[:3]) + (" and more" if len(not_here) > 3 else "")
@@ -153,6 +157,10 @@ def summary(r: dict) -> list[str]:
     if sh.get("withheld"):
         out.append(f"{_n(len(sh['withheld']), 'item')} in {who}'s file had been taken back by the person who shared "
                    "it, so it did not come in.")
+    if sh.get("unsigned"):  # hunt phase 1.5 (review, wave 2): a zip brought by hand into a project with a storage space
+        out.append(f"{_n(sh['unsigned'], 'share mark')} in {who}'s file {'was' if sh['unsigned'] == 1 else 'were'} "
+                   "not taken: in this project's storage space a member's Share and Unshare count only from their own "
+                   "signed files there, and the next round of the space brings them.")
     # roles (DESIGN-roles §4.8, §4.9): rows of a third person, and a codebook's changes that wait
     if r.get("via"):
         out.append(f"{_n(r['via'], 'row')} of other people came in through {who}'s file, not from their own: each is "

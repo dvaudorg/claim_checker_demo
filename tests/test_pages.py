@@ -58,7 +58,8 @@ def test_the_page_words_each_reason():
 def test_notes_survive_the_reload_of_a_waiting_check():
     js = _js("views/result.js")
     assert "function armWait()" in js and "noteDirty" in js
-    assert 'document.activeElement.id === "note"' in js                      # not while typing
+    # not drawn while typing (hunt phase 1: in any text field); hunt phase 1.5: looked at all the same, drawn on request
+    assert "load({ ifChanged: true, hold: !!(heldField() || noteDirty) })" in js and "if (opts.hold) { holdNew(r);" in js
     assert 'ta.addEventListener("blur"' in js and "saveNoteOnLeave" in js   # saved at once on blur and on leaving
     assert "if (!box.isConnected) return;" in js                             # no timer on a page that is gone (23)
     assert "waitTimer = setTimeout(() => load()" not in js

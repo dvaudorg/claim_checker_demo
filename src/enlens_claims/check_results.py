@@ -255,7 +255,7 @@ def _place_kept(item: dict, p: dict, v: dict) -> None:
     would begin for that quote to land on its place in the document now, so `doc_start + quote_start` is the
     quote's document offset as for any excerpt; a quote with no place in the document now points nowhere (the
     excerpt is shown as one whose document is gone: `in_corpus` false, `not_placed` true)."""
-    if item["quote_by"] == "you":
+    if item["quote_by"] in ("you", "colleague"):  # (hunt phase 1.5: a person's sentence, theirs or a colleague's)
         q, ds = v.get("user_quote"), v.get("user_start")
     elif item["quote_by"]:
         q, ds = v.get("quote"), v.get("start")
@@ -393,8 +393,12 @@ def _result(ws: Workspace, claim_id: str, threshold: float | None = None) -> tup
     others = people.others(ws, [claim_id])
     # 0.14.3: your own verdict on each excerpt (the one in force may be a colleague's, with your comment beside it):
     # what the page sends back with a comment of yours, so a colleague's verdict is never saved as yours
-    my_rows = {r["passage_id"]: r["verdict"] for r in ws.query(
-        "SELECT passage_id, verdict FROM judgements WHERE claim_id=? AND person_id=?", (claim_id, me))}
+    mine_q = ws.query("SELECT passage_id, verdict, note FROM judgements WHERE claim_id=? AND person_id=?",
+                      (claim_id, me))
+    my_rows = {r["passage_id"]: r["verdict"] for r in mine_q}
+    # hunt phase 1 (PAGESA-1): and your own comment, for the same reason (`user_note` is a colleague's where you wrote
+    # nothing on the excerpt)
+    my_notes = {r["passage_id"]: r["note"] for r in mine_q}
     # 0.13.3: the title a document has now (the work's title from the bibliography), not the one the check stored;
     # a document removed since keeps the stored one
     titles_now = {r["doc_id"]: r["title"] for r in ws.query("SELECT doc_id, title FROM documents")}
@@ -413,6 +417,7 @@ def _result(ws: Workspace, claim_id: str, threshold: float | None = None) -> tup
                 "verdict": None, "ai_verdict": None, "confidence": None, "certainty": "", "user_verdict": None,
                 "user_note": None, "counted": False, "quote": None, "quote_start": None, "quote_end": None,
                 "in_corpus": p["passage_id"] in locs, "reviewed": False, "changed": False, "quote_by": None,
+                "quote_by_name": None,
                 "ai_quote": None, "breaks": (p.get("breaks") or []) if earlier else breaks.get(p["passage_id"], []),
                 "scope_note": None, "ai_history": [],
                 "reread": False, "reread_info": None, "ai_model": None,  # 0.20.3: the model of the AI's judgement
@@ -425,7 +430,7 @@ def _result(ws: Workspace, claim_id: str, threshold: float | None = None) -> tup
                 "waiting_for_you": False, "judged_by": None, "others": others.get((claim_id, p["passage_id"]), []),
                 # 0.14.3: whether a model's judgement of it is stored (not for an excerpt no AI may read, nor for one
                 # whose part is not answered yet or failed)
-                "ai_read": False, "round_failed": p["passage_id"] in failed, "my_verdict": None,
+                "ai_read": False, "round_failed": p["passage_id"] in failed, "my_verdict": None, "my_note": None,
                 # 0.15: the excerpt is the text of an earlier reading of its document (`earlier_reader` read it), and
                 # whether its quote has no place in the document as it reads now (it points nowhere)
                 "earlier_reading": earlier, "earlier_reader": p.get("reader"), "not_placed": False,
@@ -444,6 +449,8 @@ def _result(ws: Workspace, claim_id: str, threshold: float | None = None) -> tup
             by = v.get("user_by")
             item["my_verdict"] = (my_rows[p["passage_id"]] if p["passage_id"] in my_rows else
                                   v.get("user_verdict") if not by or by == me else None)
+            item["my_note"] = (my_notes[p["passage_id"]] if p["passage_id"] in my_notes else
+                               v.get("user_note") if not by or by == me else None)
             if v.get("user_verdict") or v.get("user_note"):
                 by = v.get("user_by")
                 item["judged_by"] = "you" if not by or by == me else who.get(by, "a colleague")
@@ -474,7 +481,12 @@ def _result(ws: Workspace, claim_id: str, threshold: float | None = None) -> tup
                     s0 = p["text"].index(v["quote"])
                     item.update(quote_start=s0, quote_end=s0 + len(v["quote"]))
             if v.get("user_quote") and v.get("user_verdict"):  # the sentence the person points to
-                item.update(quote=v["user_quote"], quote_by="you")
+                # hunt phase 1.5: whose sentence it is, from the row (`user_by`), as a fixed word ("you", or
+                # "colleague" with their name in `quote_by_name`): a name is no word the page may test, since a
+                # colleague may call themselves "you"
+                theirs = bool(v.get("user_by")) and v.get("user_by") != me
+                item.update(quote=v["user_quote"], quote_by="colleague" if theirs else "you",
+                            quote_by_name=who.get(v["user_by"], "a colleague") if theirs else None)
                 if earlier:
                     pass
                 elif base is not None and v.get("user_start") is not None:
@@ -670,8 +682,8 @@ def hypothesis_result(ws: Workspace, hyp_id: str, threshold: float | None = None
     out["second_read"] = len(with_second)
     out["disagreements"] = sum(1 for x in with_second if not x["second"]["agrees"])
     out["disagreements_to_review"] = sum(1 for x in with_second if not x["second"]["agrees"] and not yours(x))
-    out["docs_added_since"] = new_documents(ws, hyp_id, _seen={x[1] for cid in part_ids for g in extras[cid]["groups"]
-                                                               for t in g for x in _cc._excerpts(t)})
+    out["docs_added_since"] = new_documents(ws, hyp_id, _parts=[part_read([t for g in extras[cid]["groups"] for t in g])
+                                                                for cid in part_ids])
     out["docs_added_since_matching"] = sum(1 for d in out["docs_added_since"] if d["matching"])
     # 0.18.1 (N4): the assessment in words under the verdict, made by rules from the judgements above (it changes none)
     from . import assessment
@@ -751,7 +763,50 @@ def _shown_docs(rounds: list) -> set[str]:
     return {p["doc_id"] for r in rounds for p in json.loads(r["payload_json"])["passages"]}
 
 
-def new_documents(ws: Workspace, hyp_id: str, matching: bool = True, _seen: set[str] | None = None) -> list[dict]:
+def evidence_added(ws: Workspace) -> tuple[list[str], list[dict]]:
+    """The evidence documents with the time each was added, oldest first, as (times, rows): what a check's documents
+    *added since* are picked from (`added_since`). 0.18.1 (K2): a theory or working document added since is no new
+    evidence. Read once and shared by the result page (`new_documents`) and the Results list (`history`), so the two
+    cannot count them apart (hunt phase 1, CHECKS-6: the list counted theory documents too)."""
+    from .docrole import evidence_sql
+
+    rows = [dict(d) for d in ws.query(f"SELECT doc_id, title, added_at FROM documents WHERE {evidence_sql()}")]
+    rows.sort(key=lambda d: (d["added_at"] or "", d["title"] or "", d["doc_id"]))
+    return [d["added_at"] or "" for d in rows], rows
+
+
+def part_read(rounds: list) -> tuple[str, set[str]] | None:
+    """What one part of a check read, for `added_since`: (when it first searched the documents, the documents its
+    rounds showed an excerpt of), from its task rows (each with `created_at` and its excerpts); None for a part with
+    no round at all (its search found nothing: it read nothing, so it says nothing about any document)."""
+    if not rounds:
+        return None
+    first = min((_cc._col(r, "created_at") or "") for r in rounds)
+    return first, {x[1] for r in rounds for x in _cc._excerpts(r)}
+
+
+def added_since(added: tuple[list[str], list[dict]], cutoff: str, parts: list) -> list[dict]:
+    """Of `evidence_added`, the documents added after `cutoff` (the check, or the last reading of its new documents)
+    that are new to one of its parts (`part_read` of each part; None for a part with no round is left out): added
+    after that part first searched, and not shown by any of its rounds. Without a part that read anything, every
+    document added after `cutoff`.
+
+    Hunt phase 1.5 (CHECKS-3, the gap the review found): a reading of the new documents that failed for one part keeps a
+    sibling part's round when the person judged an excerpt of it meanwhile, and a document any part showed counted as
+    read for every part, so the part whose reading failed never got it again. A document is now read only for the
+    parts that read it; *Read it* reads it for the others. Review wave 3: per part from when that part first searched
+    (a part of a check by queue that ranked hours later saw the documents added meanwhile and passed them over), and a
+    part with no round says nothing, so a split hypothesis from before shows no new documents it did not have."""
+    times, rows = added
+    parts = [x for x in parts if x is not None]
+    later = rows[bisect.bisect_right(times, cutoff):]
+    if not parts:
+        return later
+    return [d for d in later if any((d["added_at"] or "") > first and d["doc_id"] not in shown
+                                    for first, shown in parts)]
+
+
+def new_documents(ws: Workspace, hyp_id: str, matching: bool = True, _parts: list | None = None) -> list[dict]:
     """Documents added to the project after a hypothesis was checked (or after its new documents were last read)
     that none of its rounds read from: [{doc_id, title, added_at, matching}]. `matching` says whether the document
     has an excerpt that shares a word with the hypothesis or its search words (keyword search, nothing is read).
@@ -763,13 +818,9 @@ def new_documents(ws: Workspace, hyp_id: str, matching: bool = True, _seen: set[
         return []
     cutoff = max(h[0]["created_at"] or "", h[0]["docs_checked_at"] or "")
     claims = [dict(r) for r in ws.query("SELECT claim_id, text, terms_json FROM user_claims WHERE hyp_id=?", (hyp_id,))]
-    # `_seen`: the documents its rounds read, when the caller has read them (hypothesis_result)
-    seen_docs = _seen if _seen is not None else _shown_docs([t for c in claims
-                                                             for t in _cc._check_tasks(ws, c["claim_id"])])
-    from .docrole import evidence_sql  # 0.18.1 (K2): a theory document added since is no new evidence
-
-    rows = [d for d in ws.query("SELECT doc_id, title, added_at FROM documents WHERE added_at > ? AND "
-                                f"{evidence_sql()} ORDER BY added_at, title", (cutoff,)) if d["doc_id"] not in seen_docs]
+    # `_parts`: what each part read (`part_read`), when the caller has read its rounds (hypothesis_result)
+    parts = _parts if _parts is not None else [part_read(_cc._check_tasks(ws, c["claim_id"])) for c in claims]
+    rows = added_since(evidence_added(ws), cutoff, parts)
     hits: set[str] = set()
     if matching and rows:
         from .search import docs_matching

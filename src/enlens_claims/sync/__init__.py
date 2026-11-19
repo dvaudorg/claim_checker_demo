@@ -93,12 +93,13 @@ def before_sending(ws: Workspace) -> dict:
 def home_codebooks(ws: Workspace) -> list[Path]:
     """The codebooks this project uses that are kept in the home folder (all projects), not in the project: they go
     into the file too, or a colleague could not read the labels made with them."""
+    from .. import sharing
     from ..home import home
 
     out = []
     with ws.connect() as cx:
         names = _used_codebooks(cx)
-    for name in sorted(names):
+    for name in sorted(n for n in names if sharing.plain_key("codebook", n)):  # (a label's codebook is a colleague's word)
         if not (Path(ws.root) / "frameworks" / f"{name}.csv").is_file():
             for ext in ("csv", "json"):
                 p = home() / "frameworks" / f"{name}.{ext}"

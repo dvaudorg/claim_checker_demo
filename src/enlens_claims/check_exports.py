@@ -368,7 +368,7 @@ def export_table(ws: Workspace, threshold: float | None = None, hyp_ids: list[st
                         "no: a non-scientific document" if p.get("nonscientific") and p["verdict"]
                         else "no") if p else "",
                     "Quote": (p["quote"] or "") if p else "",
-                    "Quote chosen by": (p["quote_by"] or "") if p and p["quote"] else "",
+                    "Quote chosen by": (p.get("quote_by_name") or p["quote_by"] or "") if p and p["quote"] else "",
                     "Document": p["title"] if p else "",
                     "Where": (p["location"] or "") if p else "",
                     "Your comment on this excerpt": (p["user_note"] or "") if p else "",

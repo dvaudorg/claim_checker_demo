@@ -11,7 +11,7 @@ import threading
 import time
 from pathlib import Path
 
-from .api_common import ApiError, Job, XLSX, _csv, _disposition, _filename, _int, _str  # noqa: F401
+from .api_common import ApiError, Job, XLSX, _body_text, _csv, _disposition, _filename, _int, _str  # noqa: F401
 from .. import access, bibliography, claimcheck, home, ollama_setup, taskqueue
 from ..claude_setup import setup_info as claude_setup_info
 
@@ -36,7 +36,7 @@ class SetupApi:
             raise ApiError(403, "Cloud models are switched off on this computer by whoever installed ENLENS: a Claude "
                                 "API key cannot be used here.")
         body = self._body()
-        key = str(body.get("key") or "").strip()
+        key = (_body_text(body, "key") or "").strip()   # hunt phase 1: a list here was kept as the key "['…']"
         if not key:
             raise ApiError(400, "Give the API key.")
         self.app.session_key = key
@@ -65,14 +65,17 @@ class SetupApi:
                                 "key cannot be used here.")
         body = self._body()
         try:
-            home.set_cloud_key(self._provider(body.get("provider")), str(body.get("key") or ""))
+            home.set_cloud_key(self._provider(body.get("provider")), _body_text(body, "key") or "")
         except ValueError as e:
             raise ApiError(400, str(e)) from None
         return {"providers": self.app.providers_state()}
 
     def delete_provider_key(self, q):
         body = self._body()
-        home.forget_cloud_key(self._provider(body.get("provider") or _str(q, "provider")))
+        try:
+            home.forget_cloud_key(self._provider(body.get("provider") or _str(q, "provider")))
+        except ValueError as e:
+            raise ApiError(400, str(e)) from None
         return {"providers": self.app.providers_state()}
 
     def get_provider_models(self, q):
@@ -117,17 +120,22 @@ class SetupApi:
         running = [j for j in self.app.jobs.all() if j.state in ("queued", "running")]
         for j in running:
             self.app.jobs.cancel(j)  # 0.18 (M6): the jobs waiting for their turn leave at once
+        stopped = len(running)
+        # (hunt phase 1.5: a job that has just ended is waited for too while what follows its end runs)
+        running += [j for j in self.app.jobs.all() if j not in running and not getattr(j, "settled", True)]
         self._stop_claude_runs()
 
         def later():
             t0 = time.time()
             time.sleep(0.4)
-            while any(j.state in ("queued", "running") for j in running) and time.time() - t0 < 20:
+            # (hunt phase 1.5: and until what follows each end has run: `Job.settled`)
+            while any(j.state in ("queued", "running") or not getattr(j, "settled", True) for j in running) \
+                    and time.time() - t0 < 20:
                 time.sleep(0.2)
             finish()
 
         threading.Thread(target=later, daemon=True).start()
-        return len(running)
+        return stopped
 
     def _stop_claude_runs(self) -> None:
         """0.14.3: Claude Code runs started from the app live in their own session, so they outlive it: stop them
@@ -334,7 +342,10 @@ class SetupApi:
                 raise ValueError("Claude Code could not be installed. " + (r["text"][-600:] or ""))
             return r
 
-        return {"job": self.app.jobs.start("claude-install", "Installing Claude Code", None, run, uses_model=False).view()}
+        # (hunt phase 1.5: `unique`: the look above and this start were two steps, and two tabs at one moment started
+        # two installers; the jobs' own look under their lock gives the second press the first job)
+        return {"job": self.app.jobs.start("claude-install", "Installing Claude Code", None, run, uses_model=False,
+                                           unique=True).view()}
 
     def post_claude_sign_in(self, q):
         """Open a terminal window running `claude`, for the one-time sign-in (ENLENS never sees the login)."""

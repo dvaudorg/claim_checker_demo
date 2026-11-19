@@ -11,7 +11,9 @@ import re
 import sys
 import time
 from pathlib import Path
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
+
+urlopen = build_opener(ProxyHandler({})).open   # Ollama on this computer: never through a proxy
 
 HERE = Path(__file__).resolve().parent
 DATA = HERE / "data"

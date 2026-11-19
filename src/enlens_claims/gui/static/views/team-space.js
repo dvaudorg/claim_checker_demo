@@ -15,7 +15,11 @@ import { App, api, h, toast, showError, P, plural, field, button, link, input, s
 
 const S = (project) => `/api/projects/${P(project)}/space`;
 let LINKS = null;
-const links = async () => (LINKS = LINKS || await api("GET", "/api/space/links").catch(() => ({})));
+// the set-up help links: kept once read; a failed read gives no links this time and is asked again the next
+const links = async () => {
+  if (!LINKS) { try { LINKS = await api("GET", "/api/space/links"); } catch (_) { return {}; } }
+  return LINKS;
+};
 const when = (iso) => (iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "long" }) : "");
 export const SERVICE_NAME = { b2: "Backblaze", r2: "Cloudflare", webdav: "Your institution’s drive" };
 // a member's part of their row on the Team page: "keeps the space’s keys · since 12 November"
@@ -178,8 +182,12 @@ export async function setupDialog(ctx, service, { move = false } = {}) {
         btn.disabled = true; lock.on = true;
         try {
           await who.save();
-          let job = (await api("POST", move ? `${S(ctx.project)}/move` : `${S(ctx.project)}/${service}`, move ? { service, ...body } : body)).job;
-          job = await watchJob(job.id, (j) => { progress.textContent = (j.progress && j.progress.message) ? `${j.progress.message}…` : "Working…"; }).promise;
+          // a move asks `…/move` every time (also once the Cloudflare account is chosen: `…/r2` refuses a project that
+          // has a space already); a first set-up asks `…/<service>`
+          const start = (extra) => api("POST", move ? `${S(ctx.project)}/move` : `${S(ctx.project)}/${service}`, move ? { service, ...body, ...extra } : { ...body, ...extra });
+          const showProgress = (j) => { progress.textContent = (j.progress && j.progress.message) ? `${j.progress.message}…` : "Working…"; };
+          let job = (await start({})).job;
+          job = await watchJob(job.id, showProgress).promise;
           if (job.state !== "done") { progress.textContent = ""; err.textContent = job.error || "The set-up did not finish."; return false; }
           const r = job.result || {};
           if (r.accounts && r.accounts.length) {   // a token that reaches several Cloudflare accounts: one is chosen
@@ -187,8 +195,8 @@ export async function setupDialog(ctx, service, { move = false } = {}) {
             const chosen = await dialog({ title: "Which Cloudflare account?", body: field("Account", sel),
               actions: [{ text: "Cancel", value: null }, { text: "Use it", value: true, primary: true }] });
             if (!chosen) { progress.textContent = ""; return false; }
-            job = (await api("POST", `${S(ctx.project)}/r2`, { ...body, account_id: sel.value })).job;
-            job = await watchJob(job.id).promise;
+            job = (await start({ account_id: sel.value })).job;
+            job = await watchJob(job.id, showProgress).promise;
             if (job.state !== "done") { progress.textContent = ""; err.textContent = job.error || "The set-up did not finish."; return false; }
           }
           const warnings = (job.result && job.result.warnings) || [];
@@ -341,7 +349,9 @@ function spaceSection(ctx) {
   const keeper = sp.members.find((m) => m.keeper);
   const waiting = !sp.joined ? notice({ kind: "info" }, h("p", {}, `Waiting for ${keeper && !keeper.me ? keeper.name : "the owner"} to let you in: their ENLENS does it by itself at its next round. Until then, your colleagues do not see what you share; you already see theirs.`)) : null;
   const aside = sp.set_aside || [];
-  const moveFold = sp.keeper ? fold({ sm: true, id: "space-move" }, "Move to another storage space",
+  // hunt phase 1.5: a copy that keeps the keys acts as the owner only while its person is the Owner or a Co-owner (after a
+  // hand-over the old owner is a Member until a round hands the keys on; the server refuses the same)
+  const moveFold = sp.keeper && !sp.member_keeper ? fold({ sm: true, id: "space-move" }, "Move to another storage space",
     h("p", { class: "muted small team-text" }, "When the storage is lost, unpaid or should change: set up a new one. Every copy writes what it shares there once more; your colleagues’ copies follow by themselves (to a drive, only those already in a drive at the same address)."),
     h("div", { class: "btn-row" }, button({ sm: true, onClick: () => setupDialog(ctx, "b2", { move: true }) }, "Backblaze…"),
       button({ sm: true, onClick: () => setupDialog(ctx, "r2", { move: true }) }, "Cloudflare…"),
@@ -353,7 +363,7 @@ function spaceSection(ctx) {
       ? `WebDAV at ${dav.address}, folder “${dav.folder}”, as ${dav.user || "you"}. Files are encrypted with AES-256-GCM using the project’s key and signed with each member’s own key (Ed25519): the drive cannot keep a colleague to their own part, so the signatures do. ${keys}`
       : `Bucket ${sp.where}. Files are encrypted with AES-256-GCM using the project’s key and signed with each member’s own key (Ed25519). ${keys}`));
   // the owner’s role handed over in a drive: the folder stays in the drive of the person who set it up
-  const holderNote = dav && !dav.mine ? notice({ kind: "attention" }, h("p", {}, sp.keeper
+  const holderNote = dav && !dav.mine ? notice({ kind: "attention" }, h("p", {}, sp.keeper && !sp.member_keeper
     ? `The folder “${dav.folder}” is in the drive of ${dav.holder}: only they can share it with colleagues or stop sharing it. To take full control, use Move to another storage space below and choose Your institution’s drive: ENLENS makes a folder in your own drive and takes the team there.`
     : `The folder “${dav.folder}” is in the drive of ${dav.holder}.`)) : null;
   const davPassword = dav ? fold({ sm: true, id: "space-dav-password-fold", open: !!sp.refused }, "A new app password for the drive",
@@ -383,14 +393,22 @@ export function spaceInvites(ctx) {
   const sp = ctx.status && ctx.status.space;
   if (!sp) return [];
   const keeper = sp.members.find((m) => m.keeper);
+  // hunt phase 1.5: a Member's copy that still keeps the keys (after a hand-over) invites and withdraws nobody, except
+  // the one invite for the new owner when they have no part in the space yet: only they can use it, and once they join,
+  // the keys go to their copy by themselves (sync/space.py `_invite_unlocked`, `_bind_joins`)
+  const asOwner = sp.keeper && !sp.member_keeper;
   const invites = sp.invites.map((i) => listRow({
-    title: i.label ? `Invite for ${i.label}` : "An invite", sub: `made ${when(i.made_at)}, not used yet`,
-    actions: [button({ kind: "quiet", sm: true, id: `space-withdraw-${i.part}`, onClick: () => withdraw(ctx, i) }, "Withdraw")],
+    title: i.label ? `Invite for ${i.label}` : "An invite", sub: `made ${when(i.made_at)}, not used yet${i.for ? " · only they can use it" : ""}`,
+    actions: [asOwner || (sp.keeper && i.for) ? button({ kind: "quiet", sm: true, id: `space-withdraw-${i.part}`, onClick: () => withdraw(ctx, i) }, "Withdraw") : null].filter(Boolean),
   }));
-  const invite = sp.keeper ? button({ kind: "main", sm: true, icon: "plus", id: "space-invite", onClick: () => inviteDialog(ctx) }, "Invite a colleague…") : null;
+  const invite = asOwner ? button({ kind: "main", sm: true, icon: "plus", id: "space-invite", onClick: () => inviteDialog(ctx) }, "Invite a colleague…") : null;
+  const out = sp.keeper && sp.member_keeper && sp.owner_outside ? sp.owner_outside : null;
+  const forOwner = out && !sp.invites.some((i) => i.for === out.id) ? button({ kind: "main", sm: true, icon: "plus", id: "space-invite-owner",
+    onClick: () => inviteDialog(ctx, { forOwner: out }) }, `Make an invite for ${out.name}…`) : null;
   return [
     invites.length ? listGroup(`Invites not used yet (${invites.length})`, ...invites) : null,
-    invite ? h("div", { class: "btn-row" }, invite) : (sp.joined ? h("p", { class: "muted small team-text" }, `To add a colleague, ask ${keeper && !keeper.me ? keeper.name : "the owner"} for an invite.`) : null),
+    out ? h("p", { class: "muted small team-text", id: "space-owner-outside" }, `${out.name} is the owner now but is not in the storage space yet, so this computer keeps its keys. Send ${out.name} the invite made for them: only they can use it, and once they have joined, the keys go to their copy by themselves.`) : null,
+    invite || forOwner ? h("div", { class: "btn-row" }, invite || forOwner) : (sp.joined && !sp.member_keeper ? h("p", { class: "muted small team-text" }, `To add a colleague, ask ${keeper && !keeper.me ? keeper.name : "the owner"} for an invite.`) : null),
   ].filter(Boolean);
 }
 
@@ -432,15 +450,17 @@ async function drivePasswordDialog(ctx, dav, sp) {
   });
 }
 
-export async function inviteDialog(ctx) {
-  const name = input({ id: "space-invite-name", maxlength: 80, placeholder: "e.g. Ben de Wit", autocomplete: "off" });
+export async function inviteDialog(ctx, opts = {}) {
+  // `opts.forOwner` ({id, name}, hunt phase 1.5): the invite a Member's copy makes for the project's new owner
+  const name = input({ id: "space-invite-name", maxlength: 80, placeholder: "e.g. Ben de Wit", autocomplete: "off",
+    value: opts.forOwner ? opts.forOwner.name : "", readonly: !!opts.forOwner });
   const dav = ctx.status && ctx.status.space && ctx.status.space.drive;
   const driveUser = input({ id: "space-invite-drive-user", maxlength: 200, autocomplete: "off", spellcheck: "false" });
   const out = h("div", {});
   const err = h("p", { class: "field-error", role: "alert" });
   let made = null;
   await dialog({
-    title: "Invite a colleague", wide: true,
+    title: opts.forOwner ? `Invite ${opts.forOwner.name}, the owner` : "Invite a colleague", wide: true,
     body: h("div", {}, field("Who is it for? (optional)", name, { help: "Only for you, to tell the invites apart." }),
       dav ? field(`Their user name at ${dav.host}`, driveUser, { help: `ENLENS shares the folder “${dav.folder}” with them. Leave it empty to share the folder yourself in the drive’s website.` }) : null,
       err, out),

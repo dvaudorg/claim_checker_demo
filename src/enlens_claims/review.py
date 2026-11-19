@@ -148,7 +148,8 @@ def append_row(sheet, values: list) -> None:
 
 
 def read_csv_rows(path: str | Path) -> list[dict]:
-    """Rows of a CSV file as saved by a spreadsheet: UTF-8 with or without a byte-order mark, else Windows-1252."""
+    """Rows of a CSV file as saved by a spreadsheet: UTF-8 with or without a byte-order mark, else Windows-1252, with
+    ",", ";" or a tab between cells."""
     raw = Path(path).read_bytes()
     try:
         text = raw.decode("utf-8-sig")
@@ -156,7 +157,13 @@ def read_csv_rows(path: str | Path) -> list[dict]:
         text = raw.decode("cp1252", errors="replace")
     import io
 
-    return [{(k or "").strip(): v for k, v in r.items()} for r in csv.DictReader(io.StringIO(text, newline=""))]
+    # Excel in most European languages saves ";" between cells: read the separator from the header line, as a
+    # codebook is read (frameworks._delimiter), not by sniffing the whole file, whose cells (the targets column)
+    # hold "; " themselves. A header with none of them (one column) stays comma-separated.
+    from .frameworks import _delimiter
+
+    rows = csv.DictReader(io.StringIO(text, newline=""), delimiter=_delimiter(text))
+    return [{(k or "").strip(): v for k, v in r.items()} for r in rows]
 
 
 def import_decisions(ws: Workspace, path: str | Path, reviewer: str = "") -> dict[str, int]:

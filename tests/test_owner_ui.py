@@ -114,7 +114,7 @@ def test_the_documents_page_in_marked_lines():
     assert "proposedToast(res, project, ids);" in marked                   # in patchDocs: the select and the dialog
     assert "if (!(res.proposed || []).length) toast(" in marked             # its own words only when not proposed
     assert "const proposal = await removalNote(project, d);" in marked
-    assert "proposal) });" in SOURCES and 'toast(proposal ? "Removed from your copy.' in marked
+    assert "proposal)," in SOURCES and 'toast(proposal ? "Removed from your copy.' in marked
     chip = OWNER[OWNER.index("export function proposalChip"):OWNER.index("// who the owner is, for the Documents page")]
     assert 'class: "visually-hidden" }, c.text' in chip and '"aria-hidden": c.text ? "true" : null' in chip  # said once
     note = OWNER[OWNER.index("export async function removalNote"):]
@@ -197,7 +197,7 @@ def test_keyboard_and_screen_reader():
     assert 'h("label", { for: id, class: "field-label" }, label)' in lib and 'control.setAttribute("aria-describedby", id + "-help")' in lib
     dlg = lib[lib.index("export function dialog("):]
     assert 'e.key === "Enter"' in OWNER and 'dlg.addEventListener("cancel", (e) => { e.preventDefault(); dismiss(); });' in dlg  # Escape
-    assert 'const ok = await reasonDialog({ title: "Decline this proposal?", confirmText: "Decline", help: reasonHelp(p),' in OWNER
+    assert 'await askAndAct(ctx, { title: "Decline this proposal?", confirmText: "Decline", help: reasonHelp(p),' in OWNER   # (hunt phase 1.5: saved from the dialog)
     assert "sees it with your answer, and it is kept in the research log." in OWNER   # the help says where the reason goes
     # stable ids, so the panel finds the focus again after a redraw (a card's buttons: an answer reads the tab again and
     # the focus goes to the section's heading, ctx.focusHeading("owner"))

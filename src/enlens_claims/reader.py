@@ -44,6 +44,12 @@ the text has begun (e-mails, the DOI, the dates in the first page's footer) are 
 large type is not the title, and a running head with a page number on its row is found on every page. For any kind of
 file, in a document in two languages (`languages.py`) no block is carried on, and no passage put together, across the
 two. `read_blocks(raw, version=5)` still reads as reader 5 did.
+
+Reader 7 adds the rules of `reader7.py`, for text files, Word files and web pages (PDFs read as by
+reader 6): a line that comes back in text whose every line is a paragraph (an interviewer's question) is not taken for
+a running head, a text file of short sentences one per line is a paragraph per line, a Word file's text box is read
+once as paragraphs of its own (`ingest._read_docx`), and a file saved as ISO-8859-2 keeps its letters
+(`ingest.decode_text`). `read_blocks(raw, version=6)` still reads as reader 6 did.
 """
 from __future__ import annotations
 
@@ -56,9 +62,9 @@ from dataclasses import dataclass, field
 
 from .textutil import split_sentences
 
-READER = 6   # 2: ENLENS 0.15.0; 3: ENLENS 0.15.1 (reader3.py); 4: ENLENS 0.17.2 (reader4.py);
+READER = 7   # 2: ENLENS 0.15.0; 3: ENLENS 0.15.1 (reader3.py); 4: ENLENS 0.17.2 (reader4.py);
 #              5: ENLENS 0.18.1 (reader5.py); 6: ENLENS 0.19 (reader6.py; languages.py: no passage holds both
-#              languages of a document in two)
+#              languages of a document in two); 7: reader7.py (text, Word and web pages only)
 INCLUDED = ("body", "heading", "title", "abstract", "caption")
 KINDS = ("title", "heading", "abstract", "body", "caption", "table", "footnote", "front", "back", "references",
          "figure", "furniture", "contents", "index")
@@ -161,7 +167,10 @@ def _pdfminer_pages(path, shapes: list | None = None,
     pages: list[list[Line]] = []
     dims: list[tuple[float, float]] = []
     if version >= 6:
-        from .reader6 import extract_pages
+        from . import reader6
+
+        if reader6.PDFMINER_RULES:   # (an older pdfminer lacks what they need: the stock `extract_pages` then)
+            extract_pages = reader6.extract_pages
     for pno, pg in enumerate(extract_pages(str(path), laparams=params)):
         height = float(pg.height)
         out: list[Line] = []
@@ -1059,8 +1068,8 @@ def _lang_break(a: Block, b: Block) -> bool:
 def read_blocks(raw, version: int = READER) -> tuple[list[Block], dict]:
     """The blocks of a RawDoc in reading order, with their kinds and repaired text, and the reading report. `version`
     2 reads as ENLENS 0.15.0 did; 3 adds the rules of `reader3.py`; 4 those of `reader4.py`; 5 those of `reader5.py`;
-    6 keeps the two languages of a document in two apart (`languages.py`)."""
-    from . import reader3, reader4, reader5
+    6 keeps the two languages of a document in two apart (`languages.py`); 7 those of `reader7.py`."""
+    from . import reader3, reader4, reader5, reader7
 
     raw = raw.as_read_by(version) if hasattr(raw, "as_read_by") else raw
 
@@ -1108,8 +1117,10 @@ def read_blocks(raw, version: int = READER) -> tuple[list[Block], dict]:
         # lines without positions (text files, OCR, pypdf without them): text printed twice, running heads and page
         # numbers by repetition, and paragraphs in hard-wrapped text
         reader3.undouble_lines(pages, counts)
-        layout = reader3.text_furniture(pages)
-        if version >= 4 and raw.kind == "text" and reader4.paragraph_lines(pages):
+        # (reader 7's rules are for text, Word files and web pages: a PDF reads as by reader 6)
+        layout = reader3.text_furniture(pages, min(version, 6) if pdf else version)
+        if version >= 4 and raw.kind == "text" and (reader7.paragraph_lines(pages) if version >= 7
+                                                     else reader4.paragraph_lines(pages)):
             layout["paragraph_lines"] = True  # each line a paragraph (no blank lines between them)
         layout["wrapped"] = reader3.paragraph_breaks(pages) is not None
     all_lines = [ln for p in pages for ln in p]
@@ -1260,6 +1271,8 @@ def read_blocks(raw, version: int = READER) -> tuple[list[Block], dict]:
                                            "accents")},
         "tables": sum(1 for b in blocks if b.kind == "table"),
     }
+    if getattr(raw, "encoding", None):   # hunt phase 1.5: the encoding guessed for a file that names none
+        report["encoding_guess"] = raw.encoding
     if v5:
         report["figures"] = sum(1 for b in blocks if b.kind == "figure" and (b.box is not None or not pdf))
         report["tables_joined"] = tables_joined

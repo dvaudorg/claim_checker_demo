@@ -49,11 +49,27 @@ ROWS = taskkinds.Rows()
 ROW_OF = taskkinds.Table("row")
 
 ALIASES = ("haiku", "sonnet", "opus", "fable")
-RANK = {a: i for i, a in enumerate(ALIASES)}   # 0.13.10: where the plan moved a model, a step up goes higher
+# 0.13.10: where the plan moved a model, a step up goes higher. Hunt phase 1: written out, not taken from the order
+# of ALIASES, so a model added to ALIASES later without its place here fails a test (test_hunt1_backends) instead of
+# stepping sideways; `rank` reads it
+RANK = {"haiku": 0, "sonnet": 1, "opus": 2, "fable": 3}
 # the Claude API's ids for the aliases (Models overview, October 2026); "opus" follows Settings' anthropic_model
 API_IDS = {"haiku": "claude-haiku-5-5", "sonnet": "claude-sonnet-5-5", "opus": "claude-opus-5-5",
            "fable": "claude-fable-5-1"}
 LADDER = ("haiku", "sonnet", "opus")
+
+
+def rank(model: str | None) -> int | None:
+    """Where a Claude model stands (RANK): an alias, or a full Claude API id by the alias it names ("claude-opus-5-5"
+    is Opus); None for a model of unknown strength."""
+    m = str(model or "").lower()
+    if m in RANK:
+        return RANK[m]
+    if m.startswith("claude-"):
+        named = [a for a in m.split("-") if a in RANK]
+        if len(named) == 1:
+            return RANK[named[0]]
+    return None
 
 # kind: (first model, the model it steps up to; "auditor" = Opus, or Fable when the researcher switched it on).
 # The reasons for each choice are with the kinds, in taskkinds.py.
@@ -306,6 +322,13 @@ class Router:
             if nxt is None:
                 return None
             nxt = self._auditor() if nxt == "auditor" else nxt
+            # hunt phase 1: a model the person chose steps up only to a stronger one. Fable (or Opus with the Fable
+            # switch off) has none, so the result page says so instead of reading the task again on a weaker model
+            # or the same one, recorded as the stronger; a model of unknown strength does not step either
+            if self.route in CLAUDE_ROUTES and (self.overrides.get(kind) or self.overrides.get(ROW_OF.get(kind, ""))):
+                r_start, r_next = rank(start), rank(nxt)
+                if r_start is None or r_next is None or r_next <= r_start:
+                    return None
             # 0.13.10: where the plan moved a kind's model (Free; Max for the kinds it raised to Opus), only ever up
             # to a stronger model: a check that starts on Opus has no stronger one unless Fable is on. The SDG pack's
             # Opus tasks still have their hard cases read again by the auditor, as since 0.8.1.

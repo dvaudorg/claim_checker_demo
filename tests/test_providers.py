@@ -327,6 +327,22 @@ def test_the_key_is_kept_in_the_keychain_only(mixed, tmp_path):
     assert home.cloud_keys()["openai"] is False and home.cloud_key("openai") == ""
 
 
+def test_a_key_the_keychain_would_not_let_go_is_not_called_removed(mixed, monkeypatch):
+    """Hunt phase 0 (PS-1): the system keychain's delete never says whether it worked (a locked keychain, a prompt that
+    was refused). A key that is still there after Remove is still in use: the person is told, not shown "no key"."""
+    from enlens_claims import keychain
+
+    secret = "sk-proj-STILLHERE1234567890"
+    home.set_cloud_key("openai", secret)
+    with monkeypatch.context() as m:
+        m.setattr(keychain, "delete", lambda name: None)   # the system refused, without a word
+        with pytest.raises(ValueError, match="still on this computer"):
+            home.forget_cloud_key("openai")
+        assert home.cloud_keys()["openai"] is True and home.cloud_key("openai") == secret
+    home.forget_cloud_key("openai")   # once the keychain lets go, the key is gone (and no later test finds one)
+    assert home.cloud_keys()["openai"] is False and home.cloud_key("openai") == ""
+
+
 # ---------------------------------------------------------------------------------------------
 # R7, R8: settings and routing
 # ---------------------------------------------------------------------------------------------

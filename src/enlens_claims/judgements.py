@@ -17,7 +17,7 @@ _KEEP = object()
 
 
 def set_judgement(ws: Workspace, claim_id: str, passage_id: str, verdict: str | None, note: str | None = None,
-                  quote=_KEEP, threshold: float | None = None) -> dict:
+                  quote=_KEEP, threshold: float | None = None, quote_start: int | None = None) -> dict:
     """`_set_judgement`, and what it did to the answer (0.18.1, N4): the hypothesis's status before and after, and
     when it changed, a sentence naming this judgement as the change that moved it, also written into the research log.
     Returns {"hyp_id", "before", "after", "moved"} ("moved" is the sentence, or None). `threshold`: the strictness
@@ -30,7 +30,7 @@ def set_judgement(ws: Workspace, claim_id: str, passage_id: str, verdict: str | 
         before = hypothesis_result(ws, hyp_id, threshold) if hyp_id else None
     except KeyError:
         before = None
-    _set_judgement(ws, claim_id, passage_id, verdict, note, quote)
+    _set_judgement(ws, claim_id, passage_id, verdict, note, quote, quote_start)
     if before is None:
         return {"hyp_id": None, "before": None, "after": None, "moved": None}
     after = hypothesis_result(ws, hyp_id, threshold)
@@ -43,14 +43,39 @@ def set_judgement(ws: Workspace, claim_id: str, passage_id: str, verdict: str | 
     return {"hyp_id": hyp_id, "before": before["status"], "after": after["status"], "moved": moved}
 
 
+def _row_for_unread(cx, claim_id: str, passage_id: str) -> bool:
+    """Hunt phase 1.5: an excerpt a round of this check showed whose AI answers failed has no row of its own (only an
+    accepted answer writes rows), so the person could not judge it, though the result offers it ("it counts once you
+    judge it yourself", the 0.14.3 design). Its row is made as for an excerpt no model read (no AI judgement, as
+    `claimcheck._person_rows` makes them). Whether there was such an excerpt to make it for."""
+    from .claimcheck import PERSON
+
+    cond, args = tasks.check_task_ids_sql(claim_id)
+    for tid, status, pl in cx.execute(f"SELECT task_id, status, payload_json FROM tasks WHERE +kind='check' AND {cond}",
+                                      args).fetchall():
+        if status != "failed":
+            continue
+        p = next((p for p in json.loads(pl)["passages"] if p["passage_id"] == passage_id), None)
+        if p is not None:
+            cx.execute("INSERT OR IGNORE INTO verifications(ver_id, subject_kind, subject_id, passage_id, doc_id, "
+                       "verdict, page, model) VALUES (?,?,?,?,?,?,?,?)",
+                       (f"v{tasks._h(tid, passage_id)}", "user_claim", claim_id, passage_id, p["doc_id"],
+                        "not_enough_info", p.get("page"), PERSON))
+            return True
+    return False
+
+
 def _set_judgement(ws: Workspace, claim_id: str, passage_id: str, verdict: str | None, note: str | None = None,
-                   quote=_KEEP) -> None:
+                   quote=_KEEP, quote_start: int | None = None) -> None:
     """A person's own judgement of an excerpt the AI read. It replaces the AI's in the answer (and always counts);
     `verdict` None removes it. The AI's judgement is kept and shown beside it. With `verdict` None and a `note`,
     only the comment is kept: a comment alone is not a judgement (it does not count as agreeing with the AI).
 
     `quote` is the sentence the person points to (text of this excerpt, found as quotes are); it is shown and exported
-    instead of the AI's quote. Left out, an earlier one is kept; None or "" removes it.
+    instead of the AI's quote. Left out, an earlier one is kept; None or "" removes it. `quote_start` (hunt phase
+    1.5): where the person selected it, in the excerpt's text as the result shows it (code points, as the result's
+    `quote_start`): words that stand twice in the excerpt are kept where they were selected, as a label's are
+    (`profile.add_label`); without it (an older page, the connector) at their first place, as before.
     """
     if verdict is not None and verdict not in USER_VERDICTS:
         raise ValueError(f"The judgement must be one of {', '.join(USER_VERDICTS)} (or empty to remove yours).")
@@ -61,6 +86,10 @@ def _set_judgement(ws: Workspace, claim_id: str, passage_id: str, verdict: str |
         row = cx.execute("SELECT p.text, p.start, p.doc_id, p.end FROM verifications v LEFT JOIN passages p ON "
                          "p.passage_id=v.passage_id WHERE v.subject_kind='user_claim' AND v.subject_id=? AND "
                          "v.passage_id=?", (claim_id, passage_id)).fetchone()
+        if row is None and verdict is not None and _row_for_unread(cx, claim_id, passage_id):
+            row = cx.execute("SELECT p.text, p.start, p.doc_id, p.end FROM verifications v LEFT JOIN passages p ON "
+                             "p.passage_id=v.passage_id WHERE v.subject_kind='user_claim' AND v.subject_id=? AND "
+                             "v.passage_id=?", (claim_id, passage_id)).fetchone()
         if row is None:
             raise KeyError(f"{claim_id}/{passage_id}")
         people.adopt(cx, me)  # a judgement from before 0.14 is yours
@@ -83,7 +112,13 @@ def _set_judgement(ws: Workspace, claim_id: str, passage_id: str, verdict: str |
                             kept = p
                 if kept is not None:  # the sentence is chosen in the excerpt as it was shown, the check's record
                     text, base = kept["text"], None
-                hit = find_selection(text or "", q)  # 0.14.3: a selection cutting a word is widened to whole words
+                hit = None
+                if isinstance(quote_start, int) and not isinstance(quote_start, bool) and \
+                        0 <= quote_start <= len(text or ""):
+                    from .notes import find as find_near_words
+
+                    hit = find_near_words(text or "", q, quote_start)
+                hit = hit or find_selection(text or "", q)  # 0.14.3: a selection cutting a word is widened to whole words
                 if not hit:
                     raise ValueError("The sentence must be text from this excerpt (select it in the excerpt).")
                 uq = (text or "")[hit[0]:hit[1]]
@@ -177,10 +212,17 @@ def reread_excerpt(ws: Workspace, claim_id: str, passage_id: str, backend, model
               "confidence": v["confidence"] if v and v["verdict"] in GRADES else None}
     try:
         ok, _errs = tasks.run_one(ws, tid, backend, model)
-    except BaseException:
-        with ws.connect() as cx:  # stopped: nothing changes, and it can be asked again
+    except BaseException as e:
+        gone = isinstance(e, KeyError) and not ws.scalar("SELECT 1 FROM tasks WHERE task_id=?", (tid,))
+        with ws.connect() as cx:  # stopped or failed: nothing changes, and it can be asked again
             cx.execute("DELETE FROM results WHERE task_id=?", (tid,))
             cx.execute("DELETE FROM tasks WHERE task_id=?", (tid,))
+        if gone:
+            # hunt phase 1.5: the document was read with the new reader while the AI read the excerpt (a round of
+            # the shared folder moves an accepted reading): the move asked its task again (reread.py), and the
+            # answer, about a passage id that now names other text, is not stored. Said in words, not "unknown task"
+            raise ValueError("This document was read with the new reader while the AI was reading the excerpt again, "
+                             "so its answer was not kept. Nothing else changed: read the excerpt again now.") from None
         raise
     now_v = ws.query("SELECT verdict, confidence, scope_note FROM verifications WHERE subject_kind='user_claim' AND "
                      "subject_id=? AND passage_id=?", (claim_id, passage_id))
@@ -202,7 +244,10 @@ def more_available(ws: Workspace, claim_id: str, semantic: bool = False) -> bool
     if not uc:
         raise KeyError(claim_id)
     uc = dict(uc[0])
-    seen = {p["passage_id"] for r in _cc._check_tasks(ws, claim_id) for p in json.loads(r["payload_json"])["passages"]}
+    # hunt phase 1.5 (CHECKS-5): the excerpts of a round that has ended unanswered (`_left`) are read again by the
+    # next round, so they are still to read
+    seen = {p["passage_id"] for r in _cc._check_tasks(ws, claim_id) if not _cc._left(r)
+            for p in json.loads(r["payload_json"])["passages"]}
     opts = json.loads(uc["options_json"] or "{}")
     docs = set(opts.get("doc_ids") or [])
     if semantic:
@@ -229,6 +274,10 @@ def delete_claim(ws: Workspace, claim_id: str, why: str | None = None, _log: boo
             cx.execute("DELETE FROM results WHERE task_id >= ? AND task_id < ?", lo_hi)
             cx.execute("DELETE FROM tasks WHERE task_id >= ? AND task_id < ?", lo_hi)
         cx.execute("DELETE FROM second_opinions WHERE subject_id=?", (claim_id,))
+        # every person's judgement of its excerpts goes with it: "how often you agreed" (people.agreement) reads
+        # this table alone, and a removed check must not keep counting there. A colleague's copy does not bring
+        # them back: the check is in sync_removed and a merge takes judgements only of checks this copy has.
+        cx.execute("DELETE FROM judgements WHERE claim_id=?", (claim_id,))
         cx.execute("DELETE FROM user_claims WHERE claim_id=?", (claim_id,))
         hid = hyp[0] if hyp and hyp[0] else claim_id
         if not cx.execute("SELECT 1 FROM user_claims WHERE hyp_id=?", (hid,)).fetchone():
@@ -236,6 +285,31 @@ def delete_claim(ws: Workspace, claim_id: str, why: str | None = None, _log: boo
             cx.execute("DELETE FROM results WHERE task_id=?", (f"decompose:{hid}",))
             cx.execute("DELETE FROM tasks WHERE task_id=?", (f"decompose:{hid}",))
             cx.execute("DELETE FROM hypotheses WHERE hyp_id=?", (hid,))
+
+
+def repair_old_judgements(cx) -> None:
+    """Hunt phase 1.5: two kinds of row an earlier version left, both told apart by the data alone, mended when a
+    project opens (`Workspace._setup`).
+
+    - A judgement of an excerpt of a check that no longer exists (CHECKS-7): `delete_claim` left them before hunt
+      phase 1, and "how often you agreed" (people.agreement) still counted them. Nothing makes such a row honestly: a
+      merge takes judgements only of checks the copy has, sharing sends them only with their check.
+    - An excerpt's row with no person's fields beside a judgement of it with a verdict or a comment (CHECKS-2): the
+      earlier "Judge it myself" pressed twice wrote the row again without the judgement. `people.refresh` puts the
+      one in force back by its usual rule. A judgement from before 0.14 (on the row, no person, no `judgements` row) is
+      not such a row, nor one taken back (a `judgements` row without verdict or note).
+
+    Each step is its own test (no such row is left after it), so no mark of being done is kept: a mark in `meta`
+    would travel in the shared folder's bundles."""
+    cx.execute("DELETE FROM judgements WHERE claim_id NOT IN (SELECT claim_id FROM user_claims)")
+    wiped = [r[0] for r in cx.execute(
+        "SELECT DISTINCT v.subject_id FROM verifications v WHERE v.subject_kind='user_claim' AND v.user_by IS NULL "
+        "AND v.user_verdict IS NULL AND v.user_note IS NULL AND EXISTS (SELECT 1 FROM judgements j WHERE "
+        "j.claim_id=v.subject_id AND j.passage_id=v.passage_id AND (j.verdict IS NOT NULL OR j.note IS NOT NULL))")]
+    if wiped:
+        from .people import refresh
+
+        refresh(cx, wiped)
 
 
 def delete_hypothesis(ws: Workspace, hyp_id: str, why: str | None = None, unmade: bool = False) -> None:

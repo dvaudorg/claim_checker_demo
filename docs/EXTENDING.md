@@ -181,7 +181,14 @@ INDEXES = "CREATE INDEX IF NOT EXISTS ix_drafts_created ON drafts(created_at);"
 
 Every project runs them as it is opened, after ENLENS's own and in the add-ons' order: `SCHEMA`, then the
 `MIGRATIONS`, then `INDEXES`. Write them so that running them again changes nothing (`IF NOT EXISTS`); a column is
-added only when it is missing. Table and column names are plain names (letters, digits and `_`).
+added only when it is missing. Table and column names are plain names (letters, digits and `_`). Each add-on's three
+run together inside one savepoint, so they must not manage the transaction or the file themselves: an add-on whose
+SQL holds `BEGIN`, `COMMIT`, `END`, `ROLLBACK`, `SAVEPOINT`, `RELEASE`, `VACUUM`, `ATTACH`, `DETACH` or `PRAGMA
+journal_mode` is refused, naming the statement. If one of them fails (or a name is not plain), what that add-on set up
+in this opening is taken back and the add-on is left out of THAT project: the project opens without it, its routes
+answer 409 there with words that name it, its `overview` keys are left out there and answers of its kinds of task are
+not stored there; its other projects are not affected. The error is printed, kept in `addons.errors(project)` and
+shown to the person (`GET /api/state` → `addon_problems`). A later opening that sets it up forgets the failure.
 
 **Where a hypothesis comes from.** `claimcheck.create_hypothesis(ws, text, …, origin="draft", origin_id=draft_id)`
 records it in the hypothesis's `origin` and `origin_id` columns, so an add-on that makes hypotheses needs no column
@@ -266,7 +273,9 @@ taskkinds.register(taskkinds.TaskKind(
 **The quote check is required.** A kind without `quote_from` is refused. ENLENS checks every answer of an add-on's
 kind before its store function sees it: against `schema`, then every string under a key in `quote_fields` (default
 `quote`), at any depth, must be found in the text `quote_from(payload)` gives (case, spacing and typography aside).
-An answer that fails goes back with its problems, as for ENLENS's own kinds.
+An answer that fails goes back with its problems, as for ENLENS's own kinds. The store function is handed each quote
+as that text writes it, not as the model wrote it: the check reads "10³ tonnes" and "103 tonnes" alike, the store
+function gets "10³ tonnes" (the model's own words stay in the answer kept with the task).
 
 **The guard holds.** A task of an add-on's kind is made with `tasks._insert_task` like any other, so it takes the
 setting of the documents (and floors) its payload names, is handed to Claude Code only when that is *cloud*, is

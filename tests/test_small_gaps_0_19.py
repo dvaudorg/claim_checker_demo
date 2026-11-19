@@ -422,7 +422,7 @@ def test_documents_added_to_another_project_get_the_sdg_codes(api, corpus):  # n
     assert api("POST", "/api/projects", {"name": "Second"})[0] == 200
     for f in sorted(corpus.iterdir()):
         assert api("POST", f"/api/projects/Second/uploads?batch=b1&name={f.name}", raw=f.read_bytes())[0] == 200
-    st, r = api("POST", "/api/projects/Second/ingest", {"batch": "b1"})
+    st, r = api("POST", "/api/projects/Second/ingest", {"ai_access": "cloud", "batch": "b1"})
     job = api.wait(r["job"]["id"])
     assert job["state"] == "done", job
     assert "codes_error" not in job["result"], job["result"]

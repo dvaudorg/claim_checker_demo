@@ -1,7 +1,7 @@
 // Projects: create, link an existing workspace folder, switch, remove.
 import { quickLookButton } from "./quicklook.js";
 import { App, api, h, icon, replace, append, toast, showError, field, navigate, dialog, confirmDialog, pageHead, P, fmt, download, button, downloadButton, card, input, tag, emptyState,
-  optionCards, switchControl, fold, link } from "../lib.js";
+  optionCards, switchControl, fold, link, notice } from "../lib.js";
 import { MOVE_TITLE, MOVING, BOTH, NOT_FRESH, moveSummary, secondName, foreignServers, serverLine, movedText, linkCleanTitle, LINK_CLEAN } from "./move-state.js";   // roles
 import { zipButton } from "./share.js";   // 0.18: the two downloads, what you shared or the whole project
 import { FEATURES } from "../features.js";
@@ -339,12 +339,15 @@ export async function renderProjects(view) {
     if (!projects.length) { list.appendChild(emptyState("folder", "No projects yet", "Create one to get started.")); return; }
     for (const p of projects) {
       const current = p.name === App.project;
+      const busyNote = h("div", { class: "pj-busy" });   // hunt phase 1: why Remove was refused (a job still runs), here
       list.appendChild(card({ as: "div" },
         h("div", { class: "row pj-row" },
           h("div", { class: "grow" },
             h("div", { class: "it" }, icon(p.linked ? "link" : "folder", { size: 16 }), h("h2", {}, p.name), current ? tag({ kind: "code" }, "current") : null, !p.ok ? tag({ kind: "attention" }, "cannot be opened") : null),
             h("div", { class: "muted small pj-counts" }, `${p.documents} ${p.documents === 1 ? "document" : "documents"} · ${p.hypotheses} ${p.hypotheses === 1 ? "result" : "results"}${p.linked ? " · folder used in place" : ""}${p.temporary ? ` · a quick look, moved to the trash on ${fmt.dateShort(new Date(p.temporary.expires_at * 1000).toISOString())} unless kept` : ""}`),
-            h("div", { class: "muted small mono pj-path" }, p.path)),
+            h("div", { class: "muted small mono pj-path" }, p.path),
+            // hunt phase 1.5: why it cannot be opened (a damaged settings file, a newer ENLENS) and what to do
+            !p.ok && p.problem ? notice({ kind: "attention" }, h("p", {}, p.problem)) : null),
           h("div", { class: "btn-row" },
             !current ? button({ sm: true, onClick: async () => { try { await api("PUT", "/api/settings", { project: p.name }); await App.refresh(); toast(`Project: ${p.name}`, "ok", { ttl: 2000 }); draw(); } catch (e) { showError(e); } } }, "Switch to") : null,
             p.ok ? zipButton(p.name, "shared", { text: "Send what you shared" }) : null,
@@ -356,8 +359,9 @@ export async function renderProjects(view) {
             button({ kind: "danger", sm: true, onClick: async () => {
               const ok = await confirmDialog({ title: `Remove project “${p.name}”?`, message: p.linked ? "The folder is no longer used by the app and is left untouched on disk." : "The project (documents, results, notes) is moved to a trash folder inside the app's data folder.", confirmText: "Remove", typeToConfirm: p.name });
               if (!ok) return;
-              try { const r = await api("DELETE", `/api/projects/${P(p.name)}`, { confirm: p.name }); await App.refresh(); toast(r.result === "unlinked" ? "Project removed: its folder is left as it was." : "Project removed: it is in the trash folder inside the data folder.", "ok"); if (!App.state.projects.length) navigate("#/setup"); else draw(); } catch (e) { showError(e); }
-            } }, icon("trash", { size: 13 }), "Remove")))));
+              try { const r = await api("DELETE", `/api/projects/${P(p.name)}`, { confirm: p.name }); await App.refresh(); toast(r.result === "unlinked" ? "Project removed: its folder is left as it was." : "Project removed: it is in the trash folder inside the data folder.", "ok"); if (!App.state.projects.length) navigate("#/setup"); else draw(); } catch (e) { if (e && e.kind === "busy") replace(busyNote, notice({ kind: "attention", live: "polite" }, h("p", {}, e.message))); else showError(e); }
+            } }, icon("trash", { size: 13 }), "Remove"))),
+        busyNote));
     }
   };
   draw();

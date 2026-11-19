@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import re
 
-from .api_common import ApiError, XLSX, _bool, _disposition, _int, _str, _xlsx_with_provenance
+from .api_common import ApiError, XLSX, _body_text, _bool, _disposition, _int, _str, _xlsx_with_provenance
 from .. import codebooks, history, notes, researchlog
 
 
@@ -30,8 +30,10 @@ class RecordApi:
 
     def post_log(self, name, q):
         body = self._body()
-        return {"entry": researchlog.add(self.app.ws(name), str(body.get("text") or ""), body.get("subject_kind") or None,
-                                         body.get("subject_id") or None, body.get("title") or None)}
+        # hunt phase 1: what the entry is about is text (a list here reached the database and came back as a 500)
+        return {"entry": researchlog.add(self.app.ws(name), str(body.get("text") or ""),
+                                         _body_text(body, "subject_kind"), _body_text(body, "subject_id"),
+                                         _body_text(body, "title"))}
 
     def put_log(self, name, entry_id, q):
         body = self._body()
@@ -139,7 +141,7 @@ class RecordApi:
 
     def post_codebook_example(self, name, q):
         body = self._body()
-        got = codebooks.find_example(self.app.ws(name), str(body.get("quote") or ""), body.get("doc_id") or None)
+        got = codebooks.find_example(self.app.ws(name), str(body.get("quote") or ""), _body_text(body, "doc_id"))
         if not got:
             raise ApiError(400, "These words are not in this project's documents. Copy an example from a document, "
                                 "word for word (at least a few words).")

@@ -35,6 +35,7 @@ import base64
 import hashlib
 import os
 import plistlib
+import re
 import shlex
 import shutil
 import subprocess
@@ -75,13 +76,52 @@ def _duration(seconds: float) -> str:
     return f"{m} min" if m < 90 else f"{m // 60} h {m % 60:02d} min"
 
 
-def note_for(job, project_label: str | None = None) -> tuple[str, str]:
-    """The title and text of the notification for an ended job."""
+A_DOCUMENT = "a document"
+
+
+def note_for(job, project_label: str | None = None, hidden: tuple[str, ...] | list[str] = ()) -> tuple[str, str]:
+    """The title and text of the notification for an ended job. Hunt phase 1.5 (the owner's rule): a notification
+    shows on a lock screen, so it names no document marked Only a local AI or No AI. Only what comes from a document
+    is hidden: a job whose title was made from one gives its `note_title` (its error is then not shown either), and in
+    any other job's error the whole titles and file names of such documents (`hidden`, see `hidden_words`) become "a
+    document". The job's own title (a hypothesis's text) and the project's name are never changed. A run that met a
+    document read again meanwhile says how many passages wait for its next run."""
     took = _duration((job.finished or time.time()) - (job.started or job.created))
     where = f" · {project_label or job.project}" if job.project else ""
+    private = getattr(job, "note_title", None)
+    title = private or job.title
     if job.state == "error":
-        return "Stopped with a problem", _short(f"{job.title}: {job.error or 'see the app'}{where}")
-    return "Finished", _short(f"{job.title} (took {took}){where}")
+        error = None if private else job.error
+        for w in hidden if error else ():
+            error = re.sub(rf"(?<!\w){re.escape(w)}(?!\w)", A_DOCUMENT, error, flags=re.IGNORECASE)
+        return "Stopped with a problem", _short(f"{title}: {error or 'see the app'}{where}")
+    again = (job.result or {}).get("read_again_meanwhile") if isinstance(getattr(job, "result", None), dict) else 0
+    more = (f" {again} {'passage waits' if again == 1 else 'passages wait'} for the next run: "
+            f"{'its document was' if again == 1 else 'their documents were'} read again meanwhile.") if again else ""
+    return "Finished", _short(f"{title} (took {took}){where}.{more}" if more else f"{title} (took {took}){where}")
+
+
+def hidden_words(app, job) -> tuple[list[str], str | None]:
+    """The whole titles and file names of the documents of `job`'s project that only a local AI or no AI may read
+    (longest first; to hide in an error's text), and the label to use for the project: "a quick look" for a quick look
+    of such a document (it is named after its file, so its name comes from the document), else None (its name).
+    Raises when the project cannot be read (the caller then names nothing)."""
+    if not job.project or not hasattr(app, "ws"):
+        return [], None
+    from .. import access, home
+
+    ws = app.ws(job.project)
+    lv = access.levels(ws, budget=False, provider=None)
+    words: set[str] = set()
+    for r in ws.query("SELECT doc_id, title, path FROM documents"):
+        if lv.get(r["doc_id"]) not in ("local", "none"):
+            continue
+        for w in (r["title"], Path(str(r["path"] or "")).name):
+            w = " ".join(str(w or "").split())
+            if len(w) >= 3:
+                words.add(w)
+    label = "a quick look" if words and home.is_temporary(job.project) else None
+    return sorted(words, key=len, reverse=True), label
 
 
 def wanted(job, choice: str, seen: float, now: float | None = None) -> bool:
@@ -110,12 +150,17 @@ def job_ended(app, job, send: Callable[..., dict] | None = None) -> bool:
         choice = "away"
     if not wanted(job, choice, getattr(app, "seen", 0.0)):
         return False
-    title, text = note_for(job)
     sender = send or send_note
     url = _app_link(app)
 
     def go():
         try:
+            try:   # (here, off the job's thread: it reads the project's documents)
+                hidden, label = hidden_words(app, job)
+                title, text = note_for(job, label, hidden)
+            except Exception:  # noqa: BLE001 - the project cannot be read: a note that names nothing of it
+                traceback.print_exc()
+                title, text = ("Stopped with a problem" if job.state == "error" else "Finished"), "See the app."
             sender(title, text, url=url)
         except Exception:  # noqa: BLE001 - a notification never stops the app
             traceback.print_exc()

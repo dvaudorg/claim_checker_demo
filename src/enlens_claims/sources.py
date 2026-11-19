@@ -153,7 +153,8 @@ def document_overview(ws: Workspace) -> list[dict]:
     from . import languages
     from .ingest import READER
 
-    # 0.19: a document reader 5 read is offered reader 6 only when it would read otherwise
+    # 0.19: a document reader 5 read is offered reader 6 only when it would read otherwise (its languages tell; from
+    # reader 7 its kind does, `languages.new_reader_changes`)
     langs = languages.of_documents(ws) if READER == 6 else {}
     out = []
     for d in ws.query("SELECT d.doc_id, d.title, d.kind, d.n_pages, d.n_chars, d.path, d.added_at, d.ocr_pages, "

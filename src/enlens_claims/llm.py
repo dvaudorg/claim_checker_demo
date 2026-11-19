@@ -144,13 +144,32 @@ class _BudgetReached(Exception):
 
 
 
+_DIRECT = None   # the opener for this computer (`direct_open`), made at its first use
+
+
+def direct_open(req, *args, **kwargs):
+    """Hunt phase 1: open an address on this computer without any proxy. urllib's own urlopen hands every request to
+    the proxy the environment (http_proxy) or the system's settings name, and neither exempts 127.0.0.1 unless the
+    person listed it, so the passages of documents marked Only a local AI went to the proxy, another computer, with
+    every request to the local model. This computer is never behind a proxy (bibliography.py and sync/_web.py do the
+    same). Callers decide that the address is this computer (`local_urlopen`)."""
+    global _DIRECT
+    if _DIRECT is None:
+        from urllib.request import ProxyHandler, build_opener
+
+        _DIRECT = build_opener(ProxyHandler({}))
+    return _DIRECT.open(req, *args, **kwargs)
+
+
 def local_urlopen(req, *args, **kwargs):
     """0.19.10: urlopen for model servers on this computer. Windows looks "localhost" up as ::1 (IPv6) first, while
     Ollama, like most model servers, listens on 127.0.0.1 only, and Windows reports a refused connection only after
     about two seconds of trying again. So every request to http://localhost:… waited two seconds there, and the quick
     looks for a running server (0.6 s) never saw Ollama: the card kept saying "Starting Ollama…" or "not running"
     while Ollama ran. A request for localhost goes to 127.0.0.1 first, and to localhost as given only when nothing
-    listens there (a server on ::1 alone). Any other address is opened as it is."""
+    listens there (a server on ::1 alone). An address on this computer (providers.on_this_computer: localhost or a
+    loopback address) is opened without a proxy, on both tries (`direct_open`); any other address (a model server on
+    another computer, which counts as a provider) is opened as it is, through the proxy the system names."""
     from urllib.error import URLError
     from urllib.parse import urlsplit, urlunsplit
     from urllib.request import Request, urlopen
@@ -158,18 +177,20 @@ def local_urlopen(req, *args, **kwargs):
     if not isinstance(req, Request):
         req = Request(req)
     parts = urlsplit(req.full_url)
-    if (parts.hostname or "").lower() != "localhost":
+    if not providers.on_this_computer(req.full_url):
         return urlopen(req, *args, **kwargs)
+    if (parts.hostname or "").lower() != "localhost":
+        return direct_open(req, *args, **kwargs)
     user, at, _ = parts.netloc.rpartition("@")
     netloc = f"{user}{at}127.0.0.1" + (f":{parts.port}" if parts.port else "")
     v4 = Request(urlunsplit(parts._replace(netloc=netloc)), data=req.data, headers=dict(req.header_items()),
                  method=req.get_method())
     try:
-        return urlopen(v4, *args, **kwargs)
+        return direct_open(v4, *args, **kwargs)
     except URLError as e:
         if not isinstance(e.reason, ConnectionRefusedError):
             raise
-    return urlopen(req, *args, **kwargs)
+    return direct_open(req, *args, **kwargs)
 
 
 def _read_lines(opener, req, *, stall_timeout: float, timeout: float, t0: float, should_stop, report, on_line,
@@ -226,6 +247,10 @@ def _read_lines(opener, req, *, stall_timeout: float, timeout: float, t0: float,
             last = time.time()
             if on_line(val):
                 return
+            # hunt phase 1: the total limit holds while lines keep coming too (a server that streams a token a
+            # second ran past it: only a silence looked at it), for every backend that reads through here
+            if last - t0 > timeout:
+                raise slow()
     finally:
         # Ollama answers the headers with the first token, so a Stop before that finds no response to close: the
         # flag makes the reader close it as soon as it arrives, so the model does not go on generating
@@ -620,7 +645,10 @@ class OllamaBackend:
                 raise BackendError(f"Ollama stopped with an error: {chunk['error']}")
             if info["first_token_after"] is None:
                 info["first_token_after"] = time.time() - t0
-            msg = chunk.get("message") or {}
+            # hunt phase 1.5: a chunk of another shape (a "message" that is no object, a piece that is no text) is
+            # skipped as a line that does not parse is; it raised AttributeError out of `complete`, past every handler
+            msg = chunk.get("message")
+            msg = {k: v for k, v in msg.items() if isinstance(v, str)} if isinstance(msg, dict) else {}
             if msg.get("thinking"):
                 info["thinking_tokens"] += 1
                 thought += 1
@@ -1110,11 +1138,17 @@ class LocalBackend:
                 chunk = json.loads(data)
             except json.JSONDecodeError:
                 return False
+            # hunt phase 1.5: a chunk of another shape is skipped as a line that does not parse is (it was said as
+            # "Could not reach the local server", which sent the person looking for a server that was answering)
+            if not isinstance(chunk, dict):
+                return False
             if chunk.get("error"):
                 err = chunk["error"]
                 raise BackendError(f"The local server stopped with an error: {err.get('message') if isinstance(err, dict) else err}")
-            ch = (chunk.get("choices") or [{}])[0]
-            delta = ch.get("delta") or {}
+            chs = chunk.get("choices")
+            ch = chs[0] if isinstance(chs, list) and chs and isinstance(chs[0], dict) else {}
+            delta = ch.get("delta")
+            delta = {k: v for k, v in delta.items() if isinstance(v, str)} if isinstance(delta, dict) else {}
             if info["first_token_after"] is None and (delta.get("content") or delta.get("reasoning_content")
                                                       or delta.get("reasoning")):
                 info["first_token_after"] = time.time() - t0
@@ -1148,8 +1182,11 @@ class LocalBackend:
             if isinstance(data, dict) and data.get("error"):
                 err = data["error"]
                 raise BackendError(f"The local server returned an error: {err.get('message') if isinstance(err, dict) else err}")
-            ch = (data.get("choices") or [{}])[0]
-            content = [((ch.get("message") or {}).get("content") or "")]
+            chs = data.get("choices") if isinstance(data, dict) else None
+            ch = chs[0] if isinstance(chs, list) and chs and isinstance(chs[0], dict) else {}
+            msg = ch.get("message")
+            text = msg.get("content") if isinstance(msg, dict) else None
+            content = [text if isinstance(text, str) else ""]   # (another shape: no answer, as an empty one)
             finish = ch.get("finish_reason")
         info.update(phase="done", stats={"total_seconds": time.time() - t0, "output_tokens": info["answer_tokens"]})
         report(force=True)

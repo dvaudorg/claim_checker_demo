@@ -59,6 +59,11 @@ How results move:
    record): the report lists it (`left_out`) with the kind of text in words (reader.KIND_TEXT). A result with no place
    says where its words went when that can be told (three of its words in a row in a block left out, near where its
    passage now is).
+11. A person's work outside the results (hunt phase 1.5): their notes and highlights follow their words as a quote
+   does (`notes.move` writes the places worked out here), and their *Leave out*, *Restore*, *Text starts here* and
+   *Text ends here*, kept by a block's words, hold for the new blocks that hold the old block's text when the new
+   reader cuts the text otherwise (`_carry_choices`). Both are counted and listed in the report as the results are
+   (kinds `note` and `block`).
 
 A stored answer of a task kept this way reads quotes in the excerpt it showed; `tasks.doc_span` places them in the
 document as it reads now (a stronger model reading a round again, an excerpt read again, a second opinion).
@@ -88,6 +93,10 @@ KIND_TEXT = {
     "label": "a code label",
     "claim": "a claim the SDG pack read from the text",
     "theme_member": "a passage in a theme run",
+    # hunt phase 1.5: a person's notes and highlights, and their Leave out / Restore of blocks, are their work too:
+    # counted and listed as the rest (they were moved, or not, without a word in the preview)
+    "note": "a note or highlight on the text",
+    "block": "a block left out of the text, or restored, by a person",
 }
 WHY = {
     "gone": "Its words are not in the new reading where they were.",
@@ -103,7 +112,9 @@ LEFT_OUT_NOTE = {
     "sdg_check": ("This excerpt's", "the check keeps it, and its judgement counts as before."),
     "label": ("This label's", "the label is kept."),
     "claim": ("This claim's", "the claim is kept."),
+    "note": ("This note's", "the note is kept."),
 }
+_FP = re.compile(r"[0-9a-f]{16}")   # a block choice kept by its block's words (reader.block_fp)
 SLACK = 400              # characters around where an old passage's text is now, in which its quotes are looked for
 _KEYWORD_SOURCES = ("keywords", "meaning", "both")
 _PK = {"tasks": ("task_id",), "results": ("task_id",), "labels": ("label_id",), "verifications": ("ver_id",),
@@ -811,11 +822,6 @@ def _plan(ws: Workspace, cx, doc_id: str, new_doc, m: _Map | None = None,
         raise _Stale(doc_id)
     from . import reader as reader2
 
-    choices = {r[0]: r[1] for r in cx.execute("SELECT fp, included FROM block_choices WHERE doc_id=?", (doc_id,))}
-    new_blocks = getattr(new_doc, "blocks", None) or []
-    counts = reader2.choose_inclusion([(new_doc.text[b.start:b.end], b.kind) for b in new_blocks], choices) \
-        if choices else [b.included for b in new_blocks]
-    m.set_blocks([(b.start, b.end, b.kind, bool(c)) for b, c in zip(new_blocks, counts)])
     tomb = {p.pid: tombstone(p.pid, reader) for p in old}
     by_old = m.by_old
     plan = _Plan()
@@ -825,6 +831,14 @@ def _plan(ws: Workspace, cx, doc_id: str, new_doc, m: _Map | None = None,
             return ingest.page_of(pos, old_spans)
         p = by_old.get(pid) if pid else None
         return p.page if p is not None else None
+
+    choices = {r[0]: r[1] for r in cx.execute("SELECT fp, included FROM block_choices WHERE doc_id=?", (doc_id,))}
+    new_blocks = getattr(new_doc, "blocks", None) or []
+    if choices and new_blocks:
+        _carry_choices(cx, doc_id, m, new_doc.text, new_blocks, choices, plan, old_page)
+    counts = reader2.choose_inclusion([(new_doc.text[b.start:b.end], b.kind) for b in new_blocks], choices) \
+        if choices else [b.included for b in new_blocks]
+    m.set_blocks([(b.start, b.end, b.kind, bool(c)) for b, c in zip(new_blocks, counts)])
 
     def taskmap(pid: str) -> str:
         return m.one.get(pid) or tomb[pid]
@@ -1184,6 +1198,30 @@ def _plan(ws: Workspace, cx, doc_id: str, new_doc, m: _Map | None = None,
             if any(i in moved for i in ids):
                 plan.upd("task_claims", r["rid"], task_ids_json=json.dumps([moved.get(i, i) for i in ids]))
 
+    # --- a person's notes and highlights (notes.py) ----------------------------------------------------------------
+    # hunt phase 1.5: each follows its words as a quote does (`_Map.place`: near where its passage's text now is, the
+    # occurrence nearest where it is expected), worked out here so that the preview counts and lists them as the move
+    # then does; `_apply` writes the places (notes.move). Before, the move found a note's words near its old place in
+    # proportion and then anywhere in the text (the same words in a summary were taken for its words), and the preview
+    # said nothing of notes at all
+    note_at: dict[str, tuple[int, int] | None] = {}
+    for n in _rows(cx, "SELECT note_id, start, end, quote, text FROM notes WHERE doc_id=?", (doc_id,)):
+        if not (n["quote"] or "").strip():
+            continue
+        # (a note an earlier reading left without a place stands at the point where its words were expected: looked
+        # for again from there, so moving back to a reading that has them gives it its place again)
+        p = m.old_at(n["start"])
+        got = m.place(n["quote"], n["start"], p.pid if p is not None else None)
+        note_at[n["note_id"]] = got
+        what = f"Note: {_short(n['text'], 90)}" if n["text"] else "Highlight"
+        if got:
+            plan.moved_into("note", m.left_out(got[0]), what, n["quote"], m.page_at(got[0]))
+        else:
+            plan.counts["note"]["not_placed"] += 1
+            plan.miss("note", what, n["quote"], p.pid if p is not None else None, n["start"], "gone",
+                      old_page(n["start"], p.pid if p is not None else None),
+                      m.words_left_out(n["quote"], n["start"], p.pid) if p is not None else None)
+
     # --- what is made again ----------------------------------------------------------------------------------------
     for r in _in(cx, "SELECT rowid AS rid FROM embeddings WHERE passage_id IN ({})", sorted(old_set | set(new_pids))):
         plan.deletes["embeddings"].add(r["rid"])
@@ -1251,11 +1289,135 @@ def _plan(ws: Workspace, cx, doc_id: str, new_doc, m: _Map | None = None,
         "ai_share": {"before": before_share, "after": after_share},
         "addons": _addon_rows(cx, doc_id, old_set),
         "reading": dict(getattr(new_doc, "reading", None) or {}),
+        # hunt phase 1.5: whether the new reader reads it exactly as before: a reader that changes some files of a
+        # kind is offered to every file of that kind, and the preview says which (`same_reading`)
+        "same_reading": same_reading(
+            old_text, [(p.start, p.end, p.page, p.section) for p in old],
+            [tuple(r) for r in cx.execute("SELECT start, end, included FROM blocks WHERE doc_id=? ORDER BY n",
+                                          (doc_id,))],
+            new_doc.text, [(q.start, q.end, q.page, q.section) for q in new],
+            [(b.start, b.end, int(bool(c))) for b, c in zip(new_blocks, counts)], bool(choices)),
         "warnings": [],
     }
     _warnings(report, drow)
     return plan, {"report": report, "new_pids": new_pids, "map": m, "old_text": old_text, "reader": reader,
-                  "drow": drow, "sent_share": round(sent_share, 6) or None}
+                  "drow": drow, "sent_share": round(sent_share, 6) or None, "notes": note_at}
+
+
+def _carry_choices(cx, doc_id: str, m: _Map, new_text: str, new_blocks: list, choices: dict, plan: _Plan,
+                   old_page) -> None:
+    """Hunt phase 1.5: a person's *Leave out* or *Restore* of a block, and their *Text starts here* or *Text ends here*,
+    are kept by the block's words (reader.block_fp), so they hold when the document is read again; but a new reader
+    that cuts the text into other blocks (reader 7 reads short lines of a text file as a block each, a Word text box
+    as a paragraph of its own) gives no block with those words, and the choice applied to nothing: the text the
+    person left out counted again, without a word. Such a choice is carried to the new blocks that hold the old
+    block's text (`choices` and, through `plan.first`, the database, before the new reading is stored with the choices
+    applied); one whose text cannot be found again so is listed among the results with no place."""
+    from . import reader as reader2
+
+    rows = cx.execute("SELECT n, start, end, kind FROM blocks WHERE doc_id=? ORDER BY n", (doc_id,)).fetchall()
+    if not rows:
+        return
+    old_fps = [reader2.block_fp(m.t1[r[1]:r[2]]) for r in rows]
+    new_fps = [reader2.block_fp(new_text[b.start:b.end]) for b in new_blocks]
+    have = set(new_fps)
+    meta = {r[0]: (r[1], r[2]) for r in cx.execute("SELECT fp, person_id, at FROM block_choices WHERE doc_id=?",
+                                                   (doc_id,))}
+
+    def inside(i: int) -> list[int] | None:
+        """The new blocks that hold old block i's text: its words found again near where they were, else the span of
+        its sentences found in a row in the new text (`_Map.anchors`, each after the one before and close to it: a
+        sentence that now stands far away does not stretch the span over the blocks between); a new block counts when
+        most of it is in that span. [] when the text cannot be followed so; None when none of its words are in the
+        new reading at all (hunt phase 1.5: a choice about text the new reader no longer has is settled, not lost)."""
+        a, b = rows[i][1], rows[i][2]
+        got = m.place(m.t1[a:b], a, None)
+        if got is None:
+            mine = [(x, y, na, nb) for x, y, na, nb, _p in m.anchors if x >= a and y <= b]
+            if not mine:
+                return None if not m.f.all(m.t1[a:b]) else []
+            runs, run = [], [mine[0]]
+            for prev, cur in zip(mine, mine[1:]):
+                if cur[2] >= prev[2] and cur[2] - prev[3] <= 200:
+                    run.append(cur)
+                else:
+                    runs.append(run)
+                    run = [cur]
+            runs.append(run)
+            best = max(runs, key=lambda r: sum(y - x for x, y, *_r in r))
+            if sum(y - x for x, y, *_r in best) < 0.6 * len(m.t1[a:b].strip()):
+                return []
+            got = (min(r[2] for r in best), max(r[3] for r in best))
+        out = []
+        for j, nb in enumerate(new_blocks):
+            size = len(new_text[nb.start:nb.end].strip())
+            if size and min(got[1], nb.end) - max(got[0], nb.start) >= 0.8 * (nb.end - nb.start):
+                out.append(j)
+        return out
+
+    def lost(i: int, what: str) -> None:
+        plan.counts["block"]["not_placed"] += 1
+        plan.miss("block", what, m.t1[rows[i][1]:rows[i][2]], None, rows[i][1], "gone", old_page(rows[i][1]))
+
+    def add(fp: str, value: int, kind: str, who: tuple) -> None:
+        choices[fp] = value
+        plan.first.append(("INSERT OR REPLACE INTO block_choices(doc_id, fp, included, kind, person_id, at) "
+                           "VALUES (?,?,?,?,?,?)", (doc_id, fp, value, kind, *who)))
+
+    for fp, value in list(choices.items()):
+        if not (isinstance(fp, str) and _FP.fullmatch(fp)) or fp in have or fp not in old_fps:
+            continue  # applies as it is; or not a block's (a figure, a language, a role); or of no block read here
+        what = "A block you left out of the text" if not int(value) else "A block you restored to the text"
+        for i in [k for k, f in enumerate(old_fps) if f == fp]:
+            js = inside(i)
+            if js is None:
+                # its text is not in the new reading: nothing is left to leave out (or restore), and nothing is lost:
+                # counted apart (`settled`), so "Move the ones that move cleanly" moves the document
+                plan.counts["block"]["settled"] = plan.counts["block"].get("settled", 0) + 1
+                continue
+            if not js:
+                lost(i, what)
+                continue
+            for j in js:
+                if new_fps[j] not in choices:   # a choice of the new block's own words wins
+                    add(new_fps[j], int(value), new_blocks[j].kind, meta.get(fp, (None, None)))
+            plan.counts["block"]["moved"] += 1
+    for side in reader2.BOUNDS:
+        key = next((k for k in choices if isinstance(k, str) and k.startswith(side + ":")), None)
+        if key is None or reader2.bound_index(choices, side, new_fps) is not None:
+            continue
+        i = reader2.bound_index(choices, side, old_fps)
+        if i is None:
+            continue  # a mark of no block read here: as it was
+        js = inside(i)
+        what = "Where you said the text starts" if side == "start" else "Where you said the text ends"
+        if not js:
+            lost(i, what)
+            continue
+        j = js[0] if side == "start" else js[-1]
+        who = meta.get(key, (None, None))
+        del choices[key]
+        plan.first.append(("DELETE FROM block_choices WHERE doc_id=? AND fp=?", (doc_id, key)))
+        new_key = reader2.bound_key(side, new_fps, j)
+        choices[new_key] = 0
+        plan.first.append(("INSERT OR REPLACE INTO block_choices(doc_id, fp, included, kind, person_id, at) "
+                           "VALUES (?,?,0,'bound',?,?)", (doc_id, new_key, *who)))
+        plan.counts["block"]["moved"] += 1
+
+
+def same_reading(old_text: str, old: list[tuple], old_blocks: list[tuple], new_text: str, new: list[tuple],
+                 new_blocks: list[tuple], choices: bool = False) -> bool:
+    """Hunt phase 1.5: whether a new reading is the stored one exactly, in all that decides what searches, codes,
+    themes and checks read: the text; each passage's (start, end, page, section); each block's (start, end, included),
+    the blocks a person left out or put back counted on both sides. With a person's `choices` the stored sections
+    already hold them and the new ones do not yet: the blocks then stand for them (a section follows its blocks and
+    the text). Review wave 4: the sections were not compared, so a passage turned from furniture into body (or back)
+    at the same offsets was called "exactly as before"."""
+    if old_text != new_text or [x[:3] for x in old] != [x[:3] for x in new]:
+        return False
+    if [tuple(b) for b in old_blocks] != [tuple(b) for b in new_blocks]:
+        return False
+    return choices or [x[3] for x in old] == [x[3] for x in new]
 
 
 def _pid_has_tomb(task_id: str, doc_id: str) -> bool:
@@ -1536,6 +1698,10 @@ def move(ws: Workspace, doc_id: str, person_id: str | None = None, ocr=None, sho
     # written, once it is clear the document is still what the alignment was made from
     m = _map_for(ws._conn(), doc_id, entry)
     for attempt in (1, 2):
+        # hunt phase 1.5: Stop was seen only by text recognition (ingest._ocr_pages); a move stopped while its file
+        # was read or aligned went on and moved the document all the same. Seen here, before anything is written
+        if should_stop and should_stop():
+            raise ingest.Stopped("Stopped: the document was not moved, and nothing was changed.")
         try:
             with ws.connect() as cx:
                 c = _check(ws, cx, doc_id, verify_file=False)  # again, holding the database: nothing changed meanwhile
@@ -1607,7 +1773,9 @@ def _apply(ws: Workspace, cx, doc_id: str, plan: _Plan, info: dict, new_doc, who
     from . import notes, researchlog
 
     # 0.16: a person's notes follow their words (0.17.2: and take the page of their new place)
-    moved_notes = notes.move(cx, doc_id, new_doc.text, new_doc.page_spans if raw.paginated else None)
+    # (hunt phase 1.5: to the places `_plan` found for them, as the preview said)
+    moved_notes = notes.move(cx, doc_id, new_doc.text, new_doc.page_spans if raw.paginated else None,
+                             placed=info.get("notes"))
     # what Claude had read of passages that have no place now still counts (access.shares)
     sent = info["sent_share"]
     cx.execute("UPDATE documents SET text=?, n_chars=?, n_pages=?, reader=?, app_version=?, text_fp=?, "

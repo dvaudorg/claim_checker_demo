@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from urllib.parse import unquote
 
-from .api_common import ApiError, XLSX, _bool, _csv, _disposition, _filename, _float, _int, _list, _str, _xlsx_with_provenance
+from .api_common import ApiError, XLSX, _body_int, _bool, _csv, _disposition, _filename, _float, _int, _list, _str, _xlsx_with_provenance
 from .. import frameworks, home, sync
 
 
@@ -183,7 +183,7 @@ class ExploreApi:
         lid = profile.add_label(ws, str(body.get("framework") or "sdg"), str(body.get("passage_id") or ""),
                                 str(body.get("code") or ""), body.get("quote") or None,
                                 str(body.get("relevance") or "main"), str(body.get("direction") or "not_stated"),
-                                body.get("note"))
+                                body.get("note"), start=body.get("start"))   # hunt phase 1: where it was selected
         return {"label_id": lid}
 
     def put_label(self, name, label_id, q):
@@ -251,7 +251,9 @@ class ExploreApi:
 
         body = self._body()
         terms.set_link(self.app.ws(name), str(body.get("a") or ""), str(body.get("b") or ""),
-                       str(body.get("decision") or ""), body.get("relation") or None, note=body.get("note"))
+                       str(body.get("decision") or ""), body.get("relation") or None, note=body.get("note"),
+                       # (hunt phase 1.5: the source of the link the card shows, when the page sends it)
+                       source=str(body.get("source")) if body.get("source") else None)
         return {"saved": True}
 
     def post_concepts_judge(self, name, q):
@@ -334,8 +336,8 @@ class ExploreApi:
         from .. import themes
 
         body = self._body()
-        tid = body.get("theme_id")
-        themes.edit(self.app.ws(name), run_id, str(body.get("what") or ""), int(tid) if tid is not None else None,
+        tid = _body_int(body, "theme_id", None, -10 ** 9, 10 ** 9)   # hunt phase 1: a list here was a 500 from int()
+        themes.edit(self.app.ws(name), run_id, str(body.get("what") or ""), tid,
                     body.get("value"), body.get("passage_id") or None, reason=str(body.get("why") or "") or None)
         return {"saved": True}
 

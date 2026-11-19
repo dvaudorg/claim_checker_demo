@@ -4,7 +4,7 @@
 // A theme that is not relevant can be removed (its passages are left out until it is brought back), and a new theme
 // found in its place, on this computer without AI (POST …/new, job "theme-new").
 import { featureEyebrow, withAI } from "../features.js";
-import { App, api, h, icon, madeWithFact, replace, clear, toast, showError, fmt, pageHead, watchJob, P, emptyState, TERMINAL, dialog, download, rangeControl, passageNode, navigate, store, plural, shortTitle, runningJob, heatCell, downloadLinks, button, choice, link, tag, notice, card, input, select, textarea, fold, readsLine, aiWhere, ownStartNote, stopButton, menu, inset, searchHref, drawInSteps, heatGrid, heatHead, jobFailed, workState, aiButton, setBusy } from "../lib.js";
+import { App, api, h, icon, madeWithFact, replace, clear, toast, showError, fmt, pageHead, watchJob, P, emptyState, TERMINAL, dialog, download, rangeControl, passageNode, navigate, store, plural, shortTitle, runningJob, heatCell, downloadLinks, button, choice, link, tag, notice, card, input, select, textarea, fold, readsLine, aiWhere, ownStartNote, stopButton, menu, inset, searchHref, drawInSteps, heatGrid, heatHead, jobFailed, workState, aiButton, setBusy, appName } from "../lib.js";
 import { simpleProgress, MiniJob, jobError, timeLeft } from "./progress.js";
 import { historyButton, askWhy } from "./versions.js";
 import { shareBar } from "./share.js";   // 0.18 (L1)
@@ -38,16 +38,32 @@ function starter(t) {
 }
 
 // "Remove this theme?": "remove" (just remove it), "replace" (remove it and find a new theme in its place) or null.
-// 0.16: with the reason, for the research log. Returns null, or { how: "remove" | "replace", why }.
-async function askRemove(t) {
+// 0.16: with the reason, for the research log. Hunt phase 1.5: `save(how, why)` saves it from the dialog's own button
+// and resolves false when it failed, which keeps the dialog open with the reason typed (it was lost). Returns null
+// (cancelled), "remove" or "replace" once saved.
+async function askRemove(t, save) {
   const why = textarea({ rows: 2, maxlength: 2000, placeholder: "For example: boilerplate, off-topic, too broad" });
   const body = h("div", {},
     h("p", { class: "th-remove-lead" }, `Its ${plural(t.size, "passage")} are left out of the themes, the grids and the Excel file. It waits under “Removed themes”, where you can bring it back.`),
     h("p", {}, h("strong", {}, "Remove and find a new theme"), " also looks for a new theme in its place, on this computer and without AI: the passages that fit their own theme least well, grouped by what they share. It never takes passages that are closer to a theme you removed, so this one does not come back under another name."),
     h("label", { class: "field" }, h("span", { class: "field-label" }, "Why? (optional, kept in the research log)"), why));
-  const how = await dialog({ title: `Remove “${shortTitle(t.name, 60)}”?`, body,
-    actions: [{ text: "Cancel", value: null }, { text: "Just remove it", value: "remove" }, { text: "Remove and find a new theme", value: "replace", primary: true }] });
-  return how ? { how, why: why.value.trim() } : null;
+  const go = (how) => () => save(how, why.value.trim());
+  return dialog({ title: `Remove “${shortTitle(t.name, 60)}”?`, body,
+    actions: [{ text: "Cancel", value: null }, { text: "Just remove it", value: "remove", onClick: go("remove") }, { text: "Remove and find a new theme", value: "replace", primary: true, onClick: go("replace") }] });
+}
+
+// "Rename the theme": saved from the dialog's own buttons by `save(name)` ("" = the name it had before), which
+// resolves false when it failed: the dialog then stays open with the name typed (hunt phase 1.5: it was lost)
+function askRename(t, save, extra = null) {
+  const nameIn = input({ value: t.name, maxlength: 80 });
+  const body = h("div", {}, h("label", { class: "field" }, h("span", { class: "field-label" }, "New name"), nameIn), extra);
+  const actions = [{ text: "Cancel", value: null }];
+  if (t.name_source === "person") actions.push({ text: "Use the name it had before", value: "", onClick: () => save("") });
+  actions.push({ text: "Save", value: "save", primary: true, onClick: () => {
+    const name = nameIn.value.trim();
+    return !name || name === t.name ? true : save(name);   // nothing to save: the dialog closes
+  } });
+  return dialog({ title: "Rename the theme", body, actions, onOpen: () => { nameIn.select(); nameIn.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); nameIn.closest("dialog").querySelector(".btn-primary").click(); } }); } });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -180,8 +196,15 @@ async function renderRun(view, runId, info, query) {
   const againFold = fold({ class: "th-again" }, "Find the themes again (more or fewer themes, or after adding documents)", h("div", { class: "th-run-again" }, again));
   view.append(head, notes, nameJob, newJob, againFold, tabs, tabBox, removedBox, runsBox);
 
+  // (handed on, PAGESB15-24) only the newest look is drawn: a codebook picked, then another, showed the second's name
+  // over the first's codes when the first answered last
+  let looks = 0;
   async function reload() {
-    try { v = await api("GET", `${base}?framework=${encodeURIComponent(framework)}`); } catch (e) { showError(e); return; }
+    const look = ++looks;
+    let got;
+    try { got = await api("GET", `${base}?framework=${encodeURIComponent(framework)}`); } catch (e) { if (look === looks) showError(e); return; }
+    if (look !== looks) return;
+    v = got;
     const y = window.scrollY;
     draw();
     window.scrollTo(0, y);  // stay where the person was
@@ -418,14 +441,13 @@ async function renderRun(view, runId, info, query) {
   }
 
   async function deleteRun(r) {
-    const ok = await askWhy({ title: "Delete this set of themes?", message: `The ${r.themes_now ?? r.k} themes found ${fmt.date(r.created_at)} are deleted, with the names the AI gave them. Your renames, merges and moves are kept for a new set with the same number of themes.`, confirmText: "Delete" });
+    const ok = await askWhy({ title: "Delete this set of themes?", message: `The ${r.themes_now ?? r.k} themes found ${fmt.date(r.created_at)} are deleted, with the names the AI gave them. Your renames, merges and moves are kept for a new set with the same number of themes.`, confirmText: "Delete",
+      // hunt phase 1.5 (wave 6): sent from the dialog's button, so a refusal keeps the reason typed (it was lost)
+      save: (why) => api("DELETE", `/api/projects/${P(project)}/themes/${P(r.run_id)}${why ? `?why=${encodeURIComponent(why)}` : ""}`) });
     if (!ok) return;
-    try {
-      await api("DELETE", `/api/projects/${P(project)}/themes/${P(r.run_id)}${ok.why ? `?why=${encodeURIComponent(ok.why)}` : ""}`);
-      toast("Set of themes deleted.", "ok", { small: true });
-      if (r.run_id === runId) navigate("#/themes");
-      else { const i = runs.indexOf(r); if (i >= 0) runs.splice(i, 1); drawRuns(); }
-    } catch (e) { showError(e); }
+    toast("Set of themes deleted.", "ok", { small: true });
+    if (r.run_id === runId) navigate("#/themes");
+    else { const i = runs.indexOf(r); if (i >= 0) runs.splice(i, 1); drawRuns(); }
   }
 
   // ---- editing
@@ -434,17 +456,8 @@ async function renderRun(view, runId, info, query) {
     catch (e) { showError(e); return false; }
   }
   async function renameTheme(t) {
-    const nameIn = input({ value: t.name, maxlength: 80, id: "th-rename" });
-    const body = h("div", {}, h("label", { class: "field" }, h("span", { class: "field-label" }, "New name"), nameIn),
+    await askRename(t, (name) => edit({ what: "rename", theme_id: t.theme_id, value: name }, name ? "Theme renamed." : "The earlier name is back."),
       h("p", { class: "muted small" }, `Key terms: ${(t.terms || []).slice(0, 6).join(", ")}`));
-    const actions = [{ text: "Cancel", value: null }];
-    if (t.name_source === "person") actions.push({ text: "Use the name it had before", value: "" });
-    actions.push({ text: "Save", value: "save", primary: true });
-    const r = await dialog({ title: "Rename the theme", body, actions, onOpen: () => { nameIn.select(); nameIn.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); nameIn.closest("dialog").querySelector(".btn-primary").click(); } }); } });
-    if (r === null) return;
-    const name = r === "" ? "" : nameIn.value.trim();
-    if (r === "save" && (!name || name === t.name)) return;
-    await edit({ what: "rename", theme_id: t.theme_id, value: name }, name ? "Theme renamed." : "The earlier name is back.");
   }
   async function mergeTheme(t) {
     const others = v.themes.filter((x) => x.theme_id !== t.theme_id);
@@ -458,11 +471,8 @@ async function renderRun(view, runId, info, query) {
 
   // ---- remove a theme, bring it back, find a new theme in its place
   async function removeTheme(t) {
-    const r = await askRemove(t);
-    if (!r) return;
-    openRemoved = true;
-    if (!(await edit({ what: "remove", theme_id: t.theme_id, value: true, why: r.why || undefined }, `“${shortTitle(t.name, 60)}” removed.`))) return;
-    if (r.how === "replace") startNew(t);
+    const how = await askRemove(t, (_, why) => { openRemoved = true; return edit({ what: "remove", theme_id: t.theme_id, value: true, why: why || undefined }, `“${shortTitle(t.name, 60)}” removed.`); });
+    if (how === "replace") startNew(t);
   }
   async function bringBack(t) {
     await edit({ what: "remove", theme_id: t.theme_id, value: false }, `“${shortTitle(t.name, 60)}” is one of the themes again.`);
@@ -597,19 +607,12 @@ export async function renderTheme(view, [runId, themeId], query) {
   function draw() {
     const t = d.theme;
     const docs = t.documents || [];
-    document.title = `${t.name} · Themes · ENLENS`;
+    document.title = `${t.name} · Themes · ${appName()}`;   // hunt phase 1 (PAGESA-11): the app's name as brand.json gives it
     const renameBtn = button({ sm: true }, icon("type", { size: 13 }), "Rename");
     renameBtn.addEventListener("click", async () => {
-      const nameIn = input({ value: t.name, maxlength: 80 });
-      const actions = [{ text: "Cancel", value: null }];
-      if (t.name_source === "person") actions.push({ text: "Use the name it had before", value: "" });
-      actions.push({ text: "Save", value: "save", primary: true });
-      const r = await dialog({ title: "Rename the theme", body: h("label", { class: "field" }, h("span", { class: "field-label" }, "New name"), nameIn), actions,
-        onOpen: () => { nameIn.select(); nameIn.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); nameIn.closest("dialog").querySelector(".btn-primary").click(); } }); } });
-      if (r === null) return;
-      const name = r === "" ? "" : nameIn.value.trim();
-      if (r === "save" && (!name || name === t.name)) return;
-      if (await edit({ what: "rename", theme_id: t.theme_id, value: name }, name ? "Theme renamed." : "The earlier name is back.")) reload();
+      let saved = false;
+      await askRename(t, async (name) => (saved = await edit({ what: "rename", theme_id: t.theme_id, value: name }, name ? "Theme renamed." : "The earlier name is back.")));
+      if (saved) reload();
     });
     const mergeBtn = button({ kind: "quiet", sm: true, disabled: !d.others.length || t.removed }, icon("split", { size: 13 }), "Merge into…");
     mergeBtn.addEventListener("click", async () => {
@@ -621,9 +624,9 @@ export async function renderTheme(view, [runId, themeId], query) {
     });
     // remove it (the list follows a new theme being found), or bring it back
     const removeBtn = t.removed ? null : button({ kind: "danger", sm: true, disabled: !d.others.length, onClick: async () => {
-      const r = await askRemove(t);
-      if (!r || !(await edit({ what: "remove", theme_id: t.theme_id, value: true, why: r.why || undefined }, `“${shortTitle(t.name, 60)}” removed.`))) return;
-      if (r.how === "replace") { try { await api("POST", `${base}/new`, { replaces: t.theme_id }); } catch (e) { showError(e); } }
+      const how = await askRemove(t, (_, why) => edit({ what: "remove", theme_id: t.theme_id, value: true, why: why || undefined }, `“${shortTitle(t.name, 60)}” removed.`));
+      if (!how) return;
+      if (how === "replace") { try { await api("POST", `${base}/new`, { replaces: t.theme_id }); } catch (e) { showError(e); } }
       navigate(runHref(runId));
     } }, icon("minus", { size: 13 }), "Remove…");
     // a theme is the research's own words: its name in the Display serif; the way to Hypotheses is a link, so it sits in

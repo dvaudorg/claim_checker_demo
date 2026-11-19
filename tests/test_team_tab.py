@@ -124,7 +124,7 @@ def test_the_team_place_draws_itself_for_its_state():
 
 def test_the_first_invite_while_you_are_the_only_one():
     fn = TEAM[TEAM.index("function firstInviteSection(ctx) {"):TEAM.index("function stateSection(ctx) {")]
-    assert "if (!sp.keeper || others.length) return null;" in fn
+    assert "if (!sp.keeper || sp.member_keeper || others.length) return null;" in fn
     # with an invite waiting, the card says so and offers another (a small button: the first is the card's main one)
     assert "waiting to be used" in fn and 'id: "team-invite-another", onClick: () => inviteDialog(ctx) }, "Invite another colleague…")' in fn
     assert 'link({ href: "#/team/settings?at=people", id: "team-invites-waiting" }, "People and settings")' in fn
@@ -134,11 +134,11 @@ def test_the_first_invite_while_you_are_the_only_one():
     assert "if ((st.people || []).length || st.reachable === false) return null;" in fn
     assert 'link({ href: "#/team/settings?at=people", id: "team-first-steps" }, "People and settings")' in fn
     space = (STATIC / "views" / "team-space.js").read_text(encoding="utf-8")
-    assert "export async function inviteDialog(ctx) {" in space
+    assert "export async function inviteDialog(ctx, opts = {}) {" in space
     # the invites and Invite a colleague… stand with the people (the People card), not in the storage space's card
     assert "export function spaceInvites(ctx) {" in space and TEAM.count("...spaceInvites(ctx)") == 2
     people = TEAM[TEAM.index("function peopleSection(ctx) {"):TEAM.index("function sharedSection(ctx) {")]
-    assert "listGroup(null, mine, ...rows, ...joined)), ...spaceInvites(ctx), gone, both, join);" in people
+    assert "listGroup(null, mine, ...rows, ...joined)), ...spaceInvites(ctx), gone, keysLeft, both, join);" in people
     card = space[space.index("function spaceSection(ctx) {"):space.index("export function spaceInvites(ctx) {")]
     assert "inviteDialog" not in card and "Invites not used yet" not in card
 

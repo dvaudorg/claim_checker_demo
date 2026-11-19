@@ -1,7 +1,7 @@
 // Documents, shared by the list (sources.js) and a document's page (doc-page.js and the panels beside its text): how a
 // document was read and the offer of a move to the new reader, the reader's kinds of block in words, where the reader
 // was before a repaint, and a job the page started earlier.
-import { api, h, icon, fmt, P, TERMINAL, session, link, tag, dialog, input, toast, showError } from "../lib.js";
+import { App, api, h, icon, fmt, P, TERMINAL, session, link, tag, dialog, input, toast } from "../lib.js";
 
 // Whether a name (a file's, a work's in the bibliography) only repeats the document's title, whatever its case, its
 // punctuation and a file's extension: "About Repair Café - Repairing for a Sustainable Future.html" says no more than
@@ -15,7 +15,7 @@ export function repeatsTitle(name, title) {
 // 0.15: how a document was read, in the list: one that read badly or has something to check (0.15.7: until the
 // person marks the reading as checked), or one read by an earlier reader (0.15.7: also 0.15.0's; its link opens the
 // preview of the move)
-export const reader = { latest: 6 };  // ingest.READER, as the list of documents says it
+export const reader = { latest: 7 };  // ingest.READER, as the list of documents says it
 // 0.17.2: what reader 4 reads otherwise than reader 3 (only text files and Word files can change)
 // 0.17.2: reader 4 reads only text and Word files otherwise than reader 3, so a reader-3 PDF or web page is not offered
 // it (it would read the same); documents of earlier readers are offered it whatever their kind
@@ -24,17 +24,39 @@ export const reader = { latest: 6 };  // ingest.READER, as the list of documents
 // 0.19: reader 6 reads PDFs otherwise than reader 5, and a document in two languages of any kind; the server says which
 // (`new_reader_changes`); without that word, a reader-5 document of another kind than a PDF is not offered it (nor a
 // reader-4 text file)
+// reader 7 reads text files, Word files and web pages otherwise and PDFs as reader 6 did, so a reader-6 PDF is
+// not offered it, and a reader-4 text file is again (the server says so too)
 export function newReaderFor(d, latest) {
   const r = d.reader || 1;
   // 0.19: the server says whether the new reader would read it otherwise (languages.new_reader_changes: reader 6
   // changes a PDF, and a document in two languages one of whose passages holds both)
   if (typeof d.new_reader_changes === "boolean") return r < latest && d.new_reader_changes;
-  return r < latest && !(r === 3 && latest === 4 && !["text", "docx"].includes(d.kind)) && !(r === 4 && latest >= 5 && d.kind === "text")
-    && !(r === 5 && latest === 6 && d.kind !== "pdf");
+  return r < latest && !(r === 3 && latest === 4 && !["text", "docx"].includes(d.kind)) && !(r === 4 && (latest === 5 || latest === 6) && d.kind === "text")
+    && !(r === 5 && latest === 6 && d.kind !== "pdf") && !(r === 6 && latest === 7 && d.kind === "pdf");
 }
+export const READER_7_NEWS = "The new reader reads text files, Word files and web pages otherwise. Where every line is a paragraph of its own (an interview with a blank line between turns), a question or answer that comes back is no longer set aside as a running head. A text file of short paragraphs, one per line, gets a paragraph per line, so a quote is cited by its own paragraph. A Word file's text box is read once, as a paragraph of its own after the one that holds it (its words were read twice, joined to that paragraph). A text saved as ISO-8859-2 (Polish, Czech, Slovak), or as UTF-16 without its mark, keeps its letters. PDFs read the same.";
 export const READER_6_NEWS = "The new reader also leaves out text a PDF hides behind a figure (a draft page cut to a window), sets aside the e-mails, DOI and dates some publishers print at the foot of the first page, takes the title rather than the journal's name where that name begins the running head, and sets aside running heads it missed on every other page. In a document printed in two languages (a side-by-side translation) it keeps the two apart: no passage holds both, so keeping one language leaves the other out entirely. Other documents read the same.";
 export const READER_5_NEWS = "The new reader also finds tables from their ruled lines, joins a table that runs on to the next page, and shows figures and pictures with their captions (drawn from the original PDF, never stored). Other text reads the same.";
 export const READER_4_NEWS = "The new reader takes each line of a text file without blank lines between its paragraphs as a paragraph of its own, and reads the text in a Word file's content controls and a table inside a table once. Other documents read the same.";
+// hunt phase 1 (PAGESB-8): the news of a move is that of every reader between the documents' and the newest that reads
+// their kind of file otherwise. It was the news of the reader after the document's alone: a reader-4 text file, offered
+// reader 7 because reader 7 reads text files otherwise, was told reader 5's news ("Other text reads the same").
+// Which kinds each reader changed (docs/manual/how-documents-are-read.md, the table of readers; a file of no known kind
+// takes every reader's news). Reader 6 changes other kinds too, but only in a document in two languages, which the
+// server alone can tell: then, as when nothing else matches, the newest reader's news is said.
+const READER_KINDS = { 4: ["text", "docx"], 5: ["pdf", "docx", "html"], 6: ["pdf"], 7: ["text", "docx", "html"] };
+const READER_NEWS = { 4: READER_4_NEWS, 5: READER_5_NEWS, 6: READER_6_NEWS, 7: READER_7_NEWS };
+const KNOWN_KINDS = ["pdf", "docx", "html", "text"];
+export function readerNews(docs, latest = reader.latest) {
+  const steps = [];
+  for (let r = 4; r <= latest; r++) {
+    if (READER_NEWS[r] && docs.some((d) => (d.reader || 1) < r && (!KNOWN_KINDS.includes(d.kind) || READER_KINDS[r].includes(d.kind)))) steps.push(r);
+  }
+  if (!steps.length) return READER_NEWS[latest] || READER_7_NEWS;
+  if (steps.length === 1) return READER_NEWS[steps[0]];
+  // several readers: each one's last words ("Other text reads the same") are untrue of the others, so they go
+  return steps.map((r) => READER_NEWS[r].replace(/\s*(?:Other text|Other documents|PDFs) reads? the same\.$/, "")).join(" ");
+}
 export function readingNote(d) {
   const href = `#/doc/${encodeURIComponent(d.doc_id)}?tab=reading`;
   if ((d.reading_quality === "poor" || d.reading_quality === "fair") && !d.reading_checked) {
@@ -58,8 +80,10 @@ const KIND_PLURAL = { title: ["title", "titles"], heading: ["heading", "headings
 export const kindCount = (k, n) => `${fmt.num(n)} ${(KIND_PLURAL[k] || [k, k])[n === 1 ? 0 : 1]}`;
 
 // where the reader was before a block was restored or left out (0.15), a move to the new reader (doc-reading.js), kept
-// for the next drawing of the document page (doc-page.js): `keep.place` is {doc, y, tab, focus, open}
+// for the next drawing of the document page (doc-page.js): `keep.place` is {project, doc, y, tab, focus, open}
 export const keep = { place: null };
+// hunt phase 1.5: the place is this project's (a copy of a project has the same document ids)
+export const keptHere = (docId) => !!keep.place && keep.place.doc === docId && keep.place.project === App.project;
 // a job this page started earlier (kept for this tab), if it is still running
 export async function stillRunning(key) {
   const j = session(key);
@@ -81,20 +105,31 @@ export async function renameDocument(project, d) {
     h("p", { class: "muted small" }, "Shown everywhere in this project: the Documents list, results, the bibliography and exports. "
       + "The file and its text stay as they are, and so does every result."),
     d.file ? h("p", { class: "muted small" }, "File: ", d.file) : null);
+  const err = h("p", { class: "field-error", role: "alert" });
+  body.appendChild(err);
+  // hunt phase 1 (as PAGESB-2): the title is saved from the dialog's own buttons, and a refused or failed save keeps
+  // the dialog open with the title typed and the reason in it; it was sent after the dialog had closed
+  let res = null, sent = "";
+  const lock = { on: false };
+  const save = (again) => async () => {
+    err.textContent = "";
+    const title = again ? "" : nameIn.value.replace(/\s+/g, " ").trim();
+    if (!again && (!title || title === was)) return true;
+    lock.on = true;
+    sent = title;
+    try { res = await api("PUT", `/api/projects/${P(project)}/documents/${P(d.doc_id)}/title`, { title }); }
+    catch (e) { err.textContent = e.message; nameIn.focus(); return false; }
+    finally { lock.on = false; }
+    return true;
+  };
   const actions = [{ text: "Cancel", value: null }];
-  if (d.named) actions.push({ text: "Use the title it had before", value: "" });
-  actions.push({ text: "Rename", value: "save", primary: true });
-  const r = await dialog({ title: "Rename the document", body, actions, onOpen: () => {
+  if (d.named) actions.push({ text: "Use the title it had before", value: "", onClick: save(true) });
+  actions.push({ text: "Rename", value: "save", primary: true, onClick: save(false) });
+  await dialog({ title: "Rename the document", body, actions, lock, onOpen: () => {
     nameIn.select();
     nameIn.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); nameIn.closest("dialog").querySelector(".btn-primary").click(); } });
   } });
-  if (r === null) return null;
-  const title = r === "" ? "" : nameIn.value.replace(/\s+/g, " ").trim();
-  if (r === "save" && (!title || title === was)) return null;
-  try {
-    const res = await api("PUT", `/api/projects/${P(project)}/documents/${P(d.doc_id)}/title`, { title });
-    if (!res.changed) return null;
-    toast(title ? "Document renamed." : "Its earlier title is back.", "ok", { small: true, ttl: 3000 });
-    return res;
-  } catch (e) { showError(e); return null; }
+  if (!res || !res.changed) return null;
+  toast(sent ? "Document renamed." : "Its earlier title is back.", "ok", { small: true, ttl: 3000 });
+  return res;
 }

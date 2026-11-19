@@ -1,5 +1,5 @@
 // Settings: model service, embeddings, check defaults, frameworks, model test, data folder.
-import { store, saveBlob, App, api, h, icon, tabs, replace, clear, toast, showError, fmt, pageHead, watchJob, P, field, switchControl, rangeControl, confirmDialog, dialog, download, VERSION, TERMINAL, strictness, statusBadge, copyLine, tesseractHelp, helpMark, rememberClaude, claudeAccount, appName, Updates, checkUpdate, speedPicker, saveSpeed, thoughtPicker, saveThought, choice, planTier, button, card, fold, link, notice, downloadButton, input as fieldInput, select as selectField, tag, optionCards, readsLine, stopButton, inset, workState, aiWhere, myLink, WhatsNew, loadWhatsNew, showWhatsNew, whatsNewLink, aiButton, setBusy, aiSide, aiSides } from "../lib.js";
+import { store, saveBlob, App, api, h, icon, tabs, replace, clear, toast, showError, fmt, pageHead, watchJob, P, field, switchControl, rangeControl, confirmDialog, dialog, download, VERSION, TERMINAL, strictness, statusBadge, copyLine, tesseractHelp, helpMark, rememberClaude, claudeAccount, appName, Updates, checkUpdate, speedPicker, saveSpeed, thoughtPicker, saveThought, latestPick, choice, planTier, button, card, fold, link, notice, downloadButton, input as fieldInput, select as selectField, tag, optionCards, readsLine, stopButton, inset, workState, aiWhere, myLink, WhatsNew, loadWhatsNew, showWhatsNew, whatsNewLink, aiButton, setBusy, aiSide, aiSides } from "../lib.js";
 import { withAI } from "../features.js";
 import { aiRun } from "./progress.js";
 import { remoteServerLine, restrictedModelCard, termsPanel } from "./ai-access.js";
@@ -49,11 +49,14 @@ const untried = (title) => `Built from ${title}’s documentation and not yet tr
 async function projectShared() {
   if (!App.project) return { shared: false };
   try { const a = ((await api("GET", `/api/projects/${P(App.project)}`)) || {}).ai_access || {}; return { shared: !!a.shared, limit: (a.team_limit && a.team_limit.providers) || null, note: a.providers_note || "" }; }
-  catch (_) { return { shared: false }; }
+  // hunt phase 1.5: a failed look is not "not shared": the consent dialog says it could not be checked (it dropped
+  // the team's line without a word)
+  catch (_) { return { shared: false, unknown: true }; }
 }
 // one line in the consent dialog of a provider in a shared project: the choice is the person's own, and the team's
 // limit, when the owner set one that leaves this provider out
 const sharedLine = (who, prov, team) => {
+  if (team && team.unknown) return h("p", { class: "small", id: "consent-shared" }, `Whether this project is shared with a team could not be checked just now. If it is, the provider is your own choice, for your copy; your colleagues see in the research log which provider you allowed, and a limit set by the team’s owner may leave ${who} out.`);
   if (!team || !team.shared) return null;
   if (team.limit && prov && !team.limit.includes(prov)) return h("p", { class: "small", id: "consent-shared" }, `${team.note} So ${who} reads none of this project’s documents.`);
   return h("p", { class: "small", id: "consent-shared" }, `This project is shared with a team: the provider is your own choice, for your copy. Your colleagues see in the research log which provider you allowed, and the AI log shows who ran what with which provider.`);
@@ -173,18 +176,23 @@ function basicsSection(s) {
     } catch (e) { showError(e); }
   }
   // strictness saves when the slider is let go, and reports what changed
+  // one save at a time; a change made meanwhile is remembered and saved when the running one ends (the newest wins)
   let savingStrict = false;
+  let wantedT = null;
   async function saveStrict(newT) {
+    wantedT = newT;
     if (savingStrict) return;
     savingStrict = true;
-    const oldT = App.settings().threshold ?? 0.6;
     try {
-      if (Math.abs(oldT - newT) > 1e-9) {
-        await save({ threshold: newT });
-        await reportChanges(oldT, newT);
+      while (wantedT !== null && Math.abs((App.settings().threshold ?? 0.6) - wantedT) > 1e-9) {
+        const oldT = App.settings().threshold ?? 0.6;
+        const t = wantedT;
+        await save({ threshold: t });
+        await reportChanges(oldT, t);
         loadCalibration();
       }
     } catch (_) { /* shown */ }
+    wantedT = null;
     savingStrict = false;
   }
   thr.input.addEventListener("change", () => saveStrict(thr.input.valueAsNumber));
@@ -194,7 +202,8 @@ function basicsSection(s) {
   const loadCalibration = async () => {
     if (!App.project) { clear(calibration); return; }
     try { replace(calibration, calibrationBlock(await api("GET", `/api/projects/${P(App.project)}/calibration`), useSuggestion)); }
-    catch (e) { clear(calibration); }
+    // hunt phase 1.5: said in the block (it was emptied without a word, and a link to it showed nothing)
+    catch (e) { replace(calibration, h("p", { class: "muted small set-calibration-empty" }, `How often you agreed with the AI could not be worked out just now (${e.message}). Open this page again to try once more.`)); }
     // linked to from a result ("how often you agree"): the block is loaded after the page, so scroll to it now
     if (/#\/settings\/calibration$/.test(location.hash)) { calibration.scrollIntoView({ block: "start" }); const t = calibration.querySelector(".cal-title"); if (t) { t.setAttribute("tabindex", "-1"); t.focus(); } }
   };
@@ -481,7 +490,15 @@ function restrictedCard(s, servers, info) {
   const extra = [];
   if (local && AGENT_ROUTES.includes(s.backend)) {
     const W = AGENT_CHOICE[s.backend].title;
-    const pick = (key, ctl) => async (v) => { const was = s[key]; try { await save({ [key]: v }); s[key] = v; } catch (_) { ctl().set(was); } };
+    // hunt phase 1.5 (phase 0 P-3): a failed pick goes back to the value saved last, and only when no later pick was made
+    const pick = (key, ctl) => {
+      let back = null;
+      return async (v) => {
+        back = back || latestPick(() => s[key], (w) => ctl().set(w));
+        const one = back.start();
+        try { await save({ [key]: v }); s[key] = v; one.saved(v); } catch (_) { one.failed(); }
+      };
+    };
     let mix = null, limit = null;
     mix = choice({ sm: true, label: "Sharing the work", value: s.ai_mix || "best",
       options: [["mostly_local", "Mostly local"], ["balanced", "Balanced"], ["best", "Best quality"]], onPick: pick("ai_mix", () => mix) });
@@ -840,7 +857,7 @@ function reasoningRows(now) {
   const budget = fieldInput({ type: "number", id: "s-think-budget", class: "set-num", min: 0, max: 16384, step: 250, value: now.think_budget ?? 1500 });
   const words = () => {
     const n = Number(budget.value) || 0;
-    return n ? `At most about ${n.toLocaleString()} tokens of reasoning per call: about ${Math.round(n / 20 / 60 * 10) / 10 || "<1"} min at 20 tokens a second. 0 = no limit.` : "No limit: a reasoning model can take many minutes per call.";
+    return n ? `At most about ${n.toLocaleString("en-GB")} tokens of reasoning per call: about ${Math.round(n / 20 / 60 * 10) / 10 || "<1"} min at 20 tokens a second. 0 = no limit.` : "No limit: a reasoning model can take many minutes per call.";
   };
   const note = h("div", { class: "field-help" }, words());
   budget.addEventListener("input", () => { note.textContent = words(); });
@@ -1186,7 +1203,7 @@ function localTierFacts(s, info) {
   const rows = pick ? h("dl", { class: "tech-dl" },
     h("div", {}, h("dt", {}, "Chosen for this computer"), h("dd", {}, `${pick.name} · ${pick.size} · ${pick.answers === "explorer" ? "explorer: points at sentences" : "suggestions"}`)),
     main ? h("div", {}, h("dt", {}, "In use now"), h("dd", {}, s.backend === "openai" ? (s.openai_model || "the first model the server lists") : (s.ollama_model || "chosen automatically"))) : null,
-    h("div", {}, h("dt", {}, "Context length, reasoning, seed"), h("dd", {}, `set by ENLENS: ${pick.num_ctx.toLocaleString()} tokens, reasoning off for checks, seed ${s.seed ?? 42}`)),
+    h("div", {}, h("dt", {}, "Context length, reasoning, seed"), h("dd", {}, `set by ENLENS: ${pick.num_ctx.toLocaleString("en-GB")} tokens, reasoning off for checks, seed ${s.seed ?? 42}`)),
     adv.computer && adv.computer.words ? h("div", {}, h("dt", {}, "This computer"), h("dd", {}, adv.computer.words)) : null) : h("p", { class: "muted small" }, (adv && adv.chat && adv.chat.reason) || "This computer could not be read just now.");
   const offer = older && ollama ? h("div", { class: "stack" },
     h("p", { class: "small" }, `You use ${older.chosen}, set up before ENLENS chose models for you. It keeps working. ${older.offer} (${older.size}) is the one chosen for this computer now; download it if you want it (it is then used for new checks).`),
@@ -1212,7 +1229,8 @@ function secondModelSection(s, servers) {
   const sum = h("span", {}, current || "None");
   const sel = selectField({ id: "second-model" }, h("option", { value: "" }, "None (no second opinions)"),
     models.map((m) => h("option", { value: m, selected: m === current }, m)),
-    current && !models.includes(current) ? h("option", { value: current, selected: true }, `${current} (not installed now)`) : null);
+    // hunt phase 1: "not installed" only when a server answered (GET /api/servers failed, or none runs: nothing is known)
+    current && !models.includes(current) ? h("option", { value: current, selected: true }, servers.length ? `${current} (not installed now)` : current) : null);
   const txt = fieldInput({ mono: true, type: "text", placeholder: "or type a model name", value: "", "aria-label": "Model for second opinions, typed" });
   const keep = async (v) => {
     if (v && v === main) { toast("That is the main model. Choose a different one for second opinions.", "warn"); return false; }
@@ -1316,7 +1334,8 @@ function embedModelSection(s, servers) {
     sum.textContent = k === "off" ? "Off" : `${st.embed_model || "No model chosen"} on ${k === "openai" ? "an OpenAI-compatible server" : "Ollama"}`;
   };
   say();
-  const modelRow = setting("Embedding model", model, { help: all.length ? null : "None installed yet." });
+  // hunt phase 1: "none installed" only when a server answered and listed none
+  const modelRow = setting("Embedding model", model, { help: all.length ? null : servers.length ? "None installed yet." : "No model server answered just now, so the installed models could not be listed." });
   const urlRow = setting("Address (optional)", url, { help: "Empty: the chat server's address." });
   const toggle = () => { modelRow.hidden = urlRow.hidden = kind.value === "off"; };
   toggle();
@@ -1384,7 +1403,7 @@ function reproSection(s) {
     setBusy(test, false);
   });
   return { id: "repeatable", title: "Repeatable results", summary: sum,
-    lead: "Every model request is sent with a fixed seed and temperature 0, and every result records the model and its exact version.",
+    lead: "A model on this computer, or another cloud provider's API that takes them, is sent a fixed seed and temperature 0; Claude Code, the Claude API, Codex and Antigravity are sent neither. Every result records the model and its exact version where the route reports one.",
     body: [setting("Seed", seed, { help: "Any whole number. Changing it can change the answers.",
       about: ["The seed", "With the same seed, documents and settings, a model gives the same answers, when its server honours the seed (test it below). The seed is shown in “How these results were made” in every Excel download."] }),
     h("div", { class: "btn-row" }, withAI(test)),
@@ -1609,12 +1628,17 @@ function installationSection() {
   const ocr = st.ocr || {};
   const v = st.version || VERSION;
   const how = st.installation && INSTALLED[st.installation.kind];
+  const problems = Array.isArray(st.addon_problems) ? st.addon_problems : [];
   return { id: "installation", title: "This installation", summary: `${appName()} ${v}${how ? `, installed ${how[0]}` : ""}`,
     body: [h("dl", { class: "kv-grid" },
       h("div", { class: "kv" }, h("dt", {}, "Version"), h("dd", {}, `ENLENS ${v}`, installedWith(st.installation))),
       h("div", { class: "kv" }, h("dt", {}, "Network"), h("dd", {}, "This computer only · nothing is loaded from the internet")),
       h("div", { class: "kv" }, h("dt", {}, "Text recognition (OCR) for scanned PDFs"), h("dd", {}, ocr.available ? `installed (Tesseract${ocr.languages && ocr.languages.length ? `, languages: ${ocr.languages.join(", ")}` : ""})`
-        : ["not available", ocr.missing && ocr.missing.length ? h("div", { class: "muted small" }, `Missing: ${ocr.missing.map((m) => ({ tesseract: "the Tesseract program (tesseract-ocr)", pypdfium2: "the Python package pypdfium2", pillow: "the Python package pillow" }[m] || m)).join("; ")}.${ocr.missing.includes("tesseract") ? " How to get Tesseract: Settings › Documents." : ""}${ocr.missing.some((m) => m !== "tesseract") ? " The Python parts: pip install 'enlens-claims[ocr]', then restart the app." : ""}`) : null])))] };
+        : ["not available", ocr.missing && ocr.missing.length ? h("div", { class: "muted small" }, `Missing: ${ocr.missing.map((m) => ({ tesseract: "the Tesseract program (tesseract-ocr)", pypdfium2: "the Python package pypdfium2", pillow: "the Python package pillow" }[m] || m)).join("; ")}.${ocr.missing.includes("tesseract") ? " How to get Tesseract: Settings › Documents." : ""}${ocr.missing.some((m) => m !== "tesseract") ? " The Python parts: pip install 'enlens-claims[ocr]', then restart the app." : ""}`) : null])),
+      // hunt phase 1.5: the add-ons that could not be loaded, and those left out of the open project (GET /api/state
+      // `addon_problems`), one line each; nothing when there are none
+      problems.length ? h("div", { class: "kv" }, h("dt", {}, problems.length === 1 ? "An add-on could not be loaded" : "Add-ons that could not be loaded"),
+        h("dd", {}, problems.map((e) => h("div", { class: "addon-problem small" }, `${e.addon}: ${e.error}${e.project ? ` (project ${e.project})` : ""}`)))) : null)] };
 }
 
 // ---------------------------------------------------------------------------------------------

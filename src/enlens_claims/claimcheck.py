@@ -18,16 +18,17 @@ A check started by a model outside this program (Claude in a chat, through the c
 """
 from __future__ import annotations
 
-import bisect
 import csv
 import inspect
 import io
 import json
+import threading
 import uuid
 from typing import Any, Callable
 
 from . import __version__, access, frameworks, routing, schema, tasks
 from .reread import is_tombstone  # noqa: F401  (still importable from here)
+from .review import csv_uncell
 from .search import neighbours, passage_index, rank_passages  # noqa: F401  (re-exported for callers)
 from .store import Workspace, now
 from .textutil import find_quote, find_selection  # noqa: F401  (still importable from here)
@@ -165,17 +166,88 @@ def _round_waiting(parts: list) -> bool:
                for t in parts)
 
 
+def _answered_again(t) -> bool:
+    """Whether a part refused with tries left will be answered again by someone other than a job of the app: a
+    Claude chat's round (it sends its grades again; hunt phase 1.5: not once it has ended, `_left`), a part in the
+    queue, or a `:local` part (Read them now)."""
+    try:
+        model = t["model"]
+    except (IndexError, KeyError):
+        model = None
+    return (model == CHAT_MODEL and not _left(t)) or _queued_open(t) or t["task_id"].endswith(":local")
+
+
+def _col(t, key: str):
+    """A column of a task row (a dict or a database row), None when the row has none."""
+    try:
+        return t[key]
+    except (IndexError, KeyError):
+        return None
+
+
+# hunt phase 1.5 (review wave 3): the proof that the app's own part of a round is answered by nobody: it was made
+# before this program started, and no job of it answers the part now (`_run_round` names the part while it asks it)
+_STARTED = now()
+_ANSWERING: set[str] = set()
+_ANSWERING_LOCK = threading.Lock()
+
+
+def _left(t) -> bool:
+    """Hunt phase 1.5 (CHECKS-5): an open part (pending, retry) of a round that nobody answers any more, so the round
+    has ended and the app may read its excerpts itself (`continue_check` takes it back first).
+
+    - A Claude chat's part untouched (made, or last answered) for as long as a claim on the queue lasts
+      (taskqueue.CLAIM_MINUTES): a chat refused once and then abandoned, or one that never sent grades.
+    - The app's own part only on its own sign, never by time (a slow model may read for longer): left at "retry"
+      (the app retries at once, so it was closed between two tries), or still "pending" though it was made before
+      this program started; in both cases only when no job of this program asks it now (`_ANSWERING`).
+    Never a part in the queue, one a program has claimed (a live claim), a `:local` part (Read them now), a person's,
+    a part of a check by queue still under way (one held out of the queue until the person allows its provider: its
+    claim's stage is still "judge"), or a part whose documents no longer allow the cloud (it waits for a model that
+    may read it, or the person). Review wave 3: the time lapse made such waiting rounds "ended" after 30 minutes, and
+    `continue_check` then deleted them."""
+    if t["status"] not in ("pending", "retry") or _is_person(t) or _queued_open(t) or t["task_id"].endswith(":local"):
+        return False
+    if _col(t, "claim_stage") in ("terms", "rank", "judge") or (_col(t, "access") or "cloud") != "cloud":
+        return False
+    from .taskqueue import _cutoff
+
+    cutoff = _cutoff()
+    if _col(t, "claimed_by") and (_col(t, "claimed_at") or "") >= cutoff:
+        return False
+    touched = _col(t, "touched")
+    if (t["model"] or "") == CHAT_MODEL:
+        return bool(touched) and touched < cutoff
+    with _ANSWERING_LOCK:
+        if t["task_id"] in _ANSWERING:
+            return False
+    return t["status"] == "retry" or (bool(touched) and touched < _STARTED)
+
+
 def _round_status(parts: list) -> str:
     """A round's status from the parts a model answers. 0.14.3: a part no model answers (`:person`, born done) is
     neutral; it made a round whose main part failed count as done, which hid the failure ("No evidence found"). A
     model part still waiting makes the round wait; otherwise the main part decides (a `:local` part that failed
     beside an answered main part is shown on its own, see `local_failed`); a round without a main part is done when
-    one of its model parts is. A round of person parts only is done: nothing is left for a model."""
+    one of its model parts is. A round of person parts only is done: nothing is left for a model.
+
+    Hunt phase 1 (CHECKS-5): a part whose answer was refused but that has tries left ("retry") is still open work
+    when someone will answer it again: a Claude chat (the connector's submit_grades says "fix exactly these
+    problems"), the queue, or the local model. The round then reads as pending ("Not finished yet"), not as a check
+    that did not work. Only a part the app itself was answering stays "retry" (failed, `_status_of_rounds`): the app
+    retries at once, and a backend error or Stop takes the round back, so such a part is left only when the app was
+    closed between two tries, and nobody will try again; "did not work, try again" is then the answer a person can
+    act on. Hunt phase 1.5: a round whose main part nobody answers any more (`_left`) has ended in the same way."""
     sts = [t["status"] for t in parts if not _is_person(t)]
     if not sts:
         return "done" if parts else "pending"
+    main = _main_part(parts)
+    if main is not None and _left(main):
+        return "retry"  # hunt phase 1.5 (CHECKS-5): ended, nobody answers it any more (did not work; read it again)
     for s in ("retry", "pending"):
         if s in sts:
+            if s == "retry" and all(_answered_again(t) for t in parts if not _is_person(t) and t["status"] == "retry"):
+                return "pending"
             return s
     main = _main_part(parts)
     if main is not None and not _is_person(main):
@@ -219,9 +291,10 @@ def _light_checks(ws: Workspace, claim_ids: list[str] | None = None, titles: boo
     whole text in memory to count its excerpts."""
     cols = "json_extract(j.value, '$.passage_id'), json_extract(j.value, '$.doc_id')" + (
         ", json_extract(j.value, '$.title')" if titles else "")
-    sql = (f"SELECT t.task_id, t.status, t.queued, t.model, CASE WHEN json_valid(t.payload_json) THEN (SELECT "
-           f"json_group_array(json_array({cols})) FROM json_each(t.payload_json, '$.passages') j) END AS ex "
-           "FROM tasks t WHERE ")
+    sql = (f"SELECT t.task_id, t.status, t.queued, t.model, t.access, t.claimed_by, t.claimed_at, t.created_at, "
+           f"{_TOUCHED.format(t='t')} AS touched, CASE WHEN "
+           f"json_valid(t.payload_json) THEN (SELECT json_group_array(json_array({cols})) FROM "
+           "json_each(t.payload_json, '$.passages') j) END AS ex FROM tasks t WHERE ")
     if claim_ids is None:
         rows = ws.query(sql + "t.kind='check' ORDER BY t.created_at, t.rowid")
     else:
@@ -230,6 +303,7 @@ def _light_checks(ws: Workspace, claim_ids: list[str] | None = None, titles: boo
             cond, args = tasks.check_task_ids_sql(cid)
             rows += ws.query(sql + f"+t.kind='check' AND {cond.replace('task_id', 't.task_id')} "
                              "ORDER BY t.created_at, t.rowid", args)
+    stage = {r[0]: r[1] for r in ws.query("SELECT claim_id, stage FROM user_claims")} if rows else {}
     out: dict[str, list[dict]] = {}
     for n, r in enumerate(rows):
         if r["ex"] is None:  # a payload SQLite cannot read: read (and fail) as before
@@ -239,7 +313,8 @@ def _light_checks(ws: Workspace, claim_ids: list[str] | None = None, titles: boo
             ex = [tuple(x) for x in json.loads(r["ex"])]
         out.setdefault(r["task_id"].split(":")[1], []).append(
             {"task_id": r["task_id"], "status": r["status"], "queued": r["queued"], "model": r["model"], "excerpts": ex,
-             "n": n})
+             "n": n, "touched": r["touched"], "access": r["access"], "claimed_by": r["claimed_by"],
+             "claimed_at": r["claimed_at"], "created_at": r["created_at"], "claim_stage": stage.get(r["task_id"].split(":")[1])})
     return out
 
 
@@ -260,9 +335,18 @@ BY_CHOICE = "by-choice"  # 0.19.8: the prompt_version of a person's row the pers
 
 def _person_rows(cx, task_id: str, cid: str, passages: list[dict], by_choice: bool = False) -> None:
     """The excerpts of a part no model reads: each waits for a person's judgement (no AI verdict). `by_choice`: the
-    person chose to judge them instead of starting the local model (0.19.8: "Awaiting manual review")."""
+    person chose to judge them instead of starting the local model (0.19.8: "Awaiting manual review").
+
+    Hunt phase 1 (CHECKS-2): a row the person judged or commented on is kept as it is, only marked as theirs to judge
+    again. `local_again` keeps such a row ("the judgement stays"), and Judge it myself pressed again wrote it anew
+    without the judgement, so the excerpt lost it and it no longer counted."""
     for p in passages:
         vid = f"v{tasks._h(task_id, p['passage_id'])}"
+        if cx.execute("SELECT 1 FROM verifications WHERE ver_id=? AND (COALESCE(user_verdict, '') != '' OR "
+                      "COALESCE(user_note, '') != '')", (vid,)).fetchone():
+            cx.execute("UPDATE verifications SET model=?, prompt_version=? WHERE ver_id=?",
+                       (PERSON, BY_CHOICE if by_choice else None, vid))
+            continue
         cx.execute("INSERT OR REPLACE INTO verifications(ver_id, subject_kind, subject_id, passage_id, doc_id, verdict, "
                    "confidence, quote, start, end, page, model, prompt_version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                    (vid, "user_claim", cid, p["passage_id"], p["doc_id"], "not_enough_info", None, None, None, None,
@@ -413,7 +497,13 @@ def _run_round(ws: Workspace, parts: dict[str, str], backend, model: str, reader
     there is none). Backend errors of the main model propagate."""
     ok = True
     if "main" in parts:
-        ok, _errs = tasks.run_one(ws, parts["main"], backend, model)
+        with _ANSWERING_LOCK:   # hunt phase 1.5: being answered, so never taken for a round nobody answers (`_left`)
+            _ANSWERING.add(parts["main"])
+        try:
+            ok, _errs = tasks.run_one(ws, parts["main"], backend, model)
+        finally:
+            with _ANSWERING_LOCK:
+                _ANSWERING.discard(parts["main"])
     if "local" in parts:
         if readers is not None and readers.defers():
             # 0.19.13: in a job of the app the local part waits for the local model's own Start, and is read beside
@@ -878,7 +968,7 @@ def check_hypothesis(ws: Workspace, text: str, backend, model: str, framework: s
             stop()
             say("decompose", "Splitting your hypothesis into parts that can be checked one by one", {})
             got = _decompose(ws, hid, text, words_by[0], words_by[1], _used(*words_by))
-            if len(got) > 1:
+            if got and len(got) > 1:   # (None when the answers failed: then it is checked as written)
                 plan = [{"text": p["text"], "role": p.get("role"), "part": i} for i, p in enumerate(got, 1)]
                 say("decompose_done", f"Split into {len(plan)} parts", {"parts": [p["text"] for p in plan]})
             else:
@@ -1325,6 +1415,18 @@ def continue_check(ws: Workspace, cid: str, backend, model: str, k: int = 8, ter
     `doc_ids` limits the round to those documents (see `more_passages`)."""
     say = _adapt(progress)
     _stopper(should_stop)()
+    # hunt phase 1.5: the app's way to a further round says, in the person's words, why it cannot start yet
+    # (`more_passages` says it in the connector's, naming the tool a Claude chat calls)
+    groups = _rounds(ws, cid)
+    last = _main_part(groups[-1]) if groups else None
+    if last is not None and last["status"] not in ("done", "failed"):
+        if not _left(last):
+            raise ValueError(ROUND_WAITS)
+        # hunt phase 1.5 (CHECKS-5): a round nobody answers any more (the app closed between two tries, a chat that
+        # stopped) is taken back, so this round reads its excerpts again; a person's judgements in it stay (they are
+        # in its `:person` part and in `judgements`), and so does what the local model read
+        with ws.connect() as cx:
+            _drop_parts(cx, [last["task_id"]])
     used = _used(backend, model)
     say("rank", "Looking for further excerpts not read yet", {})
     own = readers is None
@@ -1366,7 +1468,13 @@ def chat_rules() -> str:
 
 def _check_tasks(ws: Workspace, cid: str) -> list:
     cond, args = tasks.check_task_ids_sql(cid)  # on the key: called per part on every look at the queue
-    return ws.query(f"SELECT * FROM tasks WHERE +kind='check' AND {cond} ORDER BY created_at, rowid", args)
+    return ws.query(f"SELECT *, {_TOUCHED.format(t='tasks')} AS touched, (SELECT stage FROM user_claims WHERE "
+                    f"claim_id=?) AS claim_stage FROM tasks WHERE +kind='check' AND {cond} ORDER BY created_at, rowid",
+                    [cid, *args])
+
+
+# hunt phase 1.5 (CHECKS-5): when a part was last touched (its latest answer, else when it was made), for `_left`
+_TOUCHED = "COALESCE((SELECT MAX(r.received_at) FROM results r WHERE r.task_id={t}.task_id), {t}.created_at)"
 
 
 def _shown(payload: dict) -> list[dict]:
@@ -1401,13 +1509,15 @@ def open_check(ws: Workspace, text: str, terms: list[str] | None = None, target:
 def _chat_round(ws: Workspace, parts: dict[str, str], provider: str | None = access.ANTHROPIC,
                 route: str | None = None) -> dict:
     """The excerpts of a round a Claude chat may read (the main part), and how many others there are (0.11)."""
-    main = ws.scalar("SELECT payload_json FROM tasks WHERE task_id=?", (parts["main"],)) if "main" in parts else None
+    row = ws.query("SELECT payload_json, model FROM tasks WHERE task_id=?", (parts["main"],)) if "main" in parts else []
+    main = row[0]["payload_json"] if row else None
     shown = _shown(json.loads(main)) if main else []
     if main:
         with ws.connect() as cx:
-            # the chat sees the excerpts alone (`_shown`): no context passage enters the ledger (0.11.1)
+            # the chat sees the excerpts alone (`_shown`): no context passage enters the ledger (0.11.1); its model is
+            # the chat's, which ENLENS knows only by the name the task was made with (CHAT_MODEL)
             access.record_sent(cx, parts["main"], json.loads(main), route or access.ROUTE_NAMES["chat"], "check",
-                               context=False, provider=provider)
+                               context=False, provider=provider, model=row[0]["model"])
     n = _part_counts(ws, {k: v for k, v in parts.items() if k != "main"})
     out: dict = {"passages": shown}
     if n:
@@ -1479,6 +1589,13 @@ def submit_grades(ws: Workspace, cid: str, grades: list[dict], summary: str | No
     if t is None:
         raise ValueError("The excerpts of this round all come from documents kept on this computer, so there is "
                          "nothing for you to grade. Ask for more_passages to read further.")
+    if model == CHAT_MODEL and (t["model"] or "") != CHAT_MODEL:
+        # hunt phase 1.5 (review wave 3): the round now open is not the one this chat was shown: the chat's round
+        # ended unanswered and ENLENS read its excerpts itself (`_left`, `continue_check`), or the person asked for more
+        # in the app. Its grades would be stored for excerpts the chat never saw
+        raise ValueError("ENLENS read these excerpts itself after this chat left them unanswered (or the person read "
+                         "further in the app), so these grades were not stored. Read the result with get_check, or "
+                         "ask for more_passages to read further.")
     if t["status"] == "done":
         raise ValueError("These passages are already graded. Ask for more_passages to read further.")
     if t["status"] == "failed":
@@ -1500,7 +1617,9 @@ def read_new_documents(ws: Workspace, hyp_id: str, backend, model: str, k: int =
     """Read the documents added since a check, for every part, as a further round restricted to them (the check
     is not run again, so a person's reviews are kept). Documents without a matching excerpt are only marked as
     looked at. Returns {"hyp_id", "documents", "matching", "passages", "rounds", "before", "after", "changed"}:
-    `before`/`after` the answer and its counts (`_answer_now`), `changed` what differs (`_what_changed`)."""
+    `before`/`after` the answer and its counts (`_answer_now`), `changed` what differs (`_what_changed`). `failed`:
+    the AI's answers for a part could not be used, so what was read is taken back and the documents wait for Read it
+    again (`passages` and `rounds` then say what was shown and did not work)."""
     say = _adapt(progress)
     new = new_documents(ws, hyp_id)
     docs = [d["doc_id"] for d in new if d["matching"]]
@@ -1529,11 +1648,33 @@ def read_new_documents(ws: Workspace, hyp_id: str, backend, model: str, k: int =
         # since the check, so the card and its button come back), and the job ends as stopped
         if _was_stopped(should_stop, readers) and _undo_rounds(ws, made):
             _stopper(lambda: True)()
-    with ws.connect() as cx:
-        cx.execute("UPDATE hypotheses SET docs_checked_at=? WHERE hyp_id=?", (now(), hyp_id))
+    # Hunt phase 1 (CHECKS-3): a round whose AI answers could not be used (three tries) comes back as ok False, not
+    # as an error, and it was kept and the documents marked as looked at: its excerpts counted nowhere, yet the
+    # documents were no longer "added since" and no further round could show them again. As when the reading is
+    # stopped or fails half-way (above), what this reading made is taken back and the documents wait for Read it
+    # again. Every round of it, not only the failed ones: the documents a part read count as read for all parts
+    # (`new_documents`), so a part whose reading failed would never get them again. The answers that passed are
+    # kept by the AI's answer store and are not asked again. A round the person judged an excerpt of meanwhile stays.
+    failed = any(r["ok"] is False for r in rounds)
+    if failed:
+        _drop_failed_reading(ws, made)
+    else:
+        with ws.connect() as cx:
+            cx.execute("UPDATE hypotheses SET docs_checked_at=? WHERE hyp_id=?", (now(), hyp_id))
     after = _answer_now(ws, hyp_id) if docs else None
     return {"hyp_id": hyp_id, "documents": len(new), "matching": len(docs), "passages": total, "rounds": rounds,
-            "before": before, "after": after, "changed": _what_changed(before, after)}
+            "before": before, "after": after, "changed": _what_changed(before, after), "failed": failed}
+
+
+def _drop_failed_reading(ws: Workspace, made: list[tuple[str, dict]]) -> None:
+    """Take back the rounds of a reading of new documents that did not work (`read_new_documents`), each whole,
+    except one with an excerpt the person judged or commented on (their judgement stays, as in `_undo_unread`)."""
+    with ws.connect() as cx:
+        for cid, parts in made:
+            tids = [t for t in parts.values() if t]
+            if not tids or any(_person_judged(cx, cid, t) for t in tids):
+                continue
+            _drop_parts(cx, tids)
 
 
 def _answer_now(ws: Workspace, hyp_id: str) -> dict | None:
@@ -1567,9 +1708,12 @@ def further_round_waits(ws: Workspace, hyp_id: str) -> str | None:
             return "This check is still choosing its excerpts: read further once it has finished."
         groups = _rounds(ws, c["claim_id"])
         last = _main_part(groups[-1]) if groups else None
-        if last is not None and last["status"] not in ("done", "failed"):
-            return "This check still has excerpts waiting to be judged: read further once they are judged."
+        if last is not None and last["status"] not in ("done", "failed") and not _left(last):
+            return ROUND_WAITS  # (hunt phase 1.5: a round that has ended is read again by the further round)
     return None
+
+
+ROUND_WAITS = "This check still has excerpts waiting to be judged: read further once they are judged."
 
 
 def read_unread_documents(ws: Workspace, hyp_id: str, backend, model: str, k: int = 8, embedder=None,
@@ -1619,10 +1763,16 @@ def read_unread_documents(ws: Workspace, hyp_id: str, backend, model: str, k: in
         raise
     if _was_stopped(should_stop, readers) and _undo_rounds(ws, made):
         _stopper(lambda: True)()   # 0.19.17: reset to before Read these, and the job ends as stopped
+    # Hunt phase 1 (CHECKS-3, the same shape): a round whose AI answers could not be used made its documents "read in
+    # this check" (`_unread_split` counts every excerpt shown) though nothing of them counted; it is taken back, as
+    # for the documents added since (`read_new_documents`), and the documents wait for Read these again
+    failed = any(r["ok"] is False for r in rounds)
+    if failed:
+        _drop_failed_reading(ws, made)
     after = _unread_split(ws, hyp_id) if rounds else None
     left = after[1] if after else docs
     return {"hyp_id": hyp_id, "documents": len(docs), "documents_read": len(docs - left), "left": len(left & docs),
-            "passages": total, "rounds": rounds}
+            "passages": total, "rounds": rounds, "failed": failed}
 
 
 def second_opinion(ws: Workspace, hyp_ids: list[str], backend, main_model: str, second_model: str,
@@ -1766,7 +1916,9 @@ def history(ws: Workspace, threshold: float | None = None, limit: int | None = N
     second: dict[tuple[str, str], str | None] = {}  # the latest second-model grade of each excerpt
     for r in ws.query("SELECT subject_id, passage_id, verdict FROM second_opinions ORDER BY at, rowid"):
         second[(r["subject_id"], r["passage_id"])] = r["verdict"] if r["verdict"] in GRADES else None
-    added = sorted((r["added_at"] or "", r["doc_id"]) for r in ws.query("SELECT doc_id, added_at FROM documents"))
+    from .check_results import added_since, evidence_added, part_read
+
+    added = evidence_added(ws)  # the result page's own (new_documents): theory and working documents are no evidence
     q = (query or "").lower().strip()
     labels: dict[str, str] = {}
 
@@ -1796,7 +1948,7 @@ def history(ws: Workspace, threshold: float | None = None, limit: int | None = N
         st_all: list[str] = []  # 0.18.6: counting the Non-scientific documents too
         all_vs = []
         uncounted = corrected = reviewed = to_review = disagree = 0
-        shown_docs: set[str] = set()
+        part_reads: list = []  # per part (hunt phase 1.5: a document is read for the parts that read it, `added_since`)
         limited = False
         for_you: list[bool] = []  # 0.14.3: per part, whether all it waits for is your own judgement
         for c in parts:
@@ -1819,11 +1971,11 @@ def history(ws: Workspace, threshold: float | None = None, limit: int | None = N
                 st_first.append(_status_of_rounds(sts, vf, thr, c["stage"], wt))
             else:
                 st_first.append(st[-1])
+            part_reads.append(part_read(rs))
             for r in rs:
                 shown = _excerpts(r)
                 read += len(shown)
                 for pid, did, *_title in shown:
-                    shown_docs.add(did)
                     key = (c["claim_id"], pid)
                     if key in second and key in ai_of and second[key] != ai_of[key]:
                         disagree += 1
@@ -1849,8 +2001,7 @@ def history(ws: Workspace, threshold: float | None = None, limit: int | None = N
         model = h["model"] or first["model"] or json.loads(first["options_json"] or "{}").get("model", "")
         bal = balance(all_vs, thr)
         cutoff = max(h["created_at"] or "", h["docs_checked_at"] or "")
-        since = 0 if limited else sum(1 for at, d in added[bisect.bisect_right(added, (cutoff, "\uffff")):]
-                                      if d not in shown_docs)
+        since = 0 if limited else len(added_since(added, cutoff, part_reads))
         st_text = None
         if s == "waiting" and _only_local([c for c in parts if c["hyp_id"] == h["hyp_id"]],
                                           lambda cid: rounds.get(cid, [])):  # only_local_waits, from what is read
@@ -1907,13 +2058,21 @@ def parse_batch(text: str) -> list[dict]:
     first = lines[0] if lines else ""
     delim = max(",;\t", key=first.count) if first else ","
     head = [x.strip().strip('"').lower() for x in first.split(delim)] if first.count(delim) else []
+    # A spreadsheet of one column has no separator in its header: a first line that is exactly a column name
+    # ("hypothesis", any case, in quotes or not) is that header, so the word is no hypothesis and quoted cells
+    # (a hypothesis with a comma) lose their quotes. A plain list, one hypothesis per line, is read as before.
+    # Its cells are whole lines (a comma typed in a cell left unquoted stays in the hypothesis), so no separator.
+    if not head and first.strip().strip('"').strip().lower() in BATCH_COLUMNS:
+        head, delim = [first.strip().strip('"').strip().lower()], "\x1f"
     items: list[dict] = []
     if any(c in head for c in BATCH_COLUMNS):
         reader = csv.DictReader(io.StringIO(text), delimiter=delim)
         cols = {c.strip().lower(): c for c in (reader.fieldnames or []) if c}
         col = next(cols[c] for c in BATCH_COLUMNS if c in cols)
         for r in reader:
-            t = " ".join((r.get(col) or "").split())
+            # hunt phase 1.5: ENLENS's own CSV protects a cell a spreadsheet could take for a formula with an
+            # apostrophe (review.csv_cell); read back, the hypothesis is the text without it
+            t = " ".join(csv_uncell(r.get(col) or "").split())
             if not t:
                 continue
             code = (r.get(cols.get("code", ""), "") or r.get(cols.get("target", ""), "") or "").strip()

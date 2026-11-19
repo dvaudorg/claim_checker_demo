@@ -2,10 +2,21 @@
 // builds the panels and hands each the page's `ctx`), and the page of the original PDF beside the text.
 import { App, api, h, icon, replace, clear, toast, showError, fmt, watchJob, session, plural, cap, TOKEN, button,
   link, notice } from "../lib.js";
-import { keep, newReaderFor, READER_4_NEWS, READER_5_NEWS, READER_6_NEWS, kindCount } from "./doc-shared.js";
+import { keep, newReaderFor, readerNews, reader, kindCount } from "./doc-shared.js";
 
 // 0.15 (A0): how many results a move to the new reader places (reread.move's counts, per kind of result)
-const movedCount = (r) => Object.values((r && r.counts) || {}).reduce((a, c) => a + (c.moved || 0), 0);
+// hunt phase 1.5: a person's notes and highlights, and their blocks left out or restored, are counted apart from the
+// results and said as what they are
+const OWN = { note: ["note or highlight", "notes and highlights"], block: ["block you left out or restored", "blocks you left out or restored"] };
+const isResult = (k) => !(k in OWN);
+const movedCount = (r, pick = isResult) => Object.entries((r && r.counts) || {}).reduce((a, [k, c]) => a + (pick(k) ? c.moved || 0 : 0), 0);
+// "3 notes and highlights find their place, 1 does not." for the kinds of OWN that the move touches
+function ownLines(r, lost) {
+  return Object.keys(OWN).filter((k) => (r.counts || {})[k]).map((k) => {
+    const c = r.counts[k], n = c.moved || 0, miss = lost.filter((x) => x.kind === k).length, [one, many] = OWN[k];
+    return ` ${fmt.num(n)} ${n === 1 ? one : many} ${n === 1 ? "finds its" : "find their"} place${miss ? `, ${fmt.num(miss)} ${miss === 1 ? "does" : "do"} not` : ""}.`;
+  }).join("");
+}
 
 // ---- 0.15: how the document was read (A5), and moving it to the new reader (A0)
 export function readingPanel(ctx) {
@@ -30,6 +41,8 @@ export function readingPanel(ctx) {
     // live: Restore and Leave out change it (0.16: drawn again in place, by live())
     if (d.passages_read != null) figs.push(passFig);
     if (rep.engine === "pypdf") fig("Read from:", "the text layer only (with the pdfminer extra, columns and tables are found too)");
+    // hunt phase 1.5: a text file or web page that names no encoding: which one was guessed, so a wrong guess shows
+    if (rep.encoding_guess) fig("Read as:", `${rep.encoding_guess}, a guess: the file does not say how its letters are written. If letters look wrong, save it as UTF-8 and add it again.`);
   }
   const outKinds = () => Object.entries(d.left_out || {});
   const setLeftOut = (on) => {
@@ -60,9 +73,8 @@ export function readingPanel(ctx) {
     older ? notice({ kind: "info" }, h("div", {},
       h("p", {}, before15 ? `Read by the reader of ENLENS before 0.15. ENLENS ${App.state.version || ""} has a new reader: it reads two columns in the right order, sets running heads, page numbers, author details, acknowledgements and the like aside, keeps tables as tables and repairs words broken over lines.`
         : d.reader === 2 ? `Read by the reader of ENLENS 0.15.0. The reader of ENLENS ${App.state.version || ""} also sets running heads, page numbers, contents pages and indexes aside in text files and books, finds their headings and paragraphs, and puts apart words that ran together.`
-        : d.reader === 3 ? `Read by the reader of ENLENS 0.15.1 to 0.17.1. ${READER_4_NEWS}`
-        : d.reader === 4 ? `Read by the reader of ENLENS 0.17.2 to 0.18.0. ${READER_5_NEWS}`
-        : `Read by the reader of ENLENS 0.18.1 to 0.19.0rc1. ${READER_6_NEWS}`),
+        // hunt phase 1 (PAGESB-8): what every reader since this one changes for its kind of file (doc-shared.js)
+        : `Read by the reader of ENLENS ${d.reader === 3 ? "0.15.1 to 0.17.1" : d.reader === 4 ? "0.17.2 to 0.18.0" : d.reader === 5 ? "0.18.1 to 0.19.0rc1" : "0.19.0rc2 to 0.20.3"}. ${readerNews([d], d.new_reader || reader.latest)}`),
       h("p", { class: "small" }, "Documents already in a project keep their reading, so every quote and judgement in them stays where it is, until you move one over."))) : null,
     // a reading to check needs you: an attention notice; a good one is a quiet line with the tick (DESIGN 3.3, 4.12)
     !before15 && qual ? (rep.quality === "good" ? h("p", { class: "dv-quality small" }, icon("check", { size: 14 }), ` ${qual}`)
@@ -166,9 +178,14 @@ function rereadBox(ctx) {
     const moved = movedCount(r);
     const aside = Array.isArray(r.left_out) ? r.left_out : [];  // placed, in text the new reader leaves out
     const go = button({ kind: "main", sm: true, onClick: () => move(go) }, icon("check", { size: 13 }), "Move it to the new reader");
-    const summary = h("p", { class: "small", tabindex: "-1" }, moved || lost.length ? [h("strong", {}, plural(moved, "result")), moved === 1 ? " finds its place" : " find their place", " in the new reading", lost.length ? [", ", h("strong", {}, `${fmt.num(lost.length)} ${lost.length === 1 ? "does" : "do"} not`)] : "", "."]
+    const lostR = lost.filter((x) => isResult(x.kind));
+    const own = ownLines(r, lost);
+    const summary = h("p", { class: "small", tabindex: "-1" }, moved || lost.length || own ? [moved || lostR.length ? [h("strong", {}, plural(moved, "result")), moved === 1 ? " finds its place" : " find their place", " in the new reading", lostR.length ? [", ", h("strong", {}, `${fmt.num(lostR.length)} ${lostR.length === 1 ? "does" : "do"} not`)] : "", "."] : "", own]
       : "Nothing in your results points into this document yet: it is simply read again.");
-    replace(box, h("div", { class: "dv-reread-preview" }, summary,
+    // hunt phase 1.5: a reader that changes some files of a kind is offered to every file of it: say which this is
+    const same = r.same_reading === true ? h("p", { class: "small dv-same-reading" }, "The new reader reads this document exactly as before: the same text and passages. Moving it changes only the number of the reader that read it.")
+      : r.same_reading === false ? h("p", { class: "small dv-same-reading" }, "The new reader reads this document otherwise than before: its text or passages change.") : null;
+    replace(box, h("div", { class: "dv-reread-preview" }, summary, same,
       (r.warnings || []).length ? h("ul", { class: "dv-warn dv-preview-warn" }, r.warnings.map((w) => h("li", {}, w))) : null,
       lost.length ? h("ul", { class: "dv-lost" }, lost.slice(0, 12).map((x) => h("li", { class: "small" }, h("span", { class: "muted" }, `${cap(x.kind_text || x.what || "a result")}${x.page ? `, page ${x.page}` : ""}: `),
         x.quote ? `“${x.quote}”` : (x.what || ""), x.why ? h("span", { class: "muted" }, ` ${x.why}`) : null))) : null,
@@ -199,8 +216,9 @@ function rereadBox(ctx) {
     try { done = await w.promise; } catch (e) { showError(e); return; }
     if (done.state !== "done") { replace(box, notice({ kind: "error" }, h("p", {}, done.error || "The document could not be moved; nothing was changed."))); return; }
     const r = (done.result || {}).report || {};
-    toast(`Read with the new reader: ${plural(movedCount(r), "result")} moved${(r.not_placed || []).length ? `, ${fmt.num(r.not_placed.length)} without a place` : ""}.`, "ok");
-    keep.place = { doc: docId, y: 0, tab: "reading", focus: "dv-read-h" };
+    const missR = (r.not_placed || []).filter((x) => isResult(x.kind)).length;
+    toast(`Read with the new reader: ${plural(movedCount(r), "result")} moved${missR ? `, ${fmt.num(missR)} without a place` : ""}.${ownLines(r, r.not_placed || [])}`, "ok");
+    keep.place = { project: App.project, doc: docId, y: 0, tab: "reading", focus: "dv-read-h" };
     window.dispatchEvent(new HashChangeEvent("hashchange"));
   }
   const first = drawStart(false);

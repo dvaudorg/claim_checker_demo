@@ -87,16 +87,24 @@ def _coverage(fw: frameworks.Framework, code: str, have: set[str], idf: dict[str
 
 def code_vectors(ws: Workspace, fw: frameworks.Framework, embedder) -> dict[str, list[float]] | None:
     """The vector of every code's text for this embedding model (made once, kept in `code_vectors`)."""
-    from .embed import _unit, prefixes
+    from .embed import _unit, prefixes, withheld_codes
 
     _q, dprefix = prefixes(embedder.model)
     have = {r["code"]: (r["text_hash"], bytes(r["vec"])) for r in ws.query(
         "SELECT code, text_hash, vec FROM code_vectors WHERE model=? AND framework=?", (embedder.model, fw.name))}
-    todo = []
+    todo, every = [], []
     for c in fw.sorted_codes():
         th = _h(fw.code_text(c.code))
+        every.append((c.code, f"{fw.label} {c.code}: {fw.code_text(c.code)}"))
         if have.get(c.code, ("", b""))[0] != th:
-            todo.append((c.code, th, f"{fw.label} {c.code}: {fw.code_text(c.code)}"))
+            todo.append((c.code, th, every[-1][1]))
+            have.pop(c.code, None)   # hunt phase 1.5 (review): never matched by the meaning of its old text
+    # hunt phase 1.5: text an embedding server on another computer may not have stays here: that code is matched by
+    # its words only (its vector, from a server on this computer or from before, is not used either)
+    held = withheld_codes(ws, fw, embedder, every)
+    todo = [x for x in todo if x[0] not in held]
+    for c in held:
+        have.pop(c, None)
     for i in range(0, len(todo), 32):
         chunk = todo[i:i + 32]
         vecs = embedder.embed([dprefix + t for _c, _h2, t in chunk])
@@ -247,6 +255,15 @@ def keyword_pass(ws: Workspace, framework: str = "sdg", embedder=None, doc_ids: 
             chunk = pids[i:i + 500]
             cx.execute(f"DELETE FROM labels WHERE framework=? AND source IN ('keywords','meaning','both') AND passage_id "
                        f"IN ({','.join('?' * len(chunk))})", (fw.name, *chunk))
+        # a document marked as theory after an earlier pass: its candidates of that pass go too (they counted on the
+        # Profile page after the pass was made again "without it", as docrole.impact says it can be); one a person
+        # accepted or changed is theirs and stays
+        gone = sorted(d for d in theory if only is None or d in only)
+        for i in range(0, len(gone), 500):
+            chunk = gone[i:i + 500]
+            cx.execute(f"DELETE FROM labels WHERE framework=? AND source IN ('keywords','meaning','both') AND doc_id IN "
+                       f"({','.join('?' * len(chunk))}) AND label_id NOT IN (SELECT item_id FROM reviews WHERE "
+                       "item_kind='label')", (fw.name, *chunk))
         cx.executemany(_INSERT_LABEL, [(*r, __version__) for r in out_rows])
         meta = ws.meta("profile_pass1") or {}
         meta[fw.name] = {"at": stamp, "corpus_version": ws.corpus_version(), "passages": len(rows),
@@ -270,6 +287,8 @@ def pass1_status(ws: Workspace, framework: str) -> dict:
 
 
 def ensure_pass1(ws: Workspace, framework: str, embedder=None) -> dict:
+    if not framework:   # (`frameworks.get("")` is None on purpose, for the callers that look for a codebook)
+        raise ValueError("Choose a codebook.")
     st = pass1_status(ws, framework)
     if st["done"] and not st["stale"] and (embedder is None or st.get("meaning_model") == getattr(embedder, "model", None)
                                            or st.get("meaning_model") is not None):
@@ -302,7 +321,10 @@ def label_plan(ws: Workspace, framework: str = "sdg", doc_ids: list[str] | None 
         pids = [p for p in pids if p in only]
     with_cands = {r[0] for r in ws.query("SELECT DISTINCT passage_id FROM labels WHERE framework=? AND source IN "
                                          "('keywords','meaning','both')", (framework,))}
-    chosen = pids if all_passages else [p for p in pids if p in with_cands]
+    # passages named one by one (*Label them again*: a code's passages the AI labelled with its earlier wording) are read
+    # whether or not the keyword pass found a candidate in them: one the AI labelled in a run of every passage was
+    # otherwise never read again, its task taken back all the same
+    chosen = pids if all_passages or passage_ids is not None else [p for p in pids if p in with_cands]
     head = f"label:{framework}:"
     done = {r[0][len(head):] for r in ws.query(
         "SELECT task_id FROM tasks WHERE kind='label' AND status='done' AND substr(task_id, 1, ?) = ?",
@@ -327,9 +349,14 @@ def label_plan(ws: Workspace, framework: str = "sdg", doc_ids: list[str] | None 
 def make_label_tasks(ws: Workspace, framework: str, passage_ids: list[str], model: str,
                      all_passages: bool = False) -> int:
     """`label` tasks for these passages (each with its candidates, up to MAX_CANDIDATES)."""
-    from .tasks import _insert_task
+    from .tasks import _insert_task, replace_task
+
+    from .codebooks import _events
 
     fw = frameworks.get(framework, ws)
+    events_known = _events(fw.meta or {})
+    rewords_known = [e["id"] for e in (fw.meta or {}).get("events") or []
+                     if isinstance(e, dict) and e.get("op") == "reword" and e.get("id")]
     n = 0
     with ws.connect() as cx:
         for pid in passage_ids:
@@ -338,7 +365,11 @@ def make_label_tasks(ws: Workspace, framework: str, passage_ids: list[str], mode
                            (pid,)).fetchone()
             if r is None:
                 continue
-            cands = [c["code"] for c in candidates_of(ws, fw.name, pid)][:MAX_CANDIDATES]
+            # a passage asked again (*Label them again* took its task back) is shown the codes the AI gave it before,
+            # first: with no keyword candidate it was shown no code at all, so never the code's new wording
+            had = [r[0] for r in cx.execute("SELECT DISTINCT code FROM labels WHERE framework=? AND passage_id=? AND "
+                                            "source='model' ORDER BY code", (fw.name, pid)) if r[0] in fw.codes]
+            cands = list(dict.fromkeys(had + [c["code"] for c in candidates_of(ws, fw.name, pid)]))[:MAX_CANDIDATES]
             if not cands and all_passages:
                 cands = [c["code"] for c in fw.suggest(r["text"], MAX_CANDIDATES)]
             payload = {"framework": fw.name, "framework_title": fw.title, "code_label": fw.label,
@@ -348,9 +379,44 @@ def make_label_tasks(ws: Workspace, framework: str, passage_ids: list[str], mode
                                        # 0.16: when to use the code and when not, only when the codebook says
                                        **({"include": fw.codes[c].include} if fw.codes[c].include else {}),
                                        **({"exclude": fw.codes[c].exclude} if fw.codes[c].exclude else {})}
-                                      for c in cands if c in fw.codes]}
-            n += _insert_task(cx, f"label:{fw.name}:{pid}", "label", model, payload)
+                                      for c in cands if c in fw.codes],
+                       # the codebook's renames and merges this question already shows (`_as_asked`): by their ids, as
+                       # times to the second (and a colleague's own clock) cannot tell a change just before it from one
+                       # just after. Not in the prompt, so not in the task's id or its kept answer's key either
+                       "codebook_events": [e["id"] for e in events_known],
+                       # hunt phase 1.5: likewise the changes of wording it already shows, so `codebooks.stale` tells a
+                       # label made from an earlier wording by what its question showed, not by times to the second
+                       "codebook_rewords": rewords_known}
+            tid = f"label:{fw.name}:{pid}"
+            if _failed_on_the_codebook(cx, tid):
+                # its answers were refused because the codebook changed under it (before answers with the names a
+                # task was shown were taken: `_as_asked`), or it was removed meanwhile: asked again, as the codebook
+                # is now, rather than left failed for good (a later run never asks a failed task again)
+                replace_task(cx, tid, "label", model, payload)
+                cx.execute("UPDATE tasks SET created_at=? WHERE task_id=?", (now(), tid))
+                n += 1
+                continue
+            n += _insert_task(cx, tid, "label", model, payload)
     return n
+
+
+def _failed_on_the_codebook(cx, task_id: str) -> bool:
+    """Whether a label task failed because of its codebook (perhaps among other problems): its last answer was refused
+    for a code the codebook did not know (renamed, merged or removed while the task waited), or for the codebook
+    itself (removed while it waited)."""
+    t = cx.execute("SELECT status FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+    if t is None or t[0] != "failed":
+        return False
+    r = cx.execute("SELECT errors_json FROM results WHERE task_id=? ORDER BY attempt DESC LIMIT 1", (task_id,)).fetchone()
+    try:
+        errs = json.loads(r[0]) if r and r[0] else []
+    except ValueError:
+        return False
+    return any(isinstance(e, str) and (": unknown code " in e or _CHANGED_SINCE in e or
+                                       e.startswith("Unknown framework ")) for e in errs)
+
+
+_CHANGED_SINCE = "was renamed or merged since this task was made"
 
 
 def store_labels(cx, t, payload: dict, obj: dict, model: str) -> tuple[bool, list[str]]:
@@ -369,15 +435,41 @@ def store_labels(cx, t, payload: dict, obj: dict, model: str) -> tuple[bool, lis
 
     base = cx.execute("SELECT start, page FROM passages WHERE passage_id=?", (payload["passage_id"],)).fetchone()
     p_page = base["page"] if base else payload.get("page")
+    as_asked = _as_asked(fw, payload, str(_get(t, "created_at") or ""))
+    # each label's code: the code a name the task was shown has become since (renamed, merged, removed), else the code
+    # of that name in the codebook now
+    got = []
+    unsure = []
     for i, lb in enumerate(out.labels):
-        code = fw.normalise(lb.code)
+        then = as_asked(lb.code)
+        if then == "unsure":
+            unsure.append(f"labels[{i}]: the code {lb.code!r} {_CHANGED_SINCE} (or as it was made), and this answer "
+                          "cannot say which code it means")
+            then = None
+        got.append((lb, *then, True) if then else (lb, fw.normalise(lb.code), None, False))
+    if unsure:
+        return False, unsure
+    named = {code for _lb, code, merged, _m in got if code and merged is None}
+    merged_into: dict[str, str] = {}   # a label that went into a code by a merge: {its row's code: the name it had}
+    mapped_seen: set[str] = set()
+    for i, (lb, code, merged, mapped) in enumerate(got):
         if not code:
             errors.append(f"labels[{i}]: unknown code {lb.code!r} in {fw.title}; use a code exactly as listed")
             continue
+        if merged is not None and (code in named or code in seen):
+            # the passage has the code it was merged into already: this one stays under its own name, marked, as a
+            # label a merge finds there does (codebooks._follow_one), and waits under Removed codes
+            code = merged
+        elif code in seen and (mapped or code in mapped_seen):
+            continue   # one code, named once as the task showed it and once as it is called now: one label
         if code in seen:
             errors.append(f"labels[{i}]: the code {code} is listed twice; give one label per code")
             continue
         seen.add(code)
+        if mapped:
+            mapped_seen.add(code)
+        if merged is not None:
+            merged_into[code] = merged
         hit = find_quote(text, lb.quote)
         if not hit:
             errors.append(f"labels[{i}]: quote not found in the passage: {lb.quote[:80]!r}")
@@ -399,7 +491,74 @@ def store_labels(cx, t, payload: dict, obj: dict, model: str) -> tuple[bool, lis
     keep = {r[0] for r in cx.execute("SELECT label_id FROM labels WHERE task_id=?", (t["task_id"],))}
     rows = [r for r in rows if r[0] not in keep]
     cx.executemany(_INSERT_LABEL, [(*r, __version__) for r in rows])
+    for r in rows:   # (as a merge marks the labels it moves: restoring the codebook from before it gives them back)
+        if r[4] in merged_into:
+            cx.execute("UPDATE labels SET merged_from=? WHERE label_id=?", (merged_into[r[4]], r[0]))
     return True, []
+
+
+def _get(t, key: str):
+    try:
+        return t[key]
+    except (KeyError, IndexError):
+        return None
+
+
+def _as_asked(fw: frameworks.Framework, payload: dict, asked_at: str) -> Callable[[str], tuple | str | None]:
+    """A label task shows the codebook's codes as they were when it was made, and a queue for Claude Code can wait
+    for hours: an answer naming a code by the name it was shown lands where the codebook's changes since have taken
+    that code, as the labels made before them were moved (codebooks.follow). Returns `resolve(name)`: (the code now,
+    the name it had when it was merged into it, or None), or None for a name the task was not shown or that no change
+    since touched (it is then read as a code of the codebook now). Only the names the task showed, and only the changes
+    made since it was made (a later code may have taken an old name: it keeps its own). A code removed since keeps its
+    name: its label waits under Removed codes with the code's other labels.
+
+    "Since" is the changes the task does not know (`codebook_events`, the ids it was made with). A task made before
+    they were kept is never guessed for: only changes dated strictly after it count, and an answer whose name was
+    changed since and is a code's name now as well gives "unsure" (refused, as before: a wrong code is worse)."""
+    shown = [c.get("code") for c in payload.get("candidates") or [] if isinstance(c, dict) and c.get("code")]
+    meta = fw.meta or {}
+    known = payload.get("codebook_events")
+    if not shown or (known is None and not asked_at):
+        return lambda name: None
+    from .codebooks import _events, checked_events
+
+    ok = checked_events(_events(meta))[0]
+    if isinstance(known, list):
+        ids = set(known)
+        since = [e for e in ok if e["id"] not in ids]
+    else:
+        since = [e for e in ok if str(e.get("at") or "") > asked_at]
+
+    def resolve(name: str) -> tuple | None:
+        name = str(name or "").strip()
+        hit = name if name in shown else next((s for s in shown if frameworks.name_key(s) == frameworks.name_key(name)),
+                                              None)
+        if hit is None:
+            return None
+        cur, merged = hit, None
+        for e in since:
+            if e["op"] == "rename" and e["from"] == cur:
+                cur = e["to"]
+            elif e["op"] == "merge" and e["from"] == cur:
+                cur, merged = e["to"], cur
+            elif e["op"] == "unmerge" and e["from"] == cur and merged is not None and e.get("was") == merged:
+                cur, merged = e["to"], None
+        if cur == hit and cur in fw.codes:
+            return None
+        if not isinstance(known, list) and fw.normalise(name):
+            return "unsure"   # a task of before: the name is a code's now too, and its time cannot say which
+        if not isinstance(known, list) and cur == hit and any(
+                e["op"] in ("rename", "merge") and e["from"] == hit and str(e.get("at") or "") == asked_at for e in ok):
+            # hunt phase 1.5: a task of before, its code renamed or merged in the second it was asked: its time cannot
+            # say whether it showed the name before the change or after, so it is refused and asked again (never
+            # guessed); it was stored as a REMOVED code's label, under a name no code had any more, for good
+            return "unsure"
+        if cur in fw.codes:
+            return cur, merged
+        return cur, None   # removed since it was asked: its label waits for it under Removed codes
+
+    return resolve
 
 
 class _WsShim:
@@ -464,6 +623,7 @@ def run_labels(ws: Workspace, framework: str, backend, model: str, doc_ids: list
     has_cloud = any(p not in by_local for p in plan["passage_ids"])
     total = len(plan["passage_ids"])
     seen = [0]
+    moved_away = [0]   # passages whose document was read with the new reader during the run
     import threading
     import time
 
@@ -479,8 +639,13 @@ def run_labels(ws: Workspace, framework: str, backend, model: str, doc_ids: list
         if progress:
             progress(min(seen[0], total), total)
         t0 = time.time()
-        # its setting worked out again as its text is about to leave, as `tasks.run` does: a document's cap counts
-        # what the passages before this one sent (and a passage Claude has read already adds nothing to it)
+        # hunt phase 1.5: its document was read with the new reader meanwhile (a round of the shared folder moves an
+        # accepted reading beside a run): the move asked this task again for the new passages (reread.py), so there is
+        # nothing to read here, and nothing may be written for an old passage id (it now names other text)
+        if not ws.scalar("SELECT 1 FROM tasks WHERE task_id=?", (tid,)):
+            with tally:
+                moved_away[0] += 1
+            return
         with ws.connect() as cx:
             if access.recheck(cx, tid, dflt) is None:
                 with tally:
@@ -499,6 +664,12 @@ def run_labels(ws: Workspace, framework: str, backend, model: str, doc_ids: list
             readers.local_ended(readers.memory_short or local_off)  # its passages came first: its panel says it has ended
         try:
             ok, _errs = tasks.run_one(ws, tid, got[0], got[1])
+        except KeyError:
+            if ws.scalar("SELECT 1 FROM tasks WHERE task_id=?", (tid,)):
+                raise
+            with tally:   # (moved while the model read it: its answer is not stored, as above)
+                moved_away[0] += 1
+            return
         except MemoryShort as e:
             readers.memory_short = e
             if not gated:  # with the gate, it waits for Start (or Start it anyway) and is read again then
@@ -551,6 +722,9 @@ def run_labels(ws: Workspace, framework: str, backend, model: str, doc_ids: list
     local_model = readers._local[1] if readers._local and by_local else None
     return {"framework": framework, "read": done, "failed": failed, "planned": len(plan["passage_ids"]),
             "stopped": bool(should_stop and should_stop()), "changes": change,
+            # hunt phase 1.5: passages not read because their document was read again meanwhile (asked again for the
+            # new reading's passages, by the next run)
+            "read_again_meanwhile": moved_away[0],
             "skipped_restricted": skipped + plan.get("no_ai", 0),
             "local_read": readers.read, "local_waiting": waiting, "local_model": local_model,
             "memory_short": str(readers.memory_short) if readers.memory_short else None,
@@ -633,7 +807,9 @@ def effective(ws: Workspace, framework: str, doc_ids: list[str] | None = None, p
     best: dict[tuple, dict] = {}
     for r in out:
         k = (r["passage_id"], r["code"])
-        if k not in best or rank[r["source"]] < rank[best[k]["source"]]:
+        # (hunt phase 1.5: a source this version does not know, a label from a colleague's newer ENLENS, ranks last;
+        # it raised KeyError and every page of labels failed)
+        if k not in best or rank.get(r["source"], len(rank)) < rank.get(best[k]["source"], len(rank)):
             best[k] = r
     # 0.16 (K1): the labels of a code taken out of the codebook wait (codebooks.removed_codes): they do not count
     try:
@@ -824,8 +1000,12 @@ def set_label(ws: Workspace, label_id_: str, decision: str, relevance: str | Non
 
 
 def add_label(ws: Workspace, framework: str, passage_id: str, code: str, quote: str | None = None,
-              relevance: str = "main", direction: str = "not_stated", note: str | None = None) -> str:
-    """A label of a person's own (it always counts)."""
+              relevance: str = "main", direction: str = "not_stated", note: str | None = None,
+              start: int | None = None) -> str:
+    """A label of a person's own (it always counts). `start`: where in the document the quote was selected (hunt
+    phase 1): words that stand twice in the passage are labelled where they were selected, as notes are; without it
+    (other callers, an older page) the quote's first place in the passage, as before."""
+    from .notes import find as find_near
     from .textutil import find_selection
 
     fw = frameworks.get(framework, ws)
@@ -838,7 +1018,12 @@ def add_label(ws: Workspace, framework: str, passage_id: str, code: str, quote: 
     p = p[0]
     q = s = e = None
     if quote:
-        hit = find_selection(p["text"], quote)  # 0.14.3: a selection cutting a word is widened to whole words
+        try:
+            near = int(start) - p["start"] if start is not None else None
+        except (TypeError, ValueError):
+            near = None
+        hit = find_near(p["text"], quote, near, selected=True) if near is not None and 0 <= near <= len(p["text"]) else None
+        hit = hit or find_selection(p["text"], quote)  # 0.14.3: a selection cutting a word is widened to whole words
         if not hit:
             raise ValueError("The quote must be text from this passage.")
         q, s, e = p["text"][hit[0]:hit[1]], p["start"] + hit[0], p["start"] + hit[1]

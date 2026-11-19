@@ -30,6 +30,19 @@ class ShareRules:
             return _tokens(key, self.ids)
         return key
 
+    def _signed(self) -> frozenset[str]:
+        """The members of the storage space, whose marks count only from their own signed files (`sharing.signers`)."""
+        from .. import sharing
+
+        if getattr(self, "_signers", None) is None:
+            self._signers = sharing.signers(self.ws)
+        return self._signers
+
+    def _trusted(self, by: str | None) -> bool:
+        from .. import sharing
+
+        return sharing.trusted(by, self.sender["id"], self.first_hand, self._signed())
+
     def _withhold(self, cx: sqlite3.Connection) -> None:
         from .. import sharing
 
@@ -42,9 +55,14 @@ class ShareRules:
         gone: dict[str, list[str]] = {}
         for (kind, key), r in there.items():
             mine = here.get((kind, key))
-            # the later mark counts; a guess (no one's word: a project from before 0.18) never over one here
-            mark = mine if mine is not None and (r.get("by") is None or (mine.get("at") or "") >= (r.get("at") or "")) \
-                else r
+            # the later mark counts (one dated ahead as if made now: `sharing.mark_at`); a guess (no one's word: a
+            # project from before 0.18) never over one here; a member's mark only from their own signed file (hunt
+            # phase 1.5, MERGE15-1)
+            if not self._trusted(r.get("by")):
+                mark = mine or {}
+            else:
+                mark = mine if mine is not None and (r.get("by") is None or
+                                                     (mine.get("at") or "") >= (sharing.mark_at(r) or "")) else r
             if mark.get("state") == "withdrawn" and not sharing.exists(cx, root, kind, key):
                 gone.setdefault(kind, []).append(key)
         if not gone:
@@ -70,6 +88,8 @@ class ShareRules:
         from .. import sharing
 
         there = sharing.rows(self.icx)
+        marked_there = set(there)   # (the file's own marks, before the defaults for items without one are added)
+        held_marks = sharing.rows(cx)
         sender = self.sender["id"]
         default = "shared" if self.format_in < 2 else "private"  # before 0.18 everything exchanged was shared
         for kind, keys in sharing.items(self.icx, self.inc.root).items():
@@ -85,7 +105,14 @@ class ShareRules:
             local = self._local_key(kind, key)
             present = sharing.exists(cx, root, kind, local) or (kind == "codebook" and local in coming)
             had = (kind, local) in self.items_before
-            got = sharing.receive(cx, kind, local, r, self.me, present, had=had, sender=sender)
+            got = sharing.receive(cx, kind, local, r, self.me, present, had=had, sender=sender,
+                                  first_hand=self.first_hand, signed=self._signed())
+            if got is None and not self.first_hand and not self._trusted(r.get("by")) and r.get("by") != self.me \
+                    and (kind, key) in marked_there \
+                    and (held_marks.get((kind, local)) or {}).get("state") != r.get("state"):
+                # a zip brought by hand into a project with a storage space: its marks in members' names wait for their
+                # own signed files (the report says so; review of hunt phase 1.5, wave 2)
+                self.r["shares"]["unsigned"] = self.r["shares"].get("unsigned", 0) + 1
             if got in ("shared", "withdrawn") and present:
                 self.r["shares"][got].append(self._title_here(cx, kind, local, r.get("title")))
             elif got is None and present and not had and r.get("owner") != self.me:
@@ -133,6 +160,6 @@ class ShareRules:
             when = at.replace("+00:00", ".999999+00:00") if "." not in at else at
             mark = {"state": "withdrawn", "owner": owner, "by": by, "at": when, "title": None}
             if sharing.receive(cx, kind, local, mark, self.me, True, had=(kind, local) in self.items_before,
-                               sender=self.sender["id"]) == \
+                               sender=self.sender["id"], first_hand=self.first_hand, signed=self._signed()) == \
                     "withdrawn":
                 self.r["shares"]["withdrawn"].append(self._title_here(cx, kind, local))

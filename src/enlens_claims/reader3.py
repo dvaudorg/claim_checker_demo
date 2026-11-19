@@ -92,9 +92,10 @@ def _roman(s: str) -> int | None:
     return total
 
 
-def text_furniture(pages) -> dict:
+def text_furniture(pages, version: int = 3) -> dict:
     """Mark running heads, footers and page numbers among the lines without positions (text files, OCR, pypdf without
-    line positions): `Line.furniture` 'head' or 'number'. Returns counts."""
+    line positions): `Line.furniture` 'head' or 'number'. Returns counts. `version` 7: in text whose every line is a
+    paragraph, a blank line is not a page edge (`reader7.lone_lines`)."""
     seq = [ln for p in pages for ln in p if ln.top is None]
     n = len(seq)
     out = {"heads": 0, "numbers": 0}
@@ -103,6 +104,15 @@ def text_furniture(pages) -> dict:
     # a line next to a page break or a blank line (where a page of copied text begins or ends)
     edge = [bool(ln.blank_before) or (i + 1 >= n) or bool(seq[i + 1].blank_before) or seq[i + 1].page != ln.page
             for i, ln in enumerate(seq)]
+    lone = False
+    if version >= 7:
+        from . import reader7
+
+        lone = reader7.lone_lines(seq)
+    # reader 7: where a blank line stands between nearly every two lines, only a page break is an edge (the edges of
+    # the numbered heads below keep blank lines: a short head in capitals with its page number is a sign of its own)
+    near_edge = [(i == 0) or seq[i - 1].page != ln.page or (i + 1 >= n) or seq[i + 1].page != ln.page
+                 for i, ln in enumerate(seq)] if lone else edge
 
     def in_flow(i: int) -> bool:
         """The line goes on from the line before or into the line after, as a sentence does."""
@@ -128,12 +138,17 @@ def text_furniture(pages) -> dict:
             med = statistics.median(gaps)
             if med < 12 or med > 150:
                 continue
-            near = sum(1 for i in idx if edge[i] or (i > 0 and (i - 1) in marked) or (i + 1) in marked) / len(idx)
+            near = sum(1 for i in idx if near_edge[i] or (i > 0 and (i - 1) in marked) or (i + 1) in marked) / len(idx)
             mean = statistics.mean(gaps)
             cv = statistics.pstdev(gaps) / mean if mean else 9.0
             words = len(k.split())
             regular = cv <= 0.5 and ("#" in k or words >= 3)
-            if not (near >= 0.6 or regular):
+            if lone:
+                # reader 7: an interviewer's question asked now and then is as regular as a running head; a running
+                # head stands at a page break, or between two pages in the middle of a sentence at least once
+                if not (near >= 0.6 or reader7.runs_across(seq, idx, marked)):
+                    continue
+            elif not (near >= 0.6 or regular):
                 continue
             if sum(1 for i in idx if in_flow(i)) > 0.5 * len(idx):
                 continue

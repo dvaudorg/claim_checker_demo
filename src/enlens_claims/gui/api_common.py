@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import io
 import json
+import math
 import re
 import threading
 import time
 import traceback
 import uuid
 from pathlib import Path
-from typing import Any, Callable
+from contextlib import contextmanager
+from typing import Any, Callable, Iterable
 
 from .progress import Tracker
 from .. import claimcheck, llm
@@ -19,6 +21,7 @@ from ..llm import BackendError
 
 MAX_UPLOAD = 2 * 1024 ** 3   # bytes per file
 MAX_JSON = 20 * 1024 ** 2    # bytes per JSON body (a batch of hypotheses, a codebook)
+UPLOAD_BATCH_MAX = 100       # characters of an upload batch's name (the page's are about 20; a folder: 255 bytes)
 
 
 class ApiError(Exception):
@@ -66,6 +69,13 @@ class Job:
         # also has work for Claude
         self.gate = LocalGate()
         self.used_models: set[tuple[str, str]] = set()   # 0.19.15: (address, model) of the local models it asked
+        # hunt phase 1.5: the title a notification gives a job about a document marked Only a local AI or No AI (its
+        # own title, or its error, would name it on a lock screen: notify.note_for); None: its title
+        self.note_title: str | None = None
+        # hunt phase 1.5: the job's `ended` listeners have run (Jobs.start sets it False until then). Its state says
+        # "done" at once for the page; whoever waits for a project's jobs to end (a removal, quitting) waits for this,
+        # as a listener still reads the project (a removal closed its connection under it, and the app crashed)
+        self.settled = True
 
     def view(self, full: bool = True) -> dict:
         end = self.finished or time.time()
@@ -146,6 +156,72 @@ WHERE_OF_KIND = {
 }
 
 
+_START_LOCKS: dict[str, threading.Lock] = {}
+_START_LOCKS_GUARD = threading.Lock()
+
+
+def start_lock(project: str) -> threading.Lock:
+    """Hunt phase 1.5: the project's own lock for the look for the same work already there and the start of a new job,
+    as one step (two presses at one moment). Per project, so no other project waits for it; held for the look and the
+    start only, never across the work."""
+    with _START_LOCKS_GUARD:
+        return _START_LOCKS.setdefault(project, threading.Lock())
+
+
+_STARTING: dict[tuple, dict] = {}   # (project, kind, key) -> {"done": Event, "job"}: a start under way (`once`)
+
+
+def once(app, project: str, kind: str, key, start: Callable[[], "Job"], clash: Callable[["Job"], bool] | None = None,
+         words: str = "") -> "Job":
+    """Hunt phase 1.5 (the owner's rule): the server, not only the page's buttons, guards against a double start. A
+    second start of the same work (`key`) in the same project gets the job already queued or running back; one of
+    other work of the same kind that would clash with a live one (`clash`) is a 409 in `words`. `start()` makes the
+    job (its plain mistakes are still reported at once). The project's lock covers the look and the mark of a start
+    under way only: `start()` itself (which may wake a local model for half a minute) runs outside it, and a second
+    press meanwhile waits for that start alone and gets its job."""
+    from types import SimpleNamespace
+
+    mark = (project, kind, key)
+    while True:
+        with start_lock(project):
+            live = [j for j in app.jobs.all() if j.project == project and j.kind == kind
+                    and j.state in ("queued", "running")]
+            for j in live:
+                if getattr(j, "start_key", None) == key:
+                    return j
+            pending = _STARTING.get(mark)
+            if pending is None:
+                others = [SimpleNamespace(kind=kind, start_key=m[2]) for m in _STARTING
+                          if m[0] == project and m[1] == kind]
+                if clash is not None and any(clash(j) for j in live + others):
+                    raise ApiError(409, words)
+                mine = _STARTING[mark] = {"done": threading.Event(), "job": None}
+                break
+        pending["done"].wait(120)
+        if pending["job"] is not None:
+            return pending["job"]
+        # (that start failed, in words to its own request: this one tries for itself)
+    try:
+        job = start()
+        job.start_key = key
+        mine["job"] = job
+        return job
+    finally:
+        with start_lock(project):
+            _STARTING.pop(mark, None)
+        mine["done"].set()
+
+
+def restricted(ws, doc_ids) -> bool:
+    """Hunt phase 1.5: whether any of these documents is marked Only a local AI or No AI (a notification about a job
+    of them then names none: `Job.note_title`)."""
+    from .. import access
+
+    ids = [d for d in doc_ids if d]
+    return bool(ids) and any(v in ("local", "none") for v in
+                             access.levels(ws, ids, budget=False, provider=None).values())
+
+
 def job_where(job: Job) -> str | None:
     """Where a job's work goes (WHERE_OF_KIND); None: the AI of Settings. One document read with the new reader is a
     job of kind "reread", as reading one excerpt again with the AI is: its lane tells them apart. 0.19.6: "here" while
@@ -217,6 +293,7 @@ class Jobs:
         self.model_lock = threading.Lock()
         self.ended: list[Callable[[Job], Any]] = []   # 0.18: called with every job that ends (the poller listens)
         self._seq = 0
+        self.removing: set[str] = set()   # hunt phase 1: projects being removed: no job starts in them (`removal`)
 
     def start(self, kind: str, title: str, project: str | None, fn: Callable[[Job], Any], uses_model: bool,
               unique: bool = False, lane: str | None = None, serial: str | None = None, background: bool = False,
@@ -241,6 +318,10 @@ class Jobs:
         job.lane = lane if lane is not None else LANE_OF_KIND.get(kind)
         job.serial, job.background, job.scope = serial, background, scope
         with self.lock:
+            if project is not None and project in self.removing:   # hunt phase 1: see `removal`
+                if if_free:
+                    return None
+                raise ApiError(409, f"The project “{project}” is being removed: nothing more can start in it.")
             if unique:
                 same = [j for j in self.jobs.values() if j.kind == kind and j.project == project
                         and j.state in ("queued", "running")]
@@ -309,7 +390,8 @@ class Jobs:
                         llm.USED.reset(used_token)
                         GATE.reset(gate_token)
                         access.FORCE_LOCAL.reset(token)
-                    job.state = "cancelled" if job.cancel.is_set() and job.result is None else "done"
+                    with self.lock:   # hunt phase 1: as one step with Stop's look at the state (Jobs.cancel)
+                        job.state = "cancelled" if job.cancel.is_set() and job.result is None else "done"
                 finally:
                     if lock and held["thread"] is not None:
                         held["thread"] = None
@@ -359,12 +441,18 @@ class Jobs:
                     job.tracker.finish()
                 with self.turns:  # 0.18: the jobs that wait for this one look again now
                     self.turns.notify_all()
-                for listener in list(self.ended):
-                    try:
-                        listener(job)
-                    except Exception:  # noqa: BLE001 - a listener never stops the job's thread from ending well
-                        traceback.print_exc()
+                try:
+                    for listener in list(self.ended):
+                        try:
+                            listener(job)
+                        except Exception:  # noqa: BLE001 - a listener never stops the job's thread from ending well
+                            traceback.print_exc()
+                finally:
+                    with self.turns:   # (hunt phase 1.5: now it has ended for those who wait on it: `settled`)
+                        job.settled = True
+                        self.turns.notify_all()
 
+        job.settled = False
         threading.Thread(target=run, daemon=True, name=f"job-{kind}-{job.id}").start()
         return job
 
@@ -428,10 +516,54 @@ class Jobs:
                 self.turns.wait(self.WAKE)
 
     def cancel(self, job: Job) -> None:
-        """Stop a job; one that waits for its turn leaves the queue at once (and the jobs behind it move up)."""
-        job.cancel.set()
+        """Stop a job; one that waits for its turn leaves the queue at once (and the jobs behind it move up).
+
+        Hunt phase 1: a job that has already ended is left as it is. Stop that reaches the app just after the end (a
+        second tab, a click as the job finishes) set the flag anyway, and the finished job's view said "stopped" from
+        then on, so the pages took its whole result for a stopped one (a drafted definition was dropped). The look and
+        the flag are one step under the lock, as is the job's own end state (Jobs.start), so a Stop lands either while
+        the job still runs (it sees it) or after it ended (nothing changes)."""
+        with self.lock:
+            if job.state not in ("queued", "running"):
+                return
+            job.cancel.set()
         with self.turns:
             self.turns.notify_all()
+
+    def busy(self, project: str) -> Job | None:
+        """Hunt phase 1: a job of the project that is queued or running (the earliest), if any. A project is not
+        removed while one is: the job keeps the Workspace it opened, and its next connection opens the database by its
+        path, which after a new project of the same name is made is that project's (it wrote the old project's
+        documents into the new one). Call it with the lock held when the removal must not race a new job. Hunt phase
+        1.5: a job that has ended but whose `ended` listeners still run (they read the project) counts too."""
+        mine = [j for j in self.jobs.values() if j.project == project
+                and (j.state in ("queued", "running") or not getattr(j, "settled", True))]
+        return min(mine, key=lambda j: j.created) if mine else None
+
+    @contextmanager
+    def removal(self, projects: Iterable[str], refuse: Callable[[Job], None] | None = None):
+        """Hunt phase 1 (after review): the projects of `projects` that no job of is queued or running, marked as being
+        removed for the time of the `with` (yielded as a set): `start` refuses a job in them, so none can start between
+        this look and the end of the removal. `refuse(job)`, when given, is called with a busy project's job (it raises,
+        to refuse the removal in words); else a busy project is left out. The look and the mark are one step under the
+        lock, and the removal itself runs after it: it takes home.LOCK and moves a folder (seconds on Windows, or a
+        copy to another disk), and with the lock held the job list, every job start and every finishing job waited."""
+        with self.lock:
+            free = set()
+            for name in projects:
+                job = self.busy(name)
+                if job is not None:
+                    if refuse is not None:
+                        refuse(job)
+                    continue
+                if name not in self.removing:
+                    free.add(name)
+            self.removing |= free
+        try:
+            yield free
+        finally:
+            with self.lock:
+                self.removing -= free
 
     def holder(self, project: str, kind: str, lane: str | None = None) -> Job | None:
         """0.18: the job a new job of `kind` (and `lane`) in `project` would wait for now, if any (the poller asks)."""
@@ -487,10 +619,16 @@ def _text_with_quote(path: Path, quote: str, name: str) -> bytes | None:
 
     # 0.14.3: read as the document was read when it was added (a Windows-1250 file kept its accented letters there,
     # so its quotes are found here too)
-    raw = decode_text(path.read_bytes(), html=path.suffix.lower() in (".html", ".htm"))
+    data = path.read_bytes()
+    html_file = path.suffix.lower() in (".html", ".htm")
     # 0.14.3: a quote accepted earlier is placed, not checked again (the whole-word rule is for new answers; a long
-    # quote cut at 2,000 characters may end inside a word)
-    hit = find_quote(raw, quote[:2000], whole_words=False)
+    # quote cut at 2,000 characters may end inside a word). Hunt phase 1: reader 7 reads a file saved as ISO-8859-2
+    # otherwise than readers 1 to 6, so a quote of a document they read is looked for in their reading too
+    for reader in (None, 6):
+        raw = decode_text(data, html=html_file, reader=reader)
+        hit = find_quote(raw, quote[:2000], whole_words=False)
+        if hit:
+            break
     if not hit:
         return None
     a, b = hit[0], hit[1]
@@ -521,7 +659,7 @@ def _check_options(body: dict, s: dict) -> dict:
     def num(key, lo, hi):
         try:
             v = int(body.get(key) if body.get(key) is not None else s[key])
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             raise ApiError(400, f"{key} must be a whole number.") from None
         return max(lo, min(v, hi))
 
@@ -556,9 +694,29 @@ def _body_int(body: dict, key: str, default: int | None, lo: int, hi: int) -> in
         return default
     try:
         v = int(v)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):   # (OverflowError: a JSON 1e400 is float infinity)
         raise ApiError(400, f"{key} must be a whole number.") from None
     return max(lo, min(v, hi))
+
+
+def _body_text(body: dict, key: str) -> str | None:
+    """Hunt phase 1: a text field of a JSON body, None when absent or empty; a number, list or object in its place is
+    a 400 in words (it reached the database or a dict lookup and came back as a 500 "Unexpected problem")."""
+    v = body.get(key)
+    if v is None or v == "":
+        return None
+    if not isinstance(v, str):
+        raise ApiError(400, f"{key} must be text.")
+    return v
+
+
+def _path_text(text: str) -> str:
+    """Hunt phase 1: a path a person typed, refused in words when no file system could hold it (a part over 255
+    bytes, or 4,096 in all): looking for it raised OSError "File name too long", a 500 "Unexpected problem"."""
+    if len(text.encode("utf-8", "surrogateescape")) > 4096 or any(
+            len(part.encode("utf-8", "surrogateescape")) > 255 for part in re.split(r"[/\\]", text)):
+        raise ApiError(400, "That path is too long for a folder or file on this computer. Check it and try again.")
+    return text
 
 
 def _int(q: dict, key: str, default: int, lo: int, hi: int) -> int:
@@ -588,9 +746,14 @@ def _str(q: dict, key: str) -> str | None:
 def _float(q: dict, key: str, default: float) -> float:
     v = _str(q, key)
     try:
-        return float(v) if v not in (None, "") else float(default)
+        f = float(v) if v not in (None, "") else float(default)
     except ValueError:
         raise ApiError(400, f"{key} must be a number.") from None
+    # hunt phase 1: float() also reads "1e400", "inf" and "nan", and int() of infinity raised OverflowError, which every
+    # caller's int(_float(...)) passed on as a 500 "Unexpected problem" (an address edited to ?offset=1e400 did it)
+    if not math.isfinite(f):
+        raise ApiError(400, f"{key} must be a number (infinity, and numbers that large, are not accepted).")
+    return f
 
 
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -665,7 +828,9 @@ def _disposition(fname: str) -> str:
     from urllib.parse import quote
 
     fname = re.sub(r"[\x00-\x1f\x7f]+", " ", fname)  # a line break in a name from someone's zip: no header of its own
-    ascii_name = fname.encode("ascii", "replace").decode().replace("?", "_").replace('"', "")
+    # (hunt phase 1.5: and no backslash: in the quoted name it escapes the next character, the closing quote at the
+    # end of "notes\", and the browser then lost the name)
+    ascii_name = fname.encode("ascii", "replace").decode().replace("?", "_").replace('"', "").replace("\\", "_")
     return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(fname)}"
 
 

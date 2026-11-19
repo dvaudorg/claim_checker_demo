@@ -20,7 +20,7 @@ import sqlite3
 import uuid
 
 from .store import Workspace, now
-from .textutil import find_selection, normalise
+from .textutil import find_selection, normalise, one_line
 
 COLOURS = ("yellow", "green", "blue", "pink")
 MAX_QUOTE = 4000
@@ -66,11 +66,27 @@ def _hits(text: str, quote: str, lo: int, hi: int, most: int = 200) -> list[tupl
     return out
 
 
-def find(text: str, quote: str, near: int | None = None) -> tuple[int, int] | None:
+def find(text: str, quote: str, near: int | None = None, anywhere: bool = True,
+         selected: bool = False) -> tuple[int, int] | None:
     """Where the words of a note are in a text: as a quote is found (whole words, typography and spacing evened out),
-    the place nearest `near` (near it first, then anywhere)."""
+    the place nearest `near` (near it first, then anywhere; with `anywhere` false, only near it: hunt phase 1.5, a
+    note followed to a new reading is never put on the same words in another part of the text). `selected`: `near` is
+    where the person has just selected the words (a new note or label), not an old place being followed."""
     if near is not None:
-        for lo, hi in ((max(0, near - 3000), near + len(quote) + 3000), (0, len(text))):
+        if selected:
+            # hunt phase 1.5: the words where they were selected first, widened to whole words there. A selection that
+            # cuts a word ("art of repair" out of "start of repair") was looked for as whole words only, so the same
+            # words standing whole elsewhere in the text took it. Only for a fresh selection: a note followed to a
+            # changed text keeps finding its own words whole, as before
+            a, b = max(0, near), min(len(text), near + len(quote))
+            while a > 0 and not text[a - 1].isspace():
+                a -= 1
+            while b < len(text) and not text[b].isspace():
+                b += 1
+            hit = find_selection(text[a:b], quote) if a < b else None
+            if hit:
+                return a + hit[0], a + hit[1]
+        for lo, hi in ((max(0, near - 3000), near + len(quote) + 3000), (0, len(text)))[:2 if anywhere else 1]:
             hits = _hits(text, quote, lo, min(hi, len(text)))
             if hits:
                 return min(hits, key=lambda h: (abs(h[0] - near), h[0]))
@@ -107,9 +123,9 @@ def add(ws: Workspace, doc_id: str, start: int, end: int, quote: str | None = No
         if len(want) > MAX_QUOTE:
             raise ValueError(f"Select fewer words (at most {MAX_QUOTE:,} characters); a note can say more.")
         # the words selected, where they were selected (widened to whole words), else the nearest place of them
-        got = find(body[:b + 50], want, a) if a < b else None
+        got = find(body[:b + 50], want, a, selected=True) if a < b else None
         if got is None or abs(got[0] - a) > 50:
-            got = find(body, want, a)
+            got = find(body, want, a, selected=True)
         if got is None:
             raise ValueError("These words are not in the document's text: select them in the text.")
         a, b = got
@@ -185,8 +201,11 @@ def _placed(cx: sqlite3.Connection, rows: list[sqlite3.Row]) -> list[dict]:
         here = body[d["start"]:d["end"]] if present else d["quote"]
         # 0.17.2: words that differ from the note's only in typography (a new reading) are still its words in place:
         # nothing is looked for again, and nothing is written
-        if present and here != d["quote"] and normalise(here) != normalise(d["quote"] or ""):
-            got = find(body, d["quote"] or "", d["start"])
+        if present and d["start"] is not None and d["start"] == d["end"]:
+            d["lost"] = True   # hunt phase 1.5: left without a place by a new reading (`move`): never looked for again
+        elif present and here != d["quote"] and normalise(here) != normalise(d["quote"] or ""):
+            # (hunt phase 1.5: near its place only; the same words elsewhere in the text are other words)
+            got = find(body, d["quote"] or "", d["start"], anywhere=False)
             if got is None:
                 d["lost"] = True
             else:
@@ -273,7 +292,7 @@ def counts(ws: Workspace) -> dict[str, int]:
 def table(ws: Workspace) -> list[dict]:
     out = []
     for n in sorted(search(ws, limit=100000)["notes"], key=lambda n: ((n["title"] or "").lower(), n["start"])):
-        out.append({"Document": n["title"] or n["doc_id"], "Page": n["page"] if n["page"] is not None else "",
+        out.append({"Document": n["title"] or n["doc_id"], "Page": n["page"] if n["page"] is not None and not n["lost"] else "",
                     "Words": n["quote"], "Note": n["text"] or "", "Colour": n["colour"], "Who": n["who"],
                     "Made (UTC)": n["created_at"], "Changed (UTC)": n["edited_at"] or "",
                     "Found in the text now": "no" if n["lost"] else ("yes" if n["present"] else "document removed")})
@@ -291,8 +310,9 @@ def markdown(ws: Workspace, project: str) -> str:
         if t != title:
             title = t
             lines += [f"## {t}" + ("" if n["present"] else " (removed from the project)"), ""]
-        page = f"p. {n['page']}: " if n["page"] is not None else ""
-        quote = " ".join((n["quote"] or "").split())
+        # (hunt phase 1.5: a note whose words a new reading no longer has cites no page)
+        page = "(place lost) " if n["lost"] else f"p. {n['page']}: " if n["page"] is not None else ""
+        quote = one_line(n["quote"] or "")
         who = "" if n["mine"] else f" ({n['who']})"
         lines.append(f"- {page}> {quote}{who}")
         if n["text"]:
@@ -359,20 +379,33 @@ def use_as_evidence(ws: Workspace, note_id: str, claim_id: str, verdict: str, co
     return {"hyp_id": uc["hyp_id"] or claim_id, "claim_id": claim_id, "passage_id": p["passage_id"], "new": new}
 
 
-def move(cx: sqlite3.Connection, doc_id: str, new_text: str, page_spans: list | None = None) -> dict:
-    """The notes of a document read again into `new_text` (reread.py): each follows its words, nearest its old place
-    in proportion, and takes the page of its new place (`page_spans`: the new reading's (start, end) of each page, in
-    order; none for a text without pages); those whose words cannot be found keep them and are marked lost when
-    shown. {moved, lost}."""
+def move(cx: sqlite3.Connection, doc_id: str, new_text: str, page_spans: list | None = None,
+         placed: dict | None = None) -> dict:
+    """The notes of a document read again into `new_text` (reread.py): each follows its words, and takes the page of
+    its new place (`page_spans`: the new reading's (start, end) of each page, in order; none for a text without
+    pages). `placed` (hunt phase 1.5): where reread.py's alignment of the two readings put each note's words
+    ({note_id: (start, end), or None: no place}, as the preview reported); a note not in it is looked for nearest its
+    old place in proportion, near it only (never the same words elsewhere in the text). A note whose words cannot be
+    found keeps them and is marked lost when shown: its start and end become one point (`_placed` never looks for it
+    again, so it is never put on other words later). {moved, lost}."""
     starts = [a for a, _b in page_spans or []]
-    rows = cx.execute("SELECT note_id, start, quote FROM notes WHERE doc_id=?", (doc_id,)).fetchall()
+    rows = cx.execute("SELECT note_id, start, end, quote FROM notes WHERE doc_id=?", (doc_id,)).fetchall()
     old_len = cx.execute("SELECT length(text) FROM documents WHERE doc_id=?", (doc_id,)).fetchone()
     scale = (len(new_text) / old_len[0]) if old_len and old_len[0] else 1.0
     moved = lost = 0
-    for nid, start, quote in rows:
-        got = find(new_text, quote or "", int((start or 0) * scale))
+    for nid, start, end, quote in rows:
+        if placed is not None and nid in placed:
+            got = placed[nid]   # (one an earlier reading left without a place too: found again in this one)
+        elif start is not None and start == end:
+            lost += 1   # left without a place by an earlier reading: stays so
+            continue
+        else:
+            got = find(new_text, quote or "", int((start or 0) * scale), anywhere=False)
         if got is None:
             lost += 1
+            at = min(int((start or 0) * scale), len(new_text))
+            # (and no page: the page it had is the earlier reading's, and an export would cite it as this one's)
+            cx.execute("UPDATE notes SET start=?, end=?, page=NULL WHERE note_id=?", (at, at, nid))
             continue
         page = max(0, bisect.bisect_right(starts, got[0]) - 1) + 1 if starts else None
         cx.execute("UPDATE notes SET start=?, end=?, page=? WHERE note_id=?", (*got, page, nid))
@@ -389,12 +422,18 @@ def merge(cx: sqlite3.Connection, rows: list[dict], fix, sender: str | None = No
     sender (`sync_via`); it brings up to date only a row that came relayed itself; its author's own row takes its
     place whatever its time. Without `sender`: as before."""
     me = _me()
-    gone = {r[0] for r in cx.execute("SELECT key FROM sync_removed WHERE kind='note'")}
+    # who removed each note noted as removed: only its author's removal keeps a note out. A colleague's file could
+    # say that they removed a third person's note, and that note then never came here, from its author's own file
+    # either (hunt phase 1, MERGE-6). A note of removal without a name (from before 0.14) still keeps it out
+    gone = {r[0]: r[1] for r in cx.execute("SELECT key, person_id FROM sync_removed WHERE kind='note'")}
+    from .sync.common import removed_also
+
+    also = removed_also(cx, "note")  # a second person's removal of a note not held here (hunt phase 1.5, MERGE-6)
     docs = {r[0] for r in cx.execute("SELECT doc_id FROM documents")}
     cols = [r[1] for r in cx.execute("PRAGMA table_info(notes)")]
     via_here: set[str] = set()
     if sender:
-        from .people import first_hand, note_via, relayed
+        from .people import first_hand as _first_hand, note_via, relayed
 
         via_here = relayed(cx, "note")
     from .sharing import _partner
@@ -402,7 +441,12 @@ def merge(cx: sqlite3.Connection, rows: list[dict], fix, sender: str | None = No
     pair = first_hand and bool(sender) and _partner(cx, me) == sender  # (your other account's own file)
     n = 0
     for r in rows:
-        if not isinstance(r.get("note_id"), str) or not _ID.fullmatch(r["note_id"]) or r["note_id"] in gone:
+        if not isinstance(r.get("note_id"), str) or not _ID.fullmatch(r["note_id"]):
+            continue
+        if r["note_id"] in gone and (gone[r["note_id"]] is None or not r.get("person_id")
+                                     or gone[r["note_id"]] == r.get("person_id")):
+            continue
+        if (r["note_id"], r.get("person_id")) in also:
             continue
         r = fix(r)
         if r is None or r.get("doc_id") not in docs:
@@ -432,7 +476,7 @@ def merge(cx: sqlite3.Connection, rows: list[dict], fix, sender: str | None = No
             if third and r["note_id"] not in via_here:
                 continue  # relayed: never in place of the author's own row
             if sender and not third and r["note_id"] in via_here:
-                first_hand(cx, "note", [r["note_id"]])
+                _first_hand(cx, "note", [r["note_id"]])
             elif third:
                 note_via(cx, "note", r["note_id"], r["person_id"], sender)
             sets = [c for c in use if c != "note_id"]

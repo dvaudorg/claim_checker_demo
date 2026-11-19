@@ -20,10 +20,12 @@ from __future__ import annotations
 
 import bisect
 import json
+import math
 import mimetypes
 import os
 import re
 import secrets
+import socket
 import sys
 import threading
 import time
@@ -65,9 +67,11 @@ from .api_common import (  # noqa: F401 - the names are importable from here as 
     Jobs,
     MAX_JSON,
     MAX_UPLOAD,
+    UPLOAD_BATCH_MAX,
     XLSX,
     _PDFIUM_LOCK,
     _body_int,
+    _body_text,
     _bool,
     _cell,
     _check_options,
@@ -78,11 +82,13 @@ from .api_common import (  # noqa: F401 - the names are importable from here as 
     _installation,
     _int,
     _list,
+    _path_text,
     _str,
     _text_with_quote,
     _usable_embedder,
     _xlsx_with_provenance,
     benchmark_table,
+    once,
     page_images_available,
     reading_report,
     render_page,
@@ -149,6 +155,8 @@ class App(LibraryMixin, QueueMixin):
         return self.session_key or home.env_key() or home.stored_key()
 
     def ws(self, name: str):
+        if name in self.jobs.removing:   # hunt phase 1.5: a hook that starts late never opens a project being removed
+            raise ApiError(409, f"The project “{name}” is being removed.")
         if name not in home.list_projects():
             raise ApiError(404, f"No project called {name!r}.")
         try:
@@ -251,22 +259,41 @@ class App(LibraryMixin, QueueMixin):
             return True
 
     def project_summary(self, name: str) -> dict:
+        from ..store import DamagedConfig, ProjectTooNew
+
+        problem = None
         try:
             ws = home.open_project(name)
+            ws.config  # (hunt phase 1.5: a damaged settings file is said here, on the Projects page, not at each page)
             docs = int(ws.scalar("SELECT COUNT(*) FROM documents") or 0)
             hyps = int(ws.scalar("SELECT COUNT(*) FROM hypotheses") or 0)
+            ok = True
+        except (DamagedConfig, ProjectTooNew) as e:  # hunt phase 1.5: why it cannot be opened, and what to do
+            docs = hyps = 0
+            ok, problem = False, str(e)
+        except home.BeingRemoved:   # (hunt phase 1.5: going to the trash now: passed over quietly, not "damaged")
+            docs = hyps = 0
             ok = True
         except Exception:
             docs = hyps = 0
             ok = False
         return {"name": name, "linked": home.is_linked(name), "documents": docs, "hypotheses": hyps, "ok": ok,
-                "path": str(home.project_path(name)), "temporary": home.is_temporary(name)}
+                "problem": problem, "path": str(home.project_path(name)), "temporary": home.is_temporary(name)}
 
     # -- read-only views -------------------------------------------------------------------------
     def state(self) -> dict:
         try:
-            home.cleanup_quicklooks()  # quick looks not kept go to the trash after a week
-        except OSError:
+            # quick looks not kept go to the trash after a week; hunt phase 1: not one whose job is queued or running
+            # (as a removal waits for it, gui/api_documents.py `delete_project`); the others are marked as being
+            # removed, so no job of them starts until they have gone (Jobs.removal), and moved after the jobs' lock
+            expired = home.expired_quicklooks()
+            if expired:
+                with self.jobs.removal(expired) as free:
+                    if free:
+                        home.cleanup_quicklooks(only=free)
+        except (OSError, ValueError):
+            # (ValueError: home.Damaged, a damaged links.json the removal reads: the state still answers, and the
+            # action that needs the list tells the person; the file is set aside, so the next look mends it)
             pass
         s = self.settings()
         projects = [self.project_summary(n) for n in home.list_projects()]
@@ -278,6 +305,8 @@ class App(LibraryMixin, QueueMixin):
         out = {"version": __version__, "installed_version": _installed_version(), "home": str(home.home()), "settings": s,
                "brand": addons.brand(),   # 0.13.5: the app's name and words (static/brand.json and add-ons)
                "addon_pages": addons.page_modules(),   # 0.13.6: add-on packages' page modules
+               # hunt phase 1.5: add-ons that could not be loaded, and those left out of the open project
+               "addon_problems": self._addon_problems(current),
                "backend_label": home.backend_label(s), "backend_labels": home.BACKEND_LABELS,
                "projects": projects, "project": current, "local_only": home.local_only(),
                "launcher": self.launcher, "can_quit": self.stop is not None,
@@ -299,6 +328,14 @@ class App(LibraryMixin, QueueMixin):
         out.update(addons.state(self, set(out)))  # 0.13.6: an add-on's keys, never in place of ENLENS's
         return out
 
+    def _addon_problems(self, current: str | None) -> list[dict]:
+        """[{"addon", "error", "project"?}]: add-ons that could not be loaded, and those left out of `current`."""
+        try:
+            return addons.errors(home.project_path(current) if current else None) if current else \
+                [e for e in addons.errors() if "project" not in e]
+        except (OSError, ValueError, KeyError):
+            return [e for e in addons.errors() if "project" not in e]
+
     def providers_state(self, s: dict | None = None) -> dict:
         """The cloud providers for Settings and the Documents page: the table, whether a key is stored for each (yes
         or no, never the key), and whether one other than Anthropic is set up (a key stored, or the main route is
@@ -318,7 +355,10 @@ class App(LibraryMixin, QueueMixin):
                 "other_set_up": bool(others) and not home.local_only(),
                 # a model server on another computer as the main route: its address, for the line that says it reads
                 # only the documents allowed to it
-                "route_address": access.route_address(s) if s.get("backend") in ("auto", "ollama", "openai") else None}
+                "route_address": access.route_address(s) if s.get("backend") in ("auto", "ollama", "openai") else None,
+                # hunt phase 1.5: the way out for an address such as ollama.localhost, which was this computer before
+                "route_address_note": (providers.LOOKS_LOCAL if s.get("backend") in ("auto", "ollama", "openai")
+                                       and providers.looks_local(access.route_address(s) or "") else "")}
 
     def _team_framework(self, name: str | None) -> dict | None:
         """The project's default codebook, set by its owner, when this copy holds it ({"name", "title"}): it takes the
@@ -344,7 +384,10 @@ class App(LibraryMixin, QueueMixin):
             return None
         try:
             ws = home.open_project(name)
-            n = ws.scalar(f"SELECT COUNT(*) FROM tasks WHERE {taskqueue.WAITING}") or 0  # the partial index alone
+            # the partial index alone; less the AI mix's local share, which Claude Code is never handed (hunt
+            # phase 1: the same test as the queue's own count, taskqueue.local_share)
+            share, args = taskqueue.local_share()
+            n = ws.scalar(f"SELECT COUNT(*) FROM tasks t WHERE {taskqueue.WAITING} AND NOT {share}", args) or 0
         except Exception:  # noqa: BLE001
             return None
         return {"waiting": int(n)}
@@ -461,7 +504,9 @@ class App(LibraryMixin, QueueMixin):
             listed = {m: m if ":" in m.rsplit("/", 1)[-1] else f"{m}:latest" for m in got}
             return {"url": url, "models": got, "listed": listed, "chosen": choose(listed) if use else None}
 
-        return self.jobs.start("model-pull", "Downloading " + " and ".join(models), None, run, uses_model=False)
+        # (hunt phase 1.5: `unique`, as the look above and the start were two steps: two tabs, two downloads)
+        return self.jobs.start("model-pull", "Downloading " + " and ".join(models), None, run, uses_model=False,
+                               unique=True)
 
     def test_backend(self) -> dict:
         s = self.settings()
@@ -995,7 +1040,7 @@ class App(LibraryMixin, QueueMixin):
         s = self.settings()
         text = str(body.get("text") or "")
         claimcheck._clean(text)  # the plain mistakes are reported at once, not as a failed job
-        fw, code = body.get("framework") or None, body.get("code") or None
+        fw, code = _body_text(body, "framework"), _body_text(body, "code")   # (a list here was a 500: unhashable)
         frameworks.resolve(ws, fw, code)
         opts = _check_options(body, s)
         prepared = {}
@@ -1021,7 +1066,7 @@ class App(LibraryMixin, QueueMixin):
                                              embed_model=getattr(_usable_embedder(ws, emb), "model", None),
                                              **opts, **prepared)
                 self._follow_queued(job, ws, [hid], tracker)
-                return {"hyp_id": hid, "status": claimcheck.hypothesis_result(ws, hid, s["threshold"])["status"]}
+                return {"hyp_id": hid, "status": _status_now(ws, hid, s["threshold"])}
 
             return self._job("check", text[:120], name, qrun)
 
@@ -1032,7 +1077,7 @@ class App(LibraryMixin, QueueMixin):
             hid = claimcheck.check_hypothesis(ws, text, be, model, framework=fw, code=code, progress=tracker.step,
                                               embedder=_usable_embedder(ws, emb), should_stop=job.cancel.is_set,
                                               **opts, **prepared)
-            return {"hyp_id": hid, "status": claimcheck.hypothesis_result(ws, hid, s["threshold"])["status"]}
+            return {"hyp_id": hid, "status": _status_now(ws, hid, s["threshold"])}
 
         return self.jobs.start("check", text[:120], name, run, uses_model=True)
 
@@ -1180,8 +1225,11 @@ class App(LibraryMixin, QueueMixin):
         limit = teamproviders.note(ws._conn(), prov) if any(h["why"] == "limit" for h in waiting) else None
         text = limit or (f"{title} reads only documents that allow {company}, and this project's do not: allow "
                          f"{company} for this project and the check goes on by itself")
-        if not limit and ws.meta(access.PROVIDERS_RESET):  # I7 stage 3: the ticks that came from colleagues went
-            text += (". Your provider ticks that had come with a colleague's copy were cleared: each person now "
+        reset = ws.meta(access.PROVIDERS_RESET)
+        if not limit and reset:  # I7 stage 3: the ticks that came from colleagues went
+            text += (". When this project was opened from a zip, its provider ticks were narrowed to what this copy "
+                     "allows: tick again the ones you want" if isinstance(reset, dict) and reset.get("from") == "import"
+                     else ". Your provider ticks that had come with a colleague's copy were cleared: each person now "
                      "chooses their own")
         tracker.model_report({"phase": "held", "seconds": time.time() - t0, "text": text, "agent": route,
                               "agent_title": title, "provider": prov, "company": company, "excerpts": n,
@@ -1226,7 +1274,7 @@ class App(LibraryMixin, QueueMixin):
         s = self.settings()
         text = str(body.get("text") or "")
         claimcheck._clean(text)
-        fw, code = body.get("framework") or None, body.get("code") or None
+        fw, code = _body_text(body, "framework"), _body_text(body, "code")   # (a list here was a 500: unhashable)
         frameworks.resolve(ws, fw, code)
         decompose = bool(body["decompose"]) if "decompose" in body else bool(s["decompose"])
         expand = bool(body["expand"]) if "expand" in body else bool(s["expand"])
@@ -1277,7 +1325,13 @@ class App(LibraryMixin, QueueMixin):
             r["hyp_id"] = ws.scalar("SELECT hyp_id FROM user_claims WHERE claim_id=?", (claim_id,))
             return r
 
-        return self._job("reread", "Reading one excerpt again", name, run, withdraw=("reread",), ws=ws)
+        # hunt phase 1.5: pressed twice (or in two tabs), the same excerpt read again is the job already there (two
+        # would make one task id, judgements.reread_excerpt); with another note it waits for that one's answer
+        key = ("excerpt", claim_id, passage_id, note)
+        return once(self, name, "reread", key,
+                    lambda: self._job("reread", "Reading one excerpt again", name, run, withdraw=("reread",), ws=ws),
+                    clash=lambda j: (getattr(j, "start_key", None) or ())[:3] == key[:3],
+                    words="This excerpt is being read again already: wait for its answer, then ask again.")
 
     def start_read_local(self, name: str, hyp_id: str, force: bool = False) -> Job:
         """0.11: read the excerpts of a check that wait for the local model (made in a Claude chat, or while the app
@@ -1307,7 +1361,7 @@ class App(LibraryMixin, QueueMixin):
                 raise readers.memory_short
             taskqueue.advance(ws, [hyp_id])
             return {"hyp_id": hyp_id, "parts": n,
-                    "status": claimcheck.hypothesis_result(ws, hyp_id, self.settings()["threshold"])["status"]}
+                    "status": _status_now(ws, hyp_id, self.settings()["threshold"])}
 
         # 0.19.13: its own button, all the local model's work: no second Start ("force": Start it anyway)
         job = self.jobs.start("read-local", "Reading excerpts with the local model", name, run, uses_model=True,
@@ -1345,9 +1399,12 @@ class App(LibraryMixin, QueueMixin):
         ws = self.ws(name)
         s = self.settings()
         items = body.get("items")
+        if items and not isinstance(items, list):   # hunt phase 1: a number here was a 500 ("not iterable")
+            raise ApiError(400, "items must be a list of hypotheses, each {\"text\": …}.")
         if not items:
             items = claimcheck.parse_batch(str(body.get("text") or ""))
-        items = [{"text": str(i.get("text") or ""), "framework": i.get("framework") or None, "code": i.get("code") or None}
+        items = [{"text": str(i.get("text") or ""), "framework": _body_text(i, "framework"),
+                  "code": _body_text(i, "code")}
                  for i in items if isinstance(i, dict)]
         if not items:
             raise ApiError(400, "No hypotheses found. Give one per line, or a CSV with a 'hypothesis' column.")
@@ -1448,7 +1505,10 @@ class App(LibraryMixin, QueueMixin):
                                                           progress=lambda st, m, info=None, _i=i: tracker.step(
                                                               st, m, {**(info or {}), "index": _i}),
                                                           should_stop=job.cancel.is_set))
+            # hunt phase 1.5: "N of M brought up to date" counts those whose reading worked (`checked`, as the
+            # progress panel reads it for Check several), not the one that could not be read
             return {"hypotheses": done, "passages": sum(d["passages"] for d in done),
+                    "checked": [d["hyp_id"] for d in done if not d.get("failed")], "total": len(hyp_ids),
                     # 0.20.3: how many answers the new documents changed, and how many only got other counts
                     "answers_changed": sum(d["changed"] == "answer" for d in done),
                     "evidence_changed": sum(d["changed"] == "evidence" for d in done)}
@@ -1513,18 +1573,22 @@ class App(LibraryMixin, QueueMixin):
         return self._job("second-opinion", f"Second opinion from {second} on {len(ids)} "
                          f"{'hypothesis' if len(ids) == 1 else 'hypotheses'}", name, run, withdraw=("second",), ws=ws)
 
-    def start_ingest(self, name: str, body: dict, paths: list[Path] | None = None, title: str = "Adding sources") -> Job:
+    def start_ingest(self, name: str, body: dict, paths: list[Path] | None = None, title: str = "Adding sources",
+                     own_access: str | None = None) -> Job:
         """Add documents: an upload batch, a folder or file path typed by the person, or (0.13) the files the
-        bibliography has for works without a document (`paths`)."""
+        bibliography has for works without a document (`paths`). Who may read them with AI follows the one rule of
+        every route that adds documents (`ingest.adding_access`); `own_access` (a quick look) is the documents' own
+        setting, chosen by the app, and the project's default stays unchosen, so keeping it still asks."""
         ws = self.ws(name)
         inputs: list[Path] = list(paths or [])
         if body.get("batch"):
-            folder = ws.root / "uploads" / re.sub(r"[^A-Za-z0-9_-]", "", str(body["batch"]))
-            if not folder.is_dir():
+            batch = re.sub(r"[^A-Za-z0-9_-]", "", str(body["batch"]))
+            folder = ws.root / "uploads" / batch
+            if len(batch) > UPLOAD_BATCH_MAX or not folder.is_dir():   # (no upload makes a longer one: post_upload)
                 raise ApiError(400, "Nothing was uploaded in that batch.")
             inputs.append(folder)
         if body.get("path"):
-            p = Path(str(body["path"])).expanduser()
+            p = Path(_path_text(str(body["path"]))).expanduser()
             if not p.exists():
                 raise ApiError(400, f"Nothing at {p}. Give the full path of a folder, a zip or a file on this computer.")
             inputs.append(p)
@@ -1532,14 +1596,21 @@ class App(LibraryMixin, QueueMixin):
             raise ApiError(400, "Upload files or give a folder path first.")
         exclude = str(body.get("exclude") or "").split() or None
         s = self.settings()
-        level = body.get("ai_access") or None  # 0.11: "Who may read these documents with AI?"
-        if level is not None:
+        # 0.11: "Who may read these documents with AI?" Hunt phase 1.5 (the owner's rule): documents never become
+        # readable by an AI through silence. Without an answer, a project whose default was never chosen is refused in
+        # words (the Documents page asks first, with nothing preselected; a request without `ai_access` took "Claude
+        # may read it"); with a chosen default, it applies. Earlier documents that follow an unchosen default keep
+        # following it: the answer is the new documents' own, and the result says how many follow it (`note`)
+        if own_access is not None:
+            plan = {"ai_access": own_access, "set_default": False, "earlier": 0}
+        else:
             try:
-                level = access.clean(level)
+                plan = ingest.adding_access(ws, _body_text(body, "ai_access") or None)
+            except ingest.AccessChoice as e:
+                raise ApiError(400, f"{e} (In a request: ai_access, one of cloud, local, none.)") from None
             except ValueError as e:
                 raise ApiError(400, str(e)) from None
-            if level == "cloud" and home.local_only():
-                raise ApiError(400, "Cloud models are switched off on this computer.")
+        level = plan["ai_access"]
         note = str(body.get("ai_note") or "").strip() or None
 
         def run(job: Job):
@@ -1551,8 +1622,12 @@ class App(LibraryMixin, QueueMixin):
             before = {r[0] for r in ws.query("SELECT doc_id FROM documents")}
             stats = ingest.ingest(ws, inputs, exclude=exclude, progress=prog, should_stop=job.cancel.is_set,
                                   ocr=ingest.OcrOptions(s.get("ocr", "auto"), s.get("ocr_lang") or "eng"),
-                                  ai_access=level, ai_note=note)
+                                  ai_access=level, ai_note=note, set_default=plan["set_default"])
+            if plan["earlier"]:
+                stats["note"] = ingest.earlier_words(ws, plan["earlier"])
             stats["documents_added"] = [d for d in document_overview(ws) if d["doc_id"] not in before]
+            if own_access is not None:   # hunt phase 1.5: the app's stand-in, which the person's answer replaces
+                access.mark_standin(ws, [d["doc_id"] for d in stats["documents_added"]])
             emb = home.make_embedder(s)
             if emb is not None and stats["added"] and not job.cancel.is_set():
                 job.progress = {"done": 0, "total": 0, "file": "", "phase": "embedding"}
@@ -1572,10 +1647,24 @@ class App(LibraryMixin, QueueMixin):
                     stats["bibliography_error"] = str(e)
             return stats
 
-        return self.jobs.start("ingest", title, name, run, uses_model=False)
+        job = self.jobs.start("ingest", title, name, run, uses_model=False)
+        # hunt phase 1.5: documents only a local AI or no AI may read: a notification of this job does not show its
+        # error, which can name their files (`Job.note_title`)
+        if (level or access.default(ws)) in ("local", "none"):
+            job.note_title = title
+        return job
 
 
 
+
+
+def _status_now(ws, hyp_id: str, threshold: float) -> str:
+    """The status of a hypothesis a job has just checked. Hunt phase 1.5: one removed meanwhile (while its check waited
+    for the queue) is said in words; the job's error was the bare id of the KeyError."""
+    try:
+        return claimcheck.hypothesis_result(ws, hyp_id, threshold)["status"]
+    except KeyError:
+        raise ValueError("The hypothesis was removed while it was being checked: there is no result to show.") from None
 
 
 def _clis_summary() -> list[dict]:
@@ -1590,9 +1679,11 @@ def _repair_plugin() -> None:
     try:
         from .. import claude_setup
 
-        r = claude_setup.repair()
+        r = claude_setup.repair(patient=True)  # (hunt phase 1.5: after a refusal, once a day or after an update)
         if r.get("repaired"):
             print(f"The Claude Code plugin was brought up to date ({r.get('reason')}).")
+        elif r.get("refused"):  # hunt phase 1 (INSTALL-5): not "brought up to date" when Claude Code said no
+            print(claude_setup.refused_words(r), file=sys.stderr)
         # stage 2: and what ENLENS added to Codex and Antigravity, when it no longer fits this installation
         from .. import agentcli
 
@@ -1997,6 +2088,17 @@ DOWNLOADS = {"get_hypothesis_export", "get_export", "get_document_file", "get_pr
 DOWNLOADS |= api_corpus.DOWNLOADS | api_checks_extra.DOWNLOADS
 # (these may take the token as ?token=, for plain links)
 
+def _no_constant(name: str):
+    raise ApiError(400, f"The request holds {name}, which is not a number JSON knows: send an ordinary number.")
+
+
+def _finite_float(text: str) -> float:
+    f = float(text)
+    if not math.isfinite(f):
+        raise ApiError(400, f"The number {text[:30]} in the request is too large: send an ordinary number.")
+    return f
+
+
 _HEADER_CTRL = re.compile(r"[\x00-\x1f\x7f]")  # never in a header value: CR and LF would start a header of their own
 
 
@@ -2005,6 +2107,21 @@ class Handler(BaseHTTPRequestHandler, DocumentsApi, ExploreApi, ChecksApi, Setup
     app: App
     server_version = f"enlens/{__version__}"
     protocol_version = "HTTP/1.1"
+    # hunt phase 1.5: how long the connection waits for a client that sends nothing more while a request is read
+    # (seconds). A body shorter than its Content-Length, on a connection kept open, held a thread for ever. Only reading
+    # is limited: the answer is written without a limit (`end_headers`), so a download paused for long is not cut off
+    read_timeout = 120
+
+    def handle_one_request(self):
+        self.connection.settimeout(self.read_timeout)
+        super().handle_one_request()
+
+    def end_headers(self):
+        try:
+            self.connection.settimeout(None)   # writing the answer, however slowly the client takes it
+        except OSError:
+            pass
+        super().end_headers()
 
     def log_message(self, fmt, *args):  # quiet: the terminal shows only problems
         pass
@@ -2084,17 +2201,64 @@ class Handler(BaseHTTPRequestHandler, DocumentsApi, ExploreApi, ChecksApi, Setup
         self._consumed = True
         n = self._length()
         if n > MAX_JSON:
+            self.close_connection = self._linger = True   # (not read; drained, bounded, at the close)
             raise ApiError(413, "The request is too large.")
-        raw = self.rfile.read(n) if n else b""
+        raw = self._read(n) if n else b""
         if not raw:
             return {}
         try:
-            obj = json.loads(raw)
+            # hunt phase 1: Python reads JSON's Infinity, NaN and 1e400 (float infinity) although JSON has no such
+            # numbers, and int() of one raised OverflowError deep in a handler (Settings, themes): a 500 "Unexpected
+            # problem" in place of a 400 in words. They are refused here, once for every endpoint
+            obj = json.loads(raw, parse_constant=_no_constant, parse_float=_finite_float)
         except json.JSONDecodeError:
             raise ApiError(400, "The request body is not valid JSON.") from None
         if not isinstance(obj, dict):
             raise ApiError(400, "The request body must be a JSON object.")
         return obj
+
+    def _read(self, n: int) -> bytes:
+        """Up to `n` bytes of the request body. Hunt phase 1.5: a client that stops sending (a body shorter than its
+        length) is answered 408 when the connection's `timeout` is up, and the connection closed; it was a 500."""
+        try:
+            return self.rfile.read(n)
+        except TimeoutError:
+            self.close_connection = True
+            self._linger = True
+            raise ApiError(408, "The request's body did not arrive in time.") from None
+
+    # hunt phase 1.5: a refusal that comes while the client still sends its body (a 411 for chunks, a 413, a 401 or a
+    # 404 before a large upload, a 408) closed the connection with the body unread; Windows then resets the
+    # connection, and the client lost the answer it had not read yet. After the answer, the sending side is shut and
+    # what the client still sends is read and dropped, bounded in bytes and time (a sender that never stops does not
+    # hold the thread), then the connection closes
+    LINGER_BYTES = 8 * 1024 ** 2
+    LINGER_SECONDS = 2.0
+
+    def finish(self):
+        super().finish()
+        if getattr(self, "_linger", False):
+            self._linger_close()
+
+    def _linger_close(self) -> None:
+        conn = self.connection
+        try:
+            conn.shutdown(socket.SHUT_WR)
+        except OSError:
+            return
+        end, left = time.monotonic() + self.LINGER_SECONDS, self.LINGER_BYTES
+        try:
+            while left > 0:
+                wait = end - time.monotonic()
+                if wait <= 0:
+                    break
+                conn.settimeout(wait)
+                data = conn.recv(min(65536, left))
+                if not data:
+                    break
+                left -= len(data)
+        except OSError:   # (a timeout or the client gone: close now)
+            pass
 
     def do_GET(self):
         self._dispatch("GET")
@@ -2119,6 +2283,7 @@ class Handler(BaseHTTPRequestHandler, DocumentsApi, ExploreApi, ChecksApi, Setup
         n = self._length()
         if n > MAX_JSON:
             self.close_connection = True
+            self._linger = True   # (the body still on its way is drained, bounded, at the close: `finish`)
         elif n:
             self.rfile.read(n)
 
@@ -2127,6 +2292,15 @@ class Handler(BaseHTTPRequestHandler, DocumentsApi, ExploreApi, ChecksApi, Setup
         path = url.path
         q = parse_qs(url.query)
         self._consumed = False
+        te = (self.headers.get("Transfer-Encoding") or "").strip().lower()
+        if te and te != "identity":
+            # hunt phase 1.5: a body sent in chunks (no Content-Length) was not read: an upload was stored empty with
+            # 200, and the chunks were read as the next request. The page always sends a length; scripts are told to
+            self._consumed = True
+            self._linger = True
+            self._json(411, {"error": "Send the request body with a Content-Length: a body sent in chunks is not "
+                                      "read.", "kind": "request"})
+            return
         try:
             self._route(method, path, q)
         finally:
@@ -2153,11 +2327,24 @@ class Handler(BaseHTTPRequestHandler, DocumentsApi, ExploreApi, ChecksApi, Setup
                 if mt and m == method:
                     hname = addons.handler_name(name)
                     token = self.headers.get("X-Enlens-Token") or (_str(q, "token") if hname in downloads else None)
-                    if not token or not secrets.compare_digest(token, self.app.token):
+                    # hunt phase 1: as bytes, still in constant time: compare_digest refuses two str when one holds a
+                    # letter outside ASCII ("jelszó"), and that TypeError was a 500 in place of the 401 that says how to
+                    # open ENLENS
+                    if not token or not secrets.compare_digest(token.encode("utf-8", "surrogateescape"),
+                                                               self.app.token.encode("utf-8")):
                         raise ApiError(401, "Missing or wrong token. Open ENLENS from its icon (or run enlens-gui).")
                     if self.headers.get("X-Enlens-Seen") == "1":  # a tab in front of the person (gui/notify.py)
                         self.app.seen = time.time()
                     args = [unquote(g) for g in mt.groups()]
+                    if not isinstance(name, str) and args and path.startswith("/api/projects/"):
+                        # hunt phase 1.5: an add-on left out of this project (its tables failed here) answers in
+                        # words, not with a 500 from a table that is not there
+                        try:
+                            why = addons.refused_here(name, home.project_path(args[0]))
+                        except (OSError, ValueError, KeyError):
+                            why = ""
+                        if why:
+                            raise ApiError(409, why)
                     out = getattr(self, name)(*args, q=q) if isinstance(name, str) else name(self, *args, q=q)
                     if method != "GET" and args and path.startswith("/api/projects/") and path.count("/") > 3 \
                             and name not in NOT_A_CHANGE:  # 0.18 (L3): a change in the project: a round soon
@@ -2456,15 +2643,17 @@ def serve(host: str = "127.0.0.1", port: int = 8765, open_browser: bool = True, 
     url = f"http://{'127.0.0.1' if host in ('127.0.0.1', '0.0.0.0', '::') else host}:{srv.server_address[1]}/"
     from . import launcher as _l
 
-    if launcher and host == "127.0.0.1":
-        _l.write_info(url, srv.server_address[1])
     # 0.17.2: the page does not hand out the token: the browser opens this link, and the icon and the command line
-    # find the token in a file only this account can read
+    # find the token in a file only this account can read. Hunt phase 1.5 (CI run 4): the token file first, then
+    # app.json, both once the server listens (make_server has bound and listens): a `launcher.running()` that finds
+    # the record finds the token to prove it with, and never a record with no proof to look for
     link = _l.link(url, app.token)
     try:
         _l.write_token(url, srv.server_address[1], app.token)
     except OSError as e:  # never in the way of starting: the link below still opens the app
         print(f"Could not write the token file: {e}", file=sys.stderr)
+    if launcher and host == "127.0.0.1":
+        _l.write_info(url, srv.server_address[1])
     # started from the icon, what is printed goes to a log file (launcher.log_to_file): the link with the token is
     # not written there
     print(f"ENLENS hypothesis checker {__version__} at {url if launcher else link}  (data folder: {home.home()})")

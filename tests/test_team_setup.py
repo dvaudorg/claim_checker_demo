@@ -95,7 +95,8 @@ def test_the_set_up_is_one_step_at_a_time():
     assert "onDismiss: async () => !begun() || (await confirmDialog({ title: \"Stop the set-up?\"" in dlg
     assert "const begun = () => !ready && (way.at() > first || Object.values(svc.read()).some(Boolean) || " in dlg
     assert "session(stepKey, i >= first ? i - first : null);" in dlg and dlg.count("session(stepKey, null);") == 2
-    assert 'if (asking || (lock && lock.on)) return;' in LIB and 'dlg.addEventListener("cancel", (e) => { e.preventDefault(); dismiss(); });' in LIB
+    # hunt phase 1.5 (wave 6): the dialog also waits while an action's work runs
+    assert 'if (asking || working || (lock && lock.on)) return;' in LIB and 'dlg.addEventListener("cancel", (e) => { e.preventDefault(); dismiss(); });' in LIB
     assert "if (lacks) { err.textContent = lacks; way.go(" in dlg
     # Backblaze: once the space is ready the last step says what is left to do there, and the button says Done
     assert 'way.go(afterAt);' in dlg and 'btn.textContent = "Done";' in dlg and "if (ready) return true;" in dlg

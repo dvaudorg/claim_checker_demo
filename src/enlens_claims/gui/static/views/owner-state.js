@@ -359,6 +359,22 @@ export function refusedWords(r, v) {
     return { title: "A change in your name was refused",
       text: `${viaFile} says you handed the project ${to && to !== "you" ? `to ${cap1(to)}` : "over"}. You did not: nothing was changed here.`, takeBack: true };
   }
+  if (r.kind === "removal") {
+    // hunt phase 1.5: often the person's own earlier word (their old backup brought in again): what happened, and
+    // what to do to remove the document now
+    const w = r.what || {};
+    const t = w.title || r.title;
+    // by the kind of item, and whether this copy holds it (ownership._REMOVED_WORDS, `held`)
+    const [what, how] = { document: ["the document", "use its menu on Documents"],
+      check: ["the check", "use Delete on its result page"],
+      themes: ["the set of themes", "use Delete on the Themes page"] }[w.kind] || ["an item", null];
+    const named = t ? `${what} “${t}”` : what;
+    return { title: "A removal in your name was not taken",
+      text: w.held && how
+        ? `${viaFile} says you removed ${named}, which is in your copy now. A file never removes your work in your name, so it stays. To remove it, ${how}.`
+        : `${viaFile} says you removed ${named}. A file never removes anything in your name: nothing was removed here.`,
+      takeBack: false };
+  }
   const what = r.kind === "canon" ? (r.title ? `a change to “${r.title}”` : "a change to a document")
     : r.kind === "roles" ? "a change of a role" : r.kind === "decisions" ? "an answer to a proposal" : r.kind === "proposals" ? "a proposal" : "a change";
   return { title: "A change in your name was refused",

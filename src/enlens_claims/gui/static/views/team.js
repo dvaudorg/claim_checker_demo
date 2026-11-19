@@ -25,6 +25,7 @@ import { itemHref, shareButton, KIND_WORDS, KIND_MANY, zipButton, ZIP_WORDS, SHA
 import { pollerState, syncLine, myShared, personLine, whenText, whenPhrase, newsLines, whoseWork, folderAsSeen, POLLER_API, EVERY_CHOICES, KEEP_OUT_LABEL, KEEP_OUT_HELP } from "./team-state.js";
 import { OWNER_SECTION, ownerMarks, ownerPerson } from "./owner.js";   // 0.18 L2
 import { MINE_SECTION, REMOVED_SECTION, ROLES_SECTION, peopleRows, personSub, peopleNote } from "./owner.js";   // roles
+import { canWrite } from "./owner-state.js";   // hunt phase 1.5: who may remove a colleague
 import { SPACE_SECTION, inviteDialog, spaceInvites, removeMember, memberSub, SERVICE_NAME } from "./team-space.js";   // 0.18.0rc2 (L6): a storage space
 import { TEAM_SETUP_SECTIONS } from "./team-setup.js";   // the Team page of a project without a team
 import { CODEBOOKS_SECTION } from "./team-codebooks.js";   // team codebooks: the owner's settings about codebooks
@@ -439,7 +440,7 @@ function firstInviteSection(ctx) {
   const sp = st.space;
   if (sp) {
     const others = (sp.members || []).filter((m) => !m.removed && !m.me);
-    if (!sp.keeper || others.length) return null;
+    if (!sp.keeper || sp.member_keeper || others.length) return null;   // (hunt phase 1.5: a Member's copy invites nobody)
     const waiting = sp.invites || [];
     if (waiting.length) {
       const names = waiting.map((i) => i.label).filter(Boolean);
@@ -624,7 +625,7 @@ function cameInSection(ctx) {
 // The Team page: the people. Each a list row (docs/DESIGN.md 5.5): the person mark (and its role), the name, a quiet
 // second line (since when, who keeps the storage space's keys; an attention tag when it needs you), and one control at
 // the row's end: the owner's More menu (roles, and Remove from the team… for the copy that keeps the space's keys), or
-// Remove… alone
+// Remove… alone (a Co-owner's copy that keeps the keys)
 function peopleSection(ctx) {
   const st = ctx.status;
   if (!st.folder) return null;
@@ -633,7 +634,15 @@ function peopleSection(ctx) {
   const sp = st.space;   // 0.18.0rc2 (L6): the storage space's members are the same people
   const members = sp ? (sp.members || []).filter((m) => !m.removed) : [];
   const memberOf = (id) => (id ? members.find((m) => m.person === id && !m.me) || null : null);
-  const removal = (m) => (sp && sp.keeper && m && !m.me ? { text: "Remove from the team…", icon: "x", onClick: () => removeMember(ctx, m) } : null);
+  // hunt phase 1.5: the keys alone are not the right to remove (docs/manual/roles.md: the Owner, or a Co-owner). After a
+  // hand-over the old owner is a Member whose copy keeps the keys until its next round hands them on: no Remove there
+  // (the server refuses it too), and a line says where the keys go
+  const v = ctx.data && ctx.data.owner;
+  const mayRemove = !!(sp && sp.keeper) && !!v && canWrite(v);
+  const keysLeft = sp && sp.keeper && v && !canWrite(v) && !sp.owner_outside   // (the owner outside: spaceInvites says it)
+    ? h("p", { class: "muted small team-text", id: "team-keys-left" }, `You are a Member of this project now, but this computer still keeps the storage space’s keys. They go to ${v.owner && v.owner.name ? `${v.owner.name}’s copy` : "the owner’s copy"} by themselves at the next round in which they are in the storage space; only the owner (or a Co-owner) removes colleagues.`)
+    : null;
+  const removal = (m) => (mayRemove && m && !m.me ? { text: "Remove from the team…", icon: "x", onClick: () => removeMember(ctx, m) } : null);
   const control = (person, m) => {   // one control per row
     const r = removal(m);
     const more = ownerMarks(ctx, person, r ? [r] : []);
@@ -665,11 +674,11 @@ function peopleSection(ctx) {
     sub: ["nothing sent yet", memberSub(m)].filter(Boolean).join(" · "), actions: control({ id: m.person, name: m.name }, m) }));
   const removed = sp ? (sp.members || []).filter((m) => m.removed) : [];
   const gone = removed.length ? h("p", { class: "muted small team-text" }, `Removed: ${removed.map((m) => m.name).join(", ")}. What they shared before stays in the project.`) : null;
-  const both = st.other_computer ? h("div", { class: "btn-row" }, button({ sm: true, id: "team-page-both-computers", onClick: () => bothComputersDialog(ctx) }, "Use both computers…")) : null;
+  const both = secondComputer(ctx);
   /* 0.18 real poller: offline, the folder says nothing of who is in it (not "no colleague yet") */
   if (!people.length && st.reachable === false) {
     return section("people", "People", h("div", { class: "team-people" }, listGroup(null, mine, ...joined)), ...spaceInvites(ctx),
-      h("p", { class: "muted team-text" }, st.space ? "Your colleagues show here again once the storage space can be reached." : "Your colleagues show here again once the shared folder can be reached."), gone, both);
+      h("p", { class: "muted team-text" }, st.space ? "Your colleagues show here again once the storage space can be reached." : "Your colleagues show here again once the shared folder can be reached."), gone, keysLeft, both);
   }
   const join = people.length || st.space ? null : h("div", { class: "team-join" },   // (a storage space: its section invites)
     h("p", { class: "muted team-text" }, "No colleague has used this folder for this project yet. A colleague joins in three steps:"),
@@ -684,7 +693,7 @@ function peopleSection(ctx) {
   });
   const count = 1 + people.length + joined.length;
   return section("people", count > 1 ? `People (${count})` : "People",
-    peopleNote(ctx), h("div", { class: "team-people" }, listGroup(null, mine, ...rows, ...joined)), ...spaceInvites(ctx), gone, both, join);
+    peopleNote(ctx), h("div", { class: "team-people" }, listGroup(null, mine, ...rows, ...joined)), ...spaceInvites(ctx), gone, keysLeft, both, join);
 }
 
 function sharedSection(ctx) {

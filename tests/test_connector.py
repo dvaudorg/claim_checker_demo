@@ -38,7 +38,8 @@ def test_full_check_through_the_connector(home, corpus):
             names = {t.name for t in (await c.list_tools()).tools}
             assert {"create_project", "start_check", "submit_grades", "more_passages", "get_check"} <= names
 
-            p = _json(await _call(c, "create_project", {"name": "Demo", "sources_path": str(corpus)}))
+            p = _json(await _call(c, "create_project", {"name": "Demo", "sources_path": str(corpus),
+                                                          "ai_access": "cloud"}))
             assert p["project"] == "Demo" and p["documents_added"] == 3 and p["readable_passages_added"] > 0
             docs = _json(await _call(c, "list_documents", {}))["documents"]
             assert len(docs) == 3

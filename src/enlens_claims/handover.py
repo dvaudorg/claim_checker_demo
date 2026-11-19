@@ -177,16 +177,50 @@ def _start(args: list[str], folder: str, env: dict | None = None) -> int:
         return subprocess.Popen(args, creationflags=flags, **kw).pid
 
 
+def _local_get(url: str, token: str, timeout: float = 2.0) -> bool:
+    """Whether the ENLENS app at `url` (this computer) answers a request made with `token`; never through a proxy."""
+    import urllib.request
+
+    req = urllib.request.Request(url.split("#", 1)[0].rstrip("/") + "/api/jobs", headers={"X-Enlens-Token": token})
+    try:
+        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=timeout) as r:
+            return r.status == 200
+    except (OSError, ValueError):
+        return False
+
+
+def _same(a, b) -> bool:
+    return os.path.normcase(os.path.abspath(str(a))) == os.path.normcase(os.path.abspath(str(b)))
+
+
 def _came_back(job: dict, before: int, seconds: float) -> bool:
-    """Whether the app started again: its address file names a new process that runs."""
+    """Whether the app started again: this data folder's ENLENS answers at an address. Hunt phase 1 (INSTALL-3): the
+    proof is the token file every copy writes at its start (`app-token-<port>.json`, in `token_dir`: the data folder,
+    or on Windows AppData\\Local\\ENLENS for a data folder outside the profile), naming a process other than the one
+    that was updated, the data folder (when it says), and a token the app at its address accepts. app.json, which this
+    looked at alone, is written only by a copy started from the icon: a copy started with `enlens-gui` in a terminal
+    came back and ran, yet after `come_back` seconds the PowerShell window installed ENLENS again over it; and a stale
+    app.json naming a number another program had since counted as a copy that came back."""
+    folder = Path(job.get("token_dir") or Path(job["info"]).parent)
+    home = job.get("home") or str(Path(job["info"]).parent)
     deadline = time.time() + seconds
     while time.time() < deadline:
         try:
-            pid = int(json.loads(Path(job["info"]).read_text(encoding="utf-8")).get("pid") or 0)
-        except (OSError, ValueError, TypeError, AttributeError):
-            pid = 0
-        if pid and pid != before and not _wait_gone([pid], 0):
-            return True
+            files = sorted(folder.glob("app-token-*.json"))
+        except OSError:
+            files = []
+        for f in files:
+            try:
+                rec = json.loads(f.read_text(encoding="utf-8"))
+                pid, token, url = int(rec.get("pid") or 0), str(rec.get("token") or ""), str(rec.get("url") or "")
+            except (OSError, ValueError, TypeError, AttributeError):
+                continue
+            if not pid or pid == before or not token or not url.startswith("http://127.0.0.1:"):
+                continue
+            if rec.get("home") and not _same(rec["home"], home):
+                continue  # another data folder's copy (the files of several can share a folder on Windows)
+            if _local_get(url, token):
+                return True
         time.sleep(0.5)
     return False
 

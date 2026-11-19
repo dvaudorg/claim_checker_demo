@@ -163,7 +163,14 @@ already have can use *Join with an invite link…* on its Team page instead; it 
 project* (marked *Usual*) or *This project* (only when that copy is their copy of the team's project, sent to them as a
 file before). Their first rounds bring the documents and everything shared; you see them under *People* on *Team* ›
 *People and settings* once your ENLENS has let them in, which it does by itself at its next round; until they have sent
-anything they are listed as *nothing sent yet*. A link works once; *Withdraw* takes back one not used yet.
+anything they are listed as *nothing sent yet*. A link works once; *Withdraw* takes back one not used yet. One
+computer works in a space through one project: a link for a space that another project on the computer already works
+in (your own invite link, tried on your own computer) is refused, and ENLENS names the project to open instead. Two
+projects on one computer that work in the same space (from before that refusal, or a project folder duplicated by
+hand) are not both run: only the one that last connected to the space goes on, and the Team tab of the other says to
+choose *Stop using the storage space here* in the one you do not work in. Where the second project's join replaced the
+first one's keys, the first also says to stop and join again with a new invite link (as the owner, set up a new
+storage space and invite your colleagues again).
 
 ## On the Team page
 
@@ -172,7 +179,11 @@ The Team page has two views, shown as tabs under its title. *Activity* keeps the
 managed.
 The card *The storage space* says where the space is and the invites not used yet; *People* lists everyone in it. The
 owner's copy keeps the space's keys (*keeps the space's keys*); when the project's owner changes, the keys go to the new
-owner's copy by themselves. The storage account itself stays the person's who made it, who can always reach the space
+owner's copy by themselves, at the old owner's next round once the new owner is in the space. Until then the old
+owner's copy still keeps them and says so under *People*, but acts as a Member: it does not invite, withdraw invites,
+remove a colleague or move the team (only the owner, or a Co-owner, does). When the new owner is not in the space yet,
+the old owner's *People* offers one thing: *Make an invite for …*, an invite only the new owner can use; once they
+have joined with it, the keys go to their copy, and the old owner's computer keeps none. The storage account itself stays the person's who made it, who can always reach the space
 through the service's website: for a hand-over in full, the new owner moves the team to a storage space of their own
 (below). The owner can also:
 - **Remove** a colleague (*More* on their row under *People*; the copy that keeps the space's keys offers *Remove from

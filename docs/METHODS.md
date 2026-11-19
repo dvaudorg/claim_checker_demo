@@ -27,11 +27,11 @@ text and can be overruled by a person.
 ## Reading documents
 
 ENLENS reads PDF, Word, web pages, Markdown and plain text (`ingest.SUPPORTED`). The reader is numbered, and each
-document records the one that read it (`ingest.READER`; reader 5 since ENLENS 0.18.1). A new reader reads only
+document records the one that read it (`ingest.READER`; reader 7 now). A new reader reads only
 documents added after an update; earlier documents keep their text, and every quote in them keeps its place, until a
 person moves them to the new reader ([Read with the new reader](manual/reading.md#read-with-the-new-reader)).
 
-The reader uses rules, no model (`reader.py`, `reader3.py`, `reader4.py`, `reader5.py`). It takes each line of a PDF
+The reader uses rules, no model (`reader.py`, `reader3.py` to `reader7.py`). It takes each line of a PDF
 with its position and font (pdfminer), or recognises scanned pages with Tesseract at 200 dpi when it is installed
 (`ingest.OCR_DPI`). It sets aside running heads, page numbers and line numbers by position and repetition, finds
 columns and the reading order, groups lines into blocks, and gives each block a kind: title, heading, abstract, body,

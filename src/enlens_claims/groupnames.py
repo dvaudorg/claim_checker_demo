@@ -40,7 +40,8 @@ and a name that fits no group there is kept, listed apart, not drawn.
   (`also_named`: "Also named … by …", with *Remove*, a removal like *Forget this name*).
 - *What comes in is checked* (`valid_row`): a row ENLENS could not have written (broken JSON, a wrong type, an id that
   is not a person's) is left out, and one dated more than `FUTURE` seconds ahead of this clock waits. A version last
-  changed by this copy's person, from someone else's file, is not taken (as for reviews). A colleague's file may carry
+  changed by this copy's person, or a removal in their name, is not taken from any file (as for reviews; also not from
+  one that says it is their own: a zip's "from" proves nothing). A colleague's file may carry
   a third person's names, as it carries their reviews: they are trusted as the rest of the team's work is.
 - *A name removed* (*Use its concepts as the name*, *Forget this name*) is noted in `sync_removed` (kind `group_name`),
   so a colleague's copy does not bring it back; a change made after the removal (a rename on another copy) wins.
@@ -68,6 +69,7 @@ import uuid
 from typing import Callable
 
 from .store import Workspace, now
+from .textutil import one_line
 
 KIND = "group_name"
 MAX_NAME = 60            # characters
@@ -210,6 +212,36 @@ def _failures(ws: Workspace) -> list[tuple[set[str], dict]]:
     return out
 
 
+def _as_on_map(ws: Workspace, records: list[dict], on_map: set[str]) -> list[dict]:
+    """The kept names with each concept as the map hands it out now. Hunt phase 1.5: a node's id is the wording that
+    names its concept (conceptpaths `_Graph.term`: the most frequent); new documents, or two wordings linked as the
+    same, can make another wording name it, and a name kept with the old id lost that concept: a name of a group of
+    two concepts then fitted no group and went to *names elsewhere* for good. A stored id that is not on the map stands
+    for the map's node of its concept, when one of the concept's wordings is on the map."""
+    if not records:
+        return records
+    try:
+        concept = {r[0]: r[1] for r in ws.query("SELECT term_id, concept_id FROM concept_terms")}
+    except Exception:  # noqa: BLE001 - (an older project: no concepts, nothing to translate)
+        return records
+    node: dict[str, str] = {}   # concept id: its wording on the map
+    for t, c in concept.items():
+        if t in on_map:
+            node.setdefault(c, t)
+    out = []
+    for rec in records:
+        now_of = {x: x if x in on_map else node.get(concept.get(x, ""), x) for x in rec["concepts"]}
+        if all(o == n for o, n in now_of.items()):
+            out.append(rec)
+            continue
+        labels = dict(rec["labels"])
+        for o, n in now_of.items():
+            if o != n and n not in labels and o in labels:
+                labels[n] = labels[o]
+        out.append({**rec, "concepts": list(dict.fromkeys(now_of[x] for x in rec["concepts"])), "labels": labels})
+    return out
+
+
 def attach(ws: Workspace, out: dict, members: list[list[str]], labels: dict[str, str], filters: dict, n: int,
            docs_in_scope: set[str] | None, settings: dict | None = None) -> None:
     """Give each of the map's groups its name ({"name", "name_source", "name_id", "model", "quote", "changed",
@@ -220,6 +252,7 @@ def attach(ws: Workspace, out: dict, members: list[list[str]], labels: dict[str,
     except Exception:  # noqa: BLE001 - a project opened by an older ENLENS: no table yet, no kept names
         records = []
     on_map = set(labels)
+    records = _as_on_map(ws, records, on_map)
     fitting = match_all(records, members, on_map)
     took = {gi: cs[0] for gi, cs in fitting.items()}
     fails = _failures(ws) if any(gi not in took or took[gi]["source"] != "person" for gi in range(len(members))) else []
@@ -593,8 +626,8 @@ def merge(cx, names: list[dict], quotes: list[dict], removed: list[dict], sender
     apart (neither knows the other) are settled by the later change, then the larger id of who made it, whatever their
     kind, so every copy ends the same; the one that lost stays as a name of its own when it was a person's decision in
     other words. Every row is checked first (`valid_row`), and one dated more than FUTURE seconds ahead of this clock
-    waits. A version or removal last changed by this person, from someone else's file, is not taken (as for reviews:
-    a file cannot change your work in your name). Returns how many names came in or changed."""
+    waits. A version or removal last changed by this person is not taken from any file, one that says it is this
+    person's own too (as for reviews: a file cannot change your work in your name). Returns how many names came in or changed."""
     fill_people(cx, me)
     latest = _plus(now(), FUTURE)
     gone = {r[0]: r[1] or "" for r in cx.execute("SELECT key, at FROM sync_removed WHERE kind=?", (REMOVED,))}
@@ -602,7 +635,9 @@ def merge(cx, names: list[dict], quotes: list[dict], removed: list[dict], sender
         key, at = r.get("key"), _iso(r.get("at"))
         if not isinstance(key, str) or not key or at is None or at > latest:
             continue
-        if r.get("person_id") == me and sender != me:
+        if r.get("person_id") == me:
+            # this person's own removals are made here, never taken from a file, whoever it says sent it (a zip's
+            # "from" proves nothing: hunt phase 1.5, as sync/merge.py `_removed` since phase 1, MERGE-1)
             continue
         row = cx.execute("SELECT updated_at FROM concept_group_names WHERE name_id=?", (key,)).fetchone()
         if row is not None and (row[0] or "") <= at:
@@ -633,8 +668,8 @@ def merge(cx, names: list[dict], quotes: list[dict], removed: list[dict], sender
         if r is None:
             continue
         nid = r["name_id"]
-        if r["changed_by"] == me and sender != me:
-            continue
+        if r["changed_by"] == me:
+            continue                         # (nor a version in this person's name, whoever the file says sent it)
         if nid in gone and gone[nid] >= r["updated_at"]:
             continue                         # removed after this version was made
         mine = cx.execute("SELECT * FROM concept_group_names WHERE name_id=?", (nid,)).fetchone()
@@ -756,12 +791,58 @@ def _passages_of(ws: Workspace, f, nodes: list[str], g, allowed: set[str], lv: d
     return picked
 
 
+def _name_terms(g, t: str, lab: dict[str, str]) -> list[str]:
+    """The wordings whose words a concept's name on the map holds: the wording `t` itself when the name is its own
+    (the map shows a concept by the wording that bears its name), else every wording of the concept (a name made of
+    two of them, "long form (SHORT)" for an abbreviation)."""
+    ms = g.members.get(g.node(t))
+    if not ms or g.labels.get(t) == lab.get(t):
+        return [t]
+    return sorted(ms)
+
+
+def _drafted_from(ws: Workspace) -> dict[str, set[str]]:
+    """The documents each answered group-name task of this copy showed, by the group's concepts (as `apply` writes
+    them on the name it drafted): the documents an AI-drafted name may hold words of."""
+    out: dict[str, set[str]] = {}
+    for (raw,) in ws.query("SELECT payload_json FROM tasks WHERE kind=? AND status='done'", (KIND,)):
+        try:
+            p = json.loads(raw or "{}")
+            key = json.dumps(sorted(str(c) for c in p.get("concept_ids") or []))
+            out.setdefault(key, set()).update(str(d) for d in p.get("docs") or [])
+        except (ValueError, TypeError, AttributeError):
+            continue
+    return out
+
+
+def _before(ws: Workspace, gr: dict, docs_ok: set[str], drafted: dict[str, set[str]]) -> tuple[str | None, list[str]]:
+    """(the name the AI drafted before for this group, the documents it may hold words of), or (None, []) when it
+    is not sent: the group was not named by the AI, a document it was drafted from may not be read by this task's
+    reader now, or this copy does not know which documents it came from (a colleague's draft: the task that made it
+    stays on their computer). When in doubt the name stays here; the AI is then only not told which name to avoid."""
+    if gr.get("name_source") not in ("ai", "ai_draft") or not gr.get("name_id"):
+        return None, []
+    rec = ws.query("SELECT concepts_json FROM concept_group_names WHERE name_id=?", (gr["name_id"],))
+    try:
+        key = json.dumps(sorted(str(c) for c in json.loads(rec[0][0] or "[]"))) if rec else None
+    except (ValueError, TypeError):
+        key = None
+    docs = set(drafted.get(key) or ()) if key else set()
+    if not docs:
+        return None, []
+    docs |= {r[0] for r in ws.query("SELECT doc_id FROM concept_group_quotes WHERE name_id=?", (gr["name_id"],))
+             if r[0]}
+    if not docs <= docs_ok:
+        return None, []
+    return gr["name"], sorted(docs)
+
+
 def payloads(ws: Workspace, f, n: int, which: str, allowed: set[str], settings: dict | None = None) -> dict:
     """The tasks *Name the groups* asks for, from the map as it is now: {"tasks": [(group, payload)], "skipped":
     groups with no passage the reader may read, "person": groups named by the researcher (never asked)}. `which`:
     "unnamed" (the groups still named by their concepts, and those the AI could not name) or "again" (every group
     but those named by the researcher, each for a new draft)."""
-    from . import access
+    from . import access, terms
     from .conceptmap import concept_map
     from .conceptpaths import _Graph
 
@@ -774,6 +855,7 @@ def payloads(ws: Workspace, f, n: int, which: str, allowed: set[str], settings: 
     lv = access.levels(ws, provider=access.route_provider(s))   # for the main route's provider
     dflt = access.default(ws)
     out: dict = {"tasks": [], "skipped": 0, "person": 0, "map": m}
+    drafted: dict | None = None
     for gr in m["groups"]:
         if gr["name_source"] == "person":
             out["person"] += 1
@@ -783,19 +865,45 @@ def payloads(ws: Workspace, f, n: int, which: str, allowed: set[str], settings: 
         ms = gr["concepts"]
         nodes = [g.node(t) for t in ms]
         ps = _passages_of(ws, f, nodes, g, allowed, lv, dflt)
-        if not ps:
+        # hunt phase 1 (QUEUE-1): a concept's name is words of the documents it is found in, so the prompt names only
+        # the concepts found in a document its reader may read, as its passages are chosen: Claude's (cloud) when
+        # every passage is, else the local model's (cloud and local). The names sent are named for the guard too
+        # (`access.words_floor`), which looks again while the task waits. "concept_ids" and "labels" stay whole
+        # (`apply` and `match` need the group as it is; neither is sent)
+        shown: list[str] = []
+        if ps:
+            ok = {"cloud"} if access.most(lv.get(p["doc_id"]) or dflt for p in ps) == "cloud" else {"cloud", "local"}
+            docs_ok = {d for d, x in lv.items() if (x or dflt) in ok}
+            # hunt phase 1.5: a concept's name is the words of the wordings it is made of. A concept joined by an
+            # abbreviation is named "long form (SHORT)", none of its wordings, and its map id is one wording only:
+            # such a name goes only when every wording of the concept is found in a document the reader may read
+            words = {t: _name_terms(g, t, lab) for t in ms}
+            named = terms.terms_in_docs(ws, sorted({w for ws_ in words.values() for w in ws_}), docs_ok)
+            named = {t for t in ms if set(words[t]) <= named}
+            shown = [t for t in ms if t in named][:MAX_CONCEPTS]
+        if not ps or not shown:
             out["skipped"] += 1
             continue
-        payload = {"concepts": [lab[t] for t in ms[:MAX_CONCEPTS]], "concept_ids": ms,
+        in_ps = [[ms[i] for i in p["nodes"] if i < len(ms) and ms[i] in named][:8] for p in ps]
+        sent = set(shown) | {t for x in in_ps for t in x}
+        # hunt phase 1.5: the name the AI drafted before ("Name the groups again") is words of the documents its task
+        # showed: it goes only when the reader may read every one of them now, and they are named for the guard, so a
+        # document made stricter while the task waits takes the task out of the queue
+        if drafted is None:
+            drafted = _drafted_from(ws)
+        before, before_docs = _before(ws, gr, docs_ok, drafted)
+        payload = {"concepts": [lab[t] for t in shown], "concept_ids": ms,
                    "labels": {t: lab[t] for t in ms},
+                   access.WORDS_KEY: {"terms": sorted({w for t in sent for w in words[t]}),
+                                      **({"docs": before_docs} if before else {})},
                    "docs": sorted({p["doc_id"] for p in ps}), "filters": m["filters"], "n": m["n"],
                    "name_id": gr["name_id"],
-                   "before": gr["name"] if gr["name_source"] in ("ai", "ai_draft") else None,
+                   "before": before,
                    # the whole map's groups (term ids) and this one's place: `apply` finds the name this group has on
                    # the map, never one another group holds (a name whose concepts span two groups)
                    "map_groups": [x["concepts"] for x in m["groups"]], "group_index": m["groups"].index(gr),
                    "passages": [{"n": k, "passage_id": p["passage_id"], "page": p["page"], "text": p["text"],
-                                 "concepts": [lab[ms[i]] for i in p["nodes"] if i < len(ms)][:8]}
+                                 "concepts": [lab[t] for t in in_ps[k - 1]]}
                                 for k, p in enumerate(ps, 1)]}
         out["tasks"].append((gr, payload))
     return out
@@ -902,7 +1010,7 @@ def apply(ws: Workspace, task_id: str) -> dict | None:
                 cx.execute("INSERT INTO concept_group_quotes(name_id, doc_id, passage_id, page, start, end, quote) "
                            "VALUES (?,?,?,?,?,?,?)", (nid, doc, p["passage_id"], p.get("page"),
                                                       (start or 0) + hit[0], (start or 0) + hit[1],
-                                                      " ".join(p["text"][hit[0]:hit[1]].split())))
+                                                      one_line(p["text"][hit[0]:hit[1]])))
     return {"name_id": nid, "name": name}
 
 

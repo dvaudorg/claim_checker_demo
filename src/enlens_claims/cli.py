@@ -112,6 +112,13 @@ def main(argv: list[str] | None = None) -> int:
     except FileNotFoundError as e:
         print(f"Problem: {e}", file=sys.stderr)
         return 1
+    except (json.JSONDecodeError, UnicodeError):  # (after the review of that sweep) these two are ValueErrors too, and
+        raise                                     # are never a refusal in words: a file that does not read, or a fault
+    except ValueError as e:  # hunt phase 1 (INSTALL-6's sweep): ENLENS's refusals in words (an unknown kind of task,
+        if os.environ.get("ENLENS_DEBUG"):       # a document no AI may read…) ended in a traceback; the connector says
+            raise                                # the same messages as words (`mcp_server._friendly`). ENLENS_DEBUG=1
+        print(f"Problem: {e}", file=sys.stderr)  # shows where it happened, for the day the "refusal" is a fault of
+        return 1                                 # ENLENS's own
 
 
 def _main(argv: list[str] | None = None) -> int:
@@ -182,8 +189,14 @@ def _main(argv: list[str] | None = None) -> int:
     p.add_argument("--ocr", choices=["auto", "off"], default="auto",
                    help="scanned PDF pages: recognise their text when OCR is installed (auto, the default) or not")
     p.add_argument("--ocr-lang", default="eng", help="Tesseract languages for OCR, e.g. eng+nld (default eng)")
+    p.add_argument("--ai-access", choices=["cloud", "local", "none"], default=None,
+                   help="who may read the new documents with AI: cloud (a cloud model such as Claude), local (only a "
+                        "local AI on this computer) or none (no AI; you judge them). Needed while the project has no "
+                        "default; the first choice becomes the default")
     sub.add_parser("match-sources", help="link documents to the references cited in the VCA")
-    p = sub.add_parser("reset-corpus", help="remove all documents and what was derived from them (keeps the VCA and splits)")
+    p = sub.add_parser("reset-corpus", help="remove all documents and what was made from them: hypotheses and "
+                                            "checks with their judgements, labels, themes, concepts (keeps the VCA "
+                                            "and splits)")
     p.add_argument("--yes", action="store_true", help="confirm")
     sub.add_parser("coverage", help="which justified targets have their cited sources available")
     p = sub.add_parser("screen", help="mark passages worth sending to extraction")
@@ -243,7 +256,8 @@ def _main(argv: list[str] | None = None) -> int:
                                        "API models.verify in config.json)")
         p.add_argument("--embed-model", help="semantic search with this embedding model (after `enlens embed`)")
         p.add_argument("--embed-url", help="address of the embedding server (default: --url)")
-        p.add_argument("--threshold", type=float, help="confidence from which grades count (default from config)")
+        p.add_argument("--threshold", type=float, help="confidence from which grades count (default: the Strictness "
+                                                       "of Settings, as in the app)")
         backend_args(p)
 
     for name, text in (("check", "check one claim or hypothesis against the documents in the workspace"),
@@ -256,7 +270,8 @@ def _main(argv: list[str] | None = None) -> int:
     p.add_argument("--out", help="write one row per graded passage to this CSV")
     check_args(p)
     p = sub.add_parser("history", help="hypotheses checked in this workspace, newest first")
-    p.add_argument("--threshold", type=float)
+    p.add_argument("--threshold", type=float, help="confidence from which grades count (default: the Strictness of "
+                                                   "Settings, as in the app)")
     p.add_argument("--limit", type=int, default=50)
     p.add_argument("--csv", help="write every check (one row per graded passage) to this CSV instead")
     p = sub.add_parser("embed", help="build the semantic index: embed every passage with a local embedding model")
@@ -481,6 +496,11 @@ def _main(argv: list[str] | None = None) -> int:
     # end of 0.18.1 part B
 
     a = ap.parse_args(argv)
+    if a.cmd == "measure" and not a.measure_ws:  # hunt phase 1.5: `enlens --ws P measure` measures P too (it was ignored)
+        raw = list(sys.argv[1:] if argv is None else argv)
+        before = raw[:raw.index("measure")] if "measure" in raw else raw
+        if any(x == "--ws" or x.startswith("--ws=") for x in before):
+            a.measure_ws = a.ws
     if a.cmd == "update":
         from . import update
 
@@ -503,6 +523,12 @@ def _main(argv: list[str] | None = None) -> int:
     if a.cmd == "measure":
         from . import measure
 
+        # hunt phase 1 (INSTALL-6's sweep): a folder or project that is not there is named before the long reading test
+        # (a mistyped --folder printed the report without it and exited 0)
+        for opt, path in (("--folder", a.folder), ("--ws", a.measure_ws)):
+            if path and not Path(path).expanduser().exists():
+                print(f"Problem: {opt}: nothing at {path}.", file=sys.stderr)
+                return 1
         result = measure.run(readers=a.reader, folder=a.folder, project=a.measure_ws, timings=a.timings)
         text = json.dumps(result, indent=2, ensure_ascii=False, default=str) if a.json else measure.to_markdown(result)
         if a.report:
@@ -558,7 +584,23 @@ def _main(argv: list[str] | None = None) -> int:
         _print({"workspace": str(ws.root.resolve()), "documents": ws.scalar("SELECT COUNT(*) FROM documents"),
                 "hypotheses": ws.scalar("SELECT COUNT(*) FROM hypotheses")})
         return 0
+    if not Workspace(a.ws).db_path.exists():
+        # hunt phase 1.5: a name of the app's projects given as the folder ("--ws Pilot") was told to run `init`, which
+        # makes an empty workspace in the current folder beside the app's project: name the project's folder instead
+        from . import home
+
+        try:
+            known = a.ws in home.list_projects()
+        except (OSError, ValueError):
+            known = False
+        if known:
+            print(f"Problem: there is no project folder at {a.ws}. The app's project {a.ws!r} is the folder "
+                  f'{home.project_path(a.ws)}: give that folder (--ws "{home.project_path(a.ws)}").', file=sys.stderr)
+            return 1
     ws = Workspace.open(a.ws)
+    from .home import _follow_codebooks
+
+    _follow_codebooks(ws)  # labels follow a shared codebook's renames made in another project, as the app's opening does
 
     if a.cmd == "export-project":
         from . import bundle
@@ -579,10 +621,35 @@ def _main(argv: list[str] | None = None) -> int:
     if a.cmd == "load-vca":
         _print(vca.load_into(ws, a.xlsx))
     elif a.cmd == "ingest":
-        _print(ingest.ingest(ws, a.inputs, a.exclude, ocr=ingest.OcrOptions(a.ocr, a.ocr_lang)))
+        # hunt phase 1 (INSTALL-6): a path that is not there is named and nothing is added (a typo printed
+        # {"files": 0} and exited 0, as for a folder without documents), as the connector refuses it (`_check_path`)
+        missing = [x for x in a.inputs if not Path(x).expanduser().exists()]
+        if missing:
+            print("Problem: nothing at " + ", ".join(missing) + ". Give the path of a folder, a zip or a file on this "
+                  "computer. Nothing was added.", file=sys.stderr)
+            return 1
+        # hunt phase 1.5 (the owner's rule, `ingest.adding_access`): documents never become readable by an AI through
+        # silence: a project whose default was never chosen needs --ai-access (the app asks first, with nothing
+        # preselected). The person's own command may set a looser one than the default. Earlier documents that follow
+        # an unchosen default keep following it: the answer is the new documents' own, and becomes the default only on
+        # a project without such documents
+        try:
+            plan = ingest.adding_access(ws, a.ai_access)
+        except ingest.AccessChoice:
+            print("Problem: say who may read these documents with AI: add --ai-access cloud (a cloud model such as "
+                  "Claude), --ai-access local (only a local AI on this computer) or --ai-access none (no AI; you judge "
+                  "them). This project has no default yet. Nothing was added.", file=sys.stderr)
+            return 1
+        _print(ingest.ingest(ws, [str(Path(x).expanduser()) for x in a.inputs], a.exclude,
+                             ocr=ingest.OcrOptions(a.ocr, a.ocr_lang), ai_access=plan["ai_access"],
+                             set_default=plan["set_default"]))
+        if plan["earlier"]:
+            print(ingest.earlier_words(ws, plan["earlier"]), file=sys.stderr)
     elif a.cmd == "reset-corpus":
         if not a.yes:
-            print("This deletes documents, passages, claims, verifications and their tasks. Run again with --yes.")
+            print("This deletes the documents and everything made from them: passages, claims, verifications, the "
+                  "hypotheses and their checks with their judgements and second opinions, labels, themes, key terms "
+                  "and concepts, and their tasks (the VCA and its split justifications stay). Run again with --yes.")
             return 1
         _print(ws.reset_corpus())
     elif a.cmd == "match-sources":
@@ -619,7 +686,7 @@ def _main(argv: list[str] | None = None) -> int:
         hid = claimcheck.check_hypothesis(ws, a.claim, be, _model(a, be, ws), framework=a.framework or None,
                                           code=a.code, k=a.k, per_doc=a.per_doc, expand=not a.no_expand,
                                           decompose=a.decompose, progress=_print_progress, embedder=_embedder(a))
-        _print(_summary(claimcheck.hypothesis_result(ws, hid, a.threshold)))
+        _print(_summary(claimcheck.hypothesis_result(ws, hid, _strictness(a))))
     elif a.cmd == "batch":
         from . import claimcheck
 
@@ -631,23 +698,26 @@ def _main(argv: list[str] | None = None) -> int:
         res = claimcheck.check_batch(ws, items, be, _model(a, be, ws), embedder=_embedder(a), k=a.k, per_doc=a.per_doc,
                                      expand=not a.no_expand, decompose=a.decompose,
                                      progress=lambda s, m, info=None: print(m, "...", file=sys.stderr) if s == "item" else None)
-        rows = [claimcheck.hypothesis_result(ws, h, a.threshold) for h in res["checked"]]
+        thr = _strictness(a)
+        rows = [claimcheck.hypothesis_result(ws, h, thr) for h in res["checked"]]
         if a.out:
             out_rows = [r for res_h in rows for r in claimcheck.hypothesis_rows(res_h)]
             _write_csv(a.out, out_rows)
-        _print({**res, "results": [{"hyp_id": r["hyp_id"], "status": r["status"], "hypothesis": r["text"]} for r in rows]})
+        _print({**res, "confidence_threshold": thr,
+                "results": [{"hyp_id": r["hyp_id"], "status": r["status"], "hypothesis": r["text"]} for r in rows]})
         if res["stopped"]:
             return 1
     elif a.cmd == "history":
         from . import claimcheck
 
+        thr = _strictness(a)
         if a.csv:
-            _write_csv(a.csv, claimcheck.export_rows(ws, a.threshold))
-            print(f"Written to {a.csv}")
-        else:
-            _print([{k: h[k] for k in ("hyp_id", "created_at", "status", "text", "code", "parts", "supports", "partly",
-                                       "refutes", "passages_read", "model")} for h in claimcheck.history(ws, a.threshold,
-                                                                                                         limit=a.limit)])
+            _write_csv(a.csv, claimcheck.export_rows(ws, thr))
+            print(f"Written to {a.csv} (judgements count from a confidence of {thr:g}).")
+        else:  # each row names the strictness its status and counts are at (the output stays a list, as before)
+            _print([{**{k: h[k] for k in ("hyp_id", "created_at", "status", "text", "code", "parts", "supports",
+                                          "partly", "refutes", "passages_read", "model")}, "confidence_threshold": thr}
+                    for h in claimcheck.history(ws, thr, limit=a.limit)])
     elif a.cmd == "embed":
         from . import embed
 
@@ -686,8 +756,16 @@ def _main(argv: list[str] | None = None) -> int:
         if a.kind in tasks.CORPUS_KINDS:
             print(f"Note: {a.kind} tasks hold passages of your documents. Whoever answers these files (for example "
                   "Claude workers) reads those passages: they leave this computer.", file=sys.stderr)
-        files = tasks.export(ws, a.kind, a.batch_size, a.limit)
-        _print({"files": [str(f) for f in files], "instructions": str(ws.root / "tasks" / a.kind / "WORKER_GUIDE.md")})
+        left: dict = {}   # (not `report`: the module of that name is used below)
+        files = tasks.export(ws, a.kind, a.batch_size, a.limit, report=left)
+        out = {"files": [str(f) for f in files], "instructions": str(ws.root / "tasks" / a.kind / "WORKER_GUIDE.md")}
+        if left.get("held"):   # hunt phase 1 (QUEUE-5): tasks a helper of the queue is answering now
+            n = left["held"]
+            out["left_to_the_helper_answering_them"] = n
+            out["note"] = (f"{n} task{'s' if n != 1 else ''} left out: a helper of the queue (Claude Code) is "
+                           f"answering {'them' if n != 1 else 'it'} now. Run export-tasks again later for any it gives "
+                           "back.")
+        _print(out)
     elif a.cmd == "import-results":
         _print(tasks.import_results(ws, a.paths, a.model))
     elif a.cmd == "check-results":
@@ -833,6 +911,9 @@ def _cmd_07(a, ws) -> int:
     if a.cmd == "resolve":
         from . import references
 
+        if not ws.scalar("SELECT 1 FROM documents WHERE doc_id=?", (a.doc,)):  # (INSTALL-6's sweep)
+            print(f"Problem: no document {a.doc!r} in this project.", file=sys.stderr)
+            return 1
         be = _backend(a, ("resolve",), ws)
         r = references.resolve_document(ws, a.doc, be, _model(a, be, ws), a.name,
                                         progress=lambda i, n: print(f"[{i}/{n}]", file=sys.stderr))
@@ -842,8 +923,15 @@ def _cmd_07(a, ws) -> int:
     if a.cmd == "annotate":
         from . import annotate
 
+        from . import home
+
+        if not ws.scalar("SELECT 1 FROM documents WHERE doc_id=?", (a.doc,)):  # (INSTALL-6's sweep: a traceback)
+            print(f"Problem: no document {a.doc!r} in this project.", file=sys.stderr)
+            return 1
+        # hunt phase 1 (INSTALL-1): "not counted at this strictness" at the person's Strictness, as the app's own copy
         r = annotate.annotate_document(ws, a.doc, a.hyp, tuple(a.layers), a.framework, a.concept,
-                                       use_pdfminer=not a.no_pdfminer)
+                                       use_pdfminer=not a.no_pdfminer,
+                                       threshold=float(home.load_settings()["threshold"]))
         Path(a.out).write_bytes(r["body"])
         _print({"written": a.out, "kind": r["content_type"], "quotes": r["marks"], "highlighted": r["placed"],
                 "method": r["method"], "not_placed": r["missing"]})
@@ -994,6 +1082,9 @@ def _project_name(ws) -> str:
     except home.NeedsCleaning as e:  # roles (DESIGN-roles §4.11): another person's folder is cleaned only when asked
         raise SystemExit(f"Problem: {e} Open it in the app first (Projects → Open an existing ENLENS project folder), "
                          "where you can clean and link it.") from None
+    except ValueError as e:  # hunt phase 1.5: the data folder has a project of this folder's name (a copied project)
+        raise ValueError(f"{e} Claude Code reaches a project by its name, so this folder ({root}) cannot be one too. "
+                         "Nothing was queued. Rename the folder, or use the project of the data folder.") from None
     print(f"Linked this folder as the project {name!r}, so Claude Code can reach it.", file=sys.stderr)
     return name
 
@@ -1010,6 +1101,9 @@ def _cmd_08(a, ws) -> int:
             return 1
         from .taskqueue import queue_route
 
+        # hunt phase 1.5: the name Claude Code reaches the project by is settled before anything is queued: a folder
+        # that cannot be linked (the data folder has a project of its name) had its tasks queued, then a traceback
+        name = _project_name(ws)
         r = routing.from_settings(home.load_settings(), route=queue_route())
         made: dict = {}
         with tk.queueing():
@@ -1074,7 +1168,6 @@ def _cmd_08(a, ws) -> int:
                                                          code=it.get("code"), k=a.k or 8, per_doc=a.per_doc,
                                                          expand=not a.no_expand, decompose=a.decompose, batch_id=batch)
                                   for it in items]
-        name = _project_name(ws)
         q = taskqueue.status(ws, name)
         _print({"prepared": made, "waiting": q["waiting"], "next": f"In Claude Code: {q['command']}",
                 "privacy": q["privacy"]})
@@ -1140,6 +1233,10 @@ def _claude_setup(a) -> int:
                   "(restart Claude Code first if it was open).")
             return 0
         print("\nIt could not be added automatically. Type these two lines in a terminal instead:\n")
+        for line in claude_setup.commands():
+            print("  " + line)
+        print("\nThen restart Claude Code and type /enlens-run <project> in it.")
+        return 1  # hunt phase 1 (INSTALL-6's sweep): Claude Code refused, so the command failed (it exited 0)
     else:
         if not a.print_only:
             print("\nClaude Code was not found on this computer (install it from claude.com/claude-code).")
@@ -1150,12 +1247,22 @@ def _claude_setup(a) -> int:
     return 0
 
 
+def _strictness(a) -> float:
+    """Hunt phase 1 (INSTALL-1): the confidence from which a grade counts for `check`, `batch` and `history`: --threshold,
+    else the person's Strictness of Settings, as the app and the connector use for the very same checks (they used
+    the project file's `support_confidence`, the SDG pack's pipeline's value, which the app never shows, so the
+    command line could call supported what the app shows as uncertain). Each output names the value used."""
+    from . import home
+
+    return float(home.load_settings()["threshold"]) if a.threshold is None else float(a.threshold)
+
+
 def _summary(r: dict) -> dict:
     from .claimcheck import STATUS_TEXT
 
     out = {"hyp_id": r["hyp_id"], "hypothesis": r["text"], "status": r["status"],
            "explanation": STATUS_TEXT.get(r["status"]), "status_any_confidence": r["status_any"],
-           "balance": r["balance"], "parts": []}
+           "confidence_threshold": r["threshold"], "balance": r["balance"], "parts": []}
     if r.get("code"):
         out["code"] = f"{r['code']}: {r.get('code_description', '')}"
     for p in r["parts"]:

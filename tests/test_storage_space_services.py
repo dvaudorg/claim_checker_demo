@@ -14,7 +14,7 @@ import pytest
 from enlens_claims import claimcheck, home, keychain, sharing
 from enlens_claims.llm import BaselineBackend
 from enlens_claims.sync import b2, folder, space
-from enlens_claims.sync.storage import DENIED, StorageProblem
+from enlens_claims.sync.storage import DENIED, NOT_FOUND, StorageProblem
 from test_shared_projects import Person, anna_and_ben  # noqa: F401  (fixture)
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -188,3 +188,63 @@ def test_a_move_to_backblaze_puts_project_json_there_before_the_old_space_is_tol
     _round(anna)    # no "arriving"
     with carol:
         assert space.configured(carol.ws)["service"] == "b2"
+
+
+def _two_cloudflare_accounts(monkeypatch):
+    from enlens_claims.sync import r2
+
+    monkeypatch.setattr(r2, "verify", lambda token: {"id": "tok1"})
+    monkeypatch.setattr(r2, "accounts", lambda token: [{"id": "a1", "name": "One"}, {"id": "a2", "name": "Two"}])
+
+
+def test_a_move_to_r2_with_two_accounts_hands_them_back_and_moves_nothing(anna_and_ben, backblaze, tmp_path,
+                                                                          monkeypatch):
+    """18 November 2026 (hunt P1-2): the set-up returns the accounts to choose from without setting anything up; the
+    move took the old space for the new one, gave every member a second part and rolled back the owner's own keys."""
+    anna, _ben = anna_and_ben
+    carol = Person(tmp_path, "Carol", monkeypatch)
+    with anna:
+        space.setup_b2(anna.ws, *backblaze.master)
+    _round(anna)
+    _work_together(anna, carol, tmp_path)
+    _two_cloudflare_accounts(monkeypatch)
+    names = ("me", "keys", "access", "keeper")
+    with anna:
+        old = space.configured(anna.ws)
+        ctx = space._Ctx(anna.ws, old)
+        space._read_roster(ctx)
+        roster_before = {part: (m["person"], bool(m.get("removed"))) for part, m in ctx.roster["members"].items()}
+        assert len(roster_before) == 2   # Anna and Carol
+        for what in names:
+            assert space._get_secret(old["id"], what), what
+        out = space.move(anna.ws, lambda w, ident: space.setup_r2(w, "token", None, ident=ident))
+        assert len(out["accounts"]) == 2   # the page offers the choice
+        assert "moved" not in out
+        assert space.configured(anna.ws)["id"] == old["id"]
+        for what in names:
+            assert space._get_secret(old["id"], what), what
+        ctx = space._Ctx(anna.ws, old)
+        with pytest.raises(StorageProblem) as e:
+            ctx.store.get("space/moved.json")   # nobody was told to go anywhere
+        assert e.value.kind == NOT_FOUND
+        space._read_roster(ctx)
+        assert {part: (m["person"], bool(m.get("removed"))) for part, m in ctx.roster["members"].items()} \
+            == roster_before
+
+
+def test_first_set_up_at_r2_with_two_accounts_offers_them(anna_and_ben, monkeypatch):
+    """18 November 2026 (hunt P1-1): with no space yet, `status` is None and the accounts could not be added to it."""
+    anna, _ben = anna_and_ben
+    _two_cloudflare_accounts(monkeypatch)
+    with anna:
+        out = space.setup_r2(anna.ws, "token")
+        assert len(out["accounts"]) == 2
+        assert space.configured(anna.ws) is None
+
+
+def test_try_again_on_a_project_with_no_storage_space_says_so(anna_and_ben):
+    """18 November 2026 (hunt P1-5): `mirror_of` is None without a space; `None / ".space-state.json"` was a TypeError."""
+    anna, _ben = anna_and_ben
+    with anna:
+        with pytest.raises(space.SpaceProblem, match="no storage space"):
+            space.retry_drive(anna.ws)

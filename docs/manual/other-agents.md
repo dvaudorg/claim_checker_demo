@@ -40,7 +40,9 @@ guided steps opens at the first step not done yet:
 1. **Install.** ENLENS shows the maker's own installer line and runs it when you press *Install Codex*. It puts the
    program in your user folder and needs no administrator rights. Prefer to do it yourself? The step links the maker's
    page ([Codex](https://github.com/openai/codex), [Antigravity](https://antigravity.google/docs/getting-started)) and
-   moves on by itself once the program is found.
+   moves on by itself once the program is found. On Windows, a Codex or Antigravity installed with npm works too:
+   ENLENS starts the program npm's `.cmd` file starts, never the helper's instructions through Windows' command line;
+   a `.cmd` or `.bat` file of another kind is refused at *Start*, with a line saying to use the maker's installer.
 2. **Sign in.** The button opens the sign-in. Codex opens your browser by itself, with no terminal
    ([its sign-in page](https://learn.chatgpt.com/docs/auth)). Antigravity opens one terminal window, as Claude Code
    does: sign in there and in the browser page it opens. Before you close that window, switch off **Enable

@@ -222,8 +222,24 @@ def mix_kinds() -> frozenset[str]:
 
 
 def _lent(t, lent: frozenset[str]) -> bool:
-    """A waiting task the local model of the AI mix answers first (not Claude Code's yet)."""
+    """A waiting task the local model of the AI mix answers first (not Claude Code's yet). The same test as
+    `local_share` (in SQL), for rows already read."""
     return bool(lent) and routing.task_kind(t) in lent and not int(t["step"] or 0) and not t["forced_model"]
+
+
+def local_share(lent: frozenset[str] | None = None) -> tuple[str, list]:
+    """(SQL over `tasks t`, its arguments): a waiting task that is the AI mix's local model's share now, not Claude
+    Code's: of a kind (or role) the mix lends (`_lent`), not stepped up to Claude, no model forced, and not held by a
+    claim. Hunt phase 1 (QUEUE-3, -4): written once for every place that counts what waits for Claude Code (`status`,
+    `queue_info`, the connector's projects with work, `next_tasks`' "still_waiting", the sidebar), so none of them can
+    count the local model's share as Claude Code's again ("0" when no mix is chosen). `lent`: mix_kinds(), when the
+    caller has it."""
+    lent = mix_kinds() if lent is None else lent
+    if not lent:
+        return "0", []
+    ks = sorted(lent)
+    return (f"(COALESCE(NULLIF(t.role, ''), t.kind) IN ({','.join('?' * len(ks))}) AND COALESCE(t.step, 0)=0 AND "
+            f"COALESCE(t.forced_model, '')='' AND NOT {CLAIMED})", [*ks, _cutoff()])
 
 
 def effective_helper(t, r: routing.Router) -> str:
@@ -240,6 +256,42 @@ def order(ws: Workspace) -> tuple[list[str], list[str]]:
     o += [k for k in ORDER if k not in o]
     held = [k for k in (ws.meta("queue_held") or []) if k in KINDS]
     return o, held
+
+
+def held_note(kind: str) -> str:
+    """What a kind on Hold says where its tasks would otherwise be handed out (hunt phase 1.5: Hold keeps every task
+    of the kind back, from every helper and every command, until the person presses *Go on*)."""
+    return (f"“{KIND_TITLE.get(kind, kind)}” is on Hold in the queue: nothing of it is handed out until you press "
+            f"Go on in the queue panel (or type: enlens --ws <project> queue go {kind}).")
+
+
+def refuse_held(ws: Workspace, kind: str) -> None:
+    """ValueError(held_note) when `kind` is on Hold: the command line's way of handing tasks out (`enlens run`,
+    `enlens export-tasks`) keeps to Hold as the queue does."""
+    if kind in order(ws)[1]:
+        raise ValueError(held_note(kind))
+
+
+HELD_POLL = 2.0   # seconds between two looks at Hold while a job's local first read waits for *Go on*
+
+
+def wait_while_held(ws: Workspace, kind: str, should_stop=None, progress=None, poll: float | None = None) -> None:
+    """Wait, in a job of the app, until `kind` is no longer on Hold (hunt phase 1.5: the AI mix's local first read is
+    a hand-out too, so a task of a held kind waits, as Claude Code's share does). The progress line says it is on
+    Hold; Stop (`should_stop`) raises "Stopped."."""
+    from .llm import BackendError
+
+    last = 0.0
+    while kind in order(ws)[1]:
+        if should_stop and should_stop():
+            raise BackendError("Stopped.")
+        if progress and time.time() - last >= 3:
+            last = time.time()
+            try:
+                progress({"phase": "queue", "task": kind, **queue_info(ws, kind)})
+            except Exception:  # noqa: BLE001 - a display problem must never stop the wait
+                pass
+        time.sleep(HELD_POLL if poll is None else poll)
 
 
 def set_order(ws: Workspace, kind: str, action: str) -> dict:
@@ -285,13 +337,21 @@ def _waiting_rows(ws: Workspace, kind: str | None = None, limit: int | None = No
 PAGE = 500  # the tasks that wait `next_tasks` reads first, in the queue's order: a batch takes 50 at most
 
 
-def _waiting_count(ws: Workspace, kind: str) -> int:
+def _waiting_count(ws: Workspace, kind: str, with_local: bool = False) -> int:
     """len(_waiting_rows(ws, kind)) without reading the rows: those of the kind that wait (the partial index alone),
-    less those a claim holds (not `_FREE`: held, or with no time; few, found by the index on claimed_by)."""
+    less those a claim holds (not `_FREE`: held, or with no time; few, found by the index on claimed_by). Hunt phase 1:
+    less the AI mix's local share too (`local_share`), as `status` counts what waits for Claude Code, unless
+    `with_local` (`run_here`, which answers those as well)."""
     n = ws.scalar(f"SELECT COUNT(*) FROM tasks t WHERE {WAITING} AND t.kind=?", (kind,)) or 0
     taken = ws.scalar(f"SELECT COUNT(*) FROM tasks t WHERE t.claimed_by IS NOT NULL AND (t.claimed_at >= ? OR "
                       f"t.claimed_at IS NULL) AND {WAITING} AND +t.kind=?", (_cutoff(), kind)) or 0
-    return int(n) - int(taken)
+    lent = 0
+    if not with_local:
+        share, args = local_share()
+        if share != "0":
+            lent = ws.scalar(f"SELECT COUNT(*) FROM tasks t WHERE {WAITING} AND +t.kind=? AND {_FREE} AND {share}",
+                             (kind, _cutoff(), *args)) or 0   # (free: not already less as `taken`)
+    return int(n) - int(taken) - int(lent)
 
 
 def estimate_seconds(ws: Workspace, kind: str, model: str, n: int, parallel: int = 2) -> float | None:
@@ -371,6 +431,11 @@ def _kind_order(ws: Workspace, o: list[str], kinds) -> list[str]:
     return [k for k in o if k in kinds] + rest
 
 
+def _kind_row(k: str, done: int = 0, failed: int = 0) -> dict:
+    return {"kind": k, "title": KIND_TITLE.get(k, k), "waiting": 0, "being_answered": 0, "done": done, "failed": failed,
+            "stronger_model": 0, "first_queued": None, "run_total": 0, "run_done": 0, "for_local": 0}
+
+
 def status(ws: Workspace, project: str | None = None, parallel: int = PARALLEL, helpers: dict | None = None,
            kind: str | None = None, route: str | None = None) -> dict:
     """The queue of one project: per kind what waits, is being answered, is done or failed; the groups a run hands
@@ -383,6 +448,7 @@ def status(ws: Workspace, project: str | None = None, parallel: int = PARALLEL, 
     o, held = order(ws)
     cutoff = _cutoff()
     lent = mix_kinds()
+    share, share_args = local_share(lent)
     per: dict[str, dict] = {}
     # every kind with a task in the queue, in the order its tasks were first made (the order of a kind the queue's
     # order does not name), with its answered and failed tasks
@@ -390,18 +456,19 @@ def status(ws: Workspace, project: str | None = None, parallel: int = PARALLEL, 
                         "WHERE COALESCE(queued, 0)=1 AND COALESCE(access, 'cloud')='cloud' GROUP BY kind "
                         "ORDER BY MIN(rowid)"):
         k = row[0]
-        per[k] = {"kind": k, "title": KIND_TITLE.get(k, k), "waiting": 0, "being_answered": 0, "done": int(row[1] or 0),
-                  "failed": int(row[2] or 0), "stronger_model": 0, "first_queued": None, "run_total": 0, "run_done": 0,
-                  "for_local": 0}
+        per[k] = _kind_row(k, int(row[1] or 0), int(row[2] or 0))
     groups: dict[tuple, dict] = {}
     # the tasks that wait, counted in SQL per what decides their model and helper (the router is asked once per
     # group, not twice per task), and whether a claim holds them now
-    for g0 in ws.query(f"SELECT t.kind, t.role, t.step, t.forced_model, t.model, {CLAIMED} AS claimed, COUNT(*) AS n, "
-                       f"MIN(t.queued_at) AS first FROM tasks t WHERE {WAITING} "
-                       "GROUP BY t.kind, t.role, t.step, t.forced_model, t.model, claimed", (cutoff,)):
+    for g0 in ws.query(f"SELECT t.kind, t.role, t.step, t.forced_model, t.model, {CLAIMED} AS claimed, "
+                       f"{share} AS lent, COUNT(*) AS n, MIN(t.queued_at) AS first FROM tasks t WHERE {WAITING} "
+                       "GROUP BY t.kind, t.role, t.step, t.forced_model, t.model, claimed, lent",
+                       (cutoff, *share_args)):
         k, n = g0["kind"], int(g0["n"])
-        d = per[k]
-        if not g0["claimed"] and _lent(g0, lent):
+        # a kind whose first task was queued between the two looks (a job making its tasks while the page asks): CI's
+        # Linux run of 19 Nov 2026 met it as KeyError 'expand', which the server answers as "Not found: 'expand'"
+        d = per.setdefault(k, _kind_row(k))
+        if g0["lent"]:
             d["for_local"] += n  # 0.18.1 (I1): the local model of the AI mix answers these first
             continue
         if g0["claimed"]:
@@ -633,6 +700,22 @@ def plan_helpers(groups: list[dict], parallel: int, helpers: dict[str, int] | No
 # ---------------------------------------------------------------------------------------------
 # handing out and taking back
 # ---------------------------------------------------------------------------------------------
+def read_with(ws: Workspace, route: str, taken_by: str | None, alias: str) -> tuple[str, str | None]:
+    """The model a batch is really read with, for the AI log and the answer's record: (the name to record, the
+    provider's model id or None). Claude Code: Claude's alias, which its helper runs on. Codex and Antigravity: the
+    model on the command line ENLENS started the helper with (agentcli.started_model, by the helper's own name).
+    Hunt phase 1: the queue's router guessed it from the line-up without the models the CLI offers, so it could name
+    one the plan does not offer (gpt-6.2-sol where the helper ran gpt-6.1-sol) or Antigravity's family name for the
+    model it resolved; a helper ENLENS did not start, or started without naming a model, ran on the CLI's own choice,
+    which ENLENS cannot know: that is what is recorded then."""
+    if route not in providers.AGENT_CLIS:
+        return alias, None
+    from .agentcli import started_model
+
+    _known, mid = started_model(route, ws.root, taken_by)
+    return (mid, mid) if mid else (f"not known ({route_title(route)}'s own choice)", None)
+
+
 def next_tasks(ws: Workspace, kind: str | None = None, n: int | None = None, model: str | None = None,
                taken_by: str | None = None, helper: str | None = None, route: str | None = None,
                provider: str | None = None) -> dict:
@@ -663,6 +746,10 @@ def next_tasks(ws: Workspace, kind: str | None = None, n: int | None = None, mod
     me = access.sender()   # I7 stage 3: who sends, for the ledger, looked up once for the batch
     if kind and kind not in KINDS:
         raise ValueError(f"Unknown kind of task {kind!r}. Kinds: {', '.join(KINDS)}.")
+    if kind in held:
+        # hunt phase 1.5 (the owner's): Hold keeps the kind back from every helper, also one started before the
+        # person pressed it, which goes on asking for its kind by name
+        return {"claim": None, "note": held_note(kind)}
     for k in kinds:
         # the first PAGE tasks that wait, in order: a batch is nearly always filled from them; the others are read
         # only when it is not (a queue of a hundred thousand tasks is not read whole for a batch of five)
@@ -714,7 +801,8 @@ def next_tasks(ws: Workspace, kind: str | None = None, n: int | None = None, mod
 
         system = prompts.system_prompt(k)
         cap = min(TOKEN_BUDGET, CONNECTOR_CAP - 2000 - estimate_tokens(system))
-        with ws.connect() as cx:
+        sent_model = read_with(ws, route, taken_by, m)[0]
+        with ws.connect() as cx, access.words_memo():   # (a term shared by the batch's tasks is looked up once)
             dflt = access._default_from_cx(cx)  # once per batch, not per task
             for t in itertools.chain(cand, rest()):
                 if len(picked) >= size:
@@ -742,9 +830,12 @@ def next_tasks(ws: Workspace, kind: str | None = None, n: int | None = None, mod
                 if got:
                     picked.append({"task_id": t["task_id"], "prompt": user, "payload_json": full["payload_json"]})
                     budget += cost
-                    # 0.11: the passages of this task leave the computer now, with the batch
+                    # 0.11: the passages of this task leave the computer now, with the batch; hunt phase 1: under
+                    # the model that reads them, as the answer records it (submit, `read_with`): on Codex and
+                    # Antigravity the one on the helper's command line, Claude's alias on Claude Code, never the
+                    # task's stored model (Claude's "haiku" for text sent to OpenAI) nor a guess from the line-up
                     access.record_sent(cx, t["task_id"], json.loads(full["payload_json"]), title, k,
-                                       provider=prov, person=me)
+                                       provider=prov, model=sent_model, person=me)
             if not picked:
                 continue
             cx.execute("INSERT INTO task_claims(claim_id, kind, model, helper, route, taken_by, task_ids_json, claimed_at, "
@@ -797,6 +888,9 @@ def preview(ws: Workspace, kind: str | None = None, start: int = 0, route: str |
     o, held = order(ws)
     lent = mix_kinds()
     start = max(0, int(start or 0))
+    if kind in held:   # hunt phase 1.5: nothing of a kind on Hold is about to be sent (`next_tasks`)
+        return {"kind": kind, "title": KIND_TITLE.get(kind, kind), "held": True, "tasks": [], "start": start,
+                "more": False, "note": held_note(kind)}
     for k in [kind] if kind else [k for k in o if k not in held]:
         cand = [t for t in _waiting_rows(ws, k) if not _lent(t, lent)]
         if not cand:
@@ -948,6 +1042,7 @@ def submit(ws: Workspace, claim_id: str, answers: list[dict]) -> dict:
     route = route_of_name(c["route"])   # stage 2: the agent route that took the batch (Claude Code, Codex, Antigravity)
     title = route_title(route)
     r = router(ws, route)
+    mid = read_with(ws, route, c["taken_by"], c["model"])[1]   # one helper, one model for the whole claim
     results = []
     stored = problems = 0
     kinds_stored: set[str] = set()
@@ -981,7 +1076,11 @@ def submit(ws: Workspace, claim_id: str, answers: list[dict]) -> dict:
         prov = {"digest": None, "seed": None,
                 "settings": {"backend": route, "route": title, "helper": helper, "model_as_set": model}}
         if route != "claude_code":   # which provider, and its own model id the alias stood for (as llm.provenance)
-            prov["settings"].update(provider=route_provider(route), model_id=r.api_id(model))
+            # hunt phase 1: the model on the helper's command line (`read_with`), not a guess from the line-up; when
+            # ENLENS did not start the helper, none, and the record says why
+            prov["settings"].update(provider=route_provider(route), model_id=mid)
+            if mid is None:
+                prov["settings"]["model_id_note"] = f"not known: {title} chose the model itself"
         try:  # stored only while this claim still holds the task, checked where the answer is written
             ok, errors = ingest_result(ws, tid, raw, model=model, provenance=prov, route=title, helper=helper,
                                        claimed_at=c["claimed_at"], claim=claim_id)
@@ -1210,12 +1309,20 @@ def _wait_for(ws: Workspace, task_id: str, backend, poll: float | None) -> tuple
 def queue_info(ws: Workspace, kind: str) -> dict:
     """The line a page shows while it waits: "Waiting for Claude Code: 120 passages to label · about 25 minutes".
     Asked every few seconds by each job that waits, so it counts only what the line says, from the two partial
-    indexes (the same numbers as `status`, which works out every kind's models and runs)."""
+    indexes (the same numbers as `status`, which works out every kind's models and runs). Hunt phase 1 (QUEUE-3): the
+    AI mix's local share is not Claude Code's (`local_share`, as `status` leaves it out of its waiting and being
+    answered); `waiting` is Claude Code's whole share of the kind (`status`' waiting and being answered), as before."""
     cutoff = _cutoff()
+    share, share_args = local_share()
     total: dict[str, int] = {}
     first: dict[str, str | None] = {}
-    for row in ws.query(f"SELECT kind, COUNT(*), MIN(queued_at) FROM tasks t WHERE {WAITING} GROUP BY kind"):
-        total[row[0]], first[row[0]] = int(row[1]), row[2]
+    lent: dict[str, int] = {}
+    for row in ws.query(f"SELECT kind, {share} AS lent, COUNT(*), MIN(queued_at) FROM tasks t WHERE {WAITING} "
+                        "GROUP BY kind, lent", share_args):
+        if row[1]:
+            lent[row[0]] = int(row[2])
+            continue
+        total[row[0]], first[row[0]] = int(row[2]), row[3]
     held: dict[str, int] = {}
     for (k,) in ws.query(f"SELECT t.kind FROM tasks t WHERE {_HELD} AND {WAITING}", (cutoff,)):
         held[k] = held.get(k, 0) + 1
@@ -1224,14 +1331,21 @@ def queue_info(ws: Workspace, kind: str) -> dict:
     title = route_title(route)
     command = run_command(route, ws.root.name)
     est = estimate = None
-    if n or ws.scalar("SELECT 1 FROM tasks WHERE COALESCE(queued, 0)=1 AND COALESCE(access, 'cloud')='cloud' AND "
-                      "kind=? AND (status='failed' OR (status='done' AND COALESCE(again, 0)=0)) LIMIT 1", (kind,)):
+    if n or lent.get(kind) or ws.scalar("SELECT 1 FROM tasks WHERE COALESCE(queued, 0)=1 AND COALESCE(access, "
+                                        "'cloud')='cloud' AND kind=? AND (status='failed' OR (status='done' AND "
+                                        "COALESCE(again, 0)=0)) LIMIT 1", (kind,)):
         # the kind is listed in the queue (as `status` lists it): its estimate, "" when nothing of it waits
         sec = estimate_seconds(ws, kind, router(ws, route).model(kind) or "", n, PARALLEL)
         est = round(sec) if sec is not None else None
         estimate = _estimate_text(kind, n, sec)
     text = f"Waiting for {title}: {noun(kind, n)}" if n else f"Waiting for {title}"
-    if est:
+    if not n and lent.get(kind):   # only the local model's share waits: the line says whose it is
+        text = f"Waiting for your local model: {noun(kind, lent[kind])}"
+    is_held = kind in order(ws)[1]
+    if is_held and (n or lent.get(kind)):   # hunt phase 1.5: a kind on Hold is handed to no one (no helper, not the
+        # AI mix's local model either), so the wait says why it does not move
+        text = f"On Hold: {noun(kind, n or lent[kind])}. Press Go on in the queue panel to hand them out"
+    elif est:
         text += f" · {_duration(est)}"
     waiting = sum(total.values()) - sum(held.values())
     newest = max((f or "" for f in first.values()), default="")
@@ -1239,11 +1353,12 @@ def queue_info(ws: Workspace, kind: str) -> dict:
     paused_text = None
     if paused:
         o, _held = order(ws)
-        k = next((x for x in _kind_order(ws, o, total) if total[x] - held.get(x, 0) > 0), None)
+        k = next((x for x in _kind_order(ws, o, total) if total[x] - held.get(x, 0) > 0 and x not in _held), None)
         if k:
             run_total, run_done = _run_counts(ws, k, first[k]) if first[k] else (0, 0)
             paused_text = _paused_text(k, run_done, run_total, command, route)
-    return {"text": text, "waiting": n, "being_answered": being, "paused": paused, "paused_text": paused_text,
+    return {"text": text, "waiting": n, "being_answered": being, "for_local": lent.get(kind, 0), "held": is_held,
+            "paused": paused, "paused_text": paused_text,
             "command": command, "estimate": estimate, "privacy": privacy_line(route), "kind": kind,
             "agent_route": route, "agent_title": title}
 
@@ -1255,18 +1370,25 @@ def run_here(ws: Workspace, backend, kinds: list[str] | None = None, limit: int 
              should_stop=None, progress=None, model: str | None = None) -> dict:
     """Answer the tasks waiting in the queue with this backend, kind by kind (so each model is loaded once), with
     the backend's routed models. For a shared installation with the team's Claude API key, or a local server."""
-    from .tasks import run_one, run_stepups
+    from .tasks import _answers_again_now, run_one, run_stepups
 
     o, held = order(ws)
+    for k in kinds or ():   # hunt phase 1.5: a kind named and on Hold is refused in words, as `enlens run` does
+        if k in held:
+            raise ValueError(held_note(k))
+    # hunt phase 1.5: a second reading a local server gives after the run (`run_stepups`, each model loaded once) is
+    # not asked in the run: counted "answered" there, it was counted twice and before any model read it
+    later = not _answers_again_now(backend)
     todo_kinds = [k for k in o if k not in held and (not kinds or k in kinds)]
     out: dict = {"answered": 0, "failed": 0, "kinds": {}}
     may = access.backend_levels(backend)
     prov = access.provider_of(backend)
     dflt = access.default(ws)
-    total = sum(_waiting_count(ws, k) for k in todo_kinds)
+    total = sum(_waiting_count(ws, k, with_local=True) for k in todo_kinds)
     i = 0
     for k in todo_kinds:
-        ids = [t["task_id"] for t in _waiting_rows(ws, k)]
+        ids = [t["task_id"] for t in _waiting_rows(ws, k)
+               if not (later and t["status"] == "done" and t["again"])]
         if limit:
             ids = ids[: max(0, limit - out["answered"] - out["failed"])]
         for tid in ids:
@@ -1321,17 +1443,43 @@ def remove_copy(copy: Workspace, tries: int | None = None, windows: bool | None 
 
     from . import home
 
+    from .store import held_out
+
     windows = os.name == "nt" if windows is None else windows
     tries = max(1, (12 if windows else 4) if tries is None else tries)
-    for attempt in range(tries):
-        copy.close_all()
-        home.close_project(copy.root)
-        shutil.rmtree(copy.root, ignore_errors=True)
-        if not copy.root.exists():
-            break
-        if attempt + 1 < tries:
-            time.sleep(0.1 * (attempt + 1))
+    # hunt phase 1.5: no Workspace of the copy, whoever holds it (a helper answering its queue), opens its database
+    # again while it is removed (`held_out`): one did, between the closing and the removal, and on Windows the copy
+    # then stayed in the person's list of projects
+    with held_out(copy.root):
+        for attempt in range(tries):
+            copy.close_all()   # (held out: only statements already running are waited for, a long one interrupted)
+            home.close_project(copy.root)
+            shutil.rmtree(copy.root, ignore_errors=True)
+            if not copy.root.exists():
+                break
+            if attempt + 1 < tries:
+                time.sleep(0.1 * (attempt + 1))
     return not copy.root.exists()
+
+
+def _stop_helpers(name: str) -> None:
+    """Hunt phase 1.5: stop the helpers the app started on a scratch copy's queue (Claude Code, an agent CLI) before
+    the copy is removed: they would read it while it goes."""
+    try:
+        from . import claude_setup
+
+        if claude_setup.run_state(name).get("running"):
+            claude_setup.stop_run(name)
+    except Exception:  # noqa: BLE001 - the removal goes on
+        pass
+    try:
+        from . import agentcli
+
+        for route in providers.AGENT_CLIS:
+            if agentcli.run_state(route, name).get("running"):
+                agentcli.stop_run(route, name)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def answer_on_copy(ws: Workspace, items: list[tuple[str, str, dict, str]], backend, purpose: str = "test",
@@ -1387,17 +1535,24 @@ def answer_on_copy(ws: Workspace, items: list[tuple[str, str, dict, str]], backe
         return raws, secs
     finally:
         try:
-            sent = copy.query("SELECT passage_id, doc_id, route, task_id, sent_at, feature FROM ai_sent")
+            # hunt phase 1: with the provider, the person and the model the copy's ledger names (Codex's text went to
+            # OpenAI under OpenAI's model; a row carried without them read as Anthropic's in the AI log)
+            sent = copy.query("SELECT passage_id, doc_id, route, task_id, sent_at, feature, provider, person_id, model "
+                              "FROM ai_sent")
             if sent:
                 with ws.connect() as wcx:
-                    wcx.executemany("INSERT INTO ai_sent(passage_id, doc_id, route, task_id, sent_at, feature) "
-                                    "VALUES (?,?,?,?,?,?)",
-                                    [(r[0], r[1], r[2], None, r[4], f"{r[5]} ({purpose})") for r in sent])
+                    wcx.executemany("INSERT INTO ai_sent(passage_id, doc_id, route, task_id, sent_at, feature, provider, "
+                                    "person_id, model) VALUES (?,?,?,?,?,?,?,?,?)",
+                                    [(r[0], r[1], r[2], None, r[4], f"{r[5]} ({purpose})", r[6], r[7], r[8])
+                                     for r in sent])
         except Exception:  # noqa: BLE001 - the ledger must not stop the clean-up below
             pass
+        _stop_helpers(name)
         remove_copy(copy)
-        if not copy.root.exists():  # 0.15.7: still there (a file held): moved to the trash later, as a quick look
-            try:
+        try:
+            if not copy.root.exists():
                 home.forget_temporary(name)
-            except Exception:  # noqa: BLE001
-                pass
+            else:   # 0.15.7: still there (a file held): moved to the trash later, as a quick look. Hunt phase 1.5: at
+                home.due_now(name)   # the app's next clean-up, tried again until it goes, not a week later
+        except Exception:  # noqa: BLE001
+            pass

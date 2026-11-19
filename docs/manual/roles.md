@@ -192,7 +192,8 @@ space's keys: *Remove from the team…*, last), each of which asks first:
   stands together in the list, and a judgement of theirs counts once. Rows of one person stand together; the second
   line of the second computer's row says *Also Anna de Vries: the same person* (or *Also you: …* in your own copy).
 - **Make owner…**, last, after a line: *Hand this project over to …? They will decide about its documents from now on;
-  proposals that wait become theirs to answer. You stay in the team.*
+  proposals that wait become theirs to answer. You stay in the team.* With a storage space, its keys follow at your next round (see
+  [The storage space](storage-space.md)); until then your copy no longer invites, removes or moves anyone.
 
 A Co-owner whose ENLENS is older than this release has the tag *needs a newer ENLENS to act as Co-owner*. In a team that
 works with files only (no shared folder), the *Owner* card names the owner (*Owner: …*), and the owner's *Hand over…* is

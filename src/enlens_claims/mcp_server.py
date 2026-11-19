@@ -33,6 +33,7 @@ from . import home as core
 # Anthropic, as before. CLAUDE stays the name of Anthropic for what imports it.
 CLAUDE = access.ANTHROPIC
 from .sources import document_overview  # noqa: E402
+from .store import DamagedConfig, ProjectTooNew  # noqa: E402
 
 
 def route() -> str:
@@ -86,7 +87,7 @@ says which codes (by default the 169 SDG targets) a document addresses, how much
 Adding sources: the user gives a path to a zip, a folder or files on this computer (attachments in the chat do not
 reach this connector). Call create_project or add_sources with that path. Ask the user who may read the new documents
 with AI and pass it as ai_access: cloud (Claude may read them), local (only a local AI on this computer) or none (no
-AI; the user judges them).
+AI; the user judges them). Without it, only a project whose default the user chose takes the documents.
 
 Documents the user keeps on this computer (0.11): you are never shown text of documents marked local or none. Tools
 report them as counts (restricted_hits, restricted_passages, restricted evidence) and documents marked none as
@@ -149,7 +150,8 @@ def _projects(fn, unreadable: list[str] | None = None):
     for name in core.list_projects():
         try:
             got = fn(name, core.open_project(name))
-        except (sqlite3.DatabaseError, OSError):
+        # (hunt phase 1: a settings file that does not read; phase 1.5: a project saved by a newer ENLENS)
+        except (sqlite3.DatabaseError, OSError, DamagedConfig, ProjectTooNew):
             if unreadable is not None:
                 unreadable.append(name)
             continue
@@ -159,7 +161,8 @@ def _projects(fn, unreadable: list[str] | None = None):
 
 
 def _unreadable_note(names: list[str]) -> str:
-    return (f" {len(names)} project(s) could not be opened (a damaged database, or one held by another program): "
+    return (f" {len(names)} project(s) could not be opened (a damaged database or settings "
+            f"file, one held by another program, or one saved by a newer ENLENS: the app's Projects page says which): "
             f"{', '.join(names)}." if names else "")
 
 
@@ -204,20 +207,29 @@ def _shareable(ws, check_id: str) -> tuple[bool, set[str]]:
     return every, ok
 
 
-def _summary(ws, check_id: str) -> dict:
-    r = claimcheck.result(ws, check_id)
+def _strictness() -> float:
+    """Hunt phase 1 (INSTALL-1): the person's Strictness of Settings (the data folder's `threshold`), read again on
+    every call as the app does, so a change of the slider applies without restarting the connector. Every tool that
+    reports a check's status uses it: the project file's `support_confidence` is the SDG pack's pipeline's value, has
+    no control in the app, and gave the connector another answer than the app for the very same check (80% set in
+    Settings, a grade 70% sure: "Only uncertain evidence" in the app, "supported" to Claude)."""
+    return float(core.load_settings()["threshold"])
+
+
+def _summary(ws, check_id: str, threshold: float | None = None) -> dict:
+    r = claimcheck.result(ws, check_id, _strictness() if threshold is None else threshold)
     lv = access.levels(ws, {p["doc_id"] for p in r["passages"]}, provider=reader())
     every, ok = _shareable(ws, check_id)
     evidence, restricted = [], {"supports": 0, "partially_supports": 0, "refutes": 0, "waiting_for_the_user": 0,
-                                "waiting_for_the_local_model": 0}
+                                "waiting_for_the_local_model": 0, "not_counted": 0}
     held_notes = 0
     nonsci = 0  # 0.18.6: judgements of documents marked Non-scientific: shown, never counted
     for p in r["passages"]:
         if lv.get(p["doc_id"], "none") != "cloud":  # 0.11: no text of a restricted document, only what it says
             if p.get("nonscientific"):
                 nonsci += bool(p["verdict"])
-            elif p["verdict"]:
-                restricted[p["verdict"]] += 1
+            elif p["verdict"]:  # hunt phase 1.5: a grade below the strictness is not one that counts in the status
+                restricted[p["verdict"] if p.get("counted") else "not_counted"] += 1
             restricted["waiting_for_the_user"] += bool(p.get("waiting_for_you"))
             restricted["waiting_for_the_local_model"] += bool(p.get("waiting_local"))
             continue
@@ -241,7 +253,7 @@ def _summary(ws, check_id: str) -> dict:
     if any(restricted.values()):
         out["restricted_evidence"] = {k: v for k, v in restricted.items() if v}
         notes.append("Part of the evidence comes from documents the user keeps on this computer: their grades count "
-                     "in the status, their text is not shown.")
+                     "in the status (except those under not_counted, below the strictness), their text is not shown.")
     if (r["rationale"] and not every) or held_notes:
         if not every:
             out["summary"] = None
@@ -270,6 +282,41 @@ def _summary(ws, check_id: str) -> dict:
     return out
 
 
+def _check_summary(ws, check_id: str) -> dict:
+    """get_check: what list_checks lists under this check_id. Hunt phase 1 (CHECKS-1): a hypothesis the app checked in
+    several parts is listed by its first part's check_id with the combined status, and get_check answered for that
+    part alone (another status, a part of the evidence). The whole hypothesis is answered for here, as the result page
+    does (`hypothesis_result`): its combined status, each part with its own status and check_id (still the key for
+    more_passages and submit_grades), and every part's evidence marked with its part. A check of one claim (a chat's
+    own) is answered as before."""
+    hid = ws.scalar("SELECT hyp_id FROM user_claims WHERE claim_id=?", (check_id,))
+    ids = [r[0] for r in ws.query("SELECT claim_id FROM user_claims WHERE hyp_id=? ORDER BY part, rowid", (hid,))] \
+        if hid else []
+    thr = _strictness()  # INSTALL-1: once for the whole hypothesis and its parts
+    if len(ids) < 2:
+        return _summary(ws, check_id, thr)
+    h = claimcheck.hypothesis_result(ws, hid, thr)
+    parts, evidence, notes = [], [], {}
+    for n, cid in enumerate(ids, 1):
+        p = _summary(ws, cid, thr)
+        evidence += [{**e, "part": n} for e in p.pop("evidence")]
+        for key in ("restricted_note", "non_scientific_note"):
+            if p.get(key):
+                notes.setdefault(key, []).append(p[key])
+        parts.append({"part": n, **p})
+    out = {"check_id": check_id, "claim": h["text"], "status": h["status"],
+           "status_text": h.get("status_text") or claimcheck.STATUS_TEXT.get(h["status"], h["status"]),
+           "status_at_any_confidence": h["status_any"], "confidence_threshold": h["threshold"],
+           "passages_read": sum(p["passages_read"] for p in parts), "evidence": evidence, "target": h["code"],
+           "parts": parts,
+           "parts_note": (f"This hypothesis was checked in {len(parts)} parts, and its status combines theirs. Report "
+                          "each part's status and its evidence (marked with its part); use a part's own check_id for "
+                          "more_passages.")}
+    for key, said in notes.items():
+        out[key] = " ".join(dict.fromkeys(said))
+    return out
+
+
 def _find_claim(claim: str):
     """The project that handed out this batch."""
     bad: list[str] = []
@@ -287,15 +334,49 @@ def _check_path(path: str) -> Path:
     return p
 
 
+# hunt phase 1.5 (the owner's rule): documents never become readable by an AI through silence. Without `ai_access`,
+# a project whose default was never chosen is refused in words (the app asks first, with nothing preselected); a
+# chosen default applies. After the review of wave 1 (the orchestrator's conservative decision, for the owner): an
+# `ai_access` looser than the project's chosen default is refused too, since the AI chose it; and earlier documents
+# that follow an unchosen default keep following it. The rule is `ingest.adding_access`, called at the entry here.
+_ASK_ACCESS = ("Ask the user who may read the new documents with AI, then call again with ai_access: cloud (Claude may "
+               "read them), local (only a local AI on this computer) or none (no AI; the user judges them). This "
+               "project has no default yet, so nothing was added.")
+
+
+def _access_chosen(ws, ai_access: str | None) -> None:
+    if ai_access is None and (ws is None or not access.default_chosen(ws)):
+        raise ValueError(_ASK_ACCESS)
+    if ai_access == "cloud" and access._local_only():  # said before a new project is made, not after (it stayed empty)
+        raise ValueError("Cloud models are switched off on this computer: documents can be read by a local AI or by "
+                         "the user only. Call again with ai_access local or none.")
+
+
+def _plan_access(ws, ai_access: str | None) -> dict:
+    """`ingest.adding_access` for an AI's call, in the connector's words."""
+    try:
+        return ingest.adding_access(ws, ai_access, by_ai=True)
+    except ingest.AccessChoice as e:
+        if e.kind == "missing":
+            raise ValueError(_ASK_ACCESS) from None
+        raise ValueError(str(e) + " Ask the user before passing a looser ai_access.") from None
+
+
 def _ingest(ws, path: str, exclude: list[str] | None, ai_access: str | None = None) -> dict:
     p = _check_path(path)
+    _access_chosen(ws, ai_access)
+    plan = _plan_access(ws, ai_access)
     before = {d["doc_id"] for d in document_overview(ws)}
-    stats = ingest.ingest(ws, [p], exclude=exclude or None, ai_access=ai_access)
+    stats = ingest.ingest(ws, [p], exclude=exclude or None, ai_access=plan["ai_access"],
+                          set_default=plan["set_default"])
     added = [d for d in document_overview(ws) if d["doc_id"] not in before]
     out = {"documents_added": len(added), "usable_documents_added": sum(1 for d in added if not d["check"]),
            "readable_passages_added": sum(d["passages"] for d in added), "already_in_project": stats["duplicates"],
            "without_text": stats["empty"]}
     out["ai_access"] = access.default(ws) if ai_access is None else ai_access
+    if plan["earlier"]:  # (they keep following the default nobody chose; the new ones have their own setting)
+        out["earlier_documents_without_a_chosen_setting"] = plan["earlier"]
+        out["note"] = ingest.earlier_words(ws, plan["earlier"])
     hidden = access.restricted_titles(ws)  # a No-AI document's title is not told to the chat (as list_documents)
     warn = [{"title": hidden.get(d["doc_id"], d["title"]), "warning": d["check"]} for d in added if d["check"]]
     if warn:
@@ -388,16 +469,21 @@ def build_server():
     @s.tool(description="Create a project and read its sources from a path on this computer: a zip, a folder, or a "
                         "PDF/HTML/text file. A manifest.csv inside (columns file, reference, doi, optional ai_access) "
                         "names each work. ai_access: who may read the documents with AI: cloud (Claude may read them), "
-                        "local (only a local AI on this computer), none (no AI); without it the project's default.")
+                        "local (only a local AI on this computer), none (no AI). Ask the user; a new project has no "
+                        "default, so without ai_access nothing is made.")
     @_friendly
     def create_project(name: str, sources_path: str, exclude: Optional[list[str]] = None,
                        ai_access: Optional[Literal["cloud", "local", "none"]] = None) -> dict:
         _check_path(sources_path)  # before creating: a mistyped path must not leave an empty project behind
+        _access_chosen(None, ai_access)  # nor a missing choice of who may read it (a new project has no default)
         ws = core.create_project(name)
         return {"project": ws.root.name, **_ingest(ws, sources_path, exclude, ai_access)}
 
     @s.tool(description="Add sources to an existing project from a path on this computer (zip, folder or file). "
-                        "ai_access as for create_project; without it the project's default applies.")
+                        "ai_access as for create_project; without it the project's default applies, and a project "
+                        "whose default was never chosen adds nothing until you pass it. An ai_access looser than the "
+                        "project's default (cloud where it is local or none, local where it is none) is refused: "
+                        "only the person can open documents wider, in the app's Documents page.")
     @_friendly
     def add_sources(project: str, sources_path: str, exclude: Optional[list[str]] = None,
                     ai_access: Optional[Literal["cloud", "local", "none"]] = None) -> dict:
@@ -407,10 +493,31 @@ def build_server():
     @s.tool(description="Use an existing ENLENS workspace folder (for example the pilot) as a project, without copying "
                         "it. A folder another person made is cleaned first, as a project from a zip is (its record of a "
                         "shared folder, file paths and cache go; the documents and the work stay): ask the user, then "
-                        "call again with clean=true.")
+                        "call again with clean=true. A folder whose default AI setting was never chosen (one made "
+                        "with the command line) needs ai_access (cloud, local or none), as for create_project: ask "
+                        "the user. A folder with a chosen setting keeps it; a looser ai_access is refused.")
     @_friendly
-    def use_folder_as_project(path: str, name: Optional[str] = None, clean: bool = False) -> dict:
-        return {"project": core.link_existing(path, name, clean=clean)}
+    def use_folder_as_project(path: str, name: Optional[str] = None, clean: bool = False,
+                              ai_access: Optional[Literal["cloud", "local", "none"]] = None) -> dict:
+        # hunt phase 1.5 (review of wave 1): a folder nobody chose an AI setting for was linked without asking, and
+        # its documents became readable through this connector by silence. The person's answer (asked by the AI)
+        # becomes the folder's default here: these documents are what is being added
+        from .store import Workspace
+
+        src = Path(path).expanduser()
+        if not (src / "enlens.sqlite").exists():
+            raise ValueError(f"No workspace (enlens.sqlite) in {src}.")
+        folder = Workspace(src)
+        chosen = access.default_chosen(folder)
+        if not chosen:
+            _access_chosen(None, ai_access)
+        elif ai_access is not None:
+            _plan_access(folder, ai_access)  # a looser setting than the folder's own is refused
+        project = core.link_existing(path, name, clean=clean)
+        ws = core.open_project(project)
+        if not chosen:
+            access.set_default(ws, ai_access)
+        return {"project": project, "ai_access": access.default(ws)}
 
     @s.tool(description="List a project's documents with pages, passages and warnings (unreadable or very short files).")
     @_friendly
@@ -483,19 +590,22 @@ def build_server():
             r["note"] = "No further passages match."
         return r
 
-    @s.tool(description="The current status and evidence of a check.")
+    @s.tool(description="The current status and evidence of a check. For a hypothesis checked in several parts (as "
+                        "list_checks lists it), the combined status, each part with its own status and check_id, and "
+                        "every part's evidence marked with its part.")
     @_friendly
     def get_check(check_id: str) -> dict:
         _, ws = _find_check(check_id)
-        return _summary(ws, check_id)
+        return _check_summary(ws, check_id)
 
     @s.tool(description="Recent checks in a project, newest first, with their status.")
     @_friendly
     def list_checks(project: Optional[str] = None, limit: int = 20) -> dict:
         name, ws = _project(project)
         hidden = access.hidden_hypotheses(ws)  # 0.13.6: hypotheses an add-on keeps out of a chat
-        rows = [h for h in claimcheck.history(ws) if h["hyp_id"] not in hidden][: max(1, int(limit))]
-        return {"project": name, "checks": [{"check_id": h["claim_id"], "checked_at": h["created_at"], "claim": h["claim"],
+        thr = _strictness()  # INSTALL-1: the statuses at the person's Strictness, as the app lists them
+        rows = [h for h in claimcheck.history(ws, thr) if h["hyp_id"] not in hidden][: max(1, int(limit))]
+        return {"project": name, "confidence_threshold": thr, "checks": [{"check_id": h["claim_id"], "checked_at": h["created_at"], "claim": h["claim"],
                                               "status": h["status"],
                                               "status_text": h.get("status_text")
                                               or claimcheck.STATUS_TEXT.get(h["status"], h["status"]),
@@ -550,6 +660,7 @@ def build_server():
         name, ws = _project(project)
         from . import codebooks
 
+        framework = framework or "sdg"   # (no name: the default the description names)
         codebooks.follow(ws, framework)  # 0.16: labels follow the codebook's renames and merges
         profile.ensure_pass1(ws, framework)
         d = profile.doc_profile(ws, framework, document_id)
@@ -629,11 +740,13 @@ def build_server():
             out: list[dict] = []
             bad: list[str] = []
 
+            share, share_args = taskqueue.local_share()   # the settings, read once for every project
+
             def waiting(name, ws):
                 # what queue_status of that project calls waiting: tasks Claude Code may take now (not those a
-                # claim holds, nor any it is never handed)
-                n = ws.scalar(f"SELECT COUNT(*) FROM tasks t WHERE {taskqueue.WAITING} AND NOT {taskqueue.CLAIMED}",
-                              (taskqueue._cutoff(),)) or 0
+                # claim holds, nor any it is never handed, nor the AI mix's local share: hunt phase 1, QUEUE-4)
+                n = ws.scalar(f"SELECT COUNT(*) FROM tasks t WHERE {taskqueue.WAITING} AND NOT {taskqueue.CLAIMED} "
+                              f"AND NOT {share}", (taskqueue._cutoff(), *share_args)) or 0
                 if n:
                     out.append({"project": name, "waiting": n})
 
@@ -684,21 +797,66 @@ def desktop_config_path() -> Path:
 
 
 def config_block() -> dict:
-    """Start the connector with this very Python, so the app uses the environment it was installed in."""
-    return {"command": sys.executable, "args": ["-m", "enlens_claims.mcp_server"], "env": {"ENLENS_HOME": str(core.home())}}
+    """Start the connector with this very Python, so the app uses the environment it was installed in (its console
+    python.exe, also when pythonw.exe writes it: hunt phase 1.5, `procs.console_python`)."""
+    from .procs import console_python
+
+    return {"command": console_python(), "args": ["-m", "enlens_claims.mcp_server"], "env": {"ENLENS_HOME": str(core.home())}}
+
+
+class DesktopConfigError(ValueError):
+    """The Claude desktop app's config file cannot be changed safely (it is left as it is)."""
+
+
+def _write_beside(path: Path, text: str) -> None:
+    """Hunt phase 1 (INSTALL-4): a file of another program, written whole: under another name beside it, then put in
+    its place (as home._write_whole does for the data folder's files), keeping its permissions. Written in place, a
+    full disk or a stop part way left claude_desktop_config.json cut short, and the Claude app lost every connector and
+    setting in it until the person restored the .bak by hand. A link (a dotfiles folder) is followed, not replaced."""
+    import time
+
+    target = path.resolve() if path.is_symlink() else path
+    part = target.with_name(f".{target.name}.{os.getpid()}.part")
+    try:
+        with open(part, "w", encoding="utf-8", newline="") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        if target.exists():
+            shutil.copymode(target, part)
+        for attempt in range(8):
+            try:
+                os.replace(part, target)
+                return
+            except PermissionError:  # Windows: the Claude app reads the file this very moment
+                if attempt == 7:
+                    raise
+                time.sleep(0.02 * (attempt + 1))
+    finally:
+        part.unlink(missing_ok=True)
 
 
 def install_desktop(path: Path | None = None) -> Path:
-    """Add (or update) the 'enlens' server in the desktop app's config; the previous file is kept as .bak."""
+    """Add (or update) the 'enlens' server in the desktop app's config; the previous file is kept as .bak. Hunt phase 1
+    (INSTALL-4): every other key and connector is kept as it was; a file that does not hold a settings object (it does
+    not parse, or "mcpServers" is not an object) is left untouched and DesktopConfigError says so; the new file is
+    written beside and put in place whole."""
     path = path or desktop_config_path()
     data: dict = {}
     if path.exists():
-        text = path.read_text(encoding="utf-8")
-        data = json.loads(text) if text.strip() else {}
+        text = path.read_text(encoding="utf-8-sig")  # (a byte order mark, as Notepad writes one, is no reason to stop)
+        try:
+            data = json.loads(text) if text.strip() else {}
+        except ValueError as e:
+            raise DesktopConfigError(f"{path} is not valid JSON ({e}), so ENLENS left it as it is. Correct it (or move "
+                                     "it away) and run this again.") from None
+        if not isinstance(data, dict) or not isinstance(data.get("mcpServers", {}), dict):
+            raise DesktopConfigError(f"{path} does not hold the Claude app's settings as ENLENS knows them (an object "
+                                     "with an object \"mcpServers\"), so ENLENS left it as it is.")
         shutil.copy2(path, path.with_suffix(path.suffix + ".bak"))
     data.setdefault("mcpServers", {})["enlens"] = config_block()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    _write_beside(path, json.dumps(data, indent=2))
     return path
 
 
@@ -708,12 +866,16 @@ def repair_desktop(path: Path | None = None) -> bool:
     was changed. Any other entry, or a config that names another data folder, is left alone."""
     path = path or desktop_config_path()
     try:
-        data = json.loads(path.read_text(encoding="utf-8") or "{}")
+        data = json.loads(path.read_text(encoding="utf-8-sig") or "{}")
         entry = data["mcpServers"]["enlens"]
+        if not isinstance(entry, dict):
+            return False
     except (OSError, ValueError, KeyError, TypeError):
         return False
     cmd = str(entry.get("command") or "")
-    if cmd == sys.executable or (entry.get("env") or {}).get("ENLENS_HOME") != str(core.home()) or Path(cmd).exists():
+    from .procs import same_python
+
+    if same_python(cmd, sys.executable) or (entry.get("env") or {}).get("ENLENS_HOME") != str(core.home()) or Path(cmd).exists():
         return False
     install_desktop(path)
     return True
@@ -736,7 +898,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f'claude mcp add enlens -e ENLENS_HOME="{b["env"]["ENLENS_HOME"]}" -- "{b["command"]}" ' + " ".join(b["args"]))
         return 0
     if a.install_claude_desktop:
-        p = install_desktop()
+        try:
+            p = install_desktop()
+        except (DesktopConfigError, OSError) as e:
+            print(f"Problem: {e}", file=sys.stderr)
+            return 1
         print(f"Added the ENLENS connector to {p}. Quit and reopen the Claude desktop app to load it.")
         return 0
     try:

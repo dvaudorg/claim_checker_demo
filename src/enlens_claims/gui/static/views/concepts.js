@@ -2,7 +2,7 @@
 // concept: its wordings, the documents that discuss it, the passages as concordance lines, and related concepts
 // (a person accepts or rejects the links proposed by search by meaning or by the AI).
 import { featureEyebrow, withAI, viewTabs } from "../features.js";
-import { App, api, h, icon, replace, clear, toast, showError, failedLoad, noDocuments, addDocumentsFirst, fmt, pageHead, watchJob, P, emptyState, debounce, switchControl, plural, shortTitle, runningJob, button, link, notice, card, tag, input, select, textarea, fold, readsLine, inset, searchHref, jobFailed, aiButton, setBusy } from "../lib.js";
+import { App, api, h, icon, replace, clear, toast, showError, failedLoad, noDocuments, addDocumentsFirst, fmt, pageHead, watchJob, P, emptyState, debounce, switchControl, plural, shortTitle, runningJob, button, link, notice, card, tag, input, select, textarea, fold, readsLine, inset, searchHref, jobFailed, aiButton, setBusy, appName } from "../lib.js";
 import { MiniJob, isStopped, jobCard as jobCardOf } from "./progress.js";
 import { pathsCard, timeCard } from "./concept-paths.js";   // 0.18.1: D3 and D4
 import { shareInline, sharingOf } from "./share.js";   // 0.18 (L1)
@@ -84,7 +84,8 @@ export async function renderConcepts(view, params, query) {
     const qs = new URLSearchParams({ offset: String(offset), limit: String(PAGE), sort });
     if (q) qs.set("q", q);
     let g;
-    try { g = await api("GET", `/api/projects/${P(project)}/terms?${qs}`); } catch (e) { failedLoad(listBox, e); listBox.setAttribute("aria-busy", "false"); return; }
+    // hunt phase 1.5: an older request that fails after a newer one was drawn is dropped too (it drew its error over it)
+    try { g = await api("GET", `/api/projects/${P(project)}/terms?${qs}`); } catch (e) { if (my !== seq) return; failedLoad(listBox, e); listBox.setAttribute("aria-busy", "false"); return; }
     if (my !== seq) return;
     listBox.setAttribute("aria-busy", "false");
     draw(g);
@@ -103,7 +104,7 @@ export async function renderConcepts(view, params, query) {
     if (g.stale) {
       // 0.17: out of date because documents changed, or because what it leaves out changed
       const why = g.documents_changed === false && g.words_changed
-        ? h("p", {}, "What the glossary leaves out changed since it was made (your choice under “Words the glossary leaves out”, or the common words of a newer ENLENS), so it may still list such words. ",
+        ? h("p", {}, `What the glossary leaves out changed since it was made (your choice under “Words the glossary leaves out”, or the common words of a newer ${appName()}), so it may still list such words. `,
           link({ kind: "jump", onClick: () => openWords() }, "See what it leaves out"), ".")
         : h("p", {}, "Documents were added or removed since the glossary was made, so the counts may be out of date.");
       statusBox.appendChild(notice({ kind: "attention", class: "ct-status-notice" },
@@ -175,6 +176,11 @@ export async function renderConcepts(view, params, query) {
   // 0.17: what the glossary and the key terms of themes leave out: each language's common words (a language can be
   // switched off) and the project's own words. Saving makes the glossary again.
   let wordsFold = null;
+  // hunt phase 1 (PAGESB-6): the card is drawn anew when the glossary is ready, and saving starts it at once; the own
+  // words field held only what was saved, so a word typed while the glossary was made was gone. `ownBase`: the text the
+  // field had when it was last filled or sent; a field that differs from it holds words typed since, and keeps them
+  // (with the focus and the caret, when it was being typed in)
+  let ownField = null, ownBase = null;
   function openWords() {
     if (!wordsFold) return;
     wordsFold.open = true;
@@ -194,17 +200,23 @@ export async function renderConcepts(view, params, query) {
       switches.push(sw.input);
       return h("li", {}, sw);
     }));
+    const prev = ownField, typed = prev && prev.value !== ownBase ? prev.value : null;
+    const typing = prev && document.activeElement === prev ? [prev.selectionStart, prev.selectionEnd] : null;
     const own = textarea({ rows: 5, id: "ct-own-words", spellcheck: "false", "aria-describedby": "ct-own-help",
       placeholder: "Interviewer\nR1\nzeg maar" });
-    own.value = (w.own || []).join("\n");
+    ownBase = (w.own || []).join("\n");
+    own.value = typed !== null ? typed : ownBase;
+    ownField = own;
     const state = h("span", { class: "save-state", "aria-live": "polite" });
     const save = button({ kind: "main", sm: true }, icon("refresh", { size: 13 }), "Save and update the glossary");
     save.addEventListener("click", async () => {
       save.disabled = true;
       state.textContent = "Saving…";
       const off = switches.filter((i) => !i.checked).map((i) => i.dataset.code).concat((w.off || []).filter((c) => !w.languages.some((l) => l.code === c)));
+      const sent = own.value;
       try {
-        await api("PUT", `/api/projects/${P(project)}/terms/words`, { off, own: own.value.split("\n") });
+        await api("PUT", `/api/projects/${P(project)}/terms/words`, { off, own: sent.split("\n") });
+        ownBase = sent;
         state.textContent = "Saved.";
         build(null);
       } catch (e) { state.textContent = ""; showError(e); }
@@ -212,7 +224,7 @@ export async function renderConcepts(view, params, query) {
     });
     wordsFold = fold({ class: "section", id: "left-out", open: wasOpen }, "Words the glossary leaves out",
       card({ as: "div", class: "stack ct-languages-card" },
-        h("p", { class: "ct-languages-lead" }, "The glossary and the key terms of themes leave out the common words of each language: no term starts or ends with “because” or “themselves”, or in Dutch with “dan”, “wel” or “maar”. ENLENS tells each passage’s language by the common words it uses, so a Dutch word that is also English (“net”, “door”) is left out only in Dutch passages. Search is not changed: it still finds every word."),
+        h("p", { class: "ct-languages-lead" }, `The glossary and the key terms of themes leave out the common words of each language: no term starts or ends with “because” or “themselves”, or in Dutch with “dan”, “wel” or “maar”. ${appName()} tells each passage’s language by the common words it uses, so a Dutch word that is also English (“net”, “door”) is left out only in Dutch passages. Search is not changed: it still finds every word.`),
         w.languages.length
           ? h("div", {}, h("h3", { class: "ct-languages-title" }, "Languages found"),
             h("p", { class: "muted small ct-languages-help" }, "Switch a language off to read its passages as English. A language with only a few passages is often a table or a list of references."),
@@ -222,6 +234,7 @@ export async function renderConcepts(view, params, query) {
           h("div", { class: "field-help", id: "ct-own-help" }, `One word or phrase per line (at most ${fmt.num(w.max_own || 500)}): a speaker label such as “Interviewer” or “R1”, or a word that says nothing in your project. No term starts or ends with a word listed here; a phrase leaves out just that term.`)),
         h("div", { class: "btn-row" }, save, state)));
     wordsBox.appendChild(wordsFold);
+    if (typing) { own.focus({ preventScroll: true }); if (typing[0] != null) own.setSelectionRange(typing[0], typing[1]); }
     if (query.words === "1" && wasOpen && !wordsBox.dataset.shown) { wordsBox.dataset.shown = "1"; setTimeout(() => wordsFold.scrollIntoView({ block: "start" }), 80); }
   }
   let lastBuilt = false;
@@ -316,7 +329,7 @@ export async function renderConcept(view, [termId], query) {
       sub: [h("span", { class: "ct-ways" }, link({ href: checkHref(cap(c.label) + " ") }, "Check a hypothesis about this concept"),
         link({ href: searchHref(c.label, { mode: "phrase" }) }, "Search for it"))],
     }));
-    document.title = `${c.label} · Concepts · ENLENS`;
+    document.title = `${c.label} · Concepts · ${appName()}`;   // the app's own name (lib.js appName)
     clear(body);
     body.appendChild(jobBox);
     if (c.stale && jobBox.hidden) {
@@ -459,7 +472,7 @@ export async function renderConcept(view, [termId], query) {
     const actions = h("div", { class: "btn-row ct-link-acts" });
     if (proposed) {
       actions.append(
-        button({ sm: true, onClick: (e) => saveLink({ a: lk.a, b: lk.b, decision: "accept" }, e.currentTarget, "Accepted.") }, icon("check", { size: 13 }), lk.relation === "same" ? "Yes, the same" : "Yes, right"),
+        button({ sm: true, onClick: (e) => saveLink({ a: lk.a, b: lk.b, decision: "accept", source: lk.source }, e.currentTarget, "Accepted.") }, icon("check", { size: 13 }), lk.relation === "same" ? "Yes, the same" : "Yes, right"),
         button({ kind: "quiet", sm: true, onClick: (e) => saveLink({ a: lk.a, b: lk.b, decision: "reject" }, e.currentTarget, "Rejected.", { undo: true }) }, icon("x", { size: 13 }), lk.relation === "same" ? "No, not the same" : "No"));
       if (lk.source === "meaning") actions.append(...withAI(aiButton({ sm: true, disabled: jobRunning, onClick: (e) => judgePair(lk, e.currentTarget) }, "Judge this pair")));
     } else if (lk.source !== "abbreviation") {

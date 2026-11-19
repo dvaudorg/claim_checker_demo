@@ -212,8 +212,8 @@ def checked_before(ws, lines: list[str], skip: set[str] | None = None) -> list[l
     owners = _owners(ws)
     earlier = []
     for hid, text, at in ws.query("SELECT hyp_id, text, created_at FROM hypotheses WHERE text IS NOT NULL"):
-        if skip and hid in skip:
-            continue
+        if (skip and hid in skip) or hid.startswith("prep"):  # (hunt phase 1.5: a Look before checking left
+            continue                                             # unfinished is no check, as the Results list says)
         mark = marks.get(("check", hid))
         owner = owners.get(hid) or (None if mark else me)  # no row: made here, by this copy's person
         if mark and mark["state"] == "withdrawn" and owner != me:

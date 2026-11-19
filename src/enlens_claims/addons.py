@@ -33,6 +33,7 @@ from __future__ import annotations
 import importlib
 import json
 import re
+import sqlite3
 import sys
 import traceback
 from importlib import metadata
@@ -47,6 +48,9 @@ BRAND_KEYS = ("name", "tagline", "welcome_title", "welcome_text", "description",
 
 _loaded: list[tuple[str, ModuleType]] | None = None
 _errors: list[dict] = []
+# hunt phase 1.5 (review of wave 1): an add-on whose tables failed in ONE project is left out of that project only:
+# {project folder: {add-on: why}}
+_failed_in: dict[str, dict[str, str]] = {}
 
 
 def _entry_points() -> list:
@@ -80,9 +84,92 @@ def load(refresh: bool = False) -> list[tuple[str, ModuleType]]:
     return out
 
 
-def errors() -> list[dict]:
+def _key(where) -> str:
+    root = where if isinstance(where, (str, Path)) else getattr(where, "root", where)  # (a Path's own .root is "/")
+    return str(Path(root).expanduser().resolve())
+
+
+def errors(where=None) -> list[dict]:
+    """The add-ons' problems: those that could not be loaded (every project) and, with `where` (a project or its
+    folder), those left out of that project ({"addon", "error", "project": its folder's name}); without `where`, every
+    project's."""
     load()
-    return list(_errors)
+    # (without `where`, only projects still there: a new project's empty database is set up once in a temporary
+    # folder, store._copy_empty_database, and its failures are the same project's again)
+    keys = [_key(where)] if where is not None else [k for k in list(_failed_in) if Path(k).exists()]
+    return list(_errors) + [{"addon": n, "error": e, "project": Path(k).name}
+                            for k in keys for n, e in sorted(_failed_in.get(k, {}).items())]
+
+
+def failed(name: str, error: str, where=None) -> None:
+    """Hunt phase 1.5: an add-on that loaded but failed later is left out, printed and kept: with `where` (a project
+    or its folder: its tables could not be set up there) for that project only; without, for every project (a name
+    it cannot use anywhere). Printed once per add-on, project and message."""
+    load()
+    if where is not None:
+        here = _failed_in.setdefault(_key(where), {})
+        if here.get(name) == error:
+            return
+        here[name] = error
+        print(f"ENLENS: the add-on {name} was left out of the project {Path(_key(where)).name}: {error}",
+              file=sys.stderr)
+        return
+    row = {"addon": name, "error": error}
+    if row not in _errors:
+        _errors.append(row)
+        print(f"ENLENS: the add-on {name} was left out: {error}", file=sys.stderr)
+
+
+def set_up(name: str, where) -> None:
+    """The add-on's tables were set up in this project (again): a failure noted before is forgotten."""
+    _failed_in.get(_key(where), {}).pop(name, None)
+
+
+def left_out(where) -> set[str]:
+    """The add-ons left out of a project (a Workspace, its folder, or a connection to its database)."""
+    if isinstance(where, sqlite3.Connection):  # a connection: its database's folder
+        try:
+            where = Path(where.execute("PRAGMA database_list").fetchone()[2]).parent
+        except Exception:  # noqa: BLE001 - an in-memory database belongs to no project
+            return set()
+    return set(_failed_in.get(_key(where), {})) if _failed_in else set()
+
+
+def owner_of(handler) -> str | None:
+    """The add-on whose ROUTES hold `handler`, or None (one of ENLENS's own)."""
+    for n, m in load():
+        for r in getattr(m, "ROUTES", None) or []:
+            try:
+                if r[2] is handler:
+                    return n
+            except (IndexError, TypeError):
+                continue
+    return None
+
+
+def kind_left_out(where, kind) -> str:
+    """Words when `kind` (an add-on's kind of task: its store function lives in the add-on's module) belongs to an
+    add-on left out of this project (`where`: a connection, a Workspace or a folder); "" otherwise. Its answers are
+    then not stored there: the add-on's tables were not set up."""
+    out = left_out(where)
+    if not out:
+        return ""
+    mod = getattr(getattr(kind, "store", None), "__module__", "") or ""
+    for n, m in load():
+        if n in out and (mod == m.__name__ or mod.startswith(m.__name__ + ".")):
+            return (f"The add-on {n} is left out of this project (its tables could not be set up here), so an answer "
+                    f"of its kind {getattr(kind, 'name', '')!r} cannot be stored in it. Leave this task for now.")
+    return ""
+
+
+def refused_here(handler, project_folder) -> str:
+    """Words for a call of an add-on's route in a project the add-on is left out of; "" when it may run."""
+    n = owner_of(handler)
+    if not n or n not in left_out(project_folder):
+        return ""
+    why = _failed_in.get(_key(project_folder), {}).get(n, "")
+    return (f"The add-on {n} is left out of the project {Path(_key(project_folder)).name}: its tables could not be "
+            f"set up there ({why}). Its other projects are not affected.")
 
 
 def names() -> list[str]:
@@ -175,11 +262,13 @@ def downloads() -> set[str]:
     return out
 
 
-def _extra(hook: str, arg, taken) -> dict:
+def _extra(hook: str, arg, taken, skip: set[str] = frozenset()) -> dict:
     """The keys each add-on's `hook(arg)` adds; a key ENLENS (or an earlier add-on) has is left out. An add-on whose
-    hook fails adds nothing: the page still opens."""
+    hook fails adds nothing: the page still opens. `skip`: add-ons left out (of the project `arg`)."""
     out: dict = {}
     for n, m in load():
+        if n in skip:
+            continue
         fn = getattr(m, hook, None)
         if not callable(fn):
             continue
@@ -200,28 +289,70 @@ def state(app, taken) -> dict:
 
 
 def overview(ws, taken) -> dict:
-    """Extra keys for a project's Overview."""
-    return _extra("overview", ws, taken)
+    """Extra keys for a project's Overview (none from an add-on left out of that project)."""
+    return _extra("overview", ws, taken, left_out(ws))
 
 
 # -------------------------------------------------------------------------------------------------- 0.13.6: the database
-_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# hunt phase 1 (INSTALL-8): matched whole (`fullmatch`): with `match` and `$`, a name ending in a line break passed
+# ("ai_note\n"), SQLite added the column as "ai_note", and every later opening tried to add it again and failed with
+# "duplicate column name", so no project could be opened or made, in words that named no add-on
+_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_TYPE = re.compile(r"[A-Za-z0-9_ ()'.,-]+")
 
 
 def database() -> list[dict]:
-    """Each add-on's SCHEMA, MIGRATIONS and INDEXES, in load order (only add-ons that define one of them)."""
+    """Each add-on's SCHEMA, MIGRATIONS and INDEXES, in load order (only add-ons that define one of them). Hunt phase
+    1.5 (the owner's rule): an add-on with a column ENLENS cannot add is left out and named in `errors()`; it raised,
+    and the ValueError stopped every project from opening."""
     out = []
     for n, m in load():
         schema, migrations, indexes = (getattr(m, k, None) for k in ("SCHEMA", "MIGRATIONS", "INDEXES"))
         if not (schema or migrations or indexes):
             continue
-        cols = []
+        cols, bad = [], None
         for mg in migrations or []:
-            table, col, typ = mg
-            if not (_NAME.match(table) and _NAME.match(col) and re.match(r"^[A-Za-z0-9_ ()'.,-]+$", typ)):
-                raise ValueError(f"The add-on {n} names a column ENLENS cannot add: {mg!r}")
+            table, col, typ = mg if isinstance(mg, (tuple, list)) and len(mg) == 3 else (None, None, None)
+            if not (isinstance(table, str) and isinstance(col, str) and isinstance(typ, str)
+                    and _NAME.fullmatch(table) and _NAME.fullmatch(col) and _TYPE.fullmatch(typ)):
+                bad = f"The add-on {n} names a column ENLENS cannot add: {mg!r}"
+                break
             cols.append((table, col, typ))
+        if bad:
+            failed(n, bad)
+            continue
         out.append({"addon": n, "schema": schema or "", "migrations": cols, "indexes": indexes or ""})
+    return out
+
+
+# Statements that cannot run inside the savepoint each add-on's SQL runs in (store._setup_addons): they manage the
+# transaction or the database file themselves. `executescript` ran them before hunt phase 1.5; now the add-on is
+# refused with words that name the statement (docs/EXTENDING.md).
+_OWN_TRANSACTION = re.compile(r"\s*(BEGIN|COMMIT|END|ROLLBACK|SAVEPOINT|RELEASE|VACUUM|ATTACH|DETACH|"
+                              r"PRAGMA\s+(\w+\.)?journal_mode)\b", re.I)
+
+
+def transaction_statement(stmt: str) -> str:
+    """The words of `stmt`'s start when it manages the transaction or the file itself (BEGIN, COMMIT, VACUUM, PRAGMA
+    journal_mode...), else ""."""
+    m = _OWN_TRANSACTION.match(stmt)
+    return " ".join(m.group(1).split()) if m else ""
+
+
+def statements(script: str) -> list[str]:
+    """The SQL statements of a script, one by one (a trigger's body stays whole), so they can run inside a savepoint
+    one `execute` at a time (`executescript` commits what came before it first)."""
+    import sqlite3
+
+    out, buf = [], ""
+    for piece in script.split(";"):
+        buf += piece + ";"
+        if sqlite3.complete_statement(buf):
+            if buf.strip().strip(";").strip():
+                out.append(buf.strip())
+            buf = ""
+    if buf.strip().strip(";").strip():
+        out.append(buf.strip().rstrip(";"))  # an unfinished statement: SQLite says what is wrong with it
     return out
 
 

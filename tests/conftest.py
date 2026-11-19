@@ -129,6 +129,7 @@ def _read_one_file_at_a_time(monkeypatch):
     them here, one at a time, so what a test changes in this process (a stand-in for OCR, say) is what reading sees;
     tests/test_speed.py reads at once on purpose and compares."""
     monkeypatch.setenv("ENLENS_READ_WORKERS", "1")
+    monkeypatch.setenv("ENLENS_READ_HERE", "1")   # hunt phase 1.5: also in a job with Stop (else a reading process)
 
 
 @pytest.fixture(autouse=True)

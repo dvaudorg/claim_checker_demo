@@ -156,7 +156,7 @@ def test_the_cap_turns_a_document_local_once_reached(mixed):
     assert access.levels(ws, [ids["cloud"]])[ids["cloud"]] == "cloud"
     n = ws.scalar("SELECT COUNT(*) FROM passages WHERE doc_id=?", (ids["cloud"],))
     with ws.connect() as cx:  # Claude reads one passage of four or so: well past 10 %
-        access.record_sent(cx, "t", {"passage_id": pid["cloud"]}, "Claude API", "check")
+        access.record_sent(cx, "t", {"passage_id": pid["cloud"]}, "Claude API", "check", model="claude-opus-5-5")
     assert n >= 2 and access.levels(ws, [ids["cloud"]])[ids["cloud"]] == "local"
     assert access.documents_view(ws)[ids["cloud"]]["budget_reached"] is True
     assert _insert(ws, "check:capped", {"passages": [{"passage_id": pid["cloud"]}]}) == "local"

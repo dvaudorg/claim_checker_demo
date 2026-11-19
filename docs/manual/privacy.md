@@ -79,6 +79,8 @@ interview transcript.
   changed together with the bar at the bottom of the window, and the message after a change has *Undo*. A note
   (*Why*, for example "publisher licence") is kept with the document and exported with the project; it changes
   nothing.
+- **From the command line or a Claude chat** (`--ai-access`, `ai_access`): no answer, nothing added until a default
+  exists. Earlier documents stay as they were; Claude cannot add documents more open than the default.
 - **For large corpora**, a `manifest.csv` may have `ai_access` (`cloud`, `local` or `none`) and `ai_note` columns.
 
 Projects made before 0.11 keep *Claude may read it* for every document until you change it; a project zip made before
@@ -88,30 +90,29 @@ Claude is not offered.
 ### Other cloud providers
 
 *Claude may read it* means Anthropic, unless you allow more. A document marked that way also says **which cloud
-providers may read it**, and by default that is only Anthropic: a project you already have means exactly what it did,
-and nothing reaches OpenAI, Google, Mistral, Azure or OpenRouter, nor Codex or Antigravity, until you allow it ([Settings](settings.md#an-api-key-claude-or-another-provider)).
+providers may read it**: by default only Anthropic, so nothing reaches another company, Codex or Antigravity until
+you allow it ([Settings](settings.md#an-api-key-claude-or-another-provider)).
 
-- **Where.** On the Documents page, the line *Cloud AI may read it: …* above the list opens the project's choice, as
-  tick boxes of providers; a document's own AI-setting dialog (*Add a note on why*, in its details) has its own.
-- **The words change.** While no provider other than Anthropic is set up, the page says *Claude may read it*. Once
-  one is (a key stored, or chosen as the main route), it says *Cloud AI may read it* and shows the tick boxes. The
-  page also shows how much each provider has read.
+- **Where.** On the Documents page, the line *Cloud AI may read it: …* above the list opens the project's choice of
+  providers; a document's own AI-setting dialog (*Add a note on why*, in its details) has its own.
+- **The words change.** Until a provider other than Anthropic is set up (a key stored, or the main route), the page
+  says *Claude may read it*; then *Cloud AI may read it*, with the tick boxes and how much each provider has read.
 - **A document that does not allow the provider of the main route** is treated as *Only a local AI* for that route:
-  its excerpts go to the local model for restricted documents, or wait for your judgement. The Claude connector counts
-  as Anthropic, and so does Claude Code.
+  its excerpts go to the local model, or wait for your judgement. The Claude connector and
+  Claude Code count as Anthropic.
 - **The queue hands passages only to the company of the agent that takes it.** Codex counts as OpenAI, Antigravity as
-  Google. A document that allows OpenAI but not Anthropic reaches Codex and never Claude Code, and the reverse. *What
-  was sent* records the company and the agent.
+  Google: a document that allows OpenAI but not Anthropic reaches Codex, never Claude Code. *What was sent* records
+  the company and the agent.
 - **A model server on another computer** (not `localhost`, `127.0.0.1` or `::1`) counts as a cloud provider too: an
   OpenAI address as OpenAI, any other as *a server on another computer*, which no document allows until you do.
 - **In a shared project each person chooses their own provider.** The providers you tick stay in your copy: they
-  never travel to a colleague's, nor theirs to yours; the team shares each document's AI setting, as before. The owner
+  never travel in a file, not even your own backup; the team shares each document's AI setting, as before. The owner
   may limit the providers the team may use (no limit by default): a provider outside it reads none of the project's
   documents in anyone's copy, and its work waits with a note naming the limit and who set it ([Roles](roles.md#on-the-activity-view),
   which also says what is not signed yet). A colleague's older ENLENS allows Anthropic only. The
   [AI log](how-the-ai-is-used.md#the-ai-log) shows who ran which AI work, with which provider.
 - **Your key** is kept in the system's keychain, never in a project, a log or a moving file. Each provider's terms
-  decide what it keeps and whether it trains on it: check them first.
+  decide what it keeps and whether it trains on it.
 
 ### What happens in each feature
 
@@ -136,16 +137,18 @@ flowchart LR
 - **Every other AI task** (a second opinion, reading an excerpt again, the AI pass of *Codes*, theme names, concept
   links, references) takes the setting of the most restricted document it touches. A theme whose passages are all
   restricted is named by the local model or keeps its key terms; two concepts found only in restricted documents are
-  linked by the local model or not at all.
+  linked by the local model or not at all. A concept's name and a document's title count as words of their documents:
+  *Name the groups*, *Other wordings* and a framework from theory name only what the AI may read, and a document you
+  make stricter while such a task waits takes the task away from the AI.
 - **A check started in a Claude chat** (the connector) shows Claude only the excerpts it may read; the result page then
   offers *Read them now on this computer* for the local ones. When the main model runs on this computer, it also
   reads the excerpts marked *Only a local AI*, so its summary and notes are left out of a Claude chat (the connector
   says so).
-- **When the local model's answers cannot be used** (three tries), the result says so and shows those excerpts without
-  a judgement. *Read them again on this computer* tries once more (after choosing another local model, say), or you
-  judge them yourself.
-- **Search by meaning**: an embedding server on another computer receives neither the restricted passages (they are
-  found by their words) nor glossary terms found only in them.
+- **When the local model's answers cannot be used** (three tries), those excerpts show no judgement: *Read them
+  again on this computer* tries once more, or you judge them.
+- **Search by meaning**: an embedding server on another computer receives no restricted passage (they are found by
+  their words), and no glossary term or code whose text may carry their words (an older theory codebook is known by
+  its quotations; reworded without them, it goes as your words).
 
 The local model's own *Start*, and what happens when memory is short: [A model on your own computer](local-models.md#the-local-models-own-start-and-your-computers-memory).
 

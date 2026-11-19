@@ -106,7 +106,9 @@ documents reader 5 read only PDFs and documents in two languages that have a pas
 the others would read the same. Reader 5 changes PDFs with ruled tables,
 tables over two pages or figures, and Word files and web pages with pictures; reader 6 changes PDFs with text hidden
 behind a figure, publishing details at the foot of the first page, or running heads beside a page number, and any
-document in two languages one of whose passages holds both. The preview
+document in two languages one of whose passages holds both. Reader 7 changes text files, Word files and web pages
+only (an interview's repeated lines, short paragraphs one per line, Word text boxes, files saved as ISO-8859-2), so
+of the documents reader 6 read every one but a PDF is offered it. The preview
 says what would change.
 
 ```mermaid
@@ -118,10 +120,13 @@ flowchart LR
 ```
 
 The preview says how many of your results (a check's judgements and yours, codes and your reviews of them, themes,
-references) find their place in the new text, and which do not. **Move it to the new reader** then does it in one
-step, or not at all:
+references, your notes and highlights, the blocks you left out or restored) find their place in the new text, and
+which do not. **Move it to the new reader** then does it in one step, or not at all:
 
-- each result follows its quote to the same words in the new text, and a check keeps the excerpt it showed;
+- each result follows its quote to the same words in the new text, and a check keeps the excerpt it showed; a note
+  follows its words the same way, never to the same words in another part of the text;
+- a block you left out (or restored), and where you said the text starts or ends, hold for the new reader's blocks
+  that have the old block's text, also where the new reader cuts the text otherwise;
 - keyword codes, key terms and the document's search index are made again;
 - work still waiting for the AI about it is asked again;
 - a set of themes is marked out of date where its passages changed;

@@ -91,8 +91,9 @@ def test_score_labels_leave_out_codes_only_mentioned():
     s = v.score_labels(_pass()["labels"], CODES)
     # passage 4: C is only mentioned, so its C is neither right nor wrong: 2 decisions there, 3 elsewhere
     assert s["code_decisions"] == 14
-    # wrong: passage 2 B missed, passage 3 C added, passage 5 (no answer) C missed
-    assert s["code_accuracy"] == round(11 / 14, 3)
+    # wrong: passage 2 B missed, passage 3 C added, and all three of passage 5 (no answer): they still count, each as
+    # "no answer", which is never right (hunt phase 1.5, as for checks; A and B counted as rightly absent)
+    assert s["code_accuracy"] == round(9 / 14, 3)
     assert s["same_codes"] == 0.4                     # passages 1 and 4 (C mentioned, so B is the whole answer)
     assert s["answered"] == 4
     assert s["per_code"]["A"] == {"gold": 2, "precision": 1.0, "recall": 1.0}
@@ -112,7 +113,7 @@ def test_quote_failures_and_repeatability():
     r = v.repeatability(p1, p2, CODES)
     assert r["checks"]["same_status"] == 0.6
     assert r["labels"]["same_codes"] == 0.6
-    assert r["labels"]["code_agreement"] == round(13 / 15, 3)
+    assert r["labels"]["code_agreement"] == round(11 / 15, 3)   # passage 5: no answer in the first pass agrees on none
 
 
 def test_quote_problem_wording():
@@ -157,7 +158,9 @@ def test_report_rendering():
     assert "## Limits" in one and "invented" in one and "English only" in one
     assert "the gold set has changed" not in one
     two = v.to_markdown(v.make_run([_pass(), _pass()], GOLD, date="2026-11-13"), gold_fingerprint="other")
-    assert "the same verdict for 100% of 5 hypotheses" in two
+    # hunt phase 1 (BACKENDS-9): H5, unanswered in both passes, is left out of repeatability, and the report says so
+    assert "the same verdict for 100% of 4 hypotheses" in two
+    assert "1 hypothesis unanswered in both passes left out" in two
     assert "the gold set has changed since this run (now `other`)" in two
 
 

@@ -35,6 +35,8 @@ the model service chosen in Settings.
   0.13.5: `GET /static/site.css` is the installation's own `site.css` followed by each add-on package's;
   `GET /static/addons/<add-on>/<file>` serves an add-on package's page files (docs/EXTENDING.md).
 - **JSON in, JSON out.** Request bodies are JSON objects (`Content-Type: application/json`), except uploads (raw bytes).
+  A body needs its `Content-Length`: one sent in chunks is refused with 411, and one that stops coming is answered
+  408 after two minutes.
 - **Errors**: status 4xx/5xx with `{"error": "plain-language message", "kind": "request" | "backend" | "internal"}`.
   `kind: "backend"` (HTTP 502) means the model service is the problem (not running, model missing, key wrong): offer
   a link to Settings. 401 means the token is missing or from an earlier run: open ENLENS from its icon (or run
@@ -42,7 +44,9 @@ the model service chosen in Settings.
 - **Jobs.** Long work returns `{"job": Job}` at once; poll `GET /api/jobs/<id>` (about every 500 ms while
   `state` is `queued` or `running`). Jobs that use the chat model run one at a time; others wait in `queued`.
   0.17.0: jobs of one project that change the same things wait their turn in `queued` too, with `waiting_for` saying
-  for which job (see Jobs below).
+  for which job (see Jobs below). The same work started twice in a project (a label run, themes, naming the themes or
+  the concept map's groups, reading one excerpt or documents again) returns the job already queued or running; work
+  of the same kind that would clash with it is a 409 in words.
 - Times: hypotheses and documents carry ISO 8601 UTC strings (`created_at`); jobs carry Unix seconds.
 - Ids are opaque strings. URL-encode project names (they may contain spaces).
 
@@ -113,8 +117,11 @@ when nothing was graded. `who` lists the same documents by side (see the hypothe
  "statuses": [{"status": "supported", "text": "Supported by a source", "help": "…"}, …],
  "jobs": [Job summaries of queued/running jobs],
  "brand": {"name": "ENLENS", "tagline": "explore and check your documents", "welcome_title": "…", "welcome_text": "…",
-           "description": "…", "logo": "/static/logo.svg"}}
+           "description": "…", "logo": "/static/logo.svg"},
+ "addon_problems": [{"addon": "fieldnotes", "error": "its tables could not be set up: …", "project": "Demo"}]}
 ```
+`addon_problems`: add-ons that could not be loaded (no `project`), and those left out of the open project because
+their tables could not be set up there (`project`); an add-on route called in such a project answers 409 in words.
 `brand` (0.13.5): the app's name and words, from `static/brand.json` and any add-on's `BRAND` (docs/EXTENDING.md).
 0.13.6: an add-on may add keys of its own (its `state(app)`); they never replace one of these. Its routes are documented
 in `docs/ADDON_API.md` and come after ENLENS's own (docs/EXTENDING.md). `GET /api/projects/<p>/overview` may carry an
@@ -359,14 +366,22 @@ is not one, 409 when no Ollama answers on this computer (or at the address in Se
 
 ### Projects
 
-`GET /api/projects` → `{"projects": [summary]}`.
+`GET /api/projects` → `{"projects": [summary]}`. A summary's `ok` is false for a project that cannot be opened; then
+`problem` says why and what to do, in words for a researcher, when ENLENS knows (a damaged `config.json`, which is
+never written over; a project saved by a newer ENLENS, which this version does not open or change), else it is
+`null`.
 `POST /api/projects` `{"name": "Morocco"}` → `{"project": summary}` (also becomes the current project).
 `POST /api/projects/link` `{"path": "/path/to/workspace", "name": "Pilot"}` → links an existing workspace folder
 (not copied). When the folder is another person's project (its people do not include this person) the answer is 409 with
 `{"error", "report": {"other": {"name"} | null, "triggers": n, "views": n, "config": [keys changed], "bib_paths": n,
 "cache": bool}}` and nothing is linked; the same request with `"clean": true` cleans it like a project brought in from a
 file (a shared-folder record, file paths of the other computer, and what was stored for speed go; the documents and
-the work stay) and links it. `DELETE /api/projects/<p>` `{"confirm": "<p>"}` → `{"result": "unlinked" | "moved to …/trash/…"}`.
+the work stay) and links it. `DELETE /api/projects/<p>` `{"confirm": "<p>"}` → `{"result": "unlinked" | "moved to …/trash/…"}`;
+409 with `"kind": "busy"` and the `job_id` while a job of the project is queued or running (its message names the job:
+stop it or wait, then remove the project). A round of the shared folder the app started by itself, which the person
+cannot stop, is waited for a few seconds first; if it still runs, the 409 says to try again in a moment. While the removal runs, a job started in the project is a 409 ("is being
+removed"). A quick look is not moved to the trash at the end of its week while a job of
+it runs either.
 
 `GET /api/projects/<p>/export.zip` → the whole project as one zip, to give to a colleague or move to another
 computer: a consistent copy of the database, `config.json`, the project's codebooks, and the original file of every
@@ -478,9 +493,12 @@ and original files are stored there once for the whole team.
 - `PUT /api/projects/<p>/shared-folder {"path", "keep_out"?}` → the status above. The folder must exist, be writable,
   not be inside the project's own folder, and not hold the project nor ENLENS's own folder (the cloud service would
   copy the project's database to the team): 400 in plain words otherwise. The project's folder in it (`ENLENS-…`)
-  chosen by mistake stands for the folder that holds it. The research log notes the choice (kind `sync`).
+  chosen by mistake stands for the folder that holds it. The research log notes the choice (kind `sync`). Refused (400,
+  in words) while the project works through a storage space: leaving the space forgets its keys, so that is done only
+  by the DELETE below.
 - `DELETE /api/projects/<p>/shared-folder` → the status: the project stops using the folder (nothing in it is
-  removed; what came in stays).
+  removed; what came in stays). With a storage space, this is *Stop using the storage space here*: this computer
+  forgets its keys to it (`DELETE …/space` does the same).
 - `PUT /api/projects/<p>/shared-folder/keep-out {"keep_out": bool}` → the status. On: documents marked *Only a local
   AI* or *No AI* stay out of the folder (their readings, files, the AI work on them, and their passages in what a
   shared check handed to the AI); colleagues add those files themselves, and checks that read them still come in
@@ -520,7 +538,12 @@ folder's (a space is looked at every 10 minutes at most, and about 20 s after a 
 password is asked nothing more until `PUT …/space/drive-password` or `POST …/space/drive-retry`), `not_found` (a drive's
 folder is not where this copy has it: looked for again by its contents every half hour), `full` (the service's cap or
 billing), `set_aside` (a file or the list of members not signed as it must be: nothing of it came in), `no_keys` (this
-computer has not got the space's keys: a project copied from elsewhere; ask for a new invite).
+computer has not got the space's keys: a project copied from elsewhere; ask for a new invite), `other_project_here`
+(another project on this computer works in the same space: one that joined before such joins were refused, or a
+folder duplicated by hand; only the project that last connected to the space here runs, and only with the keys the team
+knows; the round does nothing; the message says what to do), `busy` (a file of the copy on
+this computer could not be written, on Windows one another program held open: what was not written is fetched again
+next round).
 - `GET …/shared-folder` → as above, with `"space": null | {"id", "service": "b2" | "r2" | "webdav" | "dir", "where",
   "region", "in_eu", "keeper" (this copy keeps the space's keys: it invites, removes and moves), "joined" (the keeper's
   copy has let this copy in), "members": [{"part", "person", "name", "me", "keeper", "removed", "since"}], "invites":
@@ -587,7 +610,9 @@ next round, as its maker); `POST …/unshare` stops it going from here at once a
   withdrawn (its keys deleted; in a drive, the folder no longer shared with its account where ENLENS can).
 - `DELETE /api/projects/<p>/space/members/<part>` → the status with `"warnings": [text]`: the colleague's keys are
   deleted (in a drive, the folder no longer shared with them where ENLENS can; what is left to do also stays in
-  `"left_to_do"`) and the project's key is replaced for those who stay. The keeper's copy only.
+  `"left_to_do"`) and the project's key is replaced for those who stay. The keeper's copy only, and only when its
+  person is the Owner or a Co-owner (a 400 of kind `not_owner` otherwise: after a hand-over, until the next round
+  hands the keys on).
 - `POST /api/projects/<p>/space/move {"service": "b2", "key_id", "app_key"} | {"service": "r2", "token",
   "account_id"?} | {"service": "webdav", "address", "user", "password"}` → `{"job": view}`: a new space; every member gets a part and keys there, sealed to them in the old
   space, and their copies follow at their next round. The `result` has `"moved": {"told": n, "not_told": [names]}`
@@ -822,7 +847,10 @@ recognised pages may contain recognition errors).
 
 Uploading (one request per file, all files of one upload share a `batch` id chosen by the page, `[A-Za-z0-9_-]`):
 `POST /api/projects/<p>/uploads?batch=<b>&name=<file name>` with the raw file as body →
-`{"batch": "b", "name": "report.pdf", "size": 123}`. Accepted: `.pdf .html .htm .txt .md .zip` (zips are opened,
+`{"batch": "b", "name": "report.pdf", "size": 123}`. `name` is the name the file was kept under: a name a file of the
+batch has already (also when it differs only by case or by composed or decomposed accents, or once `:` `?` `*` are
+cleaned to `_`) gets a number, `report (2).pdf`; a Windows device name (`CON.txt`) gets a `_` in front; a name over
+240 bytes is shortened, keeping its extension. A batch id of more than 100 characters is a 400. Accepted: `.pdf .html .htm .txt .md .zip` (zips are opened,
 also nested; a `manifest.csv` inside, columns `file, reference, doi`, names the works). Max 2 GB per file.
 
 `POST /api/projects/<p>/ingest` `{"batch": "b", "exclude": "A_18_* draft*"}` or `{"path": "/Users/me/Reports"}`
@@ -841,7 +869,9 @@ while the new passages get vectors). `result`:
 zip: save a copy without the password and add that (report.pdf)"`, `"…: damaged zip: copy or download it again (…)"`),
 a damaged Word file and a password-protected PDF (`"x.pdf: password-protected: …"`, before reported as a file without
 text); the other files are added. `"stopped": true` when Stop was pressed, also during the text recognition (OCR) of a
-scanned PDF, which is then not added.
+scanned PDF, which is then not added. Hunt phase 1.5: with it `"not_added"` (how many files of the batch were not
+read), and `"stopped_at"` (the file being read when Stop came, absent when Stop came between two files); a file read
+whose passages could not be made is a line under `failed`, and the other files are added.
 (optional keys are absent when empty). `ocr`: PDFs whose scanned pages were read by OCR (on this computer, at low
 priority). `scanned_no_text`: PDFs with scanned pages that stayed without text (OCR off or not installed): say
 "Scanned: no text. Ask IT to install Tesseract to read it." A wholly scanned PDF without OCR is also in
@@ -878,7 +908,9 @@ reader), `"new_reader"` (the reader new documents get), `"reading"` (the reading
 "pdfminer"|"pypdf"|"text", "pages", "pages_with_text", "ocr_pages", "scanned_pages", "multi_column_pages",
 "repairs": {"hyphens_joined", "hyphens_kept", "words_split", "ligatures", "spaces", "accents"}, "tables", "blocks":
 {kind: n}, "left_out_chars": {kind: n}, "included_share", "passages", "body_passages", "unreadable_passages", "words",
-"warnings": [sentence], "quality": "good"|"fair"|"poor"}`; for a document read before 0.15 `{"reader": 1, "older":
+"warnings": [sentence], "quality": "good"|"fair"|"poor", "encoding_guess"?}` (hunt phase 1.5: `encoding_guess`, for a
+text file or web page that names no encoding and is not UTF-8, the one taken: "Windows-1252", "Windows-1250",
+"ISO-8859-2" or "UTF-16"); for a document read before 0.15 `{"reader": 1, "older":
 true, "pages", "ocr_pages", "scanned_pages", "passages", "body_passages", "unreadable_passages", "warnings": [],
 "quality": null}`), `"page_images"` (a picture of each page can be had), `"tables"` and `"paragraphs"` (counts).
 0.19: `"languages"`: `{"shares": {code: share of the characters whose language is known}, "blocks": {code: n},
@@ -942,12 +974,14 @@ that would do, changing nothing: `{"ok": false, "reason", "reader", "new_reader"
 (read by the new reader already, the original missing or changed, a task of it waiting or out with Claude Code, almost
 no text in the new reading), otherwise the report: `{"ok": true, "moved": false, "doc_id", "title", "reader",
 "new_reader", "counts": {kind: {"moved", "not_placed", "left_out"}}` (kinds: `check`, `judgement`, `second_opinion`,
-`label`, `claim`, `sdg_check`, `theme_member`), `"not_placed": [{"kind", "kind_text", "what", "quote", "page", "where",
+`label`, `claim`, `sdg_check`, `theme_member`; hunt phase 1.5: `note`, a note or highlight, and `block`, a person's
+*Leave out*, *Restore*, *Text starts here* or *Text ends here* the new reader's other blocks are given), `"not_placed": [{"kind", "kind_text", "what", "quote", "page", "where",
 "left_out_kind", "why"}]` (page in the old reading), `"left_out": [{… "note"}]` (placed, in text the new reader leaves
 out; page in the new reading), `"remade"`, `"tasks": {"asked_again", "moved", "kept_as_records"}`, `"themes":
 {"runs_kept_up_to_date", "runs_out_of_date", "runs"}`, `"passages": {"before", "after", "one_to_one", "body_before",
 "body_after"}`, `"ai_share": {"before", "after"}`, `"addons": [{"table", "rows"}]`, `"reading"` (the new reading
-report), `"warnings": [sentence]}` (`reread.py`). `POST …/reread` → `{"job"}` (kind `reread`): the move in one
+report), `"same_reading"` (hunt phase 1.5: true when the new reader reads it exactly as before, the same text and
+passages), `"warnings": [sentence]}` (`reread.py`). `POST …/reread` → `{"job"}` (kind `reread`): the move in one
 transaction (all or nothing), then the document's search by meaning, the glossary and the keyword pass, as after adding
 a document; the job's result is `{"report": {… "moved": true}, "glossary", "codes", …}`. 409 with the reason when it
 cannot be done. 0.17.0: while another job of the project runs, the move waits its turn (`waiting_for`) instead of a 409;
@@ -969,12 +1003,13 @@ cannot be read again now, and the result has `summary`: `{"moved", "left_as_they
 (`ingest.READER`) beside each document's `reader`, and (0.19) `new_reader_changes`. 0.19: a document reader 5
 read is one of "the documents an earlier reader read" only when reader 6 would read it otherwise (a PDF, or a
 document one of whose passages holds both languages of a document in two); `POST …/reread` of any other answers 409
-with the reason.
+with the reason. With reader 7: of the documents reader 6 read, every one but a PDF is one of them (reader 7 reads PDFs as
+reader 6 did).
 
 `POST /api/projects/<p>/new-reader/preview` `{"doc_ids"?: [doc_id]}` (0.18.0rc2) → `{"job"}` (kind
 `new_reader_preview`): the dry run before moving several documents; same `doc_ids` rules, errors and 409 as the move.
 Each document is read again by the current reader (`reread.preview`; nothing is stored or changed). The job's result is
-`{"documents": [{"doc_id", "title", "ok", "reason", "results", "no_place", "left_out", "not_placed": [{"kind_text",
+`{"documents": [{"doc_id", "title", "ok", "reason", "results", "no_place", "left_out", "same_reading", "not_placed": [{"kind_text",
 "what", "quote", "page", "where", "left_out_kind", "why"}]}], "stopped", "summary": {"documents", "clean",
 "would_lose", "cannot", "results_without_place"}}`: `clean` documents move with every result in place, `would_lose`
 documents have `no_place` results that would find none, `cannot` documents cannot be read again now (`reason`).
@@ -1020,9 +1055,14 @@ project's default. The setting is enforced where tasks are made and run (see `ac
   the provider of the main route is treated as `local` for that route; Claude Code's queue and the connector always
   count as `anthropic`. A model server on another computer is a provider (`other`, or a known one by its address).
 - `PUT /api/projects/<p>/ai-access` `{"default": "cloud"|"local"|"none"}` and/or `{"dismiss_banner": true}` →
-  `{"ai_access": {…}}`.
+  `{"ai_access": {…}}`. The default given also reaches the documents holding the app's stand-in setting (a quick
+  look's document); `ai_access.standin` counts those still holding it and `ai_access.own_stricter` the documents
+  with a setting of their own stricter than `cloud`.
 - `POST /api/projects/<p>/ingest` takes `ai_access` (who may read the new documents; the first answer in a project
-  becomes its default) and `ai_note`. A `manifest.csv` may have `ai_access` and `ai_note` columns per file; an unknown
+  becomes its default) and `ai_note`. Without `ai_access`, a project whose default was never chosen answers 400 in words
+  and adds nothing; with a chosen default, the default applies. When earlier documents follow a default nobody chose,
+  the answer is the new documents' own setting and the job's `result.note` says how many still follow it (the same
+  rule for `POST …/bibliography/files`). A `manifest.csv` may have `ai_access` and `ai_note` columns per file; an unknown
   value is listed under `manifest_problems`.
 - `GET /api/projects/<p>/documents/<doc_id>/ai-sent` → what Claude has read of a document: `{"doc_id", "share",
   "since", "passages": [{"passage_id", "seq", "page", "preview", "times", "first", "last", "features", "routes"}]}`.
@@ -1066,7 +1106,9 @@ result: the `search` state plus `added` and `remaining`; 400 when no embedding m
 commas, semicolons or tabs.
 `GET /api/projects/<p>/frameworks/<name>` → `{"framework": {...info, "items": [{"code", "description", "group", "group_name"}]}}`.
 `POST /api/projects/<p>/frameworks` `{"name": "h2", "csv": "code,description\nH1,…", "title": "…", "label": "hypothesis code"}`
-→ `{"framework": info}`; 400 with the row problem. `DELETE /api/projects/<p>/frameworks/<name>`.
+→ `{"framework": info}`; 400 with the row problem. `DELETE /api/projects/<p>/frameworks/<name>` removes the project's own
+codebook as the editor's *Remove the codebook* does: a version is kept, the research log says so, and its label tasks
+still waiting are taken back.
 0.16: the Codebooks page uses the routes under *Your record* below; these four stay.
 `GET /api/projects/<p>/suggest?text=<claim>&framework=sdg&n=5` → `{"codes": [{"code": "6.4", "group": "6",
 "description": "…", "score": 16.9}]}` (keyword match; empty for texts under 10 characters).
@@ -1143,7 +1185,8 @@ Check job `progress` (poll it to draw the live panel):
 The `terms` step is absent when `expand` is false. `model` is filled by local servers while they stream.
 
 `POST /api/jobs/<id>/cancel` → stops the job (a stopped check leaves nothing in the history; 0.19.13: except a check by
-queue whose Claude Code part is done, kept with its excerpts waiting for the local model).
+queue whose Claude Code part is done, kept with its excerpts waiting for the local model). A job that has already ended
+is left as it is (200 with its view; `stopped` stays false).
 
 The check prompt is `check-v3`: for each excerpt the AI may add a `scope_note`, a short phrase such as "about
 fully remote workers, not hybrid", when the excerpt is about another group, setting, place or period than the
@@ -1190,7 +1233,7 @@ colleague's check they took back (withdrawn) is left out.
  "counts": {"contested": 2, "unsupported": 1}, "threshold": 0.6}
 ```
 newest first; `counts` cover the whole project (not the filter). 0.6 adds `docs_added_since` (documents added to the
-project since the check that it has not read from: tag "documents added since") and `disagreements` (excerpts
+project since the check that not every part of it has read from: tag "documents added since") and `disagreements` (excerpts
 where a second opinion differs from the AI's judgement: tag "second opinion differs on N"). 0.11.2 adds
 `status_before_stronger`: the answer the first model gave when a stronger model read excerpts again and changed it
 (else null). `supports`/`partly`/`refutes` count the excerpts whose
@@ -1237,8 +1280,9 @@ Each passage also has: `ai_verdict` (the AI's own grade or null), `user_verdict`
 (a person judged it) and `changed` (their judgement differs from the AI's), `location` (where the quote is: "page 2",
 "paragraph 6 of 8"; without a quote, the excerpt's span; documents stored before 0.5.1: "about 40% into the
 document"), `span` (what the whole excerpt covers: "paragraphs 1–6 of 8", "pages 2–3"), `doc_start` (the document
-offset where the excerpt starts), `position_pct`, `quote_by` ("the AI", "you" when the person chose the sentence, or
-null) and `ai_quote` (the AI's own quote). Each part also has `who` and `balance`. Each part has
+offset where the excerpt starts), `position_pct`, `quote_by` ("the AI", "the local model", "you" when the person chose the sentence,
+"colleague" when it is the sentence of a colleague's judgement in force, or null: fixed words, never a name), with
+`quote_by_name` (the colleague's name when `quote_by` is "colleague", else null) and `ai_quote` (the AI's own quote). Each part also has `who` and `balance`. Each part has
 `rounds_info`: `[{"round", "status", "passages", "terms": [words searched for in that round], "ai_note": "the AI's own
 note on that round's excerpts"}]`, and (this endpoint only) `more_available`: false when "read more" would find
 nothing new. `who` lists the documents behind the answer by side, with the same rule as `balance` (a document with
@@ -1253,7 +1297,9 @@ AI may read, or one whose part waits or failed); `round_failed`: its round's che
 counts (`counted` false; a person's own counts only when another round of the check was answered); and `my_verdict`:
 your own verdict (null when you gave none). In a shared project the verdict in force (`user_verdict`) may be a
 colleague's while `user_note` is your comment: a client that saves your comment sends `my_verdict` with it, never
-`user_verdict`, or the colleague's verdict would be saved as yours.
+`user_verdict`, or the colleague's verdict would be saved as yours. Hunt phase 1: `my_note` is your own comment (null
+when you wrote none); where you wrote nothing on the excerpt, `user_note` is the comment of the colleague whose
+judgement counts. A client that saves a sentence or a comment as yours starts from `my_verdict` and `my_note`.
 New in 0.6, on each passage:
 - `breaks`: `[{"at": 82, "kind": "paragraph"}, {"at": 120, "kind": "heading", "end": 127}]` (offsets in `text`):
   where a new paragraph or a heading begins inside the excerpt, from the layout found when the document was added.
@@ -1289,7 +1335,10 @@ says the opposite", "quote": "Loneliness did not rise among hybrid workers of an
 person's own judgement of one excerpt (`supports`, `partially_supports`, `refutes`, `not_relevant`; `null` removes it,
 with its sentence, and the AI's counts again). Agreeing with the AI = sending the AI's own verdict (`not_relevant`
 for an excerpt it found not about the hypothesis). `quote` (optional) is the sentence the judgement rests on: text of
-this excerpt (400 otherwise); left out, an earlier one is kept; `""` removes it. From 0.6, `{"verdict": null,
+this excerpt (400 otherwise); left out, an earlier one is kept; `""` removes it. `quote_start` (optional, with
+`quote`): where the person selected it, counted in code points in the excerpt's `text` as the result gives it (the
+same count as the result's `quote_start`): words that stand twice in the excerpt are kept at the place nearest it;
+without it, at their first place. From 0.6, `{"verdict": null,
 "note": "…"}` keeps only a comment: it is not a judgement (`reviewed` stays false, the AI's judgement counts, and it
 is not counted as agreeing with the AI). "Go back to the AI's judgement" with the comment kept is `{"verdict": null,
 "note": "<the comment>"}`; `{"verdict": null}` removes both.
@@ -1306,8 +1355,9 @@ the check (those with matching excerpts), for every part, as a further round res
 run again, so reviews are kept. Documents without a matching excerpt are only marked as looked at, so the
 hypothesis no longer counts them. `POST /api/projects/<p>/read-new` `{}` (every hypothesis with documents added
 since), `{"hyp_ids": […]}` or `{"batch": "b…"}` → one job that does this for each, one after the other (400 when
-none has new documents). `result`: `{"hypotheses": [{"hyp_id", "documents", "matching", "passages", "rounds"}],
-"passages"}`.
+none has new documents). A second press for hypotheses a `read-new` job reads already gives that job back; one that
+covers others too, or a hypothesis whose `read-unread` job runs, is a 409 (wait, then press again). `result`: `{"hypotheses": [{"hyp_id", "documents", "matching", "passages", "rounds", "failed"}],
+"passages", "checked": [the hypotheses brought up to date, without those whose reading failed], "total"}`.
 
 `GET /api/projects/<p>/hypotheses/<hyp_id>/unread` (roadmap N5, 0.18.7) → the documents this check never showed an
 excerpt of, asked again of the keyword search with each part's claim and search words (no model reads anything):
@@ -1509,7 +1559,8 @@ every answer they store records the model, its digest, the prompt version, the s
 #### Quick look and FlexiConc (F8)
 
 - `POST /api/quicklook?name=<file>` (raw body) → `{project, job}`: a temporary project for one document, opened at
-  once; `project.temporary = {created_at, expires_at, file, from}`. It goes to the trash after 7 days unless
+  once; `project.temporary = {created_at, expires_at, file, from}`. Its document is *Only a local AI* (`local`) and
+  the project's default stays unchosen: nobody was asked, so no cloud AI may read it until the person decides. It goes to the trash after 7 days unless
   `POST /api/projects/<p>/keep`. Removing it (`DELETE /api/projects/<p>`) opens another project.
 - `GET /api/projects/<p>/flexiconc.sqlite?framework=` → the project in the FlexiConc layout of the Cross-Doc SDG
   Explorer: `documents`, `sentences` (with a code label, confidence and consensus), `chains`, `clusters` and, when
@@ -1963,7 +2014,8 @@ codes, where each example was found, the groups and their order. The old routes 
   [{"name", "size", "code": {"code", "description", "described", "keywords", "examples"}}]}]}`: the sets of themes a
   codebook can start from (removed themes left out); `all` adds those of every project.
 - `PUT /api/projects/<p>/codebooks/<name> {"codebook": {…as above…}, "merges"?: [{"from": uid, "into": uid}], "why"?}`
-  → `{"changes": [words], "version_id", "codebook"}`: writes the editor's state. A code without a `uid` is new; one
+  → `{"changes": [words], "version_id", "codebook", "uids"}`: writes the editor's state (`uids`: the id each code sent
+  has now, in the order sent, a new one's included). A code without a `uid` is new; one
   that is gone is removed (its labels wait), unless named in `merges` (its labels go to the other). A bundled codebook
   is a 400. Each saved change keeps the earlier state as a version and goes into the research log with `why`.
 - `DELETE /api/projects/<p>/codebooks/<name>[?why=]` → `{"deleted"}`. Labels made with it stay.

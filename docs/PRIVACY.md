@@ -43,9 +43,14 @@ Releases are downloaded from GitHub ([below](#other-online-services-not-ai)).
 Nothing is sent to Claude until the researcher runs a feature that uses the AI. With Claude Code, the default route,
 the work then waits until the researcher starts Claude Code
 ([Start Claude Code](manual/claude-code.md#start-claude-code)). In the app, the first documents added to a new
-project ask who may read them, with nothing preselected (`access.default_chosen`). Documents added from the command
-line or the connector without a setting take the project's default, which is *Claude may read it* until a default is
-chosen (*Only a local AI* on a local-only installation; `access.default`).
+project ask who may read them, with nothing preselected (`access.default_chosen`). The app's own routes (adding
+documents, the bibliography's files), the command line (`enlens ingest --ai-access`) and the connector (`create_project`, `add_sources`, `use_folder_as_project`: `ai_access`) ask too
+(`ingest.adding_access`): without a setting they add nothing to a project whose default was never chosen, and take
+the default once it is chosen. The connector refuses a setting looser than the chosen default (only the person opens
+documents wider). A setting given for new documents becomes the default only when no earlier document follows an
+unchosen one; otherwise it is the new documents' own. A quick look at one document asks nobody: its document is
+*Only a local AI*, and the quick look's default stays unchosen, so keeping it as a project asks; the answer then
+applies to that document too, unless the person gave it a setting of its own (`access.answer_standin`).
 
 ## Each document's AI setting
 
@@ -96,7 +101,13 @@ codes, pairs of glossary terms with short passages where each occurs, the passag
 consecutive passages of one document (references), the passages that hold a code's examples with the code's name and
 group (a draft definition, `codedefine.py`), and, when a person asks for an excerpt to be read again, their
 comment. A document linked to a bibliography entry is titled by that work's title
-(`bibliography.py`). Tasks of documents marked *Only a local AI* or *No AI* are never among them. A code's
+(`bibliography.py`). Tasks of documents marked *Only a local AI* or *No AI* are never among them. Words of the
+documents that a task sends without their passages (the concepts named in *Name the groups* and *Other wordings*, a
+concept named "long form (SHORT)" by all its wordings, the name drafted before in *Name the groups again* by the
+documents it was drafted from, the titles of the researcher's own documents in a framework from theory) follow the
+same rule: only those found in a
+document the reader may read are sent, and a document made stricter while such a task waits takes the task out of the
+queue (`access.words_floor`). A code's
 definition, *when to use it* and *when not* go with every label task of its codebook, whatever document it labels: a
 definition the local model drafted from documents marked *Only a local AI* does too once it is kept, so the editor
 says to rewrite it if it gives away what those documents say.
@@ -149,7 +160,10 @@ installation ([Switching everything off](#switching-everything-off)).
 - **Shared projects (I7 stage 3).** Each person chooses their own provider. In a project that is shared (a shared
   folder, a storage space, an owner, or work exchanged with a colleague) the providers a person ticks are their own
   consent: kept in their copy, never sent to a colleague's, and not taken from a colleague's documents or project file
-  (`sync/merge.py`, `bundle._forget_folder`). Lists that earlier versions copied from a colleague are cleared once, in
+  (`sync/merge.py`, `bundle._forget_folder`), and a project zip, one that says it is the person's own too, can only
+  narrow them to what the new copy's default allows (nothing in a zip proves whose it is: `bundle._providers_asked_again`;
+  a document kept from a provider stays kept from it, and the Documents page asks to tick again what was narrowed).
+  Lists that earlier versions copied from a colleague are cleared once, in
   a shared project, unless this person set them (their own research-log entry), and the person is told on the
   Documents page (`access.settle_own_providers`). Which documents may go to cloud AI at all stays the team's. The
   owner may limit the providers the team may use (`teamproviders.py`, off by default): a provider outside it reads
@@ -197,7 +211,8 @@ and are not measured with ENLENS.
 
 A model served on the computer (Ollama, LM Studio, llama.cpp, Jan, vLLM) keeps every word on it
 ([A model on your own computer](manual/local-models.md)). It may read documents marked *Claude may read it* or *Only a
-local AI*. Requests go to its address on this computer; nothing about them is sent elsewhere.
+local AI*. Requests go to its address on this computer, never through a web proxy the computer names
+(`llm.local_urlopen`); nothing about them is sent elsewhere.
 
 Points for an assessment:
 
@@ -208,8 +223,13 @@ Points for an assessment:
   version finds its documents waiting until they allow it.
 - **Search by meaning** sends passages to the embedding server. An embedding server on another computer receives
   neither passages of documents marked *Only a local AI* or *No AI*, nor of documents that do not allow its provider
-  (`other`, or a known one by its address), nor glossary terms found only in them (`embed.py`, `terms.py`); it does
-  receive the text of searches.
+  (`other`, or a known one by its address), nor glossary terms found only in them (`embed.py`, `terms.py`), nor the
+  text of a code that may carry their words: a codebook made from theory documents it may not read (judged by their
+  settings now in their project, elsewhere by what they allowed when it was made), a definition that still holds the
+  AI's draft, or one quoting six words in a row of a document it may not read (`embed.withheld_codes`; such a code is
+  matched by its words). A codebook made from theory before this version is known by its research-log entry in its
+  own project and elsewhere by its quotations with their source; a definition reworded without its quotation is sent
+  as the researcher's own words. It does receive the text of searches and of the other codes.
 - **Getting a model** downloads Ollama's installer from ollama.com and a model from Ollama's library, only when the
   researcher presses the button. No document is sent.
 
@@ -270,7 +290,8 @@ folder](manual/privacy.md#what-goes-into-the-shared-folder)).
 - *A switch keeps documents marked Only a local AI or No AI out:* their text and files stay on the computer. Shared
   items about them still carry the words their excerpts quote, notes, judgements and the documents' titles.
 - *Never goes there:* private items, checks still in progress, earlier versions, the search index and glossary,
-  settings, the database itself and paths. A round that would write anything not shared writes nothing. ENLENS
+  the AI's drafts made for one computer (a group's draft name, a code's draft definition, a framework drafted from
+  theory documents, and the tasks and answers behind them), settings, the database itself and paths. A round that would write anything not shared writes nothing. ENLENS
   refuses a shared folder that contains the project or its own data folder.
 - *Who can read it:* anyone with access to the folder. The files are ordinary zip files, neither encrypted nor
   signed ([Who can read the folder](manual/privacy.md#who-can-read-the-folder)).
@@ -282,7 +303,10 @@ space](manual/privacy.md#through-a-storage-space-of-your-teams-own-0180rc2)):
 
 - *Encrypted before it leaves:* each file with the project's key (AES-256-GCM, a fresh 96-bit nonce per file), and
   signed with its writer's own key (Ed25519). A copy takes in a file only when it is signed by the member whose part
-  of the space it is in; anything else is set aside.
+  of the space it is in; anything else is set aside. An older copy of a colleague's own file put back in its place
+  (by the storage service, a member who can write there, or a drive's version history) is set aside too: a copy
+  remembers the latest description of each colleague it took (with their *Keep … out* switch) and the latest point
+  of their work, and never goes back to an earlier one.
 - *What the company can see:* how many files there are, their sizes and when they change; the team's roster (random
   member identifiers, public keys and dates, signed but not encrypted); nothing of the files' contents, and no names
   of people or documents. Readings and original files are stored under a keyed hash of their names.
@@ -347,7 +371,9 @@ in with their work, with a count of what Claude read there.
 - **The storage space's keys** (the project's key, each member's own keys, the storage service's keys, a drive's app
   password) are kept in the system's keychain: macOS Keychain, Windows Credential Manager, or `secret-tool` on Linux. Where none can be used,
   they are kept in files in ENLENS's folder readable by the user only (`keychain.py`). Never in a project, a zip, the
-  shared folder or the space.
+  shared folder or the space. They are kept per storage space, so one computer works in a space through one project
+  only: joining a space that another project on the computer already uses is refused, and leaving the space in one
+  project never deletes keys another project on the computer still uses.
 - **A cloud provider's API key** (OpenAI, Gemini, Mistral, Azure, OpenRouter) is kept in the system's keychain, or in
   a user-only key file where there is none (`keychain.py`). Never in `settings.json`, a log, an error message, the
   record of how an answer was made, a project, or a *Move ENLENS to another computer* file. The app shows only

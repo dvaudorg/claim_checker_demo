@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import sqlite3
 
+from .. import people
 from .common import _cols, _rows
 
 
+HELD_TAKE_BACK = "proposal-taken-back"  # `sync_via` kind: a relayed take-back of a proposal held back here (MERGE-4)
 STEP = 2 ** 32  # a row numbered more than this above the highest number held here is not taken (review, H2)
 _NUM_COLS = {"canon": ("n", "state_n", "read_n", "ai_n", "blocks_n"), "decisions": ("n",), "roles": ("n",),
              "team_settings": ("n",)}
@@ -72,12 +74,32 @@ class OwnerRules:
                     if p["id"] not in have:
                         refused.append(("proposals", p["id"], p, None))
                     continue
+                # only its maker takes a proposal back (ownership.take_back), so a take-back is taken from the maker's
+                # own file only. Relayed, it is held back (as a relayed removal of a note is): a colleague's file made
+                # a third person's proposal "taken back" in every copy (hunt phase 1, MERGE-4). The maker's own file
+                # brings it, as it brings every take-back
+                first_hand = p.get("by") == via
+                if first_hand:
+                    people.first_hand(cx, HELD_TAKE_BACK, [p["id"]])  # its maker's word has come: nothing held
+                if p["id"] not in have and p["taken_back_at"] and not first_hand:
+                    # a proposal this copy never held, relayed as taken back: not taken until its maker's own file
+                    # comes. Taken as waiting (review of the first fix), the owner was told a new proposal waits and
+                    # could accept one its maker had withdrawn; taken as taken back, a colleague's file could
+                    # withdraw a third person's proposal before the owner ever saw it
+                    continue
                 self._via_proposal(cx, p, p["id"] not in have)  # roles-p2: a third person's proposal is "via" (§4.8)
                 if p["id"] not in have:
                     self._insert(cx, "proposals", [p])
                     if not p["taken_back_at"]:
                         rep["new"].append({"id": p["id"], "kind": p["kind"], "title": p["title"], "by": p["by"]})
                 elif p["taken_back_at"] and not have[p["id"]]:
+                    if not first_hand:
+                        # said once per proposal, not with every file of the relaying colleague (noted in this copy's
+                        # own `sync_via`, never sent; its maker's own file ends the note, above)
+                        if p["id"] not in people.relayed(cx, HELD_TAKE_BACK):
+                            people.note_via(cx, HELD_TAKE_BACK, p["id"], p.get("by"), via)
+                            rep["taken_back_held"] = rep.get("taken_back_held", 0) + 1
+                        continue
                     cx.execute("UPDATE proposals SET taken_back_at=? WHERE id=?", (p["taken_back_at"], p["id"]))
             # answers, rows of the documents, roles: one row per key and writer, the higher number stays. A writer
             # numbers each row above every row of its own (`_Ctx.put`, `_own_role_n`), so the number alone says which

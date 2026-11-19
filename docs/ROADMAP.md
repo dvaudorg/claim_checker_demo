@@ -91,6 +91,39 @@ log in 0.20.1)
 - **The AI mix (I1) from every route.** It lends work to the local model only from an agent route (Claude Code, Codex,
   Antigravity), not from the Claude API or another provider's API key (`routing.MIX_ROUTES`).
 
+**Signed share marks** · Level 0 · hunt phase 1.5, 19 November 2026 (the owner's item; feature freeze)
+- What is signed today: in a storage space every file a member writes in their own part (`sync/seal.py`: Ed25519, the
+  member's own key, checked against the roster the keeper signs). So a copy knows which member wrote each bundle, and
+  since this hunt a withdrawal (*Unshare*), or any change of a mark held here, in a member's name counts only from that
+  member's own file (`sharing.signers`, `sharing.trusted`); a member's own part always carries their marks. A relayed
+  *Share* of an item new to a copy is still taken (so an honestly relayed item is never lost), and while a copy cannot
+  read the space's list of members no relayed mark is taken but those.
+- What it cannot cover: a zip brought by hand and a plain shared folder carry no signature, and the people who use only
+  them have no keys (keys exist per storage space, in its members' keychains). There a mark is data relayed by design:
+  a colleague's file can still say, in an item's owner's name, that the owner took it back, or relay a *Share* of an
+  item its owner keeps private. Since this hunt a mark dated ahead counts as made when it arrived (`sharing.mark_at`,
+  on import and once in every project held), so the owner's own next mark counts over it; but a forged withdrawal
+  dated between the owner's latest real mark and now wins whenever it arrives, before or after the owner's own mark,
+  until the owner marks the item again. A member who has left the space is no longer among the signers: marks in
+  their name are again taken from anyone's file (refusing them would lose their honest marks made while they were a
+  member, which after they leave reach a copy only through others). Nor can a mark relayed in a storage space in the
+  name of someone who is not a member (a colleague who sends zips only) be checked.
+- To build: each person a signing key of their own (not one per space), the public keys known to the team (in the
+  project, by the owner's word), and every mark signed by its maker, with its item, state and time, so it can be
+  checked whichever file carries it. The same keys would sign the owner's settings (*Open decisions*).
+
+**Delete a removed codebook for good** · Level 0 · hunt phase 1.5, 19 November 2026 (the owner's item; feature freeze)
+- What is there today: *Remove the codebook* takes its files away and keeps everything made with it under its name (its
+  labels, the passages the AI read for it, its earlier versions), so it can come back from the research log (the entry
+  of its removal: *Compare with before*, then *Restore*). While any of these remain, a new codebook cannot take the name
+  (`codebooks.held_where`): it would take them over. A codebook kept with all projects keeps its versions with all
+  projects, so its name stays taken in every project, also after the project it was removed in is gone. The refusal
+  says so and names the way back only where it exists.
+- To build: a *Delete for good* beside the removal's entry (and for a name refused this way), which says what goes (the
+  labels and the AI's reading in each project that holds them, the versions, the done label tasks), asks *Why?* for the
+  research log, and frees the name. Labels are results: a check or a theme set that used them, and a colleague's copy
+  that holds them, need a word on what they keep.
+
 ## Small things left
 
 Known gaps of built features, gathered on 18 November 2026 from the *Not yet done* lists of the changelog (the

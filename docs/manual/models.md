@@ -19,8 +19,9 @@
 
 These are the models for a **Pro** plan on Claude Code; other plans follow the next table. A model chosen in
 *Settings → Technical → AI model per task* comes first. A task **steps up** once: when its answer's certainty is
-under 0.6, after two rejected answers, or when you press *Ask a stronger model*. Why these defaults, and how good they
-are on the validation report's gold set: [MODEL_CHOICE.md](../MODEL_CHOICE.md).
+under 0.6, after two rejected answers, or when you press *Ask a stronger model*. A model you chose steps up only to
+a stronger one: Fable has none, nor has Opus while *Let the auditor use Fable* is off, and the result page says so.
+Why these defaults, and how good they are on the validation report's gold set: [MODEL_CHOICE.md](../MODEL_CHOICE.md).
 
 ### How much thought
 

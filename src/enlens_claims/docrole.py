@@ -337,13 +337,17 @@ def origin_floor(cx, payload: Any, dflt: str | None = None) -> str | None:
 
 def kept_here(ws: Workspace) -> set[str]:
     """0.19.0 (N3): the checks started from the text of a document no cloud model may read (or one removed since),
-    which the connector does not show to a Claude chat (`access.register_hidden`)."""
+    which the connector does not show to a Claude chat (`access.register_hidden`). Hunt phase 1.5: "may read" is
+    asked of the provider the connector shows things to (`mcp_server.reader`: Anthropic, or OpenAI / Google when an
+    agent CLI started it); it was Anthropic always, so a check from a document that allows Anthropic only would have
+    been listed to Codex's or Antigravity's connector."""
     from . import access
+    from .mcp_server import reader
 
     rows = ws.query("SELECT hyp_id, origin_id FROM hypotheses WHERE origin=?", (ORIGIN,))
     if not rows:
         return set()
-    lv = access.levels(ws, [r[1] for r in rows if r[1]], provider=access.ANTHROPIC)   # the connector's reader: Claude
+    lv = access.levels(ws, [r[1] for r in rows if r[1]], provider=reader())   # the connector's reader
     return {hid for hid, d in rows if not d or lv.get(d, "none") != "cloud"}
 
 

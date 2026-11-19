@@ -51,6 +51,7 @@ from typing import Any, Callable
 
 from .store import Workspace, now
 from . import providers
+from .textutil import one_line
 
 KIND = "theory_frame"
 DRAFT_FILE = ("drafts", "codebook-from-theory.json")
@@ -477,10 +478,11 @@ def _cut(q: str, n: int) -> str:
 
 
 def _payload(documents: list[dict], evidence_titles: list[str], focus: str, by_doc: list[list[dict]],
-             per_doc: int | None, chars: int) -> tuple[dict, list[dict]]:
+             per_doc: int | None, chars: int, evidence_docs: list[str] | None = None) -> tuple[dict, list[dict]]:
     """The frame payload from each document's ranked drafts: at most `per_doc` of each (the highest-ranked), at most
     MAX_DRAFTS in all (taken in turn from each document), quotes cut to `chars`. Returns (payload, the drafts sent
-    with their numbers)."""
+    with their numbers). `evidence_docs`: the documents of `evidence_titles`, which the guard looks at again while the
+    task waits (`access.words_floor`: a title is words of its document)."""
     lists = [lst[:per_doc] if per_doc is not None else lst for lst in by_doc]
     picked: list[list[dict]] = [[] for _ in lists]
     n, i = 0, 0
@@ -498,6 +500,10 @@ def _payload(documents: list[dict], evidence_titles: list[str], focus: str, by_d
                "evidence_titles": evidence_titles, "focus": focus,
                "drafts": [{"n": d["n"], "doc_id": d["doc_id"], "passage_id": d["passage_id"], "title": d["title"],
                            "name": d["name"], "quote": _cut(d["quote"], chars), "how": d["how"]} for d in sent]}
+    if evidence_docs is not None:
+        from .access import WORDS_KEY
+
+        payload[WORDS_KEY] = {"docs": list(evidence_docs)}
     return payload, sent
 
 
@@ -520,7 +526,8 @@ def _room(be, settings: dict) -> int | None:
     return int(room * 3.5) - 1600      # less a retry's problems
 
 
-def fit_payload(documents, evidence_titles, focus, by_doc, room: int | None) -> tuple[dict, list[dict]]:
+def fit_payload(documents, evidence_titles, focus, by_doc, room: int | None,
+                evidence_docs: list[str] | None = None) -> tuple[dict, list[dict]]:
     """The frame payload that fits `room` characters of user prompt: long quotes, then short ones (SHORT_QUOTE_CHARS),
     then fewer drafts of each document (the highest-ranked kept). Raises ValueError when not even three drafts of a
     document fit."""
@@ -529,17 +536,17 @@ def fit_payload(documents, evidence_titles, focus, by_doc, room: int | None) -> 
     def size(p: dict) -> int:
         return len(prompts.user_prompt(KIND, p))
 
-    p, sent = _payload(documents, evidence_titles, focus, by_doc, None, QUOTE_CHARS)
+    p, sent = _payload(documents, evidence_titles, focus, by_doc, None, QUOTE_CHARS, evidence_docs)
     if room is None or size(p) <= room:
         return p, sent
-    p, sent = _payload(documents, evidence_titles, focus, by_doc, None, SHORT_QUOTE_CHARS)
+    p, sent = _payload(documents, evidence_titles, focus, by_doc, None, SHORT_QUOTE_CHARS, evidence_docs)
     per = max((len(x) for x in by_doc), default=0)
     while size(p) > room:
         if per <= 3:
             raise ValueError("The context length of the model on this computer is too small to put a framework "
                              "together. Set it to automatic in Settings, or to 16,384 or more.")
         per = max(3, int(per * 0.8))
-        p, sent = _payload(documents, evidence_titles, focus, by_doc, per, SHORT_QUOTE_CHARS)
+        p, sent = _payload(documents, evidence_titles, focus, by_doc, per, SHORT_QUOTE_CHARS, evidence_docs)
     return p, sent
 
 
@@ -547,9 +554,13 @@ def make_task(ws: Workspace, payload: dict, model: str) -> str:
     """The frame's task, one per input: the same drafts, documents, focus, prompt version and model give the same
     task, so a reading asked again reuses its answer."""
     from . import prompts
+    from .access import WORDS_KEY
     from .tasks import replace_task
 
-    tid = f"{KIND}:" + _h(json.dumps(payload, sort_keys=True, ensure_ascii=False), prompts.VERSIONS.get(KIND) or "",
+    # (the documents of the evidence's titles are for the guard, not the input: a framework read before they were
+    # kept with it keeps its id, and its answer)
+    key = {k: v for k, v in payload.items() if k != WORDS_KEY}
+    tid = f"{KIND}:" + _h(json.dumps(key, sort_keys=True, ensure_ascii=False), prompts.VERSIONS.get(KIND) or "",
                           model or "")[:16]
     with ws.connect() as cx:
         replace_task(cx, tid, KIND, model, payload)
@@ -640,9 +651,12 @@ def _passage_at(ws: Workspace, doc_id: str, at: int | None) -> str | None:
                      (doc_id, at, at))
 
 
-def _evidence_titles(ws: Workspace, skip: set[str], levels_ok: set[str], provider: str | None = None) -> list[str]:
-    """The titles of the evidence documents the frame's reader may read (their titles only: no id, so they never make
-    the payload's setting stricter), at most MAX_EVIDENCE_TITLES."""
+def _evidence_titles(ws: Workspace, skip: set[str], levels_ok: set[str],
+                     provider: str | None = None) -> tuple[list[str], list[str]]:
+    """(the titles, their documents) of the evidence documents the frame's reader may read, at most
+    MAX_EVIDENCE_TITLES. The documents go in the payload apart from the passages' ids (`access.WORDS_KEY`): a cap
+    reached never holds the frame back (a title sends no passage), but a document made stricter while the task waits
+    takes its title out of the AI's reach (hunt phase 1: before, a title had no id, so that was never seen)."""
     from . import access
     from .docrole import not_evidence_docs
 
@@ -650,8 +664,9 @@ def _evidence_titles(ws: Workspace, skip: set[str], levels_ok: set[str], provide
     rows = [r for r in ws.query("SELECT doc_id, title FROM documents ORDER BY title") if r["doc_id"] not in skip]
     lv = access.levels(ws, [r["doc_id"] for r in rows], provider=provider) if rows else {}
     dflt = access.default(ws)
-    out = [_clean(r["title"], 140) or "untitled" for r in rows if (lv.get(r["doc_id"]) or dflt) in levels_ok]
-    return out[:MAX_EVIDENCE_TITLES]
+    out = [(_clean(r["title"], 140) or "untitled", r["doc_id"]) for r in rows
+           if (lv.get(r["doc_id"]) or dflt) in levels_ok][:MAX_EVIDENCE_TITLES]
+    return [t for t, _d in out], [d for _t, d in out]
 
 
 def mark_running(ws: Workspace, job_id: str) -> None:
@@ -956,8 +971,9 @@ def read(ws: Workspace, backend, model: str, progress: Callable | None = None,
             kept = [x for x in by_doc if x[0]["doc_id"] not in left]
             documents = [{"doc_id": x[0]["doc_id"], "title": titles[x[0]["doc_id"]]} for x in kept]
             try:
-                payload, sent = fit_payload(documents, _evidence_titles(ws, set(ids), ok_levels, access.provider_of(be)), focus, kept,
-                                            _room(be, settings)) if kept else (None, [])
+                ev_titles, ev_docs = _evidence_titles(ws, set(ids), ok_levels, access.provider_of(be))
+                payload, sent = fit_payload(documents, ev_titles, focus, kept, _room(be, settings),
+                                            ev_docs) if kept else (None, [])
             except ValueError as e:
                 payload, frame_problem = None, str(e)
             if payload:
@@ -1151,7 +1167,7 @@ def evidence(ws: Workspace, concept: dict, k: int = 4, skip=(), embedder=None) -
                      "WHERE p.passage_id=?", (p["passage_id"],))
         if not r or r[0]["text"] != p["text"]:
             return None
-        quote = " ".join(p["text"][a:z].split())
+        quote = one_line(p["text"][a:z])
         # where the words stand in the quote (the page marks them: it must not match them a second way)
         marks = sorted({(m.start(), m.end()) for w, rx in rxs if w in hit for m in rx.finditer(quote)})
         marks = [list(x) for i, x in enumerate(marks) if not i or x[0] >= marks[i - 1][1]]
@@ -1350,6 +1366,11 @@ def make(ws: Workspace) -> dict:
         drafted = {}
         if ai:
             if c.get("meaning") and c["meaning"] == ai.get("meaning"):
+                drafted["description"] = desc
+            elif (not c.get("sources") and not c.get("meaning") and c.get("when_to_use")
+                  and c["when_to_use"] == ai.get("when_to_use")):
+                # (hunt phase 1.5: no quote and no meaning, so the definition is the AI's *when to use it*
+                # (`_description`): it is the AI's words, and was not marked so)
                 drafted["description"] = desc
             if c.get("when_to_use") and c["when_to_use"] == ai.get("when_to_use"):
                 drafted["include"] = c["when_to_use"]

@@ -43,7 +43,8 @@ SIG_LEN = 64
 
 class SealProblem(ValueError):
     """A file that cannot be opened or trusted; `why` is one of: "format", "place", "writer", "signature", "key",
-    "damaged"."""
+    "damaged", and "too_large" (`seal`: a file larger than ENLENS sends). A round shows `why` and the words on the
+    Team tab (space.py `set_aside`), so both are part of what a person reads (tests/test_hunt15_storage.py)."""
 
     def __init__(self, message: str, why: str):
         super().__init__(message)
@@ -293,4 +294,9 @@ def join_proof(join_secret: bytes, part: str, person: str, public: dict) -> str:
 
 
 def check_join_proof(join_secret: bytes, part: str, person: str, public: dict, proof: str) -> bool:
-    return isinstance(proof, str) and hmac.compare_digest(join_proof(join_secret, part, person, public), proof)
+    # hunt phase 1: as bytes: compare_digest raises TypeError for a str with a letter outside ASCII (a forged or
+    # damaged file), which stopped the round instead of refusing the file
+    # hunt phase 1.5: never with an empty secret (an invite's secret gone from the keychain): anyone could make that
+    return isinstance(proof, str) and bool(join_secret) and hmac.compare_digest(
+                                                          join_proof(join_secret, part, person, public).encode(),
+                                                          proof.encode("utf-8", "surrogateescape"))

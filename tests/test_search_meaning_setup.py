@@ -16,7 +16,7 @@ def test_the_three_states_through_the_api(api, corpus):
     try:
         api("PUT", "/api/settings", {"embed_backend": "off", "embed_model": ""})
         api("POST", "/api/projects", {"name": "P"})
-        api.wait(api("POST", "/api/projects/P/ingest", {"path": str(corpus)})[1]["job"]["id"])
+        api.wait(api("POST", "/api/projects/P/ingest", {"ai_access": "cloud", "path": str(corpus)})[1]["job"]["id"])
         # 1: no model chosen
         s = api("GET", "/api/projects/P")[1]["search"]
         assert not s["model"] and not s["embedded"]

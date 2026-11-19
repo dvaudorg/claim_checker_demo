@@ -2306,13 +2306,45 @@ def record_refused(cx: sqlite3.Connection, kind: str, key: str, row: dict, via: 
         return False
     cx.execute("INSERT OR REPLACE INTO sync_refused(kind, key, what_json, via, n, at, state) VALUES (?,?,?,?,?,?,?)",
                (kind, key, what, via, n, now(), "new"))
-    who = _names_cx(cx).get(via or "", "A colleague")
-    researchlog.record(cx, "owner", _refused_text(kind, row, who, _names_cx(cx)),
+    who = _refused_who(cx, via)
+    said = {**row, "held": _removal_held(cx, row)} if kind == "removal" else row
+    researchlog.record(cx, "owner", _refused_text(kind, said, who, _names_cx(cx)),
                        data={"refused": kind, "key": key, "via": via})
     return True
 
 
+def _refused_who(cx: sqlite3.Connection, via: str | None) -> str:
+    """Whose file a refused row came in, for the words: a file that says it is this person's own is not called
+    "Anna's file" (hunt phase 1.5: their own old backup, or one made to look so)."""
+    if via and via == people.me():
+        return _OWN_FILE
+    return _names_cx(cx).get(via or "", "A colleague")
+
+
+_OWN_FILE = "\x00own"
+# a refused removal, by the kind of item (sync/merge.py `_removed`): what it is, and how the person removes it
+_REMOVED_WORDS = {"document": ("the document", "use its menu on Documents"),
+                  "check": ("the check", "use Delete on its result page"),
+                  "themes": ("the set of themes", "use Delete on the Themes page")}
+
+
+def _removal_held(cx: sqlite3.Connection, r: dict) -> bool:
+    """Whether this copy holds the item a refused note of removal names."""
+    table, col = {"document": ("documents", "doc_id"), "check": ("hypotheses", "hyp_id"),
+                  "themes": ("theme_runs", "run_id")}.get(r.get("kind"), (None, None))
+    if table is None or not isinstance(r.get("key"), str):
+        return False
+    try:
+        return bool(cx.execute(f"SELECT 1 FROM {table} WHERE {col}=?", (r["key"],)).fetchone())
+    except sqlite3.Error:
+        return False
+
+
 def _refused_text(kind: str, r: dict, who: str, names: dict[str, str]) -> str:
+    return _refused_words(kind, r, who, names).replace(f"{_OWN_FILE}'s file", "A file that says it is yours")
+
+
+def _refused_words(kind: str, r: dict, who: str, names: dict[str, str]) -> str:
     if kind == "ownership":
         to = names.get(r.get("owner") or "", "a colleague")
         return (f"{who}'s file says you handed the project over to {to}. You did not: nothing was changed here."
@@ -2332,7 +2364,16 @@ def _refused_text(kind: str, r: dict, who: str, names: dict[str, str]) -> str:
     if kind == "event":
         return f"{who}'s file said a change to {_q(r.get('title'))} was yours. It is not taken for your own word here."
     if kind == "removal":
-        return f"{who}'s file said you removed {_q(r.get('title'))}. You did not: nothing was removed here."
+        # hunt phase 1.5: often it is the person's own earlier word (their old backup brought in again, a colleague's
+        # copy of it), so it does not say "You did not"; it says, by the kind of item and whether this copy holds it,
+        # why nothing changed and what to do (`_REMOVED_WORDS`; "held" is worked out by `_removal_held`)
+        noun, how = _REMOVED_WORDS.get(r.get("kind"), ("an item", None))
+        named = f"{noun} {_q(r.get('title'))}" if r.get("title") else noun
+        if r.get("held") and how:
+            return f"{who}'s file says you removed {named}, which is in your copy now. A file never removes your work " \
+                   f"in your name, so it stays. To remove it, {how}."
+        return f"{who}'s file says you removed {named}. A file never removes anything in your name: nothing was " \
+               "removed here."
     if kind == "judgement":
         return f"{who}'s file held a judgement of an excerpt in your name. It was not taken: yours stays as it is."
     return f"{who}'s file held a proposal in your name ({what(r) if r.get('kind') in KINDS else 'a change'}). It " \
@@ -2412,8 +2453,10 @@ def refused(cx: sqlite3.Connection) -> list[dict]:
     for kind, key, what_json, via, n, at in cx.execute("SELECT kind, key, what_json, via, n, at FROM sync_refused "
                                                        "WHERE state='new' AND kind != 'clash' ORDER BY at, kind, key"):
         r = _json(what_json, {})
+        if kind == "removal" and isinstance(r, dict):
+            r = {**r, "held": _removal_held(cx, r)}  # (as this copy is now: the page words it by this too)
         out.append({"kind": kind, "key": key, "via": via, "n": n, "at": at, "what": r,
-                    "text": _refused_text(kind, r, names.get(via or "", "A colleague"), names)
+                    "text": _refused_text(kind, r, _refused_who(cx, via), names)
                     if kind in REFUSED_KINDS else f"{names.get(via or '', 'A colleague')}'s file held work in your "
                                                   "name. It was not taken."})
     return out

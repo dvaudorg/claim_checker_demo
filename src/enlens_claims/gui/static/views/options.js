@@ -1,5 +1,5 @@
 // The options of a check (shared by the Check and Batch pages) and the framework code picker.
-import { App, api, h, icon, replace, switchControl, rangeControl, field, dialog, P, debounce, input as inputField, fold } from "../lib.js";
+import { App, api, showError, h, icon, replace, switchControl, rangeControl, field, dialog, P, debounce, input as inputField, fold } from "../lib.js";
 
 export function checkOptions({ docs = [], search = null, compact = false } = {}) {
   const s = App.settings();
@@ -75,67 +75,70 @@ const fwCache = new Map();
 
 export async function loadFramework(project, name) {
   const key = `${project}/${name}`;
-  if (!fwCache.has(key)) fwCache.set(key, api("GET", `/api/projects/${P(project)}/frameworks/${P(name)}`).then((r) => r.framework));
+  if (!fwCache.has(key)) {
+    // a codebook that could not be loaded is asked for again next time, not remembered as failed
+    // (only while the entry is still this request's: a newer one, made after forgetFrameworks(), stays)
+    const p = api("GET", `/api/projects/${P(project)}/frameworks/${P(name)}`).then((r) => r.framework, (e) => { if (fwCache.get(key) === p) fwCache.delete(key); throw e; });
+    fwCache.set(key, p);
+  }
   return fwCache.get(key);
 }
 export function forgetFrameworks() { fwCache.clear(); }
 
 // Opens the picker; resolves to {code, description} or null (cleared) or undefined (cancelled).
-export function pickCode({ project, framework, suggested = [], current = "" }) {
-  return new Promise(async (resolve) => {
-    let fw;
-    try { fw = await loadFramework(project, framework); } catch (e) { resolve(undefined); throw e; }
-    const items = fw.items || [];
-    const byCode = new Map(items.map((i) => [i.code, i]));
-    const input = inputField({ type: "search", placeholder: `Search ${items.length} codes by number or words…`, "aria-label": "Search codes", autocomplete: "off" });
-    const list = h("div", { class: "picker-list", role: "listbox", "aria-label": fw.label || "Codes" });
-    let picked;
-    let dlgRef = null;
-    const choose = (code) => { picked = code ? { code, description: (byCode.get(code) || {}).description || "" } : null; dlgRef.querySelector("#dlg-done").click(); };
-    const draw = () => {
-      replace(list);
-      const q = input.value.trim().toLowerCase();
-      const words = q.split(/\s+/).filter(Boolean);
-      const match = (i) => !words.length || words.every((w) => i.code.toLowerCase().startsWith(w) || (i.description || "").toLowerCase().includes(w) || (i.group_name || "").toLowerCase().includes(w));
-      const row = (i, sugg) => h("button", { type: "button", class: "picker-item", role: "option", "aria-selected": i.code === current ? "true" : "false", onClick: () => choose(i.code) },
-        h("span", { class: "pi-code" }, sugg ? icon("star", { size: 12 }) : null, i.code),
-        h("span", { class: "pi-desc" }, i.description || ""));
-      const top = [];
-      const suggSet = new Set(suggested.map((s) => s.code));
-      if (!q && suggested.length) {
-        top.push(h("div", { class: "picker-group" }, "Suggested from your wording"));
-        suggested.forEach((s) => byCode.has(s.code) && top.push(row(byCode.get(s.code), true)));
-      }
-      top.forEach((n) => list.appendChild(n));
-      let group = null, n = 0;
-      for (const i of items) {
-        if (!match(i)) continue;
-        n++;
-        const g = i.group_name ? `${i.group ? i.group + " · " : ""}${i.group_name}` : (i.group || "");
-        if (g !== group) { group = g; if (g) list.appendChild(h("div", { class: "picker-group" }, g)); }
-        list.appendChild(row(i, suggSet.has(i.code)));
-        if (n > 400) { list.appendChild(h("p", { class: "muted small picker-note" }, "More codes: narrow the search.")); break; }
-      }
-      if (!n) list.appendChild(h("p", { class: "muted small picker-note" }, "No code matches."));
-    };
-    input.addEventListener("input", debounce(draw, 80));
-    const keyNav = (e) => {
-      const opts = [...list.querySelectorAll(".picker-item")];
-      const i = opts.indexOf(document.activeElement);
-      if (e.key === "ArrowDown") { e.preventDefault(); (opts[i + 1] || opts[0] || input).focus(); }
-      else if (e.key === "ArrowUp") { e.preventDefault(); if (i <= 0) input.focus(); else opts[i - 1].focus(); }
-      else if (e.key === "Enter" && e.target === input) { e.preventDefault(); if (opts[0]) opts[0].click(); }
-    };
-    input.addEventListener("keydown", keyNav);
-    list.addEventListener("keydown", keyNav);
-    draw();
-    const body = h("div", {}, h("p", { class: "muted small" }, fw.title || framework, " · ", h("span", {}, "the AI reads the code's description together with your hypothesis")), input, list);
-    await dialog({
-      title: `Choose a ${fw.label || "code"}`,
-      body, wide: true,
-      actions: [{ text: "No code", value: "clear", onClick: () => { picked = null; } }, { text: "Done", value: "done", id: "dlg-done", primary: true }],
-      onOpen(dlg) { dlgRef = dlg; input.focus(); },
-    });
-    resolve(picked);
+export async function pickCode({ project, framework, suggested = [], current = "" }) {
+  let fw;
+  try { fw = await loadFramework(project, framework); } catch (e) { showError(e); return undefined; }
+  const items = fw.items || [];
+  const byCode = new Map(items.map((i) => [i.code, i]));
+  const input = inputField({ type: "search", placeholder: `Search ${items.length} codes by number or words…`, "aria-label": "Search codes", autocomplete: "off" });
+  const list = h("div", { class: "picker-list", role: "listbox", "aria-label": fw.label || "Codes" });
+  let picked;
+  let dlgRef = null;
+  const choose = (code) => { picked = code ? { code, description: (byCode.get(code) || {}).description || "" } : null; dlgRef.querySelector("#dlg-done").click(); };
+  const draw = () => {
+    replace(list);
+    const q = input.value.trim().toLowerCase();
+    const words = q.split(/\s+/).filter(Boolean);
+    const match = (i) => !words.length || words.every((w) => i.code.toLowerCase().startsWith(w) || (i.description || "").toLowerCase().includes(w) || (i.group_name || "").toLowerCase().includes(w));
+    const row = (i, sugg) => h("button", { type: "button", class: "picker-item", role: "option", "aria-selected": i.code === current ? "true" : "false", onClick: () => choose(i.code) },
+      h("span", { class: "pi-code" }, sugg ? icon("star", { size: 12 }) : null, i.code),
+      h("span", { class: "pi-desc" }, i.description || ""));
+    const top = [];
+    const suggSet = new Set(suggested.map((s) => s.code));
+    if (!q && suggested.length) {
+      top.push(h("div", { class: "picker-group" }, "Suggested from your wording"));
+      suggested.forEach((s) => byCode.has(s.code) && top.push(row(byCode.get(s.code), true)));
+    }
+    top.forEach((n) => list.appendChild(n));
+    let group = null, n = 0;
+    for (const i of items) {
+      if (!match(i)) continue;
+      n++;
+      const g = i.group_name ? `${i.group ? i.group + " · " : ""}${i.group_name}` : (i.group || "");
+      if (g !== group) { group = g; if (g) list.appendChild(h("div", { class: "picker-group" }, g)); }
+      list.appendChild(row(i, suggSet.has(i.code)));
+      if (n > 400) { list.appendChild(h("p", { class: "muted small picker-note" }, "More codes: narrow the search.")); break; }
+    }
+    if (!n) list.appendChild(h("p", { class: "muted small picker-note" }, "No code matches."));
+  };
+  input.addEventListener("input", debounce(draw, 80));
+  const keyNav = (e) => {
+    const opts = [...list.querySelectorAll(".picker-item")];
+    const i = opts.indexOf(document.activeElement);
+    if (e.key === "ArrowDown") { e.preventDefault(); (opts[i + 1] || opts[0] || input).focus(); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); if (i <= 0) input.focus(); else opts[i - 1].focus(); }
+    else if (e.key === "Enter" && e.target === input) { e.preventDefault(); if (opts[0]) opts[0].click(); }
+  };
+  input.addEventListener("keydown", keyNav);
+  list.addEventListener("keydown", keyNav);
+  draw();
+  const body = h("div", {}, h("p", { class: "muted small" }, fw.title || framework, " · ", h("span", {}, "the AI reads the code's description together with your hypothesis")), input, list);
+  await dialog({
+    title: `Choose a ${fw.label || "code"}`,
+    body, wide: true,
+    actions: [{ text: "No code", value: "clear", onClick: () => { picked = null; } }, { text: "Done", value: "done", id: "dlg-done", primary: true }],
+    onOpen(dlg) { dlgRef = dlg; input.focus(); },
   });
+  return picked;
 }

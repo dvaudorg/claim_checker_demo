@@ -123,7 +123,10 @@ async function route() {
     view.setAttribute("aria-busy", "false");
     return;
   }
-  const params = match.slice(1).map((x) => (x === undefined ? undefined : decodeURIComponent(x)));
+  // hunt phase 1.5: a part that is not a valid escape (an address typed with a bare "%") is taken as it is: it threw
+  // here, outside the try below, and left an empty page
+  const decode = (x) => { try { return decodeURIComponent(x); } catch (_) { return x; } };
+  const params = match.slice(1).map((x) => (x === undefined ? undefined : decode(x)));
   try {
     const r = await render(page, params, query);
     if (seq !== renderSeq) { if (typeof r === "function") r(); return; }
@@ -320,7 +323,8 @@ const WHERE_CHIP = {
 // stage 2: to the company of the agent that answers (Anthropic, OpenAI, Google); "Claude" or the agent's name
 const cloudTip = () => `Your documents stay here; only the passages inside the AI's tasks go to ${agentCompany()}.`;
 const cloudWho = () => (agentRoute() === "claude_code" ? "Claude" : agentTitle());
-const tasksWord = (n) => `${n.toLocaleString()} ${n === 1 ? "task" : "tasks"}`;
+const tasksWord = (n) => `${n.toLocaleString("en-GB")} ${n === 1 ? "task" : "tasks"}`;
+let lastQueue = null;   // { project, q }: the sidebar's last answer of GET …/queue
 async function drawStatus() {
   const box = document.getElementById("work-indicator");
   const privacy = document.getElementById("privacy-indicator");
@@ -336,7 +340,9 @@ async function drawStatus() {
   const summary = (App.state && App.state.queue) || {};
   let q = null;
   if (App.project && (isAgent(s) || summary.waiting)) {
-    try { q = await api("GET", `/api/projects/${P(App.project)}/queue`); } catch (_) { q = null; }
+    // hunt phase 1.5: a failed look keeps what the last look of this project said (it read as "nothing waits")
+    try { q = await api("GET", `/api/projects/${P(App.project)}/queue`); lastQueue = { project: App.project, q }; }
+    catch (_) { q = lastQueue && lastQueue.project === App.project ? lastQueue.q : null; }
   }
   const active = jobs.filter((j) => !TERMINAL.has(j.state) && !quietRound(j));   // 0.18 (L3): the poller's own rounds stay quiet, unless one takes long
   const going = active.filter((j) => !j.on_hold);
@@ -372,7 +378,7 @@ async function drawStatus() {
     const j = going[0], v = jobRow(j);
     const more = going.length - 1;
     w = { kind: "running", where: j.where || null, localModel: j.local_model || "", main: v.text, time: j.state === "running" ? fmt.secs(j.seconds) : "", href: v.href, tip: v.tooltip,
-      sub: j.waiting_for ? j.waiting_for.message : j.state === "queued" ? "waiting its turn" : more ? `and ${more} more running` : waiting + answering ? `${(waiting + answering).toLocaleString()} for ${t}` : "running",
+      sub: j.waiting_for ? j.waiting_for.message : j.state === "queued" ? "waiting its turn" : more ? `and ${more} more running` : waiting + answering ? `${(waiting + answering).toLocaleString("en-GB")} for ${t}` : "running",
       act: j.waiting_for ? "cancel" : undefined, job: j.id };   // 0.18 queued jobs: what it waits for, with Cancel
     const mainLocal = ["ollama", "openai", "auto"].includes(s.backend);
     const localRuns = !!(j.local_model !== undefined && j.local_model !== null) || (mainLocal && j.where == null);
@@ -381,7 +387,7 @@ async function drawStatus() {
     if (j.queue || j.where === "cloud" || (j.where == null && App.privacy().where === "cloud")) w.cloudHalf = runner || answering ? "run" : waiting ? "need" : "wait";
     if (w.cloudHalf === "need" && w.local === "run") w.sub = `Reads here · ${fmt.num(waiting)} for ${cloudWho()}`;
   } else if (runner) {
-    w = { kind: "running", where: "cloud", main: `${t} is working`, sub: `${(waiting + answering).toLocaleString()} to go`, href: "#/settings/queue", tip: `${t} answers the work waiting for it, ${agentPlan(s)}.`, cloudHalf: "run" };
+    w = { kind: "running", where: "cloud", main: `${t} is working`, sub: `${(waiting + answering).toLocaleString("en-GB")} to go`, href: "#/settings/queue", tip: `${t} answers the work waiting for it, ${agentPlan(s)}.`, cloudHalf: "run" };
   } else if (q && waiting) {
     w = { kind: "stalled", icon: "inbox", main: `${tasksWord(waiting)} waiting`, sub: `for ${t}`, href: "#/settings/queue", tip: `Work prepared for ${t}: answer it there, or with the AI model of Settings.`, act: "open", cloudHalf: "need" };
   }
@@ -557,11 +563,16 @@ function updatePopup(info) {
   box.appendChild(t);
 }
 
+// How many jobs run; null when the app could not say (hunt phase 1.5: a failed look read as "nothing runs" and the
+// dialogs before an update, a restart or quitting left out their warning)
 async function runningJobs() {
-  return (App.state.jobs || []).length || (await api("GET", "/api/jobs").then((r) => r.jobs.filter((j) => !TERMINAL.has(j.state)).length).catch(() => 0));
+  if ((App.state.jobs || []).length) return App.state.jobs.length;
+  try { return (await api("GET", "/api/jobs")).jobs.filter((j) => !TERMINAL.has(j.state)).length; } catch (_) { return null; }
 }
 
 const RUNNING_NOTE = "Something is still running (a check, or documents being added). Restarting stops it; a check that is stopped leaves nothing behind. ";
+const UNKNOWN_NOTE = (doing) => `Whether something is still running (a check, or documents being added) could not be checked just now. If it is, ${doing} stops it; a check that is stopped leaves nothing behind. `;
+const runningNote = (running, doing = "restarting") => (running ? (doing === "restarting" ? RUNNING_NOTE : RUNNING_NOTE.replace("Restarting", "Quitting")) : running === null ? UNKNOWN_NOTE(doing) : "");
 
 async function updateApp(btn) {
   if (btn.disabled) return;
@@ -577,8 +588,8 @@ async function updateApp(btn) {
     : `${info.changes} new change${info.changes === 1 ? " is" : "s are"} waiting (you have ${info.version}). ${appName()} fetches ${info.changes === 1 ? "it" : "them"} and restarts.`;
   const ok = await confirmDialog({
     title: info.on_disk ? `Restart ${appName()}?` : `Update ${appName()}?`,
-    message: `${what} ${running ? RUNNING_NOTE : ""}Your projects and results are kept.`,
-    confirmText: info.on_disk ? "Restart" : "Update and restart", danger: !!running,
+    message: `${what} ${runningNote(running)}Your projects and results are kept.`,
+    confirmText: info.on_disk ? "Restart" : "Update and restart", danger: running !== 0,
   });
   if (!ok) return done();
   if (btn.lastChild) btn.lastChild.textContent = info.on_disk ? "Restarting…" : "Updating…";
@@ -596,8 +607,8 @@ async function restartApp(version) {
   const running = await runningJobs();
   const ok = await confirmDialog({
     title: `Restart ${appName()}?`,
-    message: `${appName()} ${version} starts in place of ${App.state.version}. ${running ? RUNNING_NOTE : ""}Your projects and results are kept.`,
-    confirmText: "Restart", danger: !!running,
+    message: `${appName()} ${version} starts in place of ${App.state.version}. ${runningNote(running)}Your projects and results are kept.`,
+    confirmText: "Restart", danger: running !== 0,
   });
   if (!ok) return;
   try { await api("POST", "/api/restart", {}); } catch (e) { showError(e); return; }
@@ -647,10 +658,10 @@ async function quitApp(reason = "") {
     const running = await runningJobs();
     const ok = await confirmDialog({
       title: `Quit ${appName()}?`,
-      message: reason + (running
-        ? "Something is still running (a check, or documents being added). Quitting stops it; a check that is stopped leaves nothing behind. Your projects and results are kept."
+      message: reason + (running !== 0
+        ? `${runningNote(running, "quitting")}Your projects and results are kept.`
         : `${appName()} stops on this computer. Your projects and results are kept.`),
-      confirmText: `Quit ${appName()}`, danger: !!running,
+      confirmText: `Quit ${appName()}`, danger: running !== 0,
     });
     if (!ok) return;
     try { await api("POST", "/api/quit", {}); } catch (e) { showError(e); return; }

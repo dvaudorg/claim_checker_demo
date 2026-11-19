@@ -25,11 +25,13 @@ as a sync-clash copy, as before 0.18.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import uuid
 from pathlib import Path
 
+from ..frameworks import name_key
 from .fingerprints import HEAD, _codebook_fp, _home_codebooks, code_fp, codebook_state, head_fp
 
 
@@ -42,6 +44,43 @@ def _event_order(e: dict) -> tuple:
     except (TypeError, ValueError):
         seq = 0
     return str(e.get("at") or ""), seq, str(e.get("id") or "")
+
+
+def opposite_merges(events: list[dict]) -> list[tuple[dict, dict]]:
+    """Hunt phase 1.5 (wave 4 review): two merges of the same two codes into each other (one copy merged A into B, a
+    colleague B into A): [(the merge that stands, the one undone)], the earlier standing (`_event_order`, the same in
+    every copy), each pair once and only while no undo of it is in the list. Kept, both took every label of the two
+    codes out of the codebook: after one exchange each way it held neither code."""
+    merges = sorted((e for e in events if isinstance(e, dict) and e.get("op") == "merge" and e.get("uid")
+                     and e.get("into_uid") and e.get("id")), key=_event_order)
+    undone = {e.get("undoes") for e in events if isinstance(e, dict) and e.get("op") == "unmerge"}
+    out = []
+    for i, first in enumerate(merges):
+        for later in merges[i + 1:]:
+            if (later["uid"], later["into_uid"]) == (first["into_uid"], first["uid"]) and later["id"] not in undone:
+                out.append((first, later))
+                undone.add(later["id"])
+                break
+    return out
+
+
+def undo_event(later: dict) -> dict:
+    """The event that undoes merge `later` (see `opposite_merges`): its code comes back with the labels it gave; the
+    same id in every copy."""
+    try:
+        seq = int(later.get("seq") or 0) + 1
+    except (TypeError, ValueError):
+        seq = 1
+    return {"op": "unmerge", "from": later["to"], "to": later["from"], "was": later["from"], "uid": later["uid"],
+            "undoes": later["id"], "id": "u" + hashlib.sha1(str(later["id"]).encode()).hexdigest()[:11],
+            "at": later.get("at"), "seq": seq}
+
+
+def clash_name(name: str, fp: str) -> str:
+    """The name a colleague's version of codebook `name` comes in under beside yours: "<name>-<6 of its fingerprint>",
+    the name cut so the whole stays within a codebook name's 40 characters (`NAME_RE`): longer, the copy came in as
+    files but was never listed, so it could not be opened, and their labels with it."""
+    return f"{name[:40 - 7]}-{fp[:6]}"
 
 
 class CodebookRules:
@@ -63,7 +102,9 @@ class CodebookRules:
 
         for csv in sorted(src.glob("*.csv")):
             name = csv.stem
-            if name in BUNDLED or not NAME_RE.match(name):
+            # (hunt phase 1.5, phase 0 P1-7: a FOLDER named `x.csv` in their zip is no codebook: it has no
+            # fingerprint, and naming its copy beside yours raised TypeError, which stopped the whole merge)
+            if name in BUNDLED or not NAME_RE.match(name) or not csv.is_file():
                 continue
             fp_in = _codebook_fp(src, name)
             if name in copies_there and name not in here:  # their copy of a codebook: perhaps your own version
@@ -75,6 +116,21 @@ class CodebookRules:
                 self._mark(cx, "codebook", name, of, copies_there[name]["person_id"], copies_there[name]["at"])
                 self.r["codebooks"]["clash"].append({"name": name, "of": of})
                 continue
+            if name not in here and fp_in not in seen_here.get(name, set()) and \
+                    not (seen_here.get(name, set()) & seen_there.get(name, set())):
+                from ..codebooks import name_held
+
+                if name_held(self.ws, name, cx):
+                    # a codebook of this copy was removed under the name, and its labels or versions are kept under
+                    # it (codebooks.name_held); theirs, never exchanged with it, is another codebook: it comes in
+                    # beside, as a codebook both made under one name does, and their labels go with it
+                    new = clash_name(name, fp_in)
+                    self.fw[name] = new
+                    self._take_codebook(src, dest, name, new)
+                    self.codebook_marks.append((new, name))
+                    self._mark(cx, "codebook", new, name)
+                    self.r["codebooks"]["clash"].append({"name": new, "of": name})
+                    continue
             if name not in here:
                 self._take_codebook(src, dest, name, name)
                 self.history.add(("codebook", name))
@@ -96,7 +152,7 @@ class CodebookRules:
             # 0.18: both changed a codebook they have exchanged before: code by code
             if seen_here.get(name, set()) & seen_there.get(name, set()) and self._merge_codes(cx, src, dest, name):
                 continue
-            new = f"{name}-{fp_in[:6]}"
+            new = clash_name(name, fp_in)
             self.fw[name] = new
             self._take_codebook(src, dest, name, new)
             self.codebook_marks.append((new, name))
@@ -138,11 +194,29 @@ class CodebookRules:
             d = t_drafted.get(uid)
             return {"ai_draft": d} if isinstance(d, dict) else {}
 
+        # two merges of the same two codes into each other, one here and one there: the earlier stands, the later is
+        # undone, so its code comes back (hunt phase 1.5, wave 4 review)
+        seen_ids: set = set()
+        both = [e for e in [*(m_meta.get("events") or []), *(t_meta.get("events") or [])] if isinstance(e, dict)
+                and not (e.get("id") in seen_ids or seen_ids.add(e.get("id")))]
+        opposite = opposite_merges(both)
+        back = {later["uid"] for _first, later in opposite}
+        # ... and the code the standing merge took away goes, though the undone merge (made here or there) went into it
+        # and so changed it: "removed there, unchanged here" would keep it, and both codes stayed (CI, which merge
+        # stood depended on the events' random ids when both were made in one second)
+        gone = {first["uid"] for first, _later in opposite}
         out: list[dict] = []
         theirs_in: set[str] = set()  # the codes taken from their version (new there, or newer there)
         for uid, mc in m_codes.items():
             mfp = code_fp(mc, m_groups)
             tc = t_codes.get(uid)
+            if tc is None and uid in back:   # merged away there by the later of two opposite merges: it stays
+                out.append(mc)
+                continue
+            if tc is None and uid in gone and uid in t_removed:   # merged away there by the standing merge: it goes
+                m_removed[uid] = t_removed[uid]
+                rep["removed"].append(mc["code"])
+                continue
             if tc is None:
                 if uid in t_removed and known(mfp, seen_there, uid):  # they removed or merged it, you did not change it
                     m_removed[uid] = t_removed[uid]
@@ -170,6 +244,13 @@ class CodebookRules:
         for uid, tc in t_codes.items():
             if uid in m_codes:
                 continue
+            if uid in m_removed and uid in back:   # merged away here by the later of two opposite merges: it comes back
+                m_removed.pop(uid, None)
+                out.append(tc)
+                theirs_in.add(uid)
+                places[uid] = (t_meta.get("places") or {}).get(uid) or []
+                rep.setdefault("undone", []).append(tc["code"])
+                continue
             if uid in m_removed:  # removed (or merged away) here
                 if not known(code_fp(tc, t_groups), seen_here, uid):  # but changed there since: kept as a clash
                     clashes[uid] = {**{k: tc[k] for k in ("code", "description", "group", "include", "exclude",
@@ -187,20 +268,20 @@ class CodebookRules:
         # two codes may not share a name (labels name their code): one of theirs that came in under the name of another
         # code here takes a name of its own, and only their labels made with it follow it there
         renamed = []
-        taken = {c["code"].lower() for c in out if c["uid"] not in theirs_in}
+        taken = {name_key(c["code"]) for c in out if c["uid"] not in theirs_in}   # (as the editor compares names)
         for c in out:
             if c["uid"] not in theirs_in:
                 continue
-            if c["code"].lower() in taken:
+            if name_key(c["code"]) in taken:
                 old, n = c["code"], 1
-                while c["code"].lower() in taken:
+                while name_key(c["code"]) in taken:
                     tail = f" ({who['name']})" if n == 1 else f" ({who['name']} {n})"
                     c["code"] = old[:max(1, 40 - len(tail))].rstrip() + tail
                     n += 1
                 renamed.append({"op": "rename", "from": old, "to": c["code"], "uid": c["uid"],
                                 "id": uuid.uuid4().hex[:12], "at": self.at, "seq": 0})
                 rep.setdefault("renamed", []).append({"from": old, "to": c["code"]})
-            taken.add(c["code"].lower())
+            taken.add(name_key(c["code"]))
         # the codebook's own settings
         head = mine
         mh, th = head_fp(mine), head_fp(theirs)
@@ -212,8 +293,20 @@ class CodebookRules:
         events = [e for e in (m_meta.get("events") or []) if isinstance(e, dict)]
         have = {e.get("id") for e in events}
         events += [e for e in (t_meta.get("events") or []) if isinstance(e, dict) and e.get("id") not in have]
+        events += [undo_event(later) for _first, later in opposite]
         events.sort(key=_event_order)
         events += renamed
+        if opposite:
+            from .. import researchlog
+
+            for first, later in opposite:
+                researchlog.record(cx, "codebook-changed",
+                                   f"You and {who['name']} merged the codes {researchlog.quoted(first['from'], 60)} and "
+                                   f"{researchlog.quoted(first['to'], 60)} into each other in the codebook "
+                                   f"{researchlog.quoted(name, 60)}: the earlier merge stands "
+                                   f"({researchlog.quoted(first['from'], 60)} into "
+                                   f"{researchlog.quoted(first['to'], 60)}), the later is undone, so every label of the "
+                                   f"two is under {researchlog.quoted(first['to'], 60)}.", "codebook", name, name)
         if renamed:  # your labels never had their name for it: the rename is followed here only by theirs
             row = cx.execute("SELECT value FROM meta WHERE key=?", (f"codebook_followed:{name}",)).fetchone()
             done = set(json.loads(row[0]) if row else [])
@@ -271,9 +364,18 @@ class CodebookRules:
         try:
             meta = json.loads(side.read_text(encoding="utf-8")) if side.is_file() else {}
         except ValueError:
-            meta = {}
+            # hunt phase 1.5: a side file that does not parse is left as it came, never counted as empty: written back
+            # with the title alone, the codes' ids, groups and history it may still hold were gone for good. The copy
+            # keeps its own name (`<name>_<colleague>`), so it still stands apart from yours
+            return
+        if not isinstance(meta, dict):
+            return
         meta["title"] = f"{meta.get('title') or of} ({self.sender['name'] or 'a colleague'}'s version)"
-        side.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+        from ..home import _write_whole
+
+        # hunt phase 1 (files sweep): whole, as the codebooks' own files are (codebooks._write): the side file holds
+        # the codes' ids, groups and history, and a write in place cut off left it empty
+        _write_whole(side, json.dumps(meta, indent=2))
 
     def _follow_codebooks(self, cx: sqlite3.Connection) -> None:
         """0.16 (codebooks.py): labels follow a codebook's renames and merges. Yours follow the changes your copy had not

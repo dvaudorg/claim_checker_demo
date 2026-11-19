@@ -27,6 +27,7 @@ import json
 from typing import Callable
 
 from .store import Workspace
+from .textutil import one_line
 
 KIND = "code_definition"
 MIN_EXAMPLES = 2       # passages: one example gives a paraphrase of one quote, not a definition
@@ -265,7 +266,7 @@ def draft_of(ws: Workspace, task_id: str) -> dict | None:
         if not hit:
             continue
         doc = ws.scalar("SELECT doc_id FROM passages WHERE passage_id=?", (p["passage_id"],))
-        quotes[field] = {"quote": " ".join(p["text"][hit[0]:hit[1]].split()), "doc_id": doc, "page": p.get("page"),
+        quotes[field] = {"quote": one_line(p["text"][hit[0]:hit[1]]), "doc_id": doc, "page": p.get("page"),
                          "title": ws.scalar("SELECT title FROM documents WHERE doc_id=?", (doc,)) if doc else None}
     return {"description": _clean(a.definition, 4000), "include": _clean(a.when_to_use, 2000),
             "exclude": _clean(a.when_not_to_use, 2000), "model": r[0]["model"], "quotes": quotes,

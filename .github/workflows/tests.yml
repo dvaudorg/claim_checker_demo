@@ -77,5 +77,8 @@ jobs:
       - name: Lint (syntax errors and undefined names only)
         if: ${{ matrix.lint }}
         run: uv run --frozen --no-sync ruff check --select E9,F63,F7,F82 src tests tools
+      - name: Lint the page's JavaScript (undefined names, async Promise executors)
+        if: ${{ matrix.lint }}
+        run: uv run --frozen --no-sync python tools/lint_js.py   # eslint, pinned there; needs the runner's Node
       - name: Test
         run: uv run --frozen --no-sync python -m pytest -q -rs -n ${{ matrix.workers }} --dist worksteal --timeout=600 --durations=25

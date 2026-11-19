@@ -1,0 +1,516 @@
+"""Hunt phase 0 (2026-11-18): browser views that kept an old value after a choice or a second action changed it.
+Each test names its bug; run in Node under the fake DOM of tests/_views.py."""
+from __future__ import annotations
+
+import pytest
+
+from _views import needs_node, run_views
+
+PROBE = r"""
+// ---- JS-1: the profile's AI card follows the codebook ------------------------------------------------------------
+await scenario("JS-1 profile card follows codebook", async (t) => {
+  const FWS = [{ name: "alpha", title: "Alpha (3 codes)", codes: 3, label: "code", groups: 0 },
+               { name: "beta", title: "Beta (4 codes)", codes: 4, label: "code", groups: 0 }];
+  t.answer("GET /api/projects/Study/documents", { documents: [{ doc_id: "d1", title: "One" }] });
+  t.answer("GET /api/projects/Study/profile?*", () => ({ frameworks: FWS, pass1: { done: true, passages: 5 }, stats: {}, grid: { codes: [], documents: [], cells: {} } }));
+  t.answer("GET /api/projects/Study/profile/plan?*", () => ({ passages: 5, with_candidates: 5, already_read: 0, to_read: 5, run: {} }));
+  t.answer("GET /api/projects/Study/profile/calibration?*", { total: 0, bins: [] });
+  t.answer("PUT /api/settings", {});
+  t.answer("POST /api/projects/Study/profile/label", { job: { id: "j1" } });
+  t.answer("GET /api/jobs/j1", { id: "j1", state: "running", progress: { done: 0, total: 5 } });
+  await t.render("views/profile.js", "renderProfile", [], { framework: "alpha" });
+  await t.type(t.field(null, { sel: "#pf-fw" }) || document.getElementById("pf-fw"), "beta");
+  await t.settle(50);
+  await t.click(/^Label 5 passages/);
+  await t.settle(50);
+  return {
+    plans: t.calls.filter((c) => c.path.includes("/profile/plan")).map((c) => c.path.split("framework=")[1].split("&")[0]),
+    posts: t.calls.filter((c) => c.method === "POST" && c.path.endsWith("/profile/label")).map((c) => c.body.framework),
+  };
+});
+
+// ---- JS-2: a second strictness change while a save is under way is not lost --------------------------------------
+await scenario("JS-2 strictness second change", async (t) => {
+  t.state({ settings: { threshold: 0.6 } }, { project: "Study" });
+  const put = [];
+  t.answer("PUT /api/settings", (body) => { put.push(body.threshold); return { settings: { threshold: body.threshold }, backend_label: "x" }; });
+  t.answer("GET /api/projects/Study/hypotheses?*", async () => { await new Promise((r) => setTimeout(r, 500)); return { hypotheses: [] }; });
+  t.answer("GET /api/projects/Study/calibration", { total: 0, bins: [] });
+  await t.render("views/settings.js", "renderSettings", ["basics"]);
+  const range = document.querySelector("input.range");
+  range.value = "0.65"; range.dispatchEvent(new Event("change", { bubbles: true }));
+  await t.settle(10);
+  range.value = "0.7"; range.dispatchEvent(new Event("change", { bubbles: true }));
+  await t.settle(5000);
+  return { put, stored: t.LIB.App.settings().threshold };
+});
+
+// ---- JS-3: Look before checking, edited while it runs -------------------------------------------------------------
+await scenario("JS-3 look then edit", async (t) => {
+  const A = "Repair cafés build community among neighbours";
+  const B = "Repair cafés reduce the waste of households";
+  t.state({ settings: { backend: "claude_code", threshold: 0.6 } });
+  let job = { id: "p1", state: "running", progress: {} };
+  t.answer("GET /api/projects/Study", { frameworks: [], passages: 40 });
+  t.answer("GET /api/projects/Study/documents", { documents: [] });
+  t.answer("GET /api/projects/Study/hypotheses?*", { hypotheses: [] });
+  t.answer("POST /api/projects/Study/hypotheses/similar", {});
+  t.answer("POST /api/projects/Study/prepare", { job: { id: "p1" } });
+  t.answer("GET /api/jobs/p1", () => job);
+  await t.render("views/hypotheses.js", "renderHypotheses", [], {});
+  await t.type("Your hypothesis", A);
+  await t.settle(1000);
+  await t.click("Look before checking");
+  await t.type("Your hypothesis", B);
+  await t.settle(1000);
+  job = { id: "p1", state: "done", result: { parts: ["Repair cafés build community", "among neighbours"], terms: [[], []], split: true } };
+  await t.settle(2000);
+  const run = t.buttons().map((b) => b.label).filter((l) => /^Check/.test(l));
+  return { run, text: t.text(), prep: t.view.querySelectorAll(".prep-card").filter((x) => !t.hidden(x)).length };
+});
+
+// ---- JS-4: the codes panel's list of codes follows the codebook ----------------------------------------------------
+await scenario("JS-4 codes list follows codebook", async (t) => {
+  const item = { passage_id: "p1", source: "model", label_id: "l1", relevance: "main", confidence: 0.8, quote: "a quote", reason: "why", location: "page 1", provisional: false };
+  const prof = (fw) => ({ framework_title: fw, code_label: "code", pass1: { done: true }, passages: 5, n_pages: 2, read_by_model: 1,
+    codes: [{ code: "X1", description: "Same code", share: 0.5, passages: 1, main: 1, pages: [1], positions: [10], items: [item] }] });
+  t.answer("GET /api/projects/Study/documents/d1/profile?*", (b, path) => prof(decodeURIComponent(path.split("framework=")[1])));
+  t.answer("GET /api/projects/Study/frameworks", { frameworks: [{ name: "alpha", title: "Alpha" }, { name: "beta", title: "Beta" }] });
+  t.answer("GET /api/projects/Study/frameworks/alpha", { framework: { items: [{ code: "A1", description: "Alpha one" }] } });
+  t.answer("GET /api/projects/Study/frameworks/beta", { framework: { items: [{ code: "B1", description: "Beta one" }] } });
+  t.answer("GET /api/projects/Study/profile/plan?*", { passages: 5, with_candidates: 5, already_read: 5, to_read: 0, run: {} });
+  const m = await t.module("views/doc-codes.js");
+  const ctx = { query: { code: "X1" }, docBase: "/api/projects/Study/documents/d1", base: "/api/projects/Study", keepUrl() {}, project: "Study",
+    watchers: [], docId: "d1", jumpTo() {}, paint() {}, framework: "alpha", tab: "codes" };
+  const panel = m.codesPanel(ctx);
+  document.getElementById("view").appendChild(panel.el);
+  await t.settle(50);
+  await t.click("Another code here");
+  await t.click("Cancel");
+  await t.type(document.getElementById("dv-fw"), "beta");
+  await t.settle(50);
+  await t.click(document.querySelector(".dv-code-head"));
+  await t.click("Another code here");
+  const opts = [...document.querySelectorAll("#dv-code-list option")].map((o) => o.value);
+  const place = document.getElementById("dv-add-code").getAttribute("placeholder");
+  return { opts, place, gets: t.calls.filter((c) => c.path.includes("/frameworks/")).map((c) => c.path.split("/").pop()) };
+});
+
+// ---- JS-5: the code picker when its codebook cannot be loaded -----------------------------------------------------
+await scenario("JS-5 picker without its codebook", async (t) => {
+  t.answer("GET /api/projects/Study/frameworks/x", t.fail(404, "Unknown framework: x"));
+  const m = await t.module("views/options.js");
+  const got = await m.pickCode({ project: "Study", framework: "x" });
+  await t.settle(50);
+  return { got: got === undefined ? "undefined" : got, toasts: t.toasts(), dialogs: t.dialogs().length };
+});
+
+// ---- P-1: the Research log's Ctrl+Enter adds an entry once --------------------------------------------------------
+await scenario("P-1 log page double Ctrl+Enter", async (t) => {
+  const posts = [];
+  t.answer("GET /api/projects/Study/log?*", { entries: [], total: 0, groups: {}, group_names: {} });
+  t.answer("GET /api/projects/Study/sharing?*", { items: [] });
+  t.answer("POST /api/projects/Study/log", async (body) => { posts.push(body.text); await new Promise((r) => setTimeout(r, 300)); return {}; });
+  await t.render("views/log.js", "renderLog", [], {});
+  const ta = t.field("A new entry");
+  ta.value = "We chose the second codebook";
+  const key = () => ta.dispatchEvent(new Event("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
+  key(); key();
+  await t.settle(1000);
+  return { posts };
+});
+await scenario("P-1 log page text typed while adding", async (t) => {
+  t.answer("GET /api/projects/Study/log?*", { entries: [], total: 0, groups: {}, group_names: {} });
+  t.answer("GET /api/projects/Study/sharing?*", { items: [] });
+  t.answer("POST /api/projects/Study/log", async () => { await new Promise((r) => setTimeout(r, 300)); return {}; });
+  await t.render("views/log.js", "renderLog", [], {});
+  const ta = t.field("A new entry");
+  ta.value = "First entry";
+  await t.click("Add to the log");
+  ta.value = "First entry and a second thought";   // typed after it, while the request runs
+  await t.settle(1000);
+  return { left: ta.value };
+});
+
+await scenario("P-1 log page box rewritten while adding", async (t) => {
+  t.answer("GET /api/projects/Study/log?*", { entries: [], total: 0, groups: {}, group_names: {} });
+  t.answer("GET /api/projects/Study/sharing?*", { items: [] });
+  t.answer("POST /api/projects/Study/log", async () => { await new Promise((r) => setTimeout(r, 300)); return {}; });
+  await t.render("views/log.js", "renderLog", [], {});
+  const ta = t.field("A new entry");
+  ta.value = "First entry";
+  await t.click("Add to the log");
+  ta.value = "Something else entirely";   // not a continuation: left alone
+  await t.settle(1000);
+  return { left: ta.value };
+});
+
+// ---- P-1 (drawer): the log drawer's Ctrl+Enter adds an entry once ------------------------------------------------
+async function drawer(t, hash) {
+  const shell = document.createElement("div"); shell.setAttribute("id", "shell"); document.body.appendChild(shell);
+  t.state({}, { project: "Study", hash });
+  t.answer("GET /api/projects/Study/log?*", { entries: [], total: 0, groups: {}, group_names: {} });
+  t.answer("GET /api/projects/Study/documents/d1?*", { title: "Field notes" });
+  const m = await t.module("views/logdrawer.js");
+  m.initLogDrawer();
+  await t.settle(50);
+  await t.click("Write in the log");
+  await t.settle(50);
+  return document.getElementById("logdrawer");
+}
+await scenario("P-1 drawer double Ctrl+Enter", async (t) => {
+  const posts = [];
+  t.answer("POST /api/projects/Study/log", async (body) => { posts.push(body); await new Promise((r) => setTimeout(r, 300)); return {}; });
+  await drawer(t, "#/doc/d1");
+  const ta = document.querySelector(".logdrawer-text");
+  ta.value = "A decision about this document";
+  const key = () => ta.dispatchEvent(new Event("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
+  key(); key();
+  await t.settle(1000);
+  return { posts: posts.map((p) => p.text) };
+});
+await scenario("P-1 drawer text typed while adding", async (t) => {
+  t.answer("POST /api/projects/Study/log", async () => { await new Promise((r) => setTimeout(r, 300)); return {}; });
+  await drawer(t, "#/hypotheses");
+  const ta = document.querySelector(".logdrawer-text");
+  ta.value = "First entry";
+  await t.click("Add to the log");
+  ta.value = "First entry and a second thought";
+  await t.settle(1000);
+  return { left: ta.value };
+});
+
+// ---- P-4: the theory draft, a second edit waiting while the first is answered 409 ---------------------------------
+await scenario("P-4 draft 409 with a waiting edit", async (t) => {
+  const BASE = "/api/projects/Study/codebook-theory/draft";
+  const C = (o) => ({ group: "", meaning: "", when_to_use: "", when_not: "", keep: true, checked: false, how: "found", sources: [], examples: [], words: [], ai: null, ...o });
+  const DRAFT = (rev) => ({ title: "Repair theory", name: "repair", where: "project", doc_ids: ["d1"], focus: "", rev,
+    reading: { state: "none", job: null, problems: [] }, left_out: [], groups: [{ key: "g1", name: "Practice", about: "" }],
+    concepts: [C({ key: "c1", name: "habitus", group: "g1", meaning: "Lasting dispositions" })] });
+  const OFFER = { offered: true, reader: "claude", parts: 1, why: "", documents: [{ doc_id: "d1", title: "Practice theory", level: "cloud", parts: 1, offered: true, why: "" }] };
+  let server = 3, gets = 0;
+  const revs = [];
+  t.state({ settings: { backend: "claude_code" } });
+  t.answer(`GET ${BASE}`, async () => { gets++; if (gets > 1) await new Promise((r) => setTimeout(r, 500)); return { draft: DRAFT(server), offer: OFFER, documents: [{ doc_id: "d1", title: "Practice theory" }] }; });
+  t.answer(`GET ${BASE}/counts`, { documents: 1, counts: {} });
+  t.answer(`PUT ${BASE}`, async (body) => {
+    revs.push(body.rev);
+    if (revs.length === 1) { await new Promise((r) => setTimeout(r, 1500)); server = 9; }   // changed elsewhere meanwhile
+    if (body.rev !== server) return t.fail(409, "The draft changed.");
+    server = body.rev + 1;
+    return { draft: { rev: server, reading: { stale: false } } };
+  });
+  await t.render("views/theory-draft.js", "renderTheoryDraft");
+  await t.click(/^Habitus /);
+  await t.type("Definition", "Ways of acting learnt over a life");
+  await t.settle(900);                       // the first save is sent and waits for its answer
+  await t.type("Definition", "Ways of acting learnt over a whole life");
+  await t.settle(1000);                      // the second is due and waits for the first
+  await t.settle(8000);
+  return { revs };
+});
+
+// ---- P-6: the team space's help links, asked for again after a failure ---------------------------------------------
+await scenario("P-6 space links after a failure", async (t) => {
+  let n = 0;
+  t.answer("GET /api/space/links", () => (++n === 1 ? t.fail(500, "not now") : { b2_signup: "https://example.org/b2-sign-up" }));
+  t.answer("GET /api/projects/Study/owner", { owner: null, people: [] });
+  const m = await t.module("views/team-space.js");
+  const ctx = { project: "Study", refresh: async () => {} };
+  const out = [];
+  for (let i = 0; i < 2; i++) {
+    const done = m.setupDialog(ctx, "b2");
+    await t.settle(100);
+    const d = t.dialog();
+    out.push(d ? t.allText(d) : null);
+    if (d) { await t.click("Cancel", { within: d }); }
+    await Promise.race([done, t.settle(100)]);
+  }
+  return { second: out[1], first: out[0], asks: n };
+});
+// ---- M1: a move to Cloudflare R2 after the account is chosen -------------------------------------------------------
+async function r2Setup(t, move) {
+  const ACCOUNTS = [{ id: "a1", name: "One" }, { id: "a2", name: "Two" }];
+  let n = 0;
+  const msgs = [];
+  t.answer("GET /api/space/links", {});
+  t.answer("GET /api/projects/Study/log?*", { entries: [], total: 0, groups: {}, group_names: {} });
+  t.answer("POST /api/projects/Study/shared-folder/sync", {});
+  t.answer("GET /api/projects/Study/owner", { owner: null, people: [] });
+  t.answer("GET /api/projects/Study/space/name", {});
+  t.answer("PUT /api/space/name", {});
+  t.answer(/^(POST|PUT) .*\/space\/(move|r2)$/, () => ({ job: { id: `j${++n}` } }));
+  t.answer("GET /api/jobs/j1", () => ({ id: "j1", state: "done", progress: { message: "Step one" }, result: { accounts: ACCOUNTS } }));
+  t.answer("GET /api/jobs/j2", () => ({ id: "j2", state: "done", progress: { message: "Step two" }, result: { moved: {} } }));
+  const m = await t.module("views/team-space.js");
+  const ctx = { project: "Study", refresh: async () => {}, startRound() {} };
+  const done = move ? m.setupDialog(ctx, "r2", { move: true }) : m.setupDialog(ctx, "r2");
+  await t.settle(100);
+  const d = t.dialog();
+  if (!move) await t.click("Next step", { within: d });   // past "Your name"
+  await t.click("I have an account", { within: d });
+  await t.click("R2 is switched on", { within: d });
+  await t.type("Token", "tok123");
+  await t.click(move ? "Move the team" : "Set up the storage space", { within: d });
+  await t.settle(3000);
+  const pick = t.dialogs().filter((x) => /Which Cloudflare account/.test(t.allText(x)))[0];
+  if (pick) { document.getElementById("space-r2-account").value = "a2"; await t.click("Use it", { within: pick }); }
+  await t.settle(3000);
+  const posts = t.calls.filter((c) => c.method === "POST" && /\/space\//.test(c.path)).map((c) => ({ path: c.path.split("/space/")[1], body: c.body }));
+  return { posts, picked: !!pick, errors: t.text(t.dialog() || undefined) };
+}
+await scenario("M1 move to r2 with several accounts", async (t) => r2Setup(t, true));
+await scenario("M1 first set-up to r2 with several accounts", async (t) => r2Setup(t, false));
+// ---- S1: Look before checking, an option toggled while it runs ----------------------------------------------------
+await scenario("S1 look then toggle option", async (t) => {
+  const A = "Repair cafés build community among neighbours";
+  t.state({ settings: { backend: "claude_code", threshold: 0.6 } });
+  let job = { id: "p1", state: "running", progress: {} };
+  t.answer("GET /api/projects/Study", { frameworks: [], passages: 40 });
+  t.answer("GET /api/projects/Study/documents", { documents: [] });
+  t.answer("GET /api/projects/Study/hypotheses?*", { hypotheses: [] });
+  t.answer("GET /api/projects/Study/log?*", { entries: [], total: 0, groups: {}, group_names: {} });
+  t.answer("POST /api/projects/Study/hypotheses/similar", {});
+  t.answer("POST /api/projects/Study/prepare", { job: { id: "p1" } });
+  t.answer("GET /api/jobs/p1", () => job);
+  await t.render("views/hypotheses.js", "renderHypotheses", [], {});
+  await t.type("Your hypothesis", A);
+  await t.settle(1000);
+  await t.click("Look before checking");
+  const sw = [...document.querySelectorAll("input.switch-input")].find((i) => /Check each part separately/.test(i.parentNode.textContent));
+  sw.checked = !sw.checked; sw.dispatchEvent(new Event("change", { bubbles: true }));   // the switch is in the folded options
+  await t.settle(1000);
+  job = { id: "p1", state: "done", result: { parts: ["Repair cafés build community", "among neighbours"], terms: [[], []], split: true } };
+  await t.settle(2000);
+  return { text: t.text(), prep: t.view.querySelectorAll(".prep-card").filter((x) => !t.hidden(x)).length };
+});
+// ---- S2: the codebook editor's example and "Why?" boxes, typed in while a request runs ---------------------------
+const CBK = "/api/projects/Study/codebooks";
+const CODE1 = { uid: "u1", code: "Mending", description: "Fixing things together", group: "1", include: "", exclude: "", keywords: [],
+  examples: [{ quote: "we mend chairs", doc_id: "d1", start: 1 }] };
+const CBBODY = { codebook: { name: "repair", title: "Repair", label: "code", where: "project", editable: true, directional: false,
+  used: { labels: 0, checks: 0 }, groups: [{ group: "1", group_name: "Practice" }], codes: [CODE1] } };
+async function editorFor(t) {
+  t.state({ settings: { backend: "claude_code" } });
+  t.answer(`GET ${CBK}/repair`, CBBODY);
+  t.answer(`GET ${CBK}/repair/offer`, { offer: null });
+  t.answer(`POST ${CBK}/repair/define/offer`, { offered: false, passages: 0, reader: "claude" });
+  t.answer("GET /api/projects/Study/sharing/codebook/repair", { shared: false });
+  t.answer("GET /api/projects/Study/shared-folder", { folder: null });
+  t.answer("GET /api/projects/Study/sync-poller", t.fail(404, "none"));
+  await t.render("views/codebooks.js", "renderCodebook", ["repair"]);
+  await t.click(/^Mending/);
+}
+await scenario("S2 example typed while adding", async (t) => {
+  t.answer(`POST ${CBK}/example`, async () => { await new Promise((r) => setTimeout(r, 300)); return { example: { quote: "we mend chairs", doc_id: "d1", start: 1 } }; });
+  await editorFor(t);
+  const ex = document.querySelector("textarea[placeholder^='Paste words']");
+  ex.value = "we mend chairs";
+  await t.click("Add the example");
+  ex.value = "we mend chairs and tables";   // typed after it, while the request runs
+  await t.settle(1000);
+  const ex2 = document.querySelector("textarea[placeholder^='Paste words']");
+  return { left: ex.value, same: ex === ex2 };
+});
+await scenario("S2 why typed while saving", async (t) => {
+  t.answer(`PUT ${CBK}/repair`, async () => { await new Promise((r) => setTimeout(r, 300)); return { ...CBBODY, changes: ["renamed"] }; });
+  await editorFor(t);
+  await t.type("Name", "Mending 2");
+  await t.settle(300);
+  const why = document.querySelector("input.cb-why");
+  why.value = "Clearer name";
+  await t.click("Save");
+  why.value = "Clearer name for the group";
+  await t.settle(1000);
+  return { left: why.value };
+});
+// ---- S4: the profile's AI card, a codebook changed while the AI labels ---------------------------------------------
+await scenario("S4 profile run kept on codebook change", async (t) => {
+  const FWS = [{ name: "alpha", title: "Alpha (3 codes)", codes: 3, label: "code", groups: 0 },
+               { name: "beta", title: "Beta (4 codes)", codes: 4, label: "code", groups: 0 }];
+  t.answer("GET /api/projects/Study/documents", { documents: [{ doc_id: "d1", title: "One" }] });
+  t.answer("GET /api/projects/Study/profile?*", () => ({ frameworks: FWS, pass1: { done: true, passages: 5 }, stats: {}, grid: { codes: [], documents: [], cells: {} } }));
+  t.answer("GET /api/projects/Study/profile/plan?*", () => ({ passages: 5, with_candidates: 5, already_read: 0, to_read: 5, run: {} }));
+  t.answer("GET /api/projects/Study/profile/calibration?*", { total: 0, bins: [] });
+  t.answer("PUT /api/settings", {});
+  t.answer("GET /api/projects/Study/log?*", { entries: [], total: 0, groups: {}, group_names: {} });
+  t.answer("GET /api/jobs", { jobs: [{ id: "j1", project: "Study", kind: "label", state: "running" }] });
+  t.answer("GET /api/jobs/j1", { id: "j1", state: "running", progress: { done: 1, total: 5 } });
+  await t.render("views/profile.js", "renderProfile", [], { framework: "alpha" });
+  await t.settle(50);
+  const before = { starts: t.buttons().filter((b) => /^Label \d+ passages/.test(b.label)).length, shows: /The AI labels passages/.test(t.text()) };
+  await t.type(document.getElementById("pf-fw"), "beta");
+  await t.settle(100);
+  return { before: before.starts, beforeShows: before.shows, after: t.buttons().filter((b) => /^Label \d+ passages/.test(b.label)).length, shows: /The AI labels passages/.test(t.text()) };
+});
+// ---- S5: a failed fetch of a codebook's codes is not remembered ---------------------------------------------------
+await scenario("S5 failed codes fetch not cached", async (t) => {
+  const item = { passage_id: "p1", source: "model", label_id: "l1", relevance: "main", confidence: 0.8, quote: "a quote", reason: "why", location: "page 1", provisional: false };
+  let n = 0;
+  t.answer("GET /api/projects/Study/documents/d1/profile?*", { framework_title: "B", code_label: "code", pass1: { done: true }, passages: 5, n_pages: 2, read_by_model: 1,
+    codes: [{ code: "X1", description: "Same code", share: 0.5, passages: 1, main: 1, pages: [1], positions: [10], items: [item] }] });
+  t.answer("GET /api/projects/Study/frameworks", { frameworks: [{ name: "B", title: "B" }] });
+  t.answer("GET /api/projects/Study/frameworks/B", () => (++n === 1 ? t.fail(500, "not now") : { framework: { items: [{ code: "B1", description: "Beta one" }] } }));
+  t.answer("GET /api/projects/Study/profile/plan?*", { passages: 5, with_candidates: 5, already_read: 5, to_read: 0, run: {} });
+  const m = await t.module("views/doc-codes.js");
+  const ctx = { query: { code: "X1" }, docBase: "/api/projects/Study/documents/d1", base: "/api/projects/Study", keepUrl() {}, project: "Study",
+    watchers: [], docId: "d1", jumpTo() {}, paint() {}, framework: "B", tab: "codes" };
+  const panel = m.codesPanel(ctx);
+  document.getElementById("view").appendChild(panel.el);
+  await t.settle(50);
+  await t.click("Another code here");
+  await t.click("Cancel");
+  await t.click("Another code here");
+  return { opts: [...document.querySelectorAll("#dv-code-list option")].map((o) => o.value), gets: n };
+});
+// ... and a newer cached entry of the options' codebooks is not removed by an older request failing
+await scenario("S5 older failure keeps newer framework entry", async (t) => {
+  let n = 0;
+  t.answer("GET /api/projects/Study/frameworks/x", async () => {
+    const i = ++n;
+    if (i === 1) { await new Promise((r) => setTimeout(r, 300)); return t.fail(500, "late failure"); }
+    return { framework: { items: [{ code: "N" + i, description: "new" }] } };
+  });
+  const m = await t.module("views/options.js");
+  const first = m.loadFramework("Study", "x").catch(() => null);
+  m.forgetFrameworks();
+  const second = await m.loadFramework("Study", "x");
+  await t.settle(500);
+  await first;
+  const third = await m.loadFramework("Study", "x");
+  return { n, second: second.items[0].code, third: third.items[0].code };
+});
+"""
+
+
+@pytest.fixture(scope="module")
+def page(tmp_path_factory):
+    return run_views(PROBE, tmp_path_factory.mktemp("stale"))
+
+
+@needs_node
+def test_js1_profile_ai_card_follows_the_codebook(page):
+    r = page["JS-1 profile card follows codebook"]
+    assert "beta" in r["plans"]
+    assert r["posts"][-1] == "beta"
+
+
+@needs_node
+def test_js2_a_second_strictness_change_during_a_save_is_kept(page):
+    r = page["JS-2 strictness second change"]
+    assert r["put"][-1] == 0.7 and r["stored"] == 0.7
+
+
+@needs_node
+def test_js3_a_look_taken_before_an_edit_is_not_shown_as_what_will_be_checked(page):
+    r = page["JS-3 look then edit"]
+    assert not any("parts" in x for x in r["run"]), r["run"]
+    assert r["prep"] == 0 and "among neighbours" not in r["text"]
+
+
+@needs_node
+def test_js4_the_codes_to_pick_from_are_the_chosen_codebooks(page):
+    r = page["JS-4 codes list follows codebook"]
+    assert "beta" in r["gets"]
+    assert r["opts"] == ["B1"] and r["place"] == "e.g. B1"
+
+
+@needs_node
+def test_js5_a_codebook_that_cannot_be_loaded_is_told_to_the_person(page):
+    r = page["JS-5 picker without its codebook"]
+    assert r["got"] == "undefined" and r["dialogs"] == 0
+    assert any("Unknown framework: x" in x for x in r["toasts"]), r["toasts"]
+
+
+@needs_node
+def test_p1_ctrl_enter_twice_adds_one_entry_on_the_log_page(page):
+    assert page["P-1 log page double Ctrl+Enter"]["posts"] == ["We chose the second codebook"]
+
+
+@needs_node
+def test_p1_text_typed_while_an_entry_is_added_is_kept_on_the_log_page(page):
+    assert page["P-1 log page text typed while adding"]["left"] == "and a second thought"
+
+
+@needs_node
+def test_p1_a_box_rewritten_while_an_entry_is_added_is_left_alone(page):
+    assert page["P-1 log page box rewritten while adding"]["left"] == "Something else entirely"
+
+
+@needs_node
+def test_p1_ctrl_enter_twice_adds_one_entry_in_the_drawer(page):
+    assert page["P-1 drawer double Ctrl+Enter"]["posts"] == ["A decision about this document"]
+
+
+@needs_node
+def test_p1_text_typed_while_an_entry_is_added_is_kept_in_the_drawer(page):
+    assert page["P-1 drawer text typed while adding"]["left"] == "and a second thought"
+
+
+@needs_node
+def test_p4_a_waiting_save_does_not_send_the_old_revision_during_the_reload(page):
+    r = page["P-4 draft 409 with a waiting edit"]
+    # the second request after the 409 must carry the revision the reload brought (9), not the old one (3): the old
+    # one would be answered 409 again, with a second "changed elsewhere" toast
+    assert r["revs"] == [3, 9], r
+
+
+@needs_node
+def test_p6_the_help_links_are_asked_for_again_after_a_failure(page):
+    r = page["P-6 space links after a failure"]
+    assert r["first"] is not None and r["second"] is not None
+    assert r["asks"] == 2, r          # the failed answer was not kept for the session
+
+
+@needs_node
+def test_m1_a_move_to_r2_goes_on_as_a_move_after_the_account_is_chosen(page):
+    r = page["M1 move to r2 with several accounts"]
+    assert r["picked"], r
+    assert [p["path"] for p in r["posts"]] == ["move", "move"], r
+    last = r["posts"][-1]["body"]
+    assert last["service"] == "r2" and last["token"] == "tok123" and last["account_id"] == "a2", last
+
+
+@needs_node
+def test_m1_a_first_set_up_of_r2_goes_on_to_r2_after_the_account_is_chosen(page):
+    r = page["M1 first set-up to r2 with several accounts"]
+    assert r["picked"], r
+    assert [p["path"] for p in r["posts"]] == ["r2", "r2"], r
+    assert r["posts"][-1]["body"]["account_id"] == "a2", r
+
+
+@needs_node
+def test_s1_a_look_discarded_for_an_option_speaks_of_the_option(page):
+    r = page["S1 look then toggle option"]
+    assert r["prep"] == 0 and "among neighbours" not in r["text"], r
+    assert "Check each part separately" in r["text"] and "hypothesis changed" not in r["text"], r["text"]
+
+
+@needs_node
+def test_s2_words_typed_while_an_example_is_added_are_kept(page):
+    r = page["S2 example typed while adding"]
+    assert r["left"] == "and tables", r
+
+
+@needs_node
+def test_s2_words_typed_while_the_codebook_is_saved_stay_in_why(page):
+    assert page["S2 why typed while saving"]["left"] == "for the group"
+
+
+@needs_node
+def test_s4_the_profile_card_still_shows_the_run_after_the_codebook_changes(page):
+    r = page["S4 profile run kept on codebook change"]
+    assert r["before"] == 0 and r["beforeShows"], r        # the run is shown at first
+    assert r["after"] == 0 and r["shows"], r
+
+
+@needs_node
+def test_s5_a_failed_fetch_of_a_codebooks_codes_is_asked_for_again(page):
+    r = page["S5 failed codes fetch not cached"]
+    assert r["opts"] == ["B1"] and r["gets"] == 2, r
+
+
+@needs_node
+def test_s5_an_older_failing_request_does_not_remove_a_newer_cached_codebook(page):
+    r = page["S5 older failure keeps newer framework entry"]
+    assert r["n"] == 2 and r["third"] == "N2", r

@@ -178,7 +178,7 @@ def test_notes_through_the_app(api, tmp_path):  # noqa: F811
     for f in sorted(DEMO.iterdir()):
         if f.suffix in (".txt", ".html"):
             assert api("POST", f"/api/projects/Demo/uploads?batch=b1&name={f.name}", raw=f.read_bytes())[0] == 200
-    assert api.wait(api("POST", "/api/projects/Demo/ingest", {"batch": "b1"})[1]["job"]["id"])["state"] == "done"
+    assert api.wait(api("POST", "/api/projects/Demo/ingest", {"ai_access": "cloud", "batch": "b1"})[1]["job"]["id"])["state"] == "done"
     from enlens_claims import home as home_mod
 
     ws = home_mod.open_project("Demo")
@@ -208,3 +208,21 @@ def test_notes_through_the_app(api, tmp_path):  # noqa: F811
     with ws.connect() as cx:
         cx.execute("UPDATE notes SET person_id='p0123456789ab' WHERE note_id=?", (nid,))
     assert api("DELETE", f"/api/projects/Demo/notes/{nid}")[0] == 403
+
+
+def test_a_file_brought_in_by_hand_naming_your_pair_changes_none_of_your_notes(demo, monkeypatch):
+    """18 November 2026 (hunt P2-1): `merge`'s `first_hand` flag was shadowed by an import of the same name, so a zip
+    that only named your paired account as sender overwrote your own notes."""
+    from enlens_claims import people, sharing
+
+    doc, text, i = _doc_with(demo, WORDS)
+    n = notes.add(demo, doc, i, i + len(WORDS), None, "Mine, as I wrote it.", "green")
+    monkeypatch.setattr(sharing, "_partner", lambda cx, me: "PAIRED")
+    with demo.connect() as cx:
+        row = dict(cx.execute("SELECT * FROM notes WHERE note_id=?", (n["note_id"],)).fetchone())
+        theirs = {**row, "text": "Overwritten.", "edited_at": "9999-01-01T00:00:00Z"}
+        assert notes.merge(cx, [theirs], lambda r: r, sender="PAIRED", first_hand=False) == 0
+        assert cx.execute("SELECT text FROM notes WHERE note_id=?", (n["note_id"],)).fetchone()[0] == "Mine, as I wrote it."
+        assert row["person_id"] == people.me()
+        assert notes.merge(cx, [theirs], lambda r: r, sender="PAIRED", first_hand=True) == 1
+        assert cx.execute("SELECT text FROM notes WHERE note_id=?", (n["note_id"],)).fetchone()[0] == "Overwritten."

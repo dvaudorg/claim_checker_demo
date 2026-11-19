@@ -860,9 +860,12 @@ export async function renderConceptMap(view, params, query) {
   };
   async function names(body) { return api("POST", `${base}/concept-map/names`, body); }
   async function act(body, words, opts2 = {}) {
-    refocus = opts2.refocus || null;
     let r;
-    try { r = await names(body); } catch (e) { showError(e); refocus = null; return null; }
+    try { r = await names(body); } catch (e) { showError(e); return null; }
+    return named(r, words, opts2);
+  }
+  async function named(r, words, opts2 = {}) {   // what follows a change of names: the toast (with Undo), the map again
+    refocus = opts2.refocus || null;
     toast(words, "ok", { small: true, ...(opts2.undo ? { button: { text: "Undo", onClick: async () => { try { await names(opts2.undo(r)); toast("Undone.", "ok", { small: true, ttl: 2500 }); await load(); } catch (e) { showError(e); } } } } : {}) });
     await load();
     return r;
@@ -873,21 +876,32 @@ export async function renderConceptMap(view, params, query) {
     const labs = (g.concepts || []).map((t) => by[t]).filter(Boolean).sort((a, b) => b.passages - a.passages).map((n) => n.label);
     const actions = [{ text: "Cancel", value: null }];
     if (g.name_source !== "concepts") actions.push({ text: "Use its concepts as the name", value: "" });
-    actions.push({ text: "Save", value: "save", primary: true });
+    // hunt phase 1.5 (the owner's rule): the new name is saved from the dialog's own button, so a refusal keeps the
+    // dialog open with the name typed and says why there
+    const err = h("p", { class: "field-error", role: "alert" });
+    let saved = null;
+    const lock = { on: false };   // (wave 6: Cancel, Escape and the x wait for a save under way)
+    actions.push({ text: "Save", value: "save", primary: true, async onClick() {
+      err.textContent = "";
+      const name = nameIn.value.trim();
+      if (!name || name === g.name) return true;
+      lock.on = true;
+      try { saved = await names({ action: "rename", ...groupBody(g, { name }) }); } catch (e) { err.textContent = e.message || String(e); nameIn.focus(); return false; } finally { lock.on = false; }
+      return true;
+    } });
     // the other names people gave this group: one press puts one in the field (Save makes it the group's name)
     const also = (g.also_named || []).length ? h("ul", { class: "cm-also-list", "aria-label": "Other names given to this group" },
       g.also_named.map((x) => h("li", {}, h("span", { class: "small" }, alsoWords(x)),
         button({ kind: "quiet", sm: true, "aria-label": `Use “${x.name}” as the new name`, onClick: () => { nameIn.value = x.name; nameIn.focus(); nameIn.select(); } }, "Use this one")))) : null;
     const r = await dialog({ title: "Rename the group",
       body: h("div", {}, h("label", { class: "field" }, h("span", { class: "field-label" }, "New name"), nameIn),
-        labs.length ? h("p", { class: "muted small" }, `Its concepts: ${firstSix(labs)}`) : null, also),
-      actions, onOpen: () => { nameIn.select(); nameIn.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); nameIn.closest("dialog").querySelector(".btn-primary").click(); } }); } });
+        labs.length ? h("p", { class: "muted small" }, `Its concepts: ${firstSix(labs)}`) : null, also, err),
+      actions, lock, onOpen: () => { nameIn.select(); nameIn.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); nameIn.closest("dialog").querySelector(".btn-primary").click(); } }); } });
     const back = () => { const b = groupsBox.querySelector(`button[data-rename="${CSS.escape((g.concepts || [""])[0])}"]`); if (b) b.focus(); };
     if (r === null || r === undefined) { back(); return; }
     if (r === "") { await act({ action: "use_concepts", name_id: g.name_id, concepts: g.concepts || [] }, "The group is named by its concepts again.", { refocus: (g.concepts || [])[0] }); return; }
-    const name = nameIn.value.trim();
-    if (!name || name === g.name) { back(); return; }
-    await act({ action: "rename", ...groupBody(g, { name }) }, "Group renamed.", { refocus: (g.concepts || [])[0] });
+    if (!saved) { back(); return; }
+    await named(saved, "Group renamed.", { refocus: (g.concepts || [])[0] });
   }
 
   let naming = null;   // the job of the AI that names the groups, while it runs

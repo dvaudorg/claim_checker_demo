@@ -1115,9 +1115,10 @@ def _decisions(ws: Workspace) -> dict[tuple[str, str], dict]:
 
     out = {}
     order, oargs = review_order()  # 0.14: yours count over a colleague's
-    for r in ws.query(f"SELECT item_id, decision, corrected FROM reviews WHERE item_kind='concept_link' {order}", oargs):
+    for r in ws.query(f"SELECT item_id, decision, corrected, proposed FROM reviews WHERE item_kind='concept_link' "
+                      f"{order}", oargs):
         a, _, b = (r["item_id"] or "").partition("|")
-        out[(a, b)] = {"decision": r["decision"], "relation": r["corrected"] or None}
+        out[(a, b)] = {"decision": r["decision"], "relation": r["corrected"] or None, "seen": r["proposed"] or None}
     return out
 
 
@@ -1128,6 +1129,13 @@ def links(ws: Workspace) -> list[dict]:
     for r in ws.query("SELECT * FROM concept_links ORDER BY a, b, source"):
         d = dict(r)
         p = dec.get((d["a"], d["b"]))
+        if p and p["decision"] == "accept" and p["seen"] and d["source"] == "pattern" and \
+                p["seen"].removeprefix("pattern:") != d["relation"]:
+            # hunt phase 1.5: a link found from the sentences, accepted as another relation (the glossary made again
+            # proposed the pair anew, by what its sentences state most often now): the person never saw this one, so
+            # it is a proposal again. Only such a row is proposed anew by a rebuild; an acceptance of another source's
+            # row (the AI's beside the meaning pass's) is the pair's, as before (wave 4 review)
+            p = None
         d["decision"] = p["decision"] if p else None
         if p and p["decision"] == "reject":
             d["relation_effective"] = None
@@ -1438,7 +1446,7 @@ def suggested_wordings(ws: Workspace, term: str) -> list[dict]:
 
 
 def set_link(ws: Workspace, a: str, b: str, decision: str, relation: str | None = None, reviewer: str = "",
-             note: str | None = None) -> None:
+             note: str | None = None, source: str | None = None) -> None:
     """A person's decision on a link between two terms: accept or reject a proposed link, change its relation, or
     add a link of their own (decision "add", with a relation). "undo" (0.8) takes the person's latest decision on
     the pair back (the link and its concept return as they were). Concepts are regrouped at once."""
@@ -1468,11 +1476,21 @@ def set_link(ws: Workspace, a: str, b: str, decision: str, relation: str | None 
             cx.execute("INSERT OR REPLACE INTO concept_links VALUES (?,?,?,?,?,?,?,?,?)",
                        (a, b, relation or "same", "person", 1.0, None, None, None, now()))
         else:
-            if not cx.execute("SELECT 1 FROM concept_links WHERE a=? AND b=?", (a, b)).fetchone():
+            rows = {r[0]: r[1] for r in cx.execute("SELECT source, relation FROM concept_links WHERE a=? AND b=?",
+                                                     (a, b))}
+            if not rows:
                 raise KeyError(f"{a}|{b}")
+            # (hunt phase 1.5: the relation of a link found from the sentences that the person accepted, as `proposed`
+            # "pattern:<relation>": a rebuild of the glossary may propose the pair anew with another relation, and the
+            # acceptance, kept by the pair, then confirmed one the person never saw. `source`: the row the card shows;
+            # without it (an older page) the pattern row only when it is the pair's only row, since the card then shows
+            # it. No other row is proposed anew, so nothing is stored for one: wave 4 review)
+            seen = None
+            if decision == "accept" and "pattern" in rows and (source == "pattern" or (source is None and len(rows) == 1)):
+                seen = f"pattern:{rows['pattern']}"
             cx.execute("INSERT INTO reviews(item_kind, item_id, field, proposed, decision, corrected, reviewer, note, "
-                       "decided_at, person_id) VALUES ('concept_link', ?, 'relation', NULL, ?, ?, ?, ?, ?, ?)",
-                       (f"{a}|{b}", decision, relation, reviewer, note, now(), me()))
+                       "decided_at, person_id) VALUES ('concept_link', ?, 'relation', ?, ?, ?, ?, ?, ?, ?)",
+                       (f"{a}|{b}", seen, decision, relation, reviewer, note, now(), me()))
     rebuild_concepts(ws)
 
 
@@ -1734,14 +1752,19 @@ def propose_wordings(ws: Workspace, term: str, backend, model: str) -> list[dict
                                                             provider=access.provider_of(backend))))
     if not ids:
         raise ValueError("This concept occurs only in documents this model may not read, so its wordings are not sent.")
-    labels = [r[0] for r in ws.query(f"SELECT label FROM terms WHERE term_id IN ({','.join('?' * len(ids))}) "
-                                     "ORDER BY tf DESC", ids)]
+    rows = ws.query(f"SELECT term_id, label FROM terms WHERE term_id IN ({','.join('?' * len(ids))}) ORDER BY tf DESC",
+                    ids)[:6]
+    labels = [r[1] for r in rows]
     n = int(ws.scalar("SELECT COUNT(*) FROM tasks WHERE kind='expand' AND task_id LIKE ?", (f"expand:concept:{term}:%",))
             or 0) + 1
     tid = f"expand:concept:{term}:{n}"
     with ws.connect() as cx:
-        tasks._insert_task(cx, tid, "expand", model, {"concept": term, "claim": f"the concept: {labels[0]}"
-                                                       + (f" (also written: {', '.join(labels[1:6])})" if labels[1:] else "")})
+        # hunt phase 1 (QUEUE-2): the wordings sent are named for the guard (`access.words_floor`), so a document
+        # made stricter while the task waits for Claude Code takes them out of its reach (the payload names no
+        # passage, so before this the task stayed `cloud` whatever happened to its documents)
+        claim = f"the concept: {labels[0]}" + (f" (also written: {', '.join(labels[1:6])})" if labels[1:] else "")
+        tasks._insert_task(cx, tid, "expand", model, {"concept": term, "claim": claim,
+                                                       access.WORDS_KEY: {"terms": [r[0] for r in rows]}})
         # worked out again as it leaves, as in the runs of several tasks (an add-on's floor may hold it back)
         if access.recheck(cx, tid, provider=access.provider_of(backend)) not in access.backend_levels(backend):
             raise ValueError("This concept's wordings may not be sent to this model.")

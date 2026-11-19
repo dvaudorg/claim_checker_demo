@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 from _fakedom import NODE
-from test_reader5_reading_view import _src
+from test_reader5_reading_view import _news, _src
 from test_reader5_tables_figures import _whole, docx_with_image, html_with_image
 
 from enlens_claims import ingest, pdfmake, reader
@@ -182,7 +182,7 @@ def _files(folder: Path) -> dict[str, Path]:
 # frozen
 # ------------------------------------------------------------------------------------------------------------------
 def test_reader_6_is_the_current_reader():
-    assert reader.READER == 6 and ingest.READER == 6
+    assert reader.READER == 7 and ingest.READER == 7   # (reader 7 is current; reader 6 stays as it was)
 
 
 @needs_pdfminer
@@ -292,9 +292,11 @@ def test_reader_6_is_offered_to_pdfs_of_reader_5(tmp_path):
     offered = {(d["reader"], d["kind"]) for d, yes in zip(docs, json.loads(r.stdout)) if yes}
     every = {(r, k) for r in (1, 2, 3) for k in ("pdf", "html", "text", "docx")}
     assert offered == every | {(4, "pdf"), (4, "html"), (4, "docx"), (5, "pdf")}
-    assert re.search(r"^export const reader = \{ latest: 6 \};", _src("doc-shared.js"), re.M)
+    assert re.search(r"^export const reader = \{ latest: 7 \};", _src("doc-shared.js"), re.M)   # reader 7
     src = _src("sources.js", "doc-reading.js", "doc-shared.js")
-    assert "const READER_6_NEWS = " in src and "`Read by the reader of ENLENS 0.18.1 to 0.19.0rc1. ${READER_6_NEWS}`" in src
+    # hunt phase 1 (PAGESB-8): the news comes from readerNews (it was pinned here by the chain's source text)
+    assert "const READER_6_NEWS = " in src and "0.18.1 to 0.19.0rc1" in src
+    assert _news(tmp_path, [[[{"reader": 5, "kind": "pdf"}], 6]]) == ["6"]
 
 
 # ------------------------------------------------------------------------------------------------------------------
@@ -418,3 +420,26 @@ def test_the_cue_pass_without_sizes(tmp_path, monkeypatch):
     hits = {t: k for t, k in kinds.items() if t.startswith(("E-mail address", "Received 16 May", "Available online"))}
     assert hits and set(hits.values()) == {"front"}
     assert all(k == "body" for t, k in kinds.items() if t.startswith("Received wisdom"))
+
+
+@needs_pdfminer
+def test_reader_6_reads_a_pdf_with_an_older_pdfminer_that_lacks_its_rules(tmp_path, monkeypatch):
+    """18 November 2026 (hunt P2-2): `pdfminer.utils.apply_matrix_rect` exists only from pdfminer 20250506. Without it
+    reader 6's aggregator was `object`: `_pdfminer_pages` raised TypeError for every PDF (the caller then fell back to
+    pypdf without a word) instead of reading with pdfminer's stock rules."""
+    import importlib
+
+    import pdfminer.utils
+
+    from enlens_claims import reader6
+    from helpers import make_pdf
+
+    path = make_pdf(tmp_path / "plain.pdf", [BODY * 2])
+    monkeypatch.delattr(pdfminer.utils, "apply_matrix_rect", raising=False)
+    importlib.reload(reader6)
+    try:
+        lines, dims = reader._pdfminer_pages(path, version=6)
+    finally:
+        monkeypatch.undo()
+        importlib.reload(reader6)
+    assert dims and any(page for page in lines)

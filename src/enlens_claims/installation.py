@@ -168,6 +168,8 @@ def post_install(by: str | None = "script", icon: bool = True, open_app: bool = 
         lines.append("Start it from its icon: " + "; ".join(out["icons"]))
     if out["plugin"].get("repaired"):
         lines.append("The Claude Code plugin now uses this installation.")
+    elif out["plugin"].get("refused"):  # hunt phase 1 (INSTALL-5): said, not claimed as done
+        lines.append(claude_setup.refused_words(out["plugin"]))
     if out["running"] and out["running"].get("version") not in (None, __version__):
         lines.append(f"ENLENS {out['running'].get('version')} is still running: choose Quit ENLENS in it, then open "
                      "ENLENS again from its icon.")

@@ -8,12 +8,25 @@ from __future__ import annotations
 import io
 import json
 import re
+import threading
 import time
 from pathlib import Path
 
-from .api_common import ApiError, XLSX, _csv, _disposition, _filename, _float, _int, _str, _usable_embedder
+from .api_common import ApiError, XLSX, _body_text, _csv, _disposition, _filename, _float, _int, _str, _usable_embedder
 from .. import claimcheck, home, sync, taskqueue
 from ..llm import BackendError
+
+
+_READING_LOCKS: dict[str, threading.Lock] = {}
+_READING_LOCKS_GUARD = threading.Lock()
+
+
+def _reading_lock(project: str) -> threading.Lock:
+    """Hunt phase 1 (after review): one lock per project for "Read the new documents" and "read unread": the look for
+    a job already at it and the start are one step. It holds a search for unread documents, so it is the project's
+    own: the app's one ONE_START held every other project's presses (a new theme, the new reader) behind it."""
+    with _READING_LOCKS_GUARD:
+        return _READING_LOCKS.setdefault(project, threading.Lock())
 
 
 class ChecksApi:
@@ -108,9 +121,14 @@ class ChecksApi:
         off = not s.get("routing", True) or s.get("backend") == "baseline"
         res["stronger_model"] = None if off else router.step_up("check")
         # 0.14.3: why there is none, for the page to say it right: "model_per_task_off" (the setting is off, or demo
-        # mode), "top_model" (Claude already runs it on the strongest model), "one_local_model", or "none"
+        # mode), "top_model" (Claude already runs it on the strongest model), "one_local_model", or "none"; hunt
+        # phase 1: "strongest_model" when checks run on the strongest model there is (Fable, chosen in Settings or
+        # as the auditor), where turning on Fable would change nothing
+        first = router.first("check") if router.route in routing.AUDITOR_ROUTES else None
         res["stronger_reason"] = None if res["stronger_model"] else (
-            "model_per_task_off" if off else "top_model" if router.route in routing.AUDITOR_ROUTES
+            "model_per_task_off" if off
+            else "strongest_model" if routing.rank(first) == max(routing.RANK.values())
+            else "top_model" if router.route in routing.AUDITOR_ROUTES
             else "one_local_model" if router.route == "local" else "none")
         res["queue_command"] = f"/enlens-run {taskqueue._quote_name(name)}"
         # 0.14: a sync-clash copy says whose version it is; the original lists the colleagues' versions of it
@@ -153,7 +171,9 @@ class ChecksApi:
             body, ctype = json.dumps(res, indent=2, ensure_ascii=False).encode(), "application/json; charset=utf-8"
         else:
             body, ctype = _csv(claimcheck.hypothesis_rows(res)), "text/csv; charset=utf-8"
-        self._send(200, body, ctype, {"Content-Disposition": f'attachment; filename="hypothesis_{hyp_id}.{fmt}"'})
+        # (hunt phase 1.5: through `_disposition`, as every other download: an id with a quote, from a colleague's
+        # database, cut the name off)
+        self._send(200, body, ctype, {"Content-Disposition": _disposition(f"hypothesis_{hyp_id}.{fmt}")})
 
     def post_more(self, name, claim_id, q):
         return {"job": self.app.start_more(name, claim_id, self._body()).view()}
@@ -312,17 +332,20 @@ class ChecksApi:
 
         body = self._body()
         token = str(body.get("token") or "")
-        path = _MOVES._get(token)
-        if path is None:
-            raise ApiError(410, "The file is no longer here: choose it again.")
+        mode, pname = _body_text(body, "mode") or "", (_body_text(body, "name") or "").strip() or None
         servers = body.get("servers") or []
         if not isinstance(servers, list) or not all(isinstance(x, str) for x in servers):
             raise ApiError(400, "servers must be a list of setting names.")
+        # hunt phase 1.5: one answer at a time per move zip: two at once (two tabs, a script) brought every project in
+        # twice. The zip is kept until it is brought in, so a refused answer can be given again
+        path = _MOVES._take(token)
         try:
-            moved = bundle.import_all(path, str(body.get("mode") or ""), settings=bool(body.get("settings")),
-                                      servers=servers, name=(str(body.get("name") or "").strip() or None))
-        except ValueError as e:
-            raise ApiError(400, str(e)) from e
+            try:
+                moved = bundle.import_all(path, mode, settings=bool(body.get("settings")), servers=servers, name=pname)
+            except ValueError as e:
+                raise ApiError(400, str(e)) from e
+        finally:
+            _MOVES._give_back(token)
         _MOVES._drop(token)
         return {"moved": moved, "project": self.app.project_summary(moved["current"]) if moved["current"] else None}
 
@@ -331,8 +354,8 @@ class ChecksApi:
         from .. import people
 
         body = self._body()
-        try:
-            pid = home.new_identity(str(body.get("name") or ""))
+        try:   # (hunt phase 1.5: a list or a number became a person named "['Anna']", for good)
+            pid = home.new_identity(_body_text(body, "name") or "")
         except ValueError as e:
             raise ApiError(400, str(e)) from e
         return {"person": {"id": pid, "name": people.my_name()}}
@@ -356,7 +379,31 @@ class ChecksApi:
         ws = self.app.ws(name)
         if not ws.scalar("SELECT 1 FROM hypotheses WHERE hyp_id=?", (hyp_id,)):
             raise ApiError(404, "No such hypothesis.")
-        return {"job": self.app.start_read_new(name, [hyp_id]).view()}
+        return {"job": self._read_new_once(name, [hyp_id]).view()}
+
+    def _read_new_once(self, name, ids):
+        """Hunt phase 1: the documents added since the checks are read by one job at a time, as "read unread" does
+        (`post_read_unread`). By Claude Code's queue (or while the local model waits for its Start) a job does not
+        hold the model's turn, so a second press started a second job beside the first: it found the first one's round
+        waiting and ended in error ("Grade the passages already shown first (submit_grades)", the connector's words),
+        and two presses at the same moment could both make a round of the same documents. A press for hypotheses a
+        job reads already gives that job back; one that covers others too waits until it has finished. The look and
+        the start are one step (`_reading_lock`: the project's own, so no other project waits for it)."""
+        with _reading_lock(name):
+            with self.app.jobs.lock:
+                live = [j for j in self.app.jobs.jobs.values()
+                        if j.project == name and j.state in ("queued", "running")]
+            for j in live:
+                if j.kind == "read-new" and set(ids) <= set(getattr(j, "hyp_ids", ())):
+                    return j
+            if any(j.kind == "read-new" and set(ids) & set(getattr(j, "hyp_ids", ())) for j in live):
+                raise ApiError(409, "The new documents are being read for some of these hypotheses already: wait "
+                                    "until that has finished, then press again for the rest.")
+            if any(j.kind == "read-unread" and j.scope in ids for j in live):
+                raise ApiError(409, "Wait until the documents not read yet have been read, then read the new ones.")
+            job = self.app.start_read_new(name, ids)
+            job.hyp_ids = tuple(ids)
+            return job
 
     def get_unread(self, name, hyp_id, q):
         """Roadmap N5: the documents this check never read, those with its search words apart (no model reads)."""
@@ -372,19 +419,21 @@ class ChecksApi:
         ws = self.app.ws(name)
         if not ws.scalar("SELECT 1 FROM hypotheses WHERE hyp_id=?", (hyp_id,)):
             raise ApiError(404, "No such hypothesis.")
-        with self.app.jobs.lock:   # a second press, or a second tab: the same job, never a second round beside it
-            live = [j for j in self.app.jobs.jobs.values() if j.project == name and j.state in ("queued", "running")]
-        same = [j for j in live if j.kind == "read-unread" and j.scope == hyp_id]
-        if same:
-            return {"job": same[0].view()}
-        if any(j.kind == "read-new" for j in live):
-            raise ApiError(409, "Wait until the new documents have been read, then read these.")
-        wait = claimcheck.further_round_waits(ws, hyp_id)
-        if wait:
-            raise ApiError(409, wait)
-        if not claimcheck.unread_documents(ws, hyp_id)["matching_n"]:
-            raise ApiError(400, "No document with this check's search words is left unread.")
-        return {"job": self.app.start_read_unread(name, hyp_id).view()}
+        with _reading_lock(name):   # hunt phase 1: the look and the start as one step (two presses at one moment)
+            with self.app.jobs.lock:   # a second press, or a second tab: the same job, never a second round beside it
+                live = [j for j in self.app.jobs.jobs.values()
+                        if j.project == name and j.state in ("queued", "running")]
+            same = [j for j in live if j.kind == "read-unread" and j.scope == hyp_id]
+            if same:
+                return {"job": same[0].view()}
+            if any(j.kind == "read-new" for j in live):
+                raise ApiError(409, "Wait until the new documents have been read, then read these.")
+            wait = claimcheck.further_round_waits(ws, hyp_id)
+            if wait:
+                raise ApiError(409, wait)
+            if not claimcheck.unread_documents(ws, hyp_id)["matching_n"]:
+                raise ApiError(400, "No document with this check's search words is left unread.")
+            return {"job": self.app.start_read_unread(name, hyp_id).view()}
 
     def post_read_new(self, name, q):
         ws = self.app.ws(name)
@@ -393,7 +442,7 @@ class ChecksApi:
             [h["hyp_id"] for h in claimcheck.history(ws) if h["docs_added_since"]]
         if not ids:
             raise ApiError(400, "No hypothesis has documents added since its check.")
-        return {"job": self.app.start_read_new(name, ids).view()}
+        return {"job": self._read_new_once(name, ids).view()}
 
     def post_second_opinion(self, name, q):
         return {"job": self.app.start_second_opinion(name, self._body()).view()}
@@ -409,6 +458,14 @@ class ChecksApi:
         body = self._body()
         verdict = body.get("verdict") or None
         extra = {"quote": body.get("quote")} if "quote" in body else {}
+        if "quote" in body and body.get("quote_start") is not None:
+            # hunt phase 1.5: where the sentence was selected, in the excerpt's text (code points, as the result's
+            # `quote_start`), so words that stand twice are kept where they were selected
+            qs = body["quote_start"]
+            if not isinstance(qs, int) or isinstance(qs, bool) or qs < 0:
+                raise ApiError(400, "quote_start must be a whole number from 0: where the sentence starts in the "
+                                    "excerpt.")
+            extra["quote_start"] = qs
         if body.get("threshold") is not None:  # 0.18.1: the strictness the page shows, for the sentence of what moved
             try:
                 extra["threshold"] = min(1.0, max(0.0, float(body["threshold"])))
@@ -603,6 +660,7 @@ class _Uploads:
 
         self._lock = threading.Lock()
         self._kept: dict[str, tuple[float, Path]] = {}
+        self._taking: set[str] = set()   # tokens an answer is bringing in now (`_take`)
 
     def _keep(self, path: Path) -> str:
         import secrets
@@ -617,6 +675,22 @@ class _Uploads:
         with self._lock:
             self._kept[token] = (time.time(), dest)
         return token
+
+    def _take(self, token: str) -> Path:
+        """Hunt phase 1.5: the zip of `token`, taken for one answer (`_give_back` after it): 410 when it is gone, 409
+        while another answer brings it in."""
+        path = self._get(token)
+        if path is None:
+            raise ApiError(410, "The file is no longer here: choose it again.")
+        with self._lock:
+            if token in self._taking:
+                raise ApiError(409, "This file is being brought in already: wait for it.")
+            self._taking.add(token)
+        return path
+
+    def _give_back(self, token: str) -> None:
+        with self._lock:
+            self._taking.discard(token)
 
     def _get(self, token: str) -> Path | None:
         self._expire()

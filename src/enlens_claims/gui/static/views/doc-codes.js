@@ -40,7 +40,38 @@ export function codesPanel(ctx) {
     refreshMarks();
   }
 
+  // hunt phase 1 (the redraw sweep): the codes are read again when the AI's labelling or the keyword pass ends, and the
+  // list is drawn anew; a label's open *Change how it applies* closed with the note typed in it and the choice made,
+  // and the field lost the keyboard's focus. What is open and typed there is carried over, by the label's id.
+  function changesInUse() {
+    const out = new Map();
+    for (const li of listBox.querySelectorAll("[data-lid]")) {
+      const f = li.querySelector(".judge-diff");
+      if (!f || !f.open) continue;
+      const note = li.querySelector(".dv-decide-row input");
+      out.set(li.dataset.lid, { note: note ? note.value : null, radios: [...li.querySelectorAll(".judge-diff input[type=radio]")].filter((x) => x.checked).map((x) => [x.name, x.value]),
+        caret: note && document.activeElement === note ? [note.selectionStart, note.selectionEnd] : null });
+    }
+    return out;
+  }
+  function changesBack(was) {
+    for (const [lid, w] of was) {
+      const li = [...listBox.querySelectorAll("[data-lid]")].find((x) => x.dataset.lid === lid);
+      const f = li && li.querySelector(".judge-diff");
+      if (!f) continue;
+      f.open = true;
+      for (const [name, value] of w.radios) for (const x of f.querySelectorAll("input[type=radio]")) if (x.name === name) x.checked = x.value === value;
+      const note = li.querySelector(".dv-decide-row input");
+      if (note && w.note !== null) note.value = w.note;
+      if (note && w.caret) { note.focus({ preventScroll: true }); if (w.caret[0] != null) note.setSelectionRange(w.caret[0], w.caret[1]); }
+    }
+  }
   function draw() {
+    const was = changesInUse();
+    drawList();
+    changesBack(was);
+  }
+  function drawList() {
     const fwName = prof.framework_title || ctx.framework;
     const label = prof.code_label || "code";
     const sel = select({ sm: true, id: "dv-fw" }, (fws || [{ name: ctx.framework, title: fwName }]).map((f) => h("option", { value: f.name, selected: f.name === ctx.framework }, f.title || f.name)));
@@ -154,6 +185,8 @@ export function codesPanel(ctx) {
     const put = async (body, msg) => {
       try {
         await api("PUT", `${base}/labels/${P(it.label_id)}`, body);
+        const f = row.querySelector(".judge-diff");
+        if (f) f.open = false;   // saved: it is not carried open through the drawing that follows (changesInUse)
         toast(msg, "ok", { small: true, ttl: 8000, group: "label", button: { text: "Undo", onClick: async () => {
           try { await api("PUT", `${base}/labels/${P(it.label_id)}`, it.decision ? { decision: it.decision === "change" ? "change" : it.decision, relevance: it.decision === "change" ? it.relevance : undefined, direction: it.decision === "change" ? it.direction : undefined } : { decision: "clear" }); toast("Undone.", "ok", { small: true, ttl: 2500, group: "label" }); await load(); } catch (e) { showError(e); }
         } } });
@@ -246,12 +279,19 @@ export function codesPanel(ctx) {
   }
 
   // a label of one's own: for a passage (from a labelled passage) or for selected text
-  let codeList = null;
+  const codeLists = new Map();   // codebook -> Promise of its codes: the form offers those of the codebook now chosen
   async function codesOf() {
-    if (!codeList) codeList = api("GET", `${base}/frameworks/${P(ctx.framework)}`).then((r) => ((r.framework && r.framework.items) || [])).catch(() => []);
-    return codeList;
+    const fw = ctx.framework;
+    if (!codeLists.has(fw)) {
+      // a failed fetch gives no codes now, but is not remembered: the next form asks again
+      const p = api("GET", `${base}/frameworks/${P(fw)}`).then((r) => ((r.framework && r.framework.items) || [])).catch(() => { if (codeLists.get(fw) === p) codeLists.delete(fw); return []; });
+      codeLists.set(fw, p);
+    }
+    return codeLists.get(fw);
   }
-  async function addForm({ passage_id, quote, where }) {
+  // `start`: where in the document the selected words begin (hunt phase 1, PAGESB-4): words that stand twice in the
+  // passage are labelled where they were selected, not on their first place
+  async function addForm({ passage_id, quote, where, start }) {
     const label = (prof && prof.code_label) || "code";
     const items = await codesOf();
     const dl = h("datalist", { id: "dv-code-list" }, items.map((x) => h("option", { value: x.code }, `${x.code} · ${shortTitle(x.description, 90)}`)));
@@ -268,7 +308,7 @@ export function codesPanel(ctx) {
       if (!code.value.trim()) { code.focus(); return; }
       save.disabled = true;
       try {
-        await api("POST", `${base}/labels`, { framework: ctx.framework, passage_id, code: code.value.trim(), quote: quote || undefined, relevance: rel.value, direction: dir ? dir.value : "not_stated", note: note.value.trim() || undefined });
+        await api("POST", `${base}/labels`, { framework: ctx.framework, passage_id, code: code.value.trim(), quote: quote || undefined, start: quote && start != null ? start : undefined, relevance: rel.value, direction: dir ? dir.value : "not_stated", note: note.value.trim() || undefined });
         clear(addBox);
         toast("Your label was added. It always counts.", "ok", { small: true });
         await load();
@@ -292,7 +332,7 @@ export function codesPanel(ctx) {
     catch (e) { showError(e); return; }
     const line = (r.lines || []).filter((l) => Math.abs(l.start - s.start) <= 30).sort((a, b) => Math.abs(a.start - s.start) - Math.abs(b.start - s.start))[0];
     if (!line) { toast("The selection could not be matched to one passage: select words within one paragraph, not across a heading or page break.", "warn"); return; }
-    addForm({ passage_id: line.passage_id, quote: s.text, where: line.location });
+    addForm({ passage_id: line.passage_id, quote: s.text, where: line.location, start: s.start });
   }
 
   api("GET", `${base}/frameworks`).then((r) => { fws = r.frameworks || []; if (prof) draw(); }).catch(() => {});

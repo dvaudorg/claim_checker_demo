@@ -11,6 +11,8 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import time
 from pathlib import Path
 
@@ -207,7 +209,10 @@ def test_antigravity_signs_in_in_a_window(clis, monkeypatch):
 
     monkeypatch.setattr(clis, "_open_window", window)
     r = clis.open_sign_in("antigravity")
-    assert r["opened"] and r["window"] == "Terminal (stand-in)" and r["command"].rstrip('"').endswith("agy")   # Windows: in a child PowerShell
+    # Windows: the commands encoded for a child PowerShell (hunt phase 1.5: no $env: for the outer shell to expand)
+    assert r["opened"] and r["window"] == "Terminal (stand-in)" and (
+        r["command"].startswith("powershell -NoProfile -EncodedCommand ") if os.name == "nt"
+        else r["command"].endswith("agy"))
     assert "antigravity-sign-in" in opened[0] and "Google account" in opened[0]
     assert clis.status("antigravity", refresh=True)["signed_in"] is True
 
@@ -382,7 +387,13 @@ def test_a_sign_in_kept_in_the_home_folder_is_asked_for_enlens_own(clis, monkeyp
 
     monkeypatch.setattr(clis, "_open_window", window)
     r = clis.open_sign_in("antigravity")
-    assert str(clis.agy_home()) in scripts[0] and str(clis.agy_home()) in r["command"]
+    # (on Windows the line's commands are encoded: hunt phase 1.5)
+    line = r["command"]
+    if os.name == "nt":
+        import base64
+
+        line = base64.b64decode(line.split()[-1]).decode("utf-16-le")
+    assert str(clis.agy_home()) in scripts[0] and str(clis.agy_home()) in line
     assert clis.status("antigravity", refresh=True)["signed_in"] is True
 
 
@@ -421,7 +432,8 @@ def test_start_codex_answers_the_queue_on_openais_models(clis, corpus):
     assert "--ignore-user-config" in argv and "--ephemeral" in argv and "--json" in argv
     assert 'mcp_servers.enlens.enabled_tools=["next_tasks", "submit_answers", "release"]' in argv
     assert "features.shell_tool=false" in argv and 'approval_policy="never"' in argv
-    assert argv[-1].startswith(clis.MARKER) and 'taken_by="enlens-labeller in Codex"' in argv[-1]
+    # (hunt phase 1: each helper process takes its batches under a name of its own, "… in Codex #1")
+    assert argv[-1].startswith(clis.MARKER) and re.search(r'taken_by="enlens-labeller in Codex #\d+"', argv[-1])
     assert Path(fake["execs"][0]["cwd"]).name.startswith("codex-Q")
     assert not list(clis.runs_folder().glob("codex-*.run.json"))   # the record goes with the run
 

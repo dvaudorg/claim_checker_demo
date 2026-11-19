@@ -44,7 +44,7 @@ Antigravity](other-agents.md)). A model on this computer needs no terminal:
    beside it, each with its download size, how quick it will be here and what it is good for. *Download …* gets the
    one you chose, with *Also …* for search by meaning (a small one for English, a larger one for many languages), a
    progress bar and *Stop* (Ollama keeps what it has and goes on from there). A model that does not fit is not offered.
-3. The downloaded model becomes the AI and is tested at once.
+3. The downloaded model becomes the AI. *Save and test* tries it; nothing loads until you press it.
 
 Ollama fetches the model from ollama.com; none of your documents are sent. When whoever installed the app already
 chose a local model that answers, this step is skipped. More in [A model on your own computer](local-models.md).
@@ -61,18 +61,19 @@ Choose files or a folder. ENLENS reads:
 | Kind | Notes |
 | --- | --- |
 | PDF | Text, columns and tables are read from the layout ([How documents are read](how-documents-are-read.md)). Scanned pages need [Tesseract](install.md#scanned-pdfs-optional). |
-| Word (.docx) | Keeps its paragraphs, headings and the pages Word marked. Older .doc files are not read: save them as .docx or PDF. |
-| Web pages (HTML), text (.txt), Markdown (.md) | Files that are not UTF-8 (a Hungarian text saved by Notepad, an old Latin-1 page) are read as they were written. |
-| Zip | Opened, and the files inside are added. |
+| Word (.docx) | Keeps its paragraphs, headings and the pages Word marked. Older .doc files are not read: save them as .docx or PDF. Such files, and slides or rich text (.pptx, .rtf, .odt), are named under the files that could not be read. |
+| Web pages (HTML), text (.txt), Markdown (.md) | Files that are not UTF-8 (a Hungarian text saved by Notepad, an old Latin-1 page, a Polish text saved as ISO-8859-2) are read as they were written. |
+| Zip | Opened, and the files inside are added. A zip that cannot be opened (cut off in a download) is named under the files that could not be read. |
 
 Then ENLENS asks **who may read these documents with AI**: Claude, only a local AI, or no AI
 ([Privacy](privacy.md#who-may-read-each-document-with-ai)).
 
 The list shows the title read from each file and warns about unreadable text and very short files (often a landing
 page saved instead of the report). A file that cannot be read (password-protected, damaged) is listed with the reason,
-and the others are added. *Stop* also stops the text recognition of a long scanned PDF. A large batch is read up to
-three files at a time, on the computer's spare processors, and added in the order of the files; the result is the same
-as reading them one by one. The list draws its first rows at once and the rest as you scroll; *Select every document*
+and the others are added. *Stop* also stops the text recognition of a long scanned PDF, or a file whose reading
+does not end (each file is read in a process of its own, which *Stop* ends): the list then names that file and how many were not added, so you can add them again and leave it
+out. A large batch is read up to three files at a time, on the computer's spare processors, and added in the order
+of the files; the result is the same as reading them one by one. The list draws its first rows at once and the rest as you scroll; *Select every document*
 selects all of them.
 
 *Open an existing ENLENS project folder (advanced)* links a project made with the command line, without copying it.

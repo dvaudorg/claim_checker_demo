@@ -21,7 +21,7 @@ gui = []
 fast = ["numpy>=1.24"]                 # faster semantic search on large projects (pure Python otherwise)
 anthropic = ["anthropic>=0.40"]        # the Claude API (cloud, opt-in)
 connector = ["mcp>=2,<3"]
-pdfminer = ["pdfminer.six>=20231228"]
+pdfminer = ["pdfminer.six>=20250506"]
 ocr = ["pypdfium2>=4.20", "pillow>=10"]  # read scanned PDF pages; also needs the program tesseract (see the manual)
 ci = ["pyyaml>=6", "ruff>=0.6"]          # 0.18.1 (J1.7): what only CI's every-extra job adds (the shape of the workflows, the lint); in uv.lock
 dev = ["pytest>=8", "pytest-xdist>=3.5", "pytest-timeout>=2.3", "pytest-testmon>=2.1"]  # 2026-11-12: tests side by side (-n), a time limit per test; 2026-11-12: only the tests a change affects (--testmon)

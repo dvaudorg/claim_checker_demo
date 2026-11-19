@@ -38,7 +38,8 @@ python -m pytest -q -rs -n 4 --durations=15                      # the whole sui
 **CI is where the whole suite runs** (2026-11-12). `.github/workflows/tests.yml` runs it on every push to `main` and
 every pull request, on Linux (Python 3.10, and 3.13 with every optional extra: the Claude API, OCR with Tesseract,
 PyYAML), macOS and Windows (0.15; required since 0.15.7), with a quick `ruff` check for syntax errors and undefined
-names. Each machine runs the tests side by side (`-n auto`), each test with a 10-minute limit (`--timeout=600`: a test
+names, and `tools/lint_js.py` for the page's JavaScript (eslint, two rules: a name defined nowhere, an async Promise
+executor; `python tools/lint_js.py` runs it here, with Node and the network). Each machine runs the tests side by side (`-n auto`), each test with a 10-minute limit (`--timeout=600`: a test
 that hangs fails with its stack), and Windows, the slowest, is split over four machines (`ENLENS_TEST_SHARD=k/4`, a
 split made in `tests/conftest.py`), so a run takes about 8 minutes. The 25 slowest tests of each machine are listed at
 the end of its log: read them before guessing why a run got slower. Side by side, the heaviest tests take several
@@ -81,8 +82,8 @@ behaviour and breaks on a refactor.
 
 Tests never touch a real Claude Code, uv or the network: `tests/conftest.py` points `ENLENS_CLAUDE` nowhere, gives
 every test its own `ENLENS_HOME` (and keeps secrets in files there, `ENLENS_KEYCHAIN=file`, never the computer's
-keychain), shows no notification on the screen (`ENLENS_NO_NOTIFY=1`, the dev server too) and reads added documents one at a time (`ENLENS_READ_WORKERS=1`, so a stand-in a test puts in this process
-is what reading sees; `tests/test_speed.py` reads at once on purpose); `tests/fake_claude_cli.py`,
+keychain), shows no notification on the screen (`ENLENS_NO_NOTIFY=1`, the dev server too) and reads added documents one at a time (`ENLENS_READ_WORKERS=1`) in this process (`ENLENS_READ_HERE=1`: the app reads every file of a job with *Stop*
+in a reading process), so a stand-in a test puts in this process is what reading sees; `tests/test_speed.py` reads at once on purpose); `tests/fake_claude_cli.py`,
 `tests/fake_claude_installer.py`, `tests/fake_servers.py` and `tests/fake_zotero.py` stand in for the real programs. A
 release's tests go in a new file `tests/test_<X>_<Y>_<Z>_<topic>.py`; older files keep their names.
 [docs/USER_TESTS.md](USER_TESTS.md) has the first-time user tests behind the app (0.5.1 to 0.7.0).
@@ -136,6 +137,7 @@ themes and at 390 px wide.
 | `reader3.py` | What reader 3 (0.15.1) adds, on the text alone: running heads and page numbers by repetition in lines without positions, text printed twice, paragraphs in hard-wrapped text, headings where a file marks none, a book's contents, front and end matter and index, ligatures broken by a space, words run together, and the report's warnings |
 | `reader4.py` | What reader 4 (0.17.2) adds: a text file with one paragraph per line read paragraph by paragraph (its Word changes, content controls and nested tables, are in `ingest._read_docx`) |
 | `reader6.py` | What reader 6 (0.19) adds, for PDFs only: a pdfminer device that honours a form's /BBox (hidden text of a draft page shown through a window is not read), a form of many words kept as one figure, publishing details after the text has begun set aside as front matter, a journal's name that begins the running head not taken for the title (reader 5's rules are in `reader5.py`); reader 6's two languages kept apart, in any kind of file, are `languages.py`'s |
+| `reader7.py` | What reader 7 adds, for text files, Word files and web pages only: in text whose every line is a paragraph a line that comes back is a running head only at a page break or where a sentence runs across it, a text file of short sentences one per line read paragraph by paragraph (its Word change, a text box read once as paragraphs of its own, is in `ingest._read_docx`; its ISO-8859-2 decoding in `ingest.decode_text`, with readers 1 to 6's text kept in `RawDoc.before_7`) |
 | `reread.py` | *Read with the new reader* (0.15): a document of a project read again by the new reader, its results moved by their quotes, all or nothing |
 | `measure.py`, `pdfmake.py` | `enlens measure` (0.15): how well each reader reads PDFs of known text (made by `pdfmake`, a small PDF writer), quotes that still find their place, timings, determinism; the validation report of each release |
 | `bundle.py` | A whole project as one zip (export and import); every project and the settings, to move to another computer (0.10) |
@@ -343,7 +345,10 @@ recorded and announced:
   `reader5.py` (0.18.1: ruled tables, tables over a page, figures), and 6 adds `reader6.py` (0.19, PDFs only: text a
   form crops away left out, publishing details in the first page's footer and a journal's name that begins the
   running head set aside, running heads beside a page number found; and, any kind of file, `languages.py`: no passage
-  holds both languages of a document in two). Check a change
+  holds both languages of a document in two), and 7 adds `reader7.py` (text files, Word files and web pages
+  only: an interview's repeated line, short sentences one per line, a Word text box once, ISO-8859-2, UTF-16 without
+  a byte-order mark; a file whose
+  text reader 7 reads otherwise keeps reader 6's in `RawDoc.before_7`). Check a change
   with `tools/reader_fingerprints.py` (a folder of files, before and after) and `tools/reader_fingerprints_pytest.py`
   (every document the tests read). A change
   that gives a document other text or passages raises it, and goes

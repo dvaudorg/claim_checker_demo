@@ -88,7 +88,7 @@ def test_the_real_list_pages_and_keeps_its_order(api, corpus):
     assert api("POST", "/api/projects", {"name": "Demo"})[0] == 200
     for f in sorted(corpus.iterdir()):
         assert api("POST", f"/api/projects/Demo/uploads?batch=b1&name={f.name}", raw=f.read_bytes())[0] == 200
-    st, r = api("POST", "/api/projects/Demo/ingest", {"batch": "b1"})
+    st, r = api("POST", "/api/projects/Demo/ingest", {"ai_access": "cloud", "batch": "b1"})
     assert api.wait(r["job"]["id"])["state"] == "done"
     text = "\n".join(f"Green hydrogen production can increase water stress in arid regions, case {i}." for i in range(5))
     st, r = api("POST", "/api/projects/Demo/batches", {"text": text, "k": 2})
@@ -281,7 +281,7 @@ def test_the_result_page_draws_long_card_lists_in_pages_and_still_finds_every_ca
 
 def test_a_judgement_changes_only_what_it_changes():
     js = _js("views/result.js")
-    put = _fn(js, "    const put = async (verdict, note, msg, opts = {}) => {", "\n    };\n")
+    put = _fn(js, "    const putOnce = async (verdict, note, msg, opts = {}) => {", "\n    };\n")   # hunt phase 1.5: put() guards putOnce()
     assert "await applyJudgement(saved)" in put and "await load()" not in put
     assert "await applyJudgement(undone)" in js
     apply_ = _fn(js, "  async function applyJudgement(saved) {")

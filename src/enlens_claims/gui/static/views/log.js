@@ -4,6 +4,7 @@
 import { featureEyebrow } from "../features.js";
 import { App, api, h, icon, clear, toast, showError, failedLoad, fmt, pageHead, P, confirmDialog, download, downloadLinks,
   debounce, session, dialog, button, searchField, select, textarea, menu, link, personMark, emptyState, latest, plural } from "../lib.js";
+import { leftAfterSending } from "../lib.js";
 import { compareVersion } from "./versions.js";
 import { shareTag, shareItem, unshareItem, sharingOf } from "./share.js";   // 0.18 (L1)
 
@@ -74,10 +75,12 @@ export async function renderLog(view) {
   view.appendChild(h("div", { class: "log-new log-new-row" }, ta, addBtn));
 
   async function add() {
+    if (addBtn.disabled) return;   // one entry at a time: a second Ctrl/⌘ + Enter waits for the first
     const text = ta.value.trim();
     if (!text) { ta.focus(); return; }
     addBtn.disabled = true;
-    try { await api("POST", base, { text }); ta.value = ""; toast("Added to the research log.", "ok"); sharesStale = true; await load(); }
+    // words typed while it was being added are the next entry's: only what was sent is cleared
+    try { await api("POST", base, { text }); ta.value = leftAfterSending(ta.value, text); toast("Added to the research log.", "ok"); sharesStale = true; await load(); }
     catch (e) { showError(e); } finally { addBtn.disabled = false; }
   }
 
@@ -177,17 +180,17 @@ export async function renderLog(view) {
   async function editWhy(e) {
     const ta2 = textarea({ rows: 3, maxlength: 2000 });
     ta2.value = e.why || "";
-    const r = await textDialog(`Why? ${e.text.length > 80 ? e.text.slice(0, 79) + "…" : e.text}`, ta2, "Save");
-    if (r === null) return;
-    try { await api("PUT", `${base}/${P(e.entry_id)}`, { why: ta2.value }); await load(); } catch (err) { showError(err); }
+    if (!(await textDialog(`Why? ${e.text.length > 80 ? e.text.slice(0, 79) + "…" : e.text}`, ta2, "Save",
+      () => api("PUT", `${base}/${P(e.entry_id)}`, { why: ta2.value })))) return;
+    await load();
   }
 
   async function editEntry(e) {
     const ta2 = textarea({ rows: 5, maxlength: 10000 });
     ta2.value = e.text;
-    const r = await textDialog("Edit your entry", ta2, "Save");
-    if (r === null) return;
-    try { await api("PUT", `${base}/${P(e.entry_id)}`, { text: ta2.value }); sharesStale = true; await load(); } catch (err) { showError(err); }
+    if (!(await textDialog("Edit your entry", ta2, "Save", () => api("PUT", `${base}/${P(e.entry_id)}`, { text: ta2.value })))) return;
+    sharesStale = true;
+    await load();
   }
 
   async function removeEntry(e) {
@@ -198,8 +201,19 @@ export async function renderLog(view) {
   await load();
 }
 
-async function textDialog(title, control, ok) {
-  const r = await dialog({ title, body: h("div", {}, control), actions: [{ text: "Cancel", value: null }, { text: ok, value: true, primary: true }],
+// `save()`: sent from the dialog's own button. hunt phase 1 (PAGESB-3): a refused or failed save keeps the dialog open
+// with the words typed and the reason under them (the entry was removed meanwhile, the app restarted); closing first and
+// saving after lost a rewritten entry. True once saved, null when cancelled.
+async function textDialog(title, control, ok, save) {
+  const err = h("p", { class: "field-error", role: "alert" });
+  const lock = { on: false };
+  const r = await dialog({ title, body: h("div", {}, control, err), lock, actions: [{ text: "Cancel", value: null }, { text: ok, value: true, primary: true,
+    async onClick() {
+      err.textContent = "";
+      lock.on = true;
+      try { await save(); } catch (e) { err.textContent = e.message; control.focus(); return false; } finally { lock.on = false; }
+      return true;
+    } }],
     onOpen: () => control.focus() });
   return r ? true : null;
 }

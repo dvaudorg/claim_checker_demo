@@ -310,11 +310,16 @@ def merge(cx: sqlite3.Connection, rows: list[dict], fix, sender: str | None = No
     sender (`sync_via`); it brings up to date only a row that came relayed itself; its author's own row takes its
     place whatever its time. Without `sender`: as before."""
     me = _me()
-    gone = {r[0] for r in cx.execute("SELECT key FROM sync_removed WHERE kind='log'")}
+    # who removed each entry noted as removed: only its author's removal keeps an entry out (as for notes,
+    # notes.merge; hunt phase 1, MERGE-6). A note of removal without a name (from before 0.14) still keeps it out
+    gone = {r[0]: r[1] for r in cx.execute("SELECT key, person_id FROM sync_removed WHERE kind='log'")}
+    from .sync.common import removed_also
+
+    also = removed_also(cx, "log")  # a second person's removal of an entry not held here (hunt phase 1.5, MERGE-6)
     cols = [r[1] for r in cx.execute("PRAGMA table_info(research_log)")]
     via_here: set[str] = set()
     if sender:
-        from .people import first_hand, note_via, relayed
+        from .people import first_hand as _first_hand, note_via, relayed
 
         via_here = relayed(cx, "log")
     from .sharing import _partner
@@ -322,7 +327,12 @@ def merge(cx: sqlite3.Connection, rows: list[dict], fix, sender: str | None = No
     pair = first_hand and bool(sender) and _partner(cx, me) == sender  # (your other account's own file)
     n = 0
     for r in rows:
-        if not isinstance(r.get("entry_id"), str) or not _ID.fullmatch(r["entry_id"]) or r["entry_id"] in gone:
+        if not isinstance(r.get("entry_id"), str) or not _ID.fullmatch(r["entry_id"]):
+            continue
+        if r["entry_id"] in gone and (gone[r["entry_id"]] is None or not r.get("person_id")
+                                      or gone[r["entry_id"]] == r.get("person_id")):
+            continue
+        if (r["entry_id"], r.get("person_id")) in also:
             continue
         r = fix(r)
         if r is None:
@@ -353,7 +363,7 @@ def merge(cx: sqlite3.Connection, rows: list[dict], fix, sender: str | None = No
             if third and r["entry_id"] not in via_here:
                 continue  # relayed: never in place of the author's own row
             if sender and not third and r["entry_id"] in via_here:
-                first_hand(cx, "log", [r["entry_id"]])
+                _first_hand(cx, "log", [r["entry_id"]])
             elif third:
                 note_via(cx, "log", r["entry_id"], r["person_id"], sender)
             sets = [c for c in use if c != "entry_id"]

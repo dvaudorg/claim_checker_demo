@@ -6,7 +6,9 @@ import json
 import os
 import sqlite3
 import threading
+import time
 import weakref
+from collections import deque
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -496,14 +498,17 @@ MIGRATIONS = [("documents", "declared_ref", "TEXT"), ("vca_refs", "alias_of", "T
 
 def _add_columns(cx: sqlite3.Connection, migrations) -> None:
     """Add the columns (table, column, type) a table does not have yet; each only once. Each table's columns are read
-    once (2026-11-13: once per column was most of the time a new project took)."""
+    once (2026-11-13: once per column was most of the time a new project took). Hunt phase 1 (INSTALL-8): names are
+    compared without case, as SQLite compares them: an add-on's "AI_Note" beside a table's "ai_note" was added again on
+    every opening and failed with "duplicate column name"."""
     known: dict[str, set] = {}
     for table, col, typ in migrations:
-        if table not in known:
-            known[table] = {r[1] for r in cx.execute(f"PRAGMA table_info({table})")}
-        if col not in known[table]:
+        key = table.lower()
+        if key not in known:
+            known[key] = {r[1].lower() for r in cx.execute(f"PRAGMA table_info({table})")}
+        if col.lower() not in known[key]:
             cx.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
-            known[table].add(col)
+            known[key].add(col.lower())
 
 
 def _migrate(cx: sqlite3.Connection) -> None:
@@ -534,6 +539,104 @@ def _ownership_key(cx: sqlite3.Connection) -> None:
     keep = [c for c in cols if c in ("seq", "owner", "by", "at", "kind", "after", "why", "sig")]
     cx.execute(f"INSERT OR IGNORE INTO ownership({', '.join(keep)}) SELECT {', '.join(keep)} FROM ownership_before_c1")
     cx.execute("DROP TABLE ownership_before_c1")
+
+
+# hunt phase 1 (FILES-1, FILES-2): a one-time step of a project from an earlier version that is still to do, noted in
+# `meta` before the schema change that is its sign is saved, and taken off with the step's own work (`Workspace._setup`)
+SHARES_UPGRADE_DUE = "shares_upgrade_due"          # sharing.upgrade: made before 0.18 (no table `shares`)
+AI_ACCESS_UPGRADE_DUE = "ai_access_upgrade_due"    # access.upgrade: made before 0.11 (no column documents.ai_access)
+META_TABLE = "CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)"  # as in SCHEMA
+
+
+# hunt phase 1.5 (MERGE15-1): a share mark dated ahead of this computer's clock (a forged "withdrawn" dated 2999,
+# taken before this version clamped marks as they come in) is clamped to now whenever a project opens: a mark is timed
+# when it is made, so one from the future can always be told, and its owner's own later marks then count over it. Not
+# a one-time step with a mark of being done: the step is its own test (no row later than now is left), costs one
+# UPDATE of a small table, and a mark of being done in `meta` travelled in the shared folder's bundles
+# (whose databases are copies of an empty one). `bundle.import_project` clamps a zip's marks itself.
+def _clamp_share_dates(cx: sqlite3.Connection) -> None:
+    """Every `shares.at` later than now becomes now."""
+    import datetime as _dt
+
+    at = _dt.datetime.now(_dt.timezone.utc).isoformat()
+    cx.execute("UPDATE shares SET at=? WHERE typeof(at)='text' AND at > ?", (at, at))
+
+
+# hunt phase 1.5: the oldest ENLENS that opens a project without harm, as the files copies exchange say theirs
+# (`sync_needs`, sync/formats.py). The database itself records no version, and an older ENLENS half-opened a project a
+# newer one had changed and wrote to it. From now on a project records in `meta` the level it needs: PROJECT_LEVEL of
+# the version that last raised it. A later version raises PROJECT_LEVEL only for a change an older one would read or
+# write wrongly (not for a table or a column it can leave aside, which `_setup` adds); an ENLENS that meets a level
+# above its own refuses the project in words and writes nothing. Versions released before this one check nothing.
+# Level 1: every project up to now.
+#
+# It is a property of THIS copy's database, never of what copies exchange: whether a file of the sync needs a newer
+# ENLENS is said by its own `sync_format`/`sync_needs` (sync/formats.py), which every route checks before it reads
+# anything. So the level stays out of every file that leaves (a zip of what you shared or of the whole project, a
+# shared-folder or storage-space bundle: `bundle.export_project` and `sharing.strip` take it out, and the scratch
+# databases bundles are made in never record it), and a merge never sets, raises or lowers it here. The copy a zip
+# becomes records its own level when it is first opened. A later version that raises PROJECT_LEVEL for a change that
+# also travels in a zip raises the zip's `sync_needs` with it, so an older copy refuses the file before it opens it.
+PROJECT_LEVEL = 1
+PROJECT_NEEDS_KEY = "project_needs"
+
+
+class ProjectTooNew(ValueError):
+    """The project was saved by a newer ENLENS, which changed it in a way this version would read or write wrongly."""
+
+
+def _needs(cx: sqlite3.Connection) -> int | None:
+    """The level a project records that it needs (None: it records none, as every project before this version);
+    raises ProjectTooNew for a value that is no whole number (no ENLENS writes one: it is not this version's)."""
+    try:
+        row = cx.execute("SELECT value FROM meta WHERE key=?", (PROJECT_NEEDS_KEY,)).fetchone()
+    except sqlite3.OperationalError:  # no table meta yet (a new database)
+        return None
+    if row is None:
+        return None
+    try:
+        level = json.loads(row[0])
+    except (TypeError, ValueError):
+        level = None
+    if not isinstance(level, int) or isinstance(level, bool):
+        raise ProjectTooNew(_too_new_words(None))
+    return level
+
+
+def _too_new_words(level: int | None) -> str:
+    return ("This project was saved by a newer ENLENS, which changed it in a way this version does not know"
+            + (f" (it needs level {level}; this version knows up to {PROJECT_LEVEL})" if level else "")
+            + ": opening it here could change it wrongly. Update ENLENS (Settings, Update), then open it again. "
+              "Nothing was changed.")
+
+
+def _refuse_newer(cx: sqlite3.Connection) -> None:
+    """Raise ProjectTooNew, in words, when the project needs a newer ENLENS than this one; reads only."""
+    level = _needs(cx)
+    if level is not None and level > PROJECT_LEVEL:
+        raise ProjectTooNew(_too_new_words(level))
+
+
+def refuse_newer(db_path: str | Path) -> None:
+    """`_refuse_newer` for a database not opened yet (a folder about to be linked and cleaned)."""
+    cx = sqlite3.connect(Path(db_path), timeout=60)
+    try:
+        _refuse_newer(cx)
+    except sqlite3.DatabaseError:
+        pass  # a file that is no database: what opens it next says so
+    finally:
+        cx.close()
+
+
+def _record_needs(cx: sqlite3.Connection) -> None:
+    """The level this version's projects need, written when it is not there or lower; never lowered."""
+    cx.execute("INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE "
+               "CAST(meta.value AS INTEGER) < CAST(excluded.value AS INTEGER)", (PROJECT_NEEDS_KEY, str(PROJECT_LEVEL)))
+
+
+def _due(cx: sqlite3.Connection, key: str) -> bool:
+    """Whether the one-time step noted as `key` is still to do."""
+    return cx.execute("SELECT 1 FROM meta WHERE key=?", (key,)).fetchone() is not None
 
 
 def _roles_upgrade(cx: sqlite3.Connection) -> None:
@@ -634,17 +737,39 @@ def _vacuum_after_drop(cx: sqlite3.Connection, folder: Path) -> bool:
     return True
 
 
-def _setup_addons(cx: sqlite3.Connection) -> None:
+def _setup_addons(cx: sqlite3.Connection, root: Path | None = None) -> None:
     """0.13.6: each add-on's tables, columns and indexes, after ENLENS's own and in the add-ons' order, the same
-    idempotent way (docs/EXTENDING.md)."""
-    from .addons import database
+    idempotent way (docs/EXTENDING.md). Hunt phase 1.5 (the owner's rule): an add-on whose SQL fails stopped every
+    project from opening, in SQLite's words that named no add-on. Each add-on now runs inside a savepoint: if any of
+    its statements fails, all of its tables, columns and indexes of this opening are taken back, the add-on is named
+    in `addons.errors()` (and the terminal), and the project opens without it. After the review of wave 1: for THIS
+    project (`root`): its routes, overview and kinds of task are left out here only (addons.left_out), and a later
+    opening that sets it up forgets the failure. SQL that manages the transaction itself (BEGIN, COMMIT, VACUUM, PRAGMA
+    journal_mode...) cannot run in the savepoint: such an add-on is refused, naming the statement."""
+    from .addons import database, failed, set_up, statements, transaction_statement
 
     for db in database():
-        if db["schema"]:
-            cx.executescript(db["schema"])
-        _add_columns(cx, db["migrations"])
-        if db["indexes"]:
-            cx.executescript(db["indexes"])
+        sql = statements(db["schema"]) + statements(db["indexes"])
+        own = next((w for w in map(transaction_statement, sql) if w), "")
+        if own:
+            failed(db["addon"], f"its SQL holds {own}, which an add-on's SCHEMA and INDEXES must not: ENLENS runs them "
+                                "inside a savepoint of its own (docs/EXTENDING.md). Remove that statement.", root)
+            continue
+        cx.execute("SAVEPOINT enlens_addon")
+        try:
+            for stmt in statements(db["schema"]):
+                cx.execute(stmt)
+            _add_columns(cx, db["migrations"])
+            for stmt in statements(db["indexes"]):
+                cx.execute(stmt)
+        except sqlite3.Error as e:
+            cx.execute("ROLLBACK TO enlens_addon")
+            cx.execute("RELEASE enlens_addon")
+            failed(db["addon"], f"its tables could not be set up: {type(e).__name__}: {e}", root)
+            continue
+        cx.execute("RELEASE enlens_addon")
+        if root is not None:
+            set_up(db["addon"], root)
 
 
 def fast_tests() -> bool:
@@ -745,6 +870,7 @@ def _copy_empty_database(dest: Path, page_size: int | None = None) -> None:
             tmp = Path(tempfile.mkdtemp(prefix="enlens-empty-"))
             try:
                 made = Workspace(tmp)
+                made._records_level = False  # (scratch copies are made from it: the level stays out of bundles)
                 if page_size:
                     cx = sqlite3.connect(made.db_path)
                     try:
@@ -782,8 +908,221 @@ def now() -> str:
     return _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat()
 
 
+class DamagedConfig(ValueError):
+    """A project's config.json is there and holds nothing ENLENS can read as settings."""
+
+
+def _damaged_config(path: Path) -> DamagedConfig:
+    return DamagedConfig(f"The project's settings file (config.json in {path.parent}) is damaged: ENLENS cannot read "
+                         "it, and nothing was saved over it. Put back a copy from a backup, or move config.json out of "
+                         "the project folder: the project then starts again from ENLENS's own settings (its documents "
+                         "and work are not in that file).")
+
+
+# one change of a config.json at a time (a round of the shared folder in the background and a setting saved on a page):
+# each reads the file, changes it and writes it back, and the second must read what the first wrote. Hunt phase 1.5
+# (notes/files.md, not proven 2): across programs too (the app, the connector Claude Code runs, the command line), as
+# the data folder's own files are: `home.LOCK`, held by one thread here and through the data folder's `.lock` file
+
+
+def write_config(path: str | Path, cfg: dict) -> None:
+    """hunt phase 1 (FILES-3): every write of a project's config.json goes through here, whole: under another name
+    beside it, then put in its place (`home._write_whole`, as the data folder's own files). Written in place, a write
+    cut off (the app quit, the computer off, the disk full) or read in the middle by another thread left it empty or
+    short: every setting of the project gone (its strictness, its AI default, its shared folder), and reading its
+    settings failed from then on."""
+    from .home import _write_whole
+
+    _write_whole(Path(path), json.dumps(cfg, indent=2))
+
+
+def change_config(path: str | Path, changes: dict) -> dict:
+    """Change some settings of a project's config.json and write it back whole (`write_config`); a value None takes
+    the setting out. Returns the settings written. A file that does not parse (or holds no object) raises
+    DamagedConfig and is left as it is: counted as empty, it was written back holding the one change alone."""
+    from .home import LOCK
+
+    path = Path(path)
+    with LOCK:
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            cfg: dict = {}
+        else:
+            try:
+                cfg = json.loads(raw)
+            except ValueError:
+                raise _damaged_config(path) from None
+            if not isinstance(cfg, dict):
+                raise _damaged_config(path)
+        for k, v in changes.items():
+            if v is None:
+                cfg.pop(k, None)
+            else:
+                cfg[k] = v
+        write_config(path, cfg)
+        return cfg
+
+
+class BeingRemoved(RuntimeError):
+    """Hunt phase 1.5: the project's folder is being removed: no connection to its database is handed out meanwhile
+    (`held_out`)."""
+
+
+_HELD_OUT: set[str] = set()   # the folders being removed now (`_folder_key`)
+_HELD_OUT_LOCK = threading.Lock()
+
+
+def _folder_key(root: str | Path) -> str:
+    return os.path.normcase(os.path.realpath(str(root)))
+
+
+@contextmanager
+def held_out(root: str | Path):
+    """Hunt phase 1.5: while a project's folder is being removed, no Workspace of it, whoever holds it (a helper
+    thread, a job's follow-up, the connector in this process), opens a connection to its database (`_conn` raises
+    BeingRemoved): one that did reopened the database inside the folder being moved, and on Windows the folder then
+    stayed (a model test's copy left in the project list). If the removal fails, the project works again after."""
+    k = _folder_key(root)
+    with _HELD_OUT_LOCK:
+        _HELD_OUT.add(k)
+    try:
+        yield
+    finally:
+        with _HELD_OUT_LOCK:
+            _HELD_OUT.discard(k)
+
+
+def is_held_out(root: str | Path) -> bool:
+    return bool(_HELD_OUT) and _folder_key(root) in _HELD_OUT
+
+
+_RAW_EXECUTE = sqlite3.Connection.execute   # a plain cursor, for a statement run and read whole under the lock
+_NEW_CURSOR, _CUR_EXECUTE, _FETCHONE = sqlite3.Connection.cursor, sqlite3.Cursor.execute, sqlite3.Cursor.fetchone
+
+
+class _Cur(sqlite3.Cursor):
+    """Hunt phase 1.5: a cursor whose every step runs holding its connection's lock (`_Cx._use`), so `close_all` never
+    closes a connection another thread is inside (closing it freed the statement under that thread's step, and the
+    app crashed: a removal just as a finished job's hook read the project). Rows are taken in batches when iterated,
+    so the lock costs little per row; the rows taken ahead and not yet given (a loop that stopped early) are given by
+    the next fetch of this cursor, so nothing is lost."""
+
+    _ahead: deque | None = None
+
+    def execute(self, sql, parameters=()):
+        self._ahead = None
+        with self.connection._use:
+            return super().execute(sql, parameters)
+
+    def executemany(self, sql, seq):
+        self._ahead = None
+        with self.connection._use:
+            return super().executemany(sql, seq)
+
+    def executescript(self, script):
+        self._ahead = None
+        with self.connection._use:
+            return super().executescript(script)
+
+    def fetchone(self):
+        if self._ahead:
+            return self._ahead.popleft()
+        with self.connection._use:
+            return _FETCHONE(self)
+
+    def fetchmany(self, size=None):
+        size = self.arraysize if size is None else size
+        out = []
+        while self._ahead and len(out) < size:
+            out.append(self._ahead.popleft())
+        if len(out) < size:
+            with self.connection._use:
+                out += super().fetchmany(size - len(out))
+        return out
+
+    def fetchall(self):
+        out = list(self._ahead or ())
+        self._ahead = None
+        with self.connection._use:
+            return out + super().fetchall()
+
+    def __next__(self):
+        row = self.fetchone()
+        if row is None:
+            raise StopIteration
+        return row
+
+    def __iter__(self):
+        while True:
+            if not self._ahead:
+                with self.connection._use:
+                    rows = super().fetchmany(256)
+                if not rows:
+                    return
+                self._ahead = deque(rows)
+            yield self._ahead.popleft()
+
+
 class _Cx(sqlite3.Connection):
-    """0.15.7: a connection a workspace can keep track of (a plain sqlite3.Connection cannot be weakly referenced)."""
+    """0.15.7: a connection a workspace can keep track of (a plain sqlite3.Connection cannot be weakly referenced).
+    Hunt phase 1.5: `_use` is held while a statement of it runs (`_Cur`, and the connection's own calls below); `close`
+    takes it too, so a connection is never closed from under the thread that uses it (`Workspace.close_all`)."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self._use = threading.RLock()
+
+    def cursor(self, factory=_Cur):
+        return super().cursor(factory)
+
+    def execute(self, sql, parameters=()):   # (the base class's own calls: the hot path of every statement)
+        cur = _NEW_CURSOR(self, _Cur)
+        with self._use:
+            _CUR_EXECUTE(cur, sql, parameters)
+        return cur
+
+    def executemany(self, sql, seq):
+        cur = self.cursor()
+        cur.executemany(sql, seq)
+        return cur
+
+    def executescript(self, script):
+        cur = self.cursor()
+        cur.executescript(script)
+        return cur
+
+    def commit(self):
+        with self._use:
+            return super().commit()
+
+    def rollback(self):
+        with self._use:
+            return super().rollback()
+
+    def backup(self, *a, **kw):
+        with self._use:
+            return super().backup(*a, **kw)
+
+    def close(self):
+        with self._use:
+            return super().close()
+
+    def _close_if_free(self) -> bool:
+        """Close this connection from another thread if no statement of it runs and no transaction of it is open
+        (hunt phase 1.5: closing between two statements of a transaction threw its first half away, and the rest was
+        saved on a new connection). True when it is closed (or was already)."""
+        if not self._use.acquire(blocking=False):
+            return False
+        try:
+            if self.in_transaction:
+                return False
+            super().close()
+            return True
+        except sqlite3.ProgrammingError:   # closed already
+            return True
+        finally:
+            self._use.release()
 
 
 class Workspace:
@@ -798,7 +1137,9 @@ class Workspace:
         # used by one thread and thrown away when the work ends: its connections write each change once (a rollback
         # journal in memory, where WAL writes it to the log and again into the file) and never flush (`scratch`)
         self.scratch = scratch
+        self._records_level = not scratch  # hunt phase 1.5: `meta.project_needs` is this copy's own (PROJECT_LEVEL)
         self.db_path = self.root / "enlens.sqlite"
+        self._key = _folder_key(self.root)   # (hunt phase 1.5: `held_out`)
         self.config_path = self.root / "config.json"
         self._local = threading.local()
         self._config_cache: tuple[tuple, dict] | None = None
@@ -818,7 +1159,7 @@ class Workspace:
         for sub in ("tasks", "results", "exports", "report"):
             (ws.root / sub).mkdir(exist_ok=True)
         if not ws.config_path.exists():
-            ws.config_path.write_text(json.dumps(DEFAULT_CONFIG, indent=2))
+            write_config(ws.config_path, DEFAULT_CONFIG)
         if not ws.db_path.exists():
             try:
                 if scratch:
@@ -841,6 +1182,8 @@ class Workspace:
     def _setup(self) -> None:
         cx = sqlite3.connect(self.db_path, timeout=60)
         try:
+            if not self.scratch:  # (a scratch copy is a file of the sync: its own `sync_needs` rules it)
+                _refuse_newer(cx)  # hunt phase 1.5: before anything is written, the journal mode included
             cx.execute("PRAGMA journal_mode=WAL")  # readers do not block on a long write; persistent per file
             # each statement of the schema below is a transaction of its own: with the default FULL each one is
             # flushed to disk (about a second per new project on Windows, and a round of the shared folder makes
@@ -849,11 +1192,23 @@ class Workspace:
             doc_cols = {r[1] for r in cx.execute("PRAGMA table_info(documents)")}
             before_011 = bool(doc_cols) and "ai_access" not in doc_cols  # a project made before 0.11, opened now
             before_018 = not cx.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='shares'").fetchone()
+            empty = not cx.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone()
+            # hunt phase 1 (FILES-1, FILES-2): the sign of a project of an earlier version (a table or a column it
+            # lacks) is saved by the schema below at once, and the one-time step it calls for runs (and is saved) only
+            # later; an opening stopped in between (the app quit, the computer off) left the sign gone and the step
+            # never done, for good. So the step to do is noted first, saved before the schema changes anything, and
+            # each step takes its note off in the same transaction as its work (as `_roles_upgrade` keeps its mark):
+            # an interrupted opening finds the note again and does the step then. A new database needs neither.
+            todo = [k for k, due in ((SHARES_UPGRADE_DUE, before_018), (AI_ACCESS_UPGRADE_DUE, before_011)) if due]
+            if todo and not empty:
+                cx.execute(META_TABLE)
+                cx.executemany("INSERT OR REPLACE INTO meta VALUES (?, '1')", [(k,) for k in todo])
+                cx.commit()
             # 2026-11-13: a new database (a new project, or one of the scratch projects of every shared-folder round) is
             # set up in one transaction, saved once instead of once per table, column and index; nothing else has it
             # open yet. A project already there is set up as before, a statement at a time, so opening it never holds
             # the database while a job of it writes.
-            new = _ONE_TRANSACTION and not cx.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone()
+            new = _ONE_TRANSACTION and empty
             begin = "BEGIN IMMEDIATE;\n" if new else ""
             cx.executescript(begin + SCHEMA)
             _migrate(cx)
@@ -861,17 +1216,28 @@ class Workspace:
             _roles_upgrade(cx)
             dropped = _drop_old_places(cx)
             cx.executescript(begin + INDEXES)  # (executescript saves what came before it)
-            _setup_addons(cx)
-            if before_018:  # 0.18 (L1): a project exchanged before counts as shared; one never sent starts private
-                from .sharing import upgrade
+            _setup_addons(cx, self.root)
+            if _due(cx, SHARES_UPGRADE_DUE):  # 0.18 (L1): a project exchanged before counts as shared; one never
+                from .sharing import upgrade      # sent starts private
 
                 upgrade(cx, self.root)
+                cx.execute("DELETE FROM meta WHERE key=?", (SHARES_UPGRADE_DUE,))  # (saved with the rows it made)
+            if self._records_level:  # (not in a scratch copy, nor in the empty database new ones are copied from)
+                _record_needs(cx)
+            if not self.scratch:  # (a scratch copy is a colleague's file or a bundle: a merge clamps what it reads)
+                _clamp_share_dates(cx)
+                # hunt phase 1.5 (CHECKS-7, CHECKS-2): judgements an earlier version left without their check, or
+                # wiped from their excerpt; the step is its own test, as above (no mark in `meta`)
+                from .judgements import repair_old_judgements
+
+                repair_old_judgements(cx)
             cx.commit()
+            ai_access_due = _due(cx, AI_ACCESS_UPGRADE_DUE)
             if dropped:
                 _vacuum_after_drop(cx, self.root)
         finally:
             cx.close()
-        if before_011:
+        if ai_access_due:  # (`access.upgrade` takes the note off in its own transaction)
             from .access import upgrade
 
             upgrade(self)
@@ -881,9 +1247,15 @@ class Workspace:
             settle_own_providers(self)
 
     def _conn(self) -> sqlite3.Connection:
+        if _HELD_OUT and self._key in _HELD_OUT:   # hunt phase 1.5: its folder is being removed (`held_out`)
+            raise BeingRemoved(f"The project “{self.root.name}” is being removed.")
         cx = getattr(self._local, "cx", None)
-        if cx is not None and getattr(self._local, "gen", 0) != self._gen:
-            cx = None  # 0.15.7: closed by close_all; a new one if this thread goes on using the project
+        if cx is not None and getattr(self._local, "gen", 0) != self._gen and not getattr(self._local, "depth", 0):
+            # 0.15.7: closed by close_all; a new one if this thread goes on using the project. Hunt phase 1.5: never
+            # inside a transaction (`depth`): it finishes on its own connection or fails whole (a nested block on a new
+            # connection committed half of it on its own). One close_all could not close is left to the collector:
+            # this thread may still be reading rows of it
+            cx = None
         if cx is None:
             # transactions are ours, see connect(); check_same_thread=False only lets close_all close it from another
             # thread: each connection is still used by the thread that opened it alone
@@ -909,17 +1281,42 @@ class Workspace:
             cx.close()
             self._local.cx = None
 
-    def close_all(self) -> None:
+    def close_all(self, wait: float = 12.0, interrupt: bool = True) -> bool:
         """0.15.7: close every connection to this project, in every thread, before its folder is moved or removed (on
-        Windows an open database file cannot be). A thread that uses the project afterwards opens a new one."""
+        Windows an open database file cannot be). A thread that uses the project afterwards opens a new one.
+
+        Hunt phase 1.5: a connection is closed only between two statements and outside a transaction (closing it from
+        under a running statement crashed the app; between two statements of a transaction it threw half of it away).
+        The busy ones are waited for together, against one deadline of `wait` seconds; with `interrupt`, a statement
+        still running after a short grace is interrupted (its transaction then fails whole). `wait=0, interrupt=False`
+        (a project that is not going away: `home.open_project` dropping a replaced file) never waits and never stops
+        anyone's work. Returns whether every connection is closed: False means the folder is still in use."""
         with self._all_lock:
             cxs = list(self._all)
             self._gen += 1
+        busy = []
         for cx in cxs:
             try:
-                cx.close()
+                if not (cx._close_if_free() if isinstance(cx, _Cx) else (cx.close() or True)):
+                    busy.append(cx)
             except sqlite3.Error:
                 pass
+        if not busy:
+            return True
+        start = time.monotonic()
+        end, grace = start + max(0.0, wait), start + min(2.0, max(0.0, wait))
+        interrupted = False
+        while busy and time.monotonic() < end:
+            if interrupt and not interrupted and time.monotonic() >= grace:
+                for cx in busy:
+                    try:
+                        cx.interrupt()
+                    except sqlite3.Error:
+                        pass
+                interrupted = True
+            time.sleep(0.02)
+            busy = [cx for cx in busy if not cx._close_if_free()]
+        return not busy
 
     @property
     def config(self) -> dict[str, Any]:
@@ -932,7 +1329,12 @@ class Workspace:
             return json.loads(json.dumps(self._config_cache[1]))
         cfg = json.loads(json.dumps(DEFAULT_CONFIG))
         if stamp:
-            user = json.loads(self.config_path.read_text())
+            try:
+                user = json.loads(self.config_path.read_text(encoding="utf-8"))
+            except ValueError:  # hunt phase 1 (FILES-3): in words, not a parser's position in an empty file
+                raise _damaged_config(self.config_path) from None
+            if not isinstance(user, dict):
+                raise _damaged_config(self.config_path)
             for k, v in user.items():
                 if isinstance(v, dict) and isinstance(cfg.get(k), dict):
                     cfg[k].update(v)
@@ -973,11 +1375,16 @@ class Workspace:
             trim_log(cx, self.db_path)
 
     # ---- small helpers ---------------------------------------------------------------------
+    # (hunt phase 1.5: the statement and its rows under the connection's lock, as one step: `_Cx._use`)
     def query(self, sql: str, args: tuple | list = ()) -> list[sqlite3.Row]:
-        return self._conn().execute(sql, tuple(args)).fetchall()
+        cx = self._conn()
+        with cx._use:
+            return _RAW_EXECUTE(cx, sql, tuple(args)).fetchall()
 
     def scalar(self, sql: str, args: tuple | list = ()) -> Any:
-        row = self._conn().execute(sql, tuple(args)).fetchone()
+        cx = self._conn()
+        with cx._use:
+            row = _RAW_EXECUTE(cx, sql, tuple(args)).fetchone()
         return row[0] if row else None
 
     def meta(self, key: str, default: Any = None) -> Any:
@@ -1048,6 +1455,9 @@ class Workspace:
             out["results"] = cx.execute(f"DELETE FROM results WHERE kind IN {kinds}").rowcount
             out["tasks"] = cx.execute(f"DELETE FROM tasks WHERE kind IN {kinds}").rowcount
             out["user_claims"] = cx.execute("DELETE FROM user_claims").rowcount
+            # hunt phase 1 (CHECKS-7): every person's judgements of the checks' excerpts go with the checks, as when one
+            # check is removed (judgements.delete_claim); "how often you agreed" reads this table alone
+            out["judgements"] = cx.execute("DELETE FROM judgements").rowcount
             out["second_opinions"] = cx.execute("DELETE FROM second_opinions").rowcount
             out["hypotheses"] = cx.execute("DELETE FROM hypotheses").rowcount
             out["reviews"] = cx.execute("DELETE FROM reviews WHERE item_kind IN ('claim', 'label', 'theme', "

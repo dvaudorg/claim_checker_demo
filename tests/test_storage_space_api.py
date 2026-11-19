@@ -68,3 +68,11 @@ def test_the_storage_space_through_the_app(api, backblaze):  # noqa: F811
 
     st, r = api("DELETE", "/api/projects/Demo/space")
     assert st == 200 and r["space"] is None and r["folder"] is None
+
+
+def test_try_again_through_the_app_on_a_project_with_no_storage_space_says_so(api):  # noqa: F811
+    """18 November 2026 (hunt P1-5): `_edit_state` did `None / ".space-state.json"`, a TypeError, so the route answered
+    500; the guard sits in `_edit_state` itself."""
+    assert api("POST", "/api/projects", {"name": "Demo"})[0] == 200
+    st, r = api("POST", "/api/projects/Demo/space/drive-retry", {})
+    assert st == 400 and r["error"] == "This project has no storage space."

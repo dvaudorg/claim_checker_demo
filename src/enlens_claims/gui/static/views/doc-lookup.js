@@ -104,7 +104,7 @@ export function refsPanel(ctx) {
       running = false;
       if (job.state === "done") { jobBox.hidden = true; const r = job.result || {}; toast(name && !r.windows ? `“${name}” does not occur in this document, written this way. Try another spelling, or select the name in the text.`
         : !r.read && r.already_read ? `The AI had already read ${plural(r.already_read, "stretch", "stretches")} for this. ${plural(r.chains || 0, "name")} with references.`
-        : `The AI read ${plural(r.read || 0, "stretch", "stretches")}${r.failed ? `; ${r.failed} could not be read` : ""}. ${r.chains ? `${plural(r.chains, "name")} with references.` : "It found no references to follow."}`, r.failed || (name && !r.windows) ? "warn" : "ok", { ttl: 9000 }); }
+        : `The AI read ${plural(r.read || 0, "stretch", "stretches")}${r.failed ? `; ${r.failed} could not be read` : ""}. ${r.chains ? `${plural(r.chains, "name")} with references.` : "It found no references to follow."}${r.read_again_meanwhile ? ` ${plural(r.read_again_meanwhile, "stretch", "stretches")} not read: the document was read with the new reader meanwhile. Start again to follow its references in the new reading.` : ""}`, r.failed || r.read_again_meanwhile || (name && !r.windows) ? "warn" : "ok", { ttl: 9000 }); }
       load();
     }, { small: true, plain: true, ai: true, noun: "passage", stoppedText: "Stopped. What the AI read so far is kept; start again to go on where it stopped." }));
   }

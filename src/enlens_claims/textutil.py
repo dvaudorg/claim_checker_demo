@@ -16,6 +16,14 @@ _CHAR_MAP = {
     "\u200b": "", "\u00ad": "", "\ufeff": "",  # zero-width space, soft hyphen, byte-order mark
     "ﬀ": "ff", "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi", "ﬄ": "ffl",
 }
+# Hunt phase 1 (READERS-7): the invisible marks that set the direction of right-to-left text (left-to-right and
+# right-to-left marks, embeddings, overrides and isolates). Word, web pages and PDFs of Arabic, Hebrew or mixed text
+# keep them in the stored text, NFKC keeps them, and nobody types or copies them: a quote of the visible words was not
+# found. They are dropped like the zero-width space. Not in 0.4's map (`_CHAR_MAP_V1`); joiners (U+200C, U+200D) stay,
+# as they change how a word is written.
+_DIRECTIONAL = ("‎", "‏", "‪", "‫", "‬", "‭", "‮",
+                "⁦", "⁧", "⁨", "⁩")
+_CHAR_MAP.update({c: "" for c in _DIRECTIONAL})
 _TRANSLATE = str.maketrans(_CHAR_MAP)
 
 STOPWORDS_V1 = frozenset(
@@ -257,6 +265,15 @@ def spacing_matches(text: str, packed: tuple, nq: str, drop: str = " ", whole_wo
         pos = sh.find(sq, pos + 1)
 
 
+def one_line(text: str) -> str:
+    """A quote on one line, to store or show: a line break (with the spaces and tabs around it) becomes one space, and
+    a run of spaces one space; every other character stays the passage's own (a non-breaking space, a ligature, a
+    superscript digit). Hunt phase 1.5: `" ".join(text.split())` also made a non-breaking space a plain one, so a stored
+    quote held characters its passage does not."""
+    text = re.sub(r"[ \t]*[\r\n\x0b\x0c\u2028\u2029]+[ \t]*", " ", text)
+    return re.sub(r"[ \t]{2,}", " ", text).strip(" \t")
+
+
 def find_selection(haystack: str, quote: str) -> tuple[int, int, str] | None:
     """A person's own selection in a text (0.14.3), found as a quote is; one that starts or ends inside a word (a
     selection dragged a little short) is widened to the whole words, so it is kept as whole words like every quote
@@ -490,8 +507,8 @@ def stem_v1(tok: str) -> str:
     return tok
 
 
-# 0.4's character map (without the soft hyphen and byte-order mark added in 0.5)
-_CHAR_MAP_V1 = {k: v for k, v in _CHAR_MAP.items() if k not in ("\u00ad", "\ufeff")}
+# 0.4's character map (without the soft hyphen and byte-order mark added in 0.5, nor the directional marks of 0.20)
+_CHAR_MAP_V1 = {k: v for k, v in _CHAR_MAP.items() if k not in ("\u00ad", "\ufeff", *_DIRECTIONAL)}
 
 
 class _V1Table(dict):

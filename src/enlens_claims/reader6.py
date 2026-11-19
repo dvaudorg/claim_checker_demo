@@ -39,8 +39,10 @@ try:
     from pdfminer.converter import PDFPageAggregator
     from pdfminer.layout import LTChar
     from pdfminer.utils import apply_matrix_rect, mult_matrix
+    PDFMINER_RULES = True   # (`apply_matrix_rect` exists from pdfminer.six 20250506)
 except Exception:  # noqa: BLE001 - without pdfminer a PDF is read with pypdf: only rules 3 and 4 apply
     PDFPageAggregator = object
+    PDFMINER_RULES = False   # (an older pdfminer: `reader` reads with pdfminer's stock aggregator, as reader 5 does)
 
 
 # ------------------------------------------------------------------------------------------------------------------

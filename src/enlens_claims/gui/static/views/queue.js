@@ -43,12 +43,12 @@ export function queueSection() {
       const model = L.model || base.model;
       if (L.gate !== "wait") return { ...base, model, memory: null, noun: L.noun || "task", running: { phase: m.who === "local" && m.phase !== "ready" ? m.phase || "waiting" : "waiting", seconds: m.seconds }, count: L.waiting,
         onStop: async () => { await api("POST", `/api/jobs/${P(gated.id)}/local/stop`, {}); draw(); } };
-      return { ...base, model, memory: L.memory || base.memory, problem: L.problem || base.problem, noun: L.noun || "task", count: L.waiting,
+      return { ...base, model, memory: L.memory || base.memory, problem: L.problem || base.problem, noun: L.noun || "task", count: L.waiting, waitKey: `job:${gated.id}`,
         sub: `For “${String(gated.title || "").replace(/[.?!]+$/, "")}”`,
         onStart: async (force) => { await api("POST", `/api/jobs/${P(gated.id)}/local/start`, { force: !!force }); draw(); } };
     }
     const limit = q && q.at_limit && q.at_limit.offer_local;
-    return { ...base, count: limit ? q.waiting : q.for_local, head: limit ? `${agentTitle()} stopped at your plan’s limit: ${base.model || "your local model"} can answer what waits` : null,
+    return { ...base, waitKey: `queue:${App.project}:${limit ? "limit" : "mix"}`, count: limit ? q.waiting : q.for_local, head: limit ? `${agentTitle()} stopped at your plan’s limit: ${base.model || "your local model"} can answer what waits` : null,
       onStart: () => runLocal(limit ? "limit" : "mix") };
   }
   function drawLocal(q = lastQ) {
@@ -60,6 +60,9 @@ export function queueSection() {
     sideFigures(local, m && m.phase ? modelFigures(m, seen) : null);
   }
   let lastQ = null;
+  // hunt phase 1.5 (phase 0 P-2): each look is numbered; an answer that comes after a newer look began (an action's
+  // own look) is dropped, so an older look cannot draw over the action's answer
+  let looks = 0;
   async function draw() {
     clearTimeout(timer);
     if (!section.isConnected && body.dataset.drawn) return;   // the page moved on
@@ -69,24 +72,27 @@ export function queueSection() {
     defers = 0;
     body.dataset.drawn = "1";
     if (!App.project) { replace(body, h("p", { class: "muted small" }, "Open a project first.")); return; }
+    const look = ++looks;
     let q;
-    try { q = await api("GET", `/api/projects/${P(App.project)}/queue`); } catch (e) { replace(body, h("p", { class: "muted small" }, e.message)); return; }
-    try {
-      gated = ((await api("GET", "/api/jobs")).jobs || []).find((j) => j.project === App.project && !TERMINAL.has(j.state) && j.local && (j.local.waiting || 0) > 0 && !j.local.problem) || null;
-    } catch (_) { gated = null; }
+    try { q = await api("GET", `/api/projects/${P(App.project)}/queue`); } catch (e) { if (look === looks) replace(body, h("p", { class: "muted small" }, e.message)); return; }
+    if (look !== looks) return;
+    let jobs = null;
+    try { jobs = (await api("GET", "/api/jobs")).jobs || []; } catch (_) { /* not known now: the side drawn last stays (hunt phase 1.5) */ }
+    if (look !== looks) return;
+    if (jobs) gated = jobs.find((j) => j.project === App.project && !TERMINAL.has(j.state) && j.local && (j.local.waiting || 0) > 0 && !j.local.problem) || null;
     const s = App.settings();
     const act = async (kind, action) => {
       try { await api("POST", `/api/projects/${P(App.project)}/queue/order`, { kind, action }); draw(); } catch (e) { showError(e); }
     };
     const remove = async (k) => {
-      const ok = await confirmDialog({ title: `Take the ${k.title.toLowerCase()} out of the queue?`, message: `The ${k.waiting.toLocaleString()} tasks no session has taken yet are removed${["check", "expand", "decompose"].includes(k.kind) ? ", and the checks still waiting are removed whole (as a stopped check)" : ""}. Answers already stored stay.`, confirmText: "Remove" });
+      const ok = await confirmDialog({ title: `Take the ${k.title.toLowerCase()} out of the queue?`, message: `The ${k.waiting.toLocaleString("en-GB")} tasks no session has taken yet are removed${["check", "expand", "decompose"].includes(k.kind) ? ", and the checks still waiting are removed whole (as a stopped check)" : ""}. Answers already stored stay.`, confirmText: "Remove" });
       if (!ok) return;
       try { const r = await api("POST", `/api/projects/${P(App.project)}/queue/withdraw`, { kind: k.kind }); toast(`${r.withdrawn} tasks taken out of the queue.`, "ok"); App.refresh().catch(() => {}); draw(); } catch (e) { showError(e); }
     };
     const kinds = (q.kinds || []).filter((k) => k.waiting || k.being_answered || k.for_local);
     const t = q.agent_title || agentTitle();
-    const head = q.runner && q.runner.running ? `${t} is working: ${(q.waiting + q.being_answered).toLocaleString()} to go`
-      : q.waiting ? (q.paused ? `Paused: ${q.waiting.toLocaleString()} waiting` : `${(q.waiting + q.being_answered).toLocaleString()} waiting for ${t}`)
+    const head = q.runner && q.runner.running ? `${t} is working: ${(q.waiting + q.being_answered).toLocaleString("en-GB")} to go`
+      : q.waiting ? (q.paused ? `Paused: ${q.waiting.toLocaleString("en-GB")} waiting` : `${(q.waiting + q.being_answered).toLocaleString("en-GB")} waiting for ${t}`)
       : q.being_answered ? `${t} is answering ${q.being_answered}` : "Nothing waits.";
     const parts = [h("p", { class: "qp-head" }, icon(q.paused ? "pause" : "inbox", { size: 14 }), " ", h("strong", {}, head))];
     if (q.paused && q.paused_text) parts.push(h("p", { class: "small qp-paused" }, q.paused_text));
@@ -100,7 +106,7 @@ export function queueSection() {
     for (const k of kinds) {
       parts.push(h("div", { class: "qp-row" + (k.held ? " qp-held" : "") },
         h("div", { class: "qp-title" }, h("strong", {}, k.title), k.held ? tag({}, "held") : null),
-        h("div", { class: "muted small" }, `${k.waiting.toLocaleString()} waiting${k.being_answered ? ` · ${k.being_answered} being answered` : ""}${k.done ? ` · ${k.done.toLocaleString()} done` : ""}${k.stronger_model ? ` · ${k.stronger_model} for a stronger model` : ""}${k.for_local ? ` · ${k.for_local.toLocaleString()} for your local model` : ""}`),
+        h("div", { class: "muted small" }, `${k.waiting.toLocaleString("en-GB")} waiting${k.being_answered ? ` · ${k.being_answered} being answered` : ""}${k.done ? ` · ${k.done.toLocaleString("en-GB")} done` : ""}${k.stronger_model ? ` · ${k.stronger_model} for a stronger model` : ""}${k.for_local ? ` · ${k.for_local.toLocaleString("en-GB")} for your local model` : ""}`),
         h("div", { class: "muted small" }, [k.helper ? `${k.helper} on ${k.model_id || k.model}` : k.model ? `on ${k.model_id || k.model}` : "", k.estimate ? ` · ${k.estimate}` : ""].join("")),
         h("div", { class: "qp-actions" },
           (q.order || [])[0] !== k.kind ? button({ kind: "quiet", sm: true, onClick: () => act(k.kind, "first") }, icon("arrow-up", { size: 12 }), "Do first") : null,

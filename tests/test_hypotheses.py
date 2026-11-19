@@ -963,3 +963,24 @@ def test_what_reading_new_documents_changed():
     assert claimcheck._what_changed(a, {**a, "partly": 1}) == "evidence"
     assert claimcheck._what_changed(a, {**a, "status": "contested", "refutes": 1}) == "answer"
     assert claimcheck._what_changed(None, a) == "" and claimcheck._what_changed(a, None) == ""
+
+
+def test_a_split_the_model_answers_badly_is_checked_as_written(loaded):
+    """18 November 2026 (hunt P1-3): an unusable split answer made `_decompose` return None; `len(None)` raised and the
+    check was deleted instead of being run as written."""
+    be = Scripted(decompose=[{}], expand=[{"terms": ["water stress"]}], check=[_quote_first("supports", 0.8)])
+    events = []
+    hid = claimcheck.check_hypothesis(loaded, CLAIM, be, "m", decompose=True, k=2,
+                                      progress=lambda stage, msg, extra=None: events.append((stage, msg)))
+    assert ("decompose_done", "It could not be split, so it is checked as written") in events
+    assert loaded.scalar("SELECT COUNT(*) FROM hypotheses WHERE hyp_id=?", (hid,)) == 1
+    r = claimcheck.hypothesis_result(loaded, hid)
+    assert [p["claim"] for p in r["parts"]] == [CLAIM] and not r["decomposed"]
+
+
+def test_a_part_still_waiting_keeps_the_whole_hypothesis_waiting():
+    """Bug hunt, phase 0 (mutation testing): beside the queue's own tests, nothing here failed when "waiting" was
+    taken out of the rule. A check by queue that is not finished is waiting, whatever its other parts say."""
+    assert claimcheck.aggregate(["supported", "waiting"]) == "waiting"
+    assert claimcheck.aggregate(["contradicted", "waiting", "failed"]) == "waiting"
+    assert claimcheck.aggregate(["supported", "supported"]) == "supported"

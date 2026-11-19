@@ -462,7 +462,8 @@ def highest_release(releases: list) -> dict:
 def latest_release(fetch: Fetch = _fetch, repo: str | None = None, channel: str | None = None) -> dict:
     """The latest published release: {"version", "tag", "wheel_url", "wheel", "sums_url", "notes", "url"}.
     0.15: on the "early" channel (default from the settings) the highest version of all published releases,
-    a pre-release too; on "stable" GitHub's *latest*, which is never a pre-release."""
+    a pre-release too; on "stable" GitHub's *latest*, which is never a pre-release (and when it is a candidate all
+    the same, the highest release that is not)."""
     from .installation import REPO
 
     early = (channel or update_channel()) == "early"
@@ -473,6 +474,16 @@ def latest_release(fetch: Fetch = _fetch, repo: str | None = None, channel: str 
         raise UpdateError(f"Could not ask GitHub for the newest ENLENS ({type(e).__name__}: {e}). Are you online?") from e
     if early:
         data = highest_release(data)
+    elif not isinstance(data, dict) or data.get("prerelease") or is_candidate(str(data.get("tag_name") or "")):
+        # hunt phase 1.5: a release candidate published without the pre-release flag (it happened: v0.19.16) was
+        # GitHub's "latest" and offered to everyone on stable. Stable takes the highest release that is none.
+        try:
+            listed = json.loads(fetch(f"{_release_api(repo or REPO)}/releases?per_page=30").decode("utf-8"))
+        except Exception as e:  # noqa: BLE001
+            raise UpdateError(f"Could not ask GitHub for the newest ENLENS ({type(e).__name__}: {e}). Are you "
+                              "online?") from e
+        data = highest_release([r for r in listed if isinstance(r, dict) and not r.get("prerelease")
+                                and not is_candidate(str(r.get("tag_name") or ""))] if isinstance(listed, list) else [])
     assets = {a.get("name", ""): a.get("browser_download_url", "") for a in data.get("assets") or []}
     # 0.17.0: each file's second route, through the API (download())
     api = {a.get("name", ""): a.get("url", "") for a in data.get("assets") or []}
@@ -596,6 +607,9 @@ def handover_job(rel: dict, have: str, folder: Path, install: list[str], restart
             "install": install, "env": {"UV_PYTHON_PREFERENCE": "only-managed"},
             "post": [str(post_py), "-m", "enlens_claims.cli", "post-install", "--by", "script", "--no-icon"],
             "start": list(restart), "info": str(launcher.info_path()), "result": str(result_path()),
+            # hunt phase 1 (INSTALL-3): where the copy it starts proves it came back (its token file), whether the
+            # icon or a terminal started it; handover.py imports nothing from ENLENS, so the job carries both
+            "token_dir": str(launcher.token_dir(home.home())), "home": str(home.home()),
             "log": str(home.home() / "logs" / "update.log"),
             "install_url": f"https://github.com/{REPO}/releases/download/{rel.get('tag') or 'v' + rel['version']}/install.ps1",
             "wait": 120, "free_wait": 60, "tries": 4, "retry_after": 5, "come_back": 90}

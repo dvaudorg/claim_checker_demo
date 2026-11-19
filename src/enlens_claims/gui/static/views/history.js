@@ -15,8 +15,10 @@ const waitingWords = (n, local) => (!local ? STATUS_SHORT.waiting : local >= n ?
 export function readNewAfter(r) {
   const a = (r && r.answers_changed) || 0, e = (r && r.evidence_changed) || 0;
   if (!r || !Array.isArray(r.hypotheses)) return "";
-  if (!a && !e) return " · nothing changed";
-  return " · " + [a ? `${a} ${a === 1 ? "answer" : "answers"} changed` : "", e ? `${e} with new evidence` : ""].filter(Boolean).join(", ");
+  const f = r.hypotheses.filter((x) => x && x.failed).length;   // hunt phase 1 (CHECKS-3): the AI's answers could not be used
+  const bad = f ? `${f} could not be read` : "";
+  if (!a && !e) return " · " + (bad || "nothing changed");
+  return " · " + [a ? `${a} ${a === 1 ? "answer" : "answers"} changed` : "", e ? `${e} with new evidence` : "", bad].filter(Boolean).join(", ");
 }
 const READ_NEW_WORDS = { doing: "reading for hypothesis", done: "hypotheses brought up to date", after: readNewAfter };
 // 0.20.3: the mark on a row the new documents changed (from the last time they were read, while the app runs)
@@ -39,6 +41,7 @@ export async function answersList(box, query, opts = {}) {
   const threshold = App.settings().threshold ?? 0.6;
   const watchers = [];
   let rowsNow = [], countsNow = {}, running = [], drawn = false, stopped = false, timer = null;
+  let following = null;     // hunt phase 1: the id of the job followed in jobBox (one at a time)
   let newDocs = new Map();  // 0.20.3: hyp_id -> what the last reading of the new documents changed (readNew result)
   let steps = null;         // the lazy list of the rows (0.18.1: lazyList): a table drawn again (a check changed) keeps as many as were shown
   const fresh = latest();   // the newest look at the answers: an older answer never draws over it
@@ -99,12 +102,17 @@ export async function answersList(box, query, opts = {}) {
   }
 
   function followJob(jobId, title, kind) {
+    // hunt phase 1: a second press of "Read the new documents" (or a second opinion) while it runs gets the same job
+    // back from the app: it is followed once, so it ends with one toast
+    if (following === jobId) return;
+    following = jobId;
     const panel = new ProgressPanel({ title, steps: kind === "second-opinion" ? ["grade"] : null, batchWords: kind === "read-new" ? READ_NEW_WORDS : null });
     replace(jobBox, h("div", { class: "section-title" }, h("h2", {}, title), h("span", { class: "muted" }, "you can leave this page; it continues")), panel.el);
     jobBox.hidden = false;
     const w = watchJob(jobId, (job) => panel.update(job));
     watchers.push(w);
     w.promise.then(async (job) => {
+      if (following === jobId) following = null;
       const st = jobBox.querySelector(".section-title h2"); if (st) st.textContent = job.state === "done" ? "Done" : job.state === "cancelled" ? "Stopped" : "Did not work";
       const sub = jobBox.querySelector(".section-title > .muted"); if (sub) sub.remove();   // it has ended: nothing continues
       if (job.state === "done") {
@@ -112,8 +120,11 @@ export async function answersList(box, query, opts = {}) {
         if (job.kind === "read-new") {
           const hs = r.hypotheses || [];
           keepNewDocs(r);
-          const n = r.passages || 0;
-          toast(`The new documents were read for ${hs.length} ${hs.length === 1 ? "answer" : "answers"}: ${n} more ${n === 1 ? "excerpt" : "excerpts"} read. Reviews are kept.`, "ok", { ttl: 6000 });
+          // hunt phase 1 (CHECKS-3): where the AI's answers could not be used, nothing was kept and the documents wait
+          const bad = hs.filter((x) => x.failed).length, good = hs.length - bad;
+          const n = hs.filter((x) => !x.failed).reduce((s, x) => s + (x.passages || 0), 0);
+          const badLine = bad ? `For ${bad} ${bad === 1 ? "answer" : "answers"} the new documents could not be read: the AI's answers could not be used, even after three tries. They are still listed as added since; read them again later, or choose another AI model in Settings.` : "";
+          toast(good ? `The new documents were read for ${good} ${good === 1 ? "answer" : "answers"}: ${n} more ${n === 1 ? "excerpt" : "excerpts"} read. Reviews are kept.${badLine ? " " + badLine : ""}` : badLine, bad ? "warn" : "ok", { ttl: bad ? 12000 : 6000 });
         } else if (job.kind === "second-opinion") {
           toast(r.graded ? `The second opinion is in for ${r.hypotheses || 0} ${r.hypotheses === 1 ? "answer" : "answers"}. Where it differs from the first AI, the answer is tagged below; the answers are unchanged.` : "Every excerpt of these answers already has a second opinion: nothing new to read.", "ok", { ttl: 6000 });
         } else if (job.kind === "more" && r.hyp_id) {
@@ -122,7 +133,13 @@ export async function answersList(box, query, opts = {}) {
         }
       } else if (job.state === "error") jobFailed(job);
       await refresh();
-    }).catch(showError);
+    }).catch((e) => {
+      // hunt phase 1 (PAGESA-6): the app no longer reports on the job (it started again, or does not answer): said in
+      // its box, which no longer shows it running with its Stop; the answers are looked at again
+      if (following === jobId) following = null;
+      failedLoad(jobBox, { message: `${title}: the app no longer reports on this work, so how it ended is not known here: ${String((e && e.message) || "no answer").replace(/\.?\s*$/, ".")} The answers below are as the app has them now.` });
+      refresh().catch(() => {});
+    });
   }
 
   function keepNewDocs(r) { newDocs = new Map(((r && r.hypotheses) || []).filter((d) => d.changed).map((d) => [d.hyp_id, d])); }

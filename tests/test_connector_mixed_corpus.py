@@ -55,6 +55,20 @@ def test_create_project_and_add_sources_with_a_setting(env):
     assert access.default(ws) == "none" and access.default_chosen(ws)  # the first answer is the project's default
 
 
+def test_document_profile_with_an_empty_codebook_name_uses_the_default_one(env):
+    """18 November 2026 (hunt P2-3): `frameworks.get("")` is None on purpose, and `document_profile(framework="")` went on
+    to an AttributeError; a missing name means the default codebook, which the tool's description names (the SDG targets)."""
+    ws = home.create_project("Mixed")
+    ids = mixed_project(ws, env / "corpus")
+
+    async def fn(call):
+        default = await call("document_profile", {"project": "Mixed", "document_id": ids["cloud"]})
+        empty = await call("document_profile", {"project": "Mixed", "document_id": ids["cloud"], "framework": ""})
+        assert empty["codebook"] == default["codebook"] and empty["codes"]
+
+    _run(fn)
+
+
 def test_every_tool_keeps_restricted_text_out(env):
     ws = home.create_project("Mixed")
     ids = mixed_project(ws, env / "corpus")

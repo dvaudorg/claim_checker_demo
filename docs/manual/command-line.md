@@ -36,7 +36,7 @@ internet: no CDN, no fonts, no analytics. Stop it with <kbd>Ctrl</kbd>+<kbd>C</k
 
 ```bash
 enlens --ws myproject init
-enlens --ws myproject ingest ~/Reports/ more.zip                    # PDF, Word (.docx), HTML, text, Markdown, zips
+enlens --ws myproject ingest --ai-access local ~/Reports/ more.zip  # PDF, Word (.docx), HTML, text, Markdown, zips
 enlens --ws myproject ingest scans/ --ocr auto --ocr-lang eng+nld   # scanned pages by OCR (default: auto, eng)
 enlens --ws myproject embed --embed-model nomic-embed-text          # optional: search by meaning
 enlens --ws myproject check "Green hydrogen production increases water stress in arid regions." --code 6.4
@@ -49,7 +49,18 @@ enlens detect                                                       # local serv
 
 `check` (or `hypothesis`) prints, as JSON, the answer, the balance, and per part the judged passages with quotes and
 the passages read without result. Options: `--decompose`, `--framework NAME --code CODE` (`--target` still works for
-SDG targets), `--k`, `--per-doc`, `--no-expand`, `--threshold`, `--embed-model` and `--embed-url`.
+SDG targets), `--k`, `--per-doc`, `--no-expand`, `--threshold`, `--embed-model` and `--embed-url`. `check`, `batch`
+and `history` count a judgement from the Strictness of Settings, as the app does (`--threshold` sets another for that
+command), and name the value used in their output (`confidence_threshold`).
+
+`ingest --ai-access` says who may read the new documents with AI: `cloud` (a cloud model such as Claude), `local` (only
+a local AI on this computer) or `none` (no AI; you judge them), as the app asks when you add documents. Until the
+project's default is chosen, `ingest` without it adds nothing and says so: this holds for every project made with the
+command line or the connector without a choice, not only new ones. On a project without documents, the first answer
+becomes the default. On one whose earlier documents follow a default nobody chose, the answer is the new documents'
+own, the earlier ones are left as they were, and `ingest` says how many there are: choose the project's default in
+the app (its Documents page asks). With a default chosen, `ingest` without the option takes it; with the option, the
+new documents get that setting, looser or stricter.
 
 **Backends** (`--backend`, on every model command):
 

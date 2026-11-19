@@ -96,6 +96,9 @@ export function aiLabelCard({ project, framework, docIds = null, watchers, onEnd
   }
 
   function draw(plan) {
+    // hunt phase 1.5: a redraw while the person is in "Read at most" (a comparison or a run ends, the plan is read
+    // again) keeps the field's focus and what is typed there, even before it is committed
+    const inLimit = body.contains(document.activeElement) && document.activeElement.classList.contains("pf-limit") ? document.activeElement : null;
     const run = plan.run || {};
     const where = App.privacy();
     const toRead = plan.to_read || 0;
@@ -177,6 +180,7 @@ export function aiLabelCard({ project, framework, docIds = null, watchers, onEnd
       h("div", {}, h("dt", {}, "Seconds per passage"), h("dd", {}, run.seconds_per_task ? String(run.seconds_per_task) : "not measured yet")),
       run.last ? h("div", {}, h("dt", {}, "Last labelling run"), h("dd", {}, `${fmt.date(run.last.started_at)} · ${shown(run.last.model)} · ${plural(run.last.tasks || 0, "passage")}`)) : null)));
     replace(body, bits);
+    if (inLimit) { limIn.value = inLimit.value; limIn.focus(); }
   }
 
   function compareNote(r) {
@@ -215,7 +219,12 @@ export function aiLabelCard({ project, framework, docIds = null, watchers, onEnd
     follow(r.job.id);
   }
 
+  let following = null;
   function follow(jobId) {
+    // hunt phase 1.5: a second press (or another tab) gets the run already under way back from the server, and the page
+    // may find it running as well: followed once (two watchers said its end twice)
+    if (running && following === jobId) return;
+    following = jobId;
     running = true;
     body.hidden = true;
     watchers.push(jobCard(jobBox, jobId, "The AI labels passages", labelLabel, (job) => {
@@ -223,7 +232,7 @@ export function aiLabelCard({ project, framework, docIds = null, watchers, onEnd
       if (job.state === "done") {
         const res = job.result || {};
         const ch = res.changes || {};
-        toast(`The AI read ${plural(res.read || 0, "passage")}${res.failed ? `; ${res.failed} could not be read` : ""}. Of the codes the keywords found there, it confirmed ${fmt.num(ch.confirmed || 0)} and did not confirm ${fmt.num(ch.not_confirmed || 0)}; it added ${fmt.num(ch.added || 0)} the keywords had missed.`, res.failed ? "warn" : "ok", { ttl: 12000 });
+        toast(`The AI read ${plural(res.read || 0, "passage")}${res.failed ? `; ${res.failed} could not be read` : ""}. Of the codes the keywords found there, it confirmed ${fmt.num(ch.confirmed || 0)} and did not confirm ${fmt.num(ch.not_confirmed || 0)}; it added ${fmt.num(ch.added || 0)} the keywords had missed.${res.read_again_meanwhile ? ` ${plural(res.read_again_meanwhile, "passage")} ${res.read_again_meanwhile === 1 ? "was" : "were"} not read: ${res.read_again_meanwhile === 1 ? "its" : "their"} document was read with the new reader meanwhile. Start again to read its new passages.` : ""}`, res.failed || res.read_again_meanwhile ? "warn" : "ok", { ttl: 12000 });
         jobBox.hidden = true;
         // 0.19.4: the local model could not start: its passages wait; the plan's local panel says why (load() below)
         lastLocal = res.local_waiting ? res : null;
@@ -341,10 +350,14 @@ export async function renderProfile(view, params, query) {
     const team = App.state && App.state.profile_framework_team;
     sel.addEventListener("change", async () => {
       framework = sel.value;
+      ai = null;   // the AI card is built for one codebook: the next draw builds it for this one
       // the codebook of document profiles is a setting: new documents get its codes when they are added
       if (!team) { try { await api("PUT", "/api/settings", { profile_framework: framework }); await App.refresh(); } catch (_) { /* the page still works */ } }
       keepUrl();
       await reload();
+      // the card just built does not know of a labelling run under way: follow it, as the first draw does
+      const run = await runningJob(project, ["label"]);
+      if (run && ai) ai.follow(run.id);
       const again = document.getElementById("pf-fw"); if (again) again.focus();
     });
     // how to count: a choice of two values (docs/DESIGN.md 4.6)

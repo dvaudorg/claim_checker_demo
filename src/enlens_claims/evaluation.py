@@ -59,9 +59,12 @@ def _copy(ref: Workspace, name: str) -> Workspace:
     """A copy of the reference workspace as a project of the data folder (the SQLite backup API: consistent while
     the reference is open). Earlier tasks and answers are dropped from the copy; its documents stay."""
     dest = home.home() / "projects" / name
-    if dest.exists():
+    # hunt phase 1.5: a linked project of that name counts too (it is the one the name opens), and the name is claimed
+    # as every new project's is (`home.claim_name`): a vanished quick look of the same name sent the copy to the trash
+    if dest.exists() or name in home.list_projects():
         raise ValueError(f"The evaluation project {name!r} exists already. Score it, or remove it under Manage "
                          "projects to run it again.")
+    home.claim_name(name)
     dest.mkdir(parents=True)
     src = sqlite3.connect(ref.db_path)
     dst = sqlite3.connect(dest / "enlens.sqlite")
@@ -72,6 +75,14 @@ def _copy(ref: Workspace, name: str) -> Workspace:
         dst.close()
     if ref.config_path.exists():
         shutil.copy2(ref.config_path, dest / "config.json")
+        # hunt phase 1.5: the copy works alone. With the original's shared folder or storage space in its settings, a
+        # round run in it would act in the team's place (with the same keys, a space's are named by the space alone)
+        # and a join elsewhere was refused because of it; the copy keeps every other setting (AI access included)
+        from .store import change_config
+        from .sync.folder import FOLDER
+        from .sync.space import CONFIG as SPACE
+
+        change_config(dest / "config.json", {FOLDER: None, SPACE: None})
     for sub in ("frameworks",):
         if (ref.root / sub).is_dir():
             shutil.copytree(ref.root / sub, dest / sub)
@@ -127,9 +138,11 @@ def prepare(ref: Workspace, folder: str | Path, kind: str, model: str, again: bo
         terms.ensure(ws)
         for r in rows:
             try:
-                ids.append(terms.make_link_task(ws, r["a"], r["b"], model))
+                tid = terms.make_link_task(ws, r["a"], r["b"], model)
             except KeyError:
                 continue
+            if tid is not None:   # (None: a term occurs only in documents no AI may read: no task)
+                ids.append(tid)
     elif kind == "theme":
         rows = _read_csv(folder / "f4_themes.csv")
         run_id = next((r["run_id"] for r in rows if r.get("run_id")), None)
@@ -221,13 +234,22 @@ def _seconds(ws: Workspace, kind: str, model: str) -> float | None:
     return round(statistics.median(xs), 1) if xs else None
 
 
+def _done(ws: Workspace, ids: list[str]) -> set[str]:
+    """The run's tasks the model under test answered. Hunt phase 1: only their answers are scored. The copy keeps
+    the reference's own AI output (its labels, links, theme names and chains: `_copy` drops tasks and results, not
+    what they wrote), and a task left unanswered (not run yet, failed, rejected) kept it, so it was scored as the
+    model's: a run with nothing answered got the reference's own score and could pass."""
+    return {t for t in ids if ws.scalar("SELECT status FROM tasks WHERE task_id=?", (t,)) == "done"}
+
+
 def _answered(ws: Workspace, ids: list[str]) -> tuple[int, int]:
     done = sum(1 for t in ids if ws.scalar("SELECT status FROM tasks WHERE task_id=?", (t,)) == "done")
     failed = sum(1 for t in ids if ws.scalar("SELECT status FROM tasks WHERE task_id=?", (t,)) == "failed")
     return done, failed
 
 
-def _score_label(ref: Workspace, ws: Workspace, folder: Path, framework: str = "sdg") -> dict:
+def _score_label(ref: Workspace, ws: Workspace, folder: Path, framework: str = "sdg",
+                 done: set[str] | None = None) -> dict:
     from . import frameworks, profile
     from .acceptance import _kappa
 
@@ -239,18 +261,22 @@ def _score_label(ref: Workspace, ws: Workspace, folder: Path, framework: str = "
     if not gold:
         return {"note": "f2_labels.csv is not filled in yet"}
     pairs = []
+    scored = 0
     for pid, codes in gold.items():
+        if done is not None and f"label:{framework}:{pid}" not in done:
+            continue   # not answered by the model under test: the labels there are the reference's
+        scored += 1
         mine = {r[0] for r in ws.query("SELECT code FROM labels WHERE framework=? AND passage_id=? AND source='model'",
                                        (framework, pid))}
         cands = {c["code"] for c in profile.candidates_of(ws, framework, pid)}
         for c in codes | mine | cands:
             pairs.append((c in codes, c in mine))
-    k = _kappa(pairs)
+    k = _kappa(pairs) if scored else None
     return {"measure": "kappa on code present", "score": round(k, 3) if k is not None else None,
-            "passages": len(gold), "keyword_pass_recall": profile.recall_at_candidates(ws, framework, gold)}
+            "passages": scored, "keyword_pass_recall": profile.recall_at_candidates(ws, framework, gold)}
 
 
-def _score_link(ws: Workspace, folder: Path) -> dict:
+def _score_link(ws: Workspace, folder: Path, done: set[str] | None = None) -> dict:
     from .acceptance import _yes
 
     rows = [r for r in _read_csv(folder / "f3_pairs.csv") if _yes(r.get("same")) is not None]
@@ -259,6 +285,8 @@ def _score_link(ws: Workspace, folder: Path) -> dict:
     agree = n = 0
     for r in rows:
         a, b = sorted((r["a"], r["b"]))
+        if done is not None and f"link:{a}|{b}" not in done:
+            continue   # not answered by the model under test: a link there is the reference's
         got = ws.query("SELECT relation FROM concept_links WHERE a=? AND b=? AND source='model'", (a, b))
         if not got:
             continue
@@ -267,35 +295,68 @@ def _score_link(ws: Workspace, folder: Path) -> dict:
     return {"measure": "pairs judged as the person did", "score": round(agree / n, 3) if n else None, "pairs": n}
 
 
-def _score_theme(ws: Workspace, folder: Path, model: str) -> dict:
+def _score_theme(ws: Workspace, folder: Path, model: str, done: set[str] | None = None) -> dict:
     from .acceptance import _write, _yes
 
     safe = re.sub(r"[^\w.-]", "-", model)  # outside the f-string: a backslash there is an error before Python 3.12
     sheet = folder / f"g6_theme_names_{safe}.csv"
-    rows = _read_csv(sheet)
-    if not rows:
+    # only the themes the model under test named (a theme whose task it did not answer keeps the reference's name)
+    named = [r for r in ws.query("SELECT run_id, theme_id, name, description FROM themes WHERE name_source='model' "
+                                 "ORDER BY theme_id")
+             if done is None or f"theme:{r['run_id']}:{r['theme_id']}" in done]
+    mine = {str(r["theme_id"]) for r in named}
+    have = _read_csv(sheet)
+    if not have:
         names = [{"theme_id": r["theme_id"], "name": r["name"] or "", "description": r["description"] or "",
-                  "fitting": "", "note": ""}
-                 for r in ws.query("SELECT theme_id, name, description FROM themes WHERE name_source='model' "
-                                   "ORDER BY theme_id")]
+                  "fitting": "", "note": ""} for r in named]
         if names:
             _write(sheet, names)
             return {"note": f"{sheet.name} written: a person says for each name whether it fits, then score again"}
         return {"note": "no theme was named yet"}
+    # hunt phase 1.5: a row counts only while it holds the name the model gave. A sheet an older version wrote before
+    # the model answered holds the reference's own names (it wrote every named theme of the copy), and a person's
+    # "fitting" for those scored the reference against itself as the model's
+    given = {str(r["theme_id"]): (r["name"] or "").strip() for r in named}
+    rows = [r for r in have if str(r.get("theme_id")) in mine
+            and (r.get("name") or "").strip() == given[str(r.get("theme_id"))]]
+    stale = sum(1 for r in have if str(r.get("theme_id")) in mine) - len(rows)
+    if not rows:
+        if stale:
+            return {"note": f"{sheet.name} holds other names than {model} gave (written before it answered): move "
+                            "the sheet away and score again, which writes it with the model's names"}
+        return {"note": f"no theme in {sheet.name} was named by {model} yet"}
     filled = [r for r in rows if _yes(r.get("fitting")) is not None]
     if not filled:
         return {"note": f"{sheet.name} is not filled in yet"}
     return {"measure": "names fitting", "score": round(sum(_yes(r["fitting"]) for r in filled) / len(filled), 3),
-            "themes": len(filled)}
+            "themes": len(filled), **({"names_not_the_models": stale} if stale else {})}
 
 
 def _norm(s: str | None) -> str:
     return " ".join(re.findall(r"[a-z0-9]+", (s or "").lower()))
 
 
-def _score_resolve(ws: Workspace, folder: Path) -> dict:
-    from .acceptance import _yes
+def _chain_names(ws: Workspace, doc_id: str, start: int, end: int, done: set[str] | None) -> list[str]:
+    """The names of the chain with a mention overlapping a selection, from the mentions of the windows the model
+    under test answered only (`done`; None: every mention, as references.chain_at)."""
     from .references import chain_at
+
+    if done is None:
+        ch = chain_at(ws, doc_id, start, end)
+        return [_norm(m.get("text")) for m in (ch or {}).get("mentions", []) if m.get("is_named")] + \
+            [_norm((ch or {}).get("name"))]
+    rows = [r for r in ws.query("SELECT chain_id, start, end, text, is_named, window FROM mentions WHERE doc_id=? AND "
+                                "chain_id IS NOT NULL ORDER BY chain_id, start", (doc_id,))
+            if (r["window"] or "").split("#", 1)[0] in done]
+    hit = next((r["chain_id"] for r in rows if r["start"] < end and start < r["end"]), None)
+    ms = [r for r in rows if r["chain_id"] == hit] if hit is not None else []
+    named = [m["text"] for m in ms if m["is_named"]]
+    name = max(named, key=lambda x: (named.count(x), len(x))) if named else (ms[0]["text"] if ms else "")
+    return [_norm(x) for x in named] + [_norm(name)]
+
+
+def _score_resolve(ws: Workspace, folder: Path, done: set[str] | None = None) -> dict:
+    from .acceptance import _yes
 
     rows = _read_csv(folder / "f5_pronouns.csv")
     rows = [r for r in rows if _yes(r.get("right")) is not None]
@@ -312,13 +373,22 @@ def _score_resolve(ws: Workspace, folder: Path) -> dict:
         i = p[0]["text"].find(r["quote"] or "")
         if i < 0:
             continue
+        if done is not None and not any(tid.startswith(f"resolve:{p[0]['doc_id']}:") and
+                                        r["passage_id"] in _window_passages(ws, tid) for tid in done):
+            continue   # no window the model under test answered holds this passage: its chains are the reference's
         n += 1
-        ch = chain_at(ws, p[0]["doc_id"], p[0]["start"] + i, p[0]["start"] + i + 12)
-        names = [_norm(m.get("text")) for m in (ch or {}).get("mentions", []) if m.get("is_named")] + \
-            [_norm((ch or {}).get("name"))]
+        names = _chain_names(ws, p[0]["doc_id"], p[0]["start"] + i, p[0]["start"] + i + 12, done)
         t = _norm(truth)
         right += any(x and (x in t or t in x) for x in names)
     return {"measure": "referent right", "score": round(right / n, 3) if n else None, "quotes": n}
+
+
+def _window_passages(ws: Workspace, task_id: str) -> set[str]:
+    try:
+        return {p["passage_id"] for p in json.loads(ws.scalar("SELECT payload_json FROM tasks WHERE task_id=?",
+                                                               (task_id,)) or "{}").get("passages", [])}
+    except (ValueError, TypeError, KeyError):
+        return set()
 
 
 def _score_check(ref: Workspace, ws: Workspace, folder: Path, ids: list[str]) -> dict:
@@ -420,21 +490,23 @@ def score(ref: Workspace, folder: str | Path, apply: bool = False) -> dict:
             continue
         ids = m.get("tasks") or []
         done, failed = _answered(ws, ids)
+        answered = _done(ws, ids)
         if kind == "label":
-            s = _score_label(ref, ws, folder)
+            s = _score_label(ref, ws, folder, done=answered)
         elif kind == "link":
-            s = _score_link(ws, folder)
+            s = _score_link(ws, folder, answered)
         elif kind == "theme":
-            s = _score_theme(ws, folder, model)
+            s = _score_theme(ws, folder, model, answered)
         elif kind == "resolve":
-            s = _score_resolve(ws, folder)
+            s = _score_resolve(ws, folder, answered)
         else:
             s = _score_check(ref, ws, folder, ids)
         rep = by_key.get((kind, model, True))
         if rep:
             s["repeatability"] = _repeatability(ws, rep[1], kind, rep[2].get("tasks") or [])["score"]
         mark = marks.get(kind)
-        passes = None if mark is None or s.get("score") is None else s["score"] >= float(mark)
+        # a run with nothing answered never passes (so `--apply` never makes its model a default)
+        passes = None if mark is None or s.get("score") is None or not done else s["score"] >= float(mark)
         rows.append({"kind": kind, "model": model, "project": name, "tasks": len(ids), "answered": done,
                      "failed": failed, "seconds_per_task": _seconds(ws, kind, model), "pass_mark": mark,
                      "passes": passes, **s})

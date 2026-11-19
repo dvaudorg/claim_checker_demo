@@ -134,7 +134,7 @@ async function modelStep(body, opts = {}) {
   const help = localModelHelp(info, {
     use: "ai",   // the downloaded model becomes the AI (chosen by the app when the download is done)
     onFound: () => modelStep(body),
-    onReady: async () => { try { await App.refresh(); } catch (_) { /* the test below says so */ } modelStep(body, { test: true }); },
+    onReady: async (got) => { try { await App.refresh(); } catch (_) { /* the test below says so */ } modelStep(body, { test: true, downloaded: (got && got.chat) || "" }); },
   });
   if (help) {
     stepCard.appendChild(help);
@@ -186,6 +186,14 @@ async function modelStep(body, opts = {}) {
     h("div", { class: "fields-2" }, field("AI model that reads and judges", chatSel, { help: "A model of 8 billion parameters (“8b”) or more judges noticeably better." }), field("Model for search by meaning (optional)", embSel, { help: "Finds excerpts even when they use other words than the hypothesis." })),
     h("div", { class: "btn-row" }, testBtn, next, link({ href: "#/settings/model" }, "More options")),
     out);
-  if (opts.test) testBtn.click();   // a model just downloaded: test it at once
+  // a model just downloaded: it is there, and is tested (which loads it) only when the person presses Save and test
+  // (owner's rule since 0.19.15: no model starts or loads until its own Start; it used to be tested at once)
+  if (opts.test) {
+    // (review wave 6) the model that was downloaded, which is not the one chosen above when Settings changed meanwhile
+    const got = opts.downloaded || "";
+    const here = !got || chatSel.value === got;
+    replace(out, notice({ kind: "done" }, h("p", {}, `${got || "The model"} is downloaded. ${here ? "Press Save and test to try it" : "Choose it above and press Save and test to try it"}: the model starts then.`)));
+    testBtn.focus();
+  }
 }
 

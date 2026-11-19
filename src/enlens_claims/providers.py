@@ -213,7 +213,11 @@ def company(pid: str | None) -> str:
 
 
 def on_this_computer(url: str) -> bool:
-    """Whether an address is this computer (localhost, 127.x, ::1)."""
+    """Whether an address is this computer (localhost, 127.x, ::1). Hunt phase 1: only `localhost` itself and loopback
+    addresses, as the privacy pages say; `localhost.localdomain` and names ending in `.localhost` no longer count,
+    since some computers ask the network's name server for them (Linux without systemd's resolver, a name server
+    that answers for its own domain), which may name another computer: a server there may read only what a provider
+    may read."""
     u = (url or "").strip()
     if not u:
         return False
@@ -223,12 +227,29 @@ def on_this_computer(url: str) -> bool:
         host = (urlparse(u).hostname or "").strip("[]").lower()
     except ValueError:
         return False
-    if host in ("localhost", "localhost.localdomain") or host.endswith(".localhost"):
+    if host == "localhost":
         return True
     try:
         return ipaddress.ip_address(host).is_loopback
     except ValueError:
         return False
+
+
+def looks_local(url: str) -> bool:
+    """Whether an address another computer may answer for was probably meant as this computer (`localhost.localdomain`,
+    a name ending in `.localhost`): the person is told to type `localhost` (hunt phase 1.5)."""
+    u = (url or "").strip()
+    if "://" not in u:
+        u = "http://" + u
+    try:
+        host = (urlparse(u).hostname or "").lower().rstrip(".")
+    except ValueError:
+        return False
+    return host == "localhost.localdomain" or host.endswith(".localhost")
+
+
+LOOKS_LOCAL = ("If the server runs on this computer, type localhost or 127.0.0.1 instead: ENLENS counts only those "
+               "as this computer, since the network's name server may answer for other names.")
 
 
 def of_url(url: str) -> str | None:

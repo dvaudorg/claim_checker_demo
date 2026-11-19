@@ -22,6 +22,7 @@ import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterable
 
 from .llm import (AnthropicBackend, BackendError, BaselineBackend, CloudBackend, LocalBackend, OllamaBackend,
                   detect_local, is_chat_model)
@@ -269,19 +270,60 @@ def _read_json(path: Path, tries: int = 6):
     return None
 
 
-def _read_dict(path: Path, strict: bool) -> dict:
+class Damaged(ValueError):
+    """A file of the data folder did not hold what ENLENS writes there: it was set aside, and the change not made."""
+
+
+# what each small file of the data folder holds, for the words when it is damaged
+_HOLDS = {"links.json": ("the list of projects you linked from other folders",
+                         "Projects you linked before are untouched in their folders: link them again."),
+          "quicklook.json": ("the list of quick looks not kept yet", ""),
+          "benchmarks.json": ("the model test's speeds", "")}
+
+
+_NOT_JSON = object()
+
+
+def _set_aside(path: Path) -> Path:
+    """Put a damaged file of the data folder aside as `<name>.damaged` (an earlier one is not written over)."""
+    aside = path.with_name(f"{path.name}.damaged")
+    if aside.exists():
+        aside = path.with_name(f"{path.name}.damaged-{time.strftime('%Y%m%d-%H%M%S')}")
+    os.replace(path, aside)
+    return aside
+
+
+def _read_dict(path: Path, strict: bool, keep_going: bool = False) -> dict:
     """A small file of the data folder that holds a JSON object ({} when there is none, or it holds something else).
     `strict` (before a change is written back): a file that cannot be read raises Unreadable instead of counting as
-    empty, so what it holds is never replaced by the one change."""
+    empty, so what it holds is never replaced by the one change. Hunt phase 1 (FILES-4): nor one that does not parse
+    (cut short by a power cut before it reached the disk, a sync tool, a hand edit): it counted as empty, and linking
+    one more project wrote a list with that one alone. It is set aside as `<name>.damaged` and Damaged says so in
+    words, so the change is made on the next try with a new file; `keep_going` (a list that only saves work, such as
+    the quick looks not kept yet): set aside, then the change goes on with a new one."""
     try:
         data = _read_json(path)
     except ValueError:
-        return {}
+        data = _NOT_JSON
     except Unreadable:
         if strict:
             raise
         return {}
-    return data if isinstance(data, dict) else {}
+    if isinstance(data, dict):
+        return data
+    if data is None or not strict:
+        return {}
+    try:
+        aside = _set_aside(path)
+    except OSError as e:
+        raise Unreadable(f"{path.name} in ENLENS's data folder is damaged and could not be set aside ({e}). Nothing "
+                         "was changed: try again in a moment.") from e
+    if keep_going:
+        return {}
+    what, then = _HOLDS.get(path.name, (f"the file {path.name}", ""))
+    raise Damaged(f"The file that holds {what} ({path.name} in ENLENS's data folder) was damaged and could not be "
+                  f"read. It is kept as {aside.name} beside it, and a new one is started; nothing else was changed. "
+                  f"Try again. {then}".strip())
 
 
 def _stored_settings() -> dict | None:
@@ -627,7 +669,13 @@ def set_cloud_key(provider: str, key: str) -> None:
 def forget_cloud_key(provider: str) -> None:
     from . import keychain
 
-    keychain.delete(_key_name(provider))
+    name = _key_name(provider)
+    keychain.delete(name)
+    # the system keychain's delete does not say whether it worked (locked, or its prompt refused): look instead
+    if keychain.get(name) is not None:
+        _KEY_STORED[provider] = True
+        raise ValueError("The key is still on this computer: its keychain would not remove it. Unlock the keychain "
+                         "and try again.")
     _KEY_STORED[provider] = False
 
 
@@ -953,8 +1001,12 @@ def make_restricted_backend(settings: dict):
     if not choice or choice.get("same_as_main"):
         return None
     if not on_this_computer(choice.get("url") or ""):
+        from .providers import LOOKS_LOCAL, looks_local
+
+        # hunt phase 1.5: an address such as ollama.localhost is another computer since phase 1: say the way out
         raise BackendError(f"The local model for restricted documents must run on this computer; "
-                           f"{choice.get('url')} is another computer.")
+                           f"{choice.get('url')} is another computer."
+                           + (f" {LOOKS_LOCAL}" if looks_local(choice.get("url") or "") else ""))
     key = "ollama_model" if choice["server"] == "ollama" else "openai_model"
     changed = {**settings, "backend": choice["server"], key: choice["model"], "routing": False}
     be, model = _make_backend(changed, "", ("check", "reread"))
@@ -1041,34 +1093,79 @@ def create_project(name: str) -> Workspace:
         if n in links:  # a link whose folder is gone (0.11.1): the new project is made in the data folder, not there
             links.pop(n)
             _save_links(links)
+        claim_name(n)
     return Workspace.create(home() / "projects" / n)
+
+
+def claim_name(name: str) -> None:
+    """Hunt phase 1 (FILES-5): a name a new project takes (made, brought in from a zip, linked) is no quick look's
+    any more. A quick look whose folder went outside ENLENS (the Finder, a clean-up tool) stayed on the list of those
+    not kept until its week was up, so a project made under its name in that week went to the trash in its place."""
+    with LOCK:
+        data = _quicklooks(strict=True)
+        if name in data:
+            del data[name]
+            _save_quicklooks(data)
 
 
 _OPEN: dict[str, tuple[float, Workspace]] = {}
 
 
+from .store import BeingRemoved, held_out, is_held_out  # noqa: E402  (hunt phase 1.5: a folder being removed)
+
+REMOVE_WAIT = 12.0            # seconds a removal waits, in all, for the project's connections still in use
+
+
 def open_project(name: str) -> Workspace:
-    """Open a project (kept open for reuse: opening runs the schema checks)."""
+    """Open a project (kept open for reuse: opening runs the schema checks). Hunt phase 1.5: a project whose folder
+    is being removed is not opened (BeingRemoved): a look at it then (the Projects list, the shared folder's poller)
+    wrote to it and held its database open, so the folder could not move on Windows."""
     path = project_path(name)
     key = str(path.resolve())
+    if is_held_out(path):
+        raise BeingRemoved(f"The project “{name}” is being removed.")
     hit = _OPEN.get(key)
     try:
         stamp = (path / "enlens.sqlite").stat().st_ino
     except OSError:
         stamp = None
     if hit and hit[0] == stamp:
-        return hit[1]
-    ws = Workspace.open(path)
-    _OPEN[key] = (stamp, ws)
+        ws = hit[1]
+    else:
+        if hit:
+            # hunt phase 1.5 (NEEDS WINDOWS in notes/files.md): the database is another file now (the folder was
+            # replaced): the project kept for the old one is dropped with its connections closed, in every thread,
+            # not left to the garbage collector (on Windows an open database keeps its folder from being moved)
+            # (hunt phase 1.5: the project stays: closed only where no statement or transaction runs, without
+            # waiting and without stopping anyone's work; the others move to the new file at their next use)
+            _OPEN.pop(key, None)
+            hit[1].close_all(wait=0, interrupt=False)
+        ws = Workspace.open(path)
+        _OPEN[key] = (stamp, ws)
+    _follow_codebooks(ws)
     return ws
 
 
-def close_project(path: str | Path) -> None:
+def _follow_codebooks(ws: Workspace) -> None:
+    """A codebook kept with all projects may have been changed in another project since this one last looked: its
+    labels here follow the renames and merges now (codebooks.follow), at every opening (the app opens a project at
+    each request, the connector at each call), not only on the Profile and Codebooks pages: Search by code, the concept
+    map, the themes' code grid and the reading view found none of a renamed code's labels until then. It writes only
+    when a change is new here; a codebook that cannot be read is left for the pages that say so."""
+    from . import codebooks
+
+    try:
+        codebooks.follow(ws, wait=False)   # (hunt phase 1.5: nor waits for it behind another writer)
+    except Exception:  # noqa: BLE001 - opening a project never fails for it
+        pass
+
+
+def close_project(path: str | Path, wait: float = 12.0, interrupt: bool = True) -> bool:
     """0.15.7: forget the project at `path` that open_project keeps, closing its connections in every thread, before
-    its folder is moved or removed (Windows refuses while its database is open)."""
+    its folder is moved or removed (Windows refuses while its database is open). Hunt phase 1.5: returns whether every
+    connection is closed (`Workspace.close_all`, with its `wait` and `interrupt`)."""
     hit = _OPEN.pop(str(Path(path).resolve()), None)
-    if hit:
-        hit[1].close_all()
+    return hit[1].close_all(wait=wait, interrupt=interrupt) if hit else True
 
 
 def release_open_projects() -> None:
@@ -1093,18 +1190,24 @@ def link_existing(path: str, name: str | None = None, clean: bool = False) -> st
     n = safe_name(name or src.name) or "workspace"
     if n in list_projects() or (home() / "projects" / n).exists():
         raise ValueError(f"A project called {n!r} already exists.")
+    from .store import refuse_newer
+
+    refuse_newer(src / "enlens.sqlite")  # hunt phase 1.5: before the cleaning below writes to a newer ENLENS's folder
     report = bundle.check_linked(src)
     if report["other"] and not clean:
         who = report["other"].get("name") or "a colleague"
         raise NeedsCleaning(report, f"This folder is {who}’s project. ENLENS will clean it like a project brought in "
                                     "from a file: its record of a shared folder, file paths on the other computer, and "
                                     "what was stored for speed go. The documents and the work stay.")
-    close_project(src)  # (a connection this program holds on it: the cleaning writes through its own)
+    # (a connection this program holds on it: the cleaning writes through its own. Hunt phase 1.5: a folder linked
+    # already under another name stays a project: nothing waits, and no work of it is stopped)
+    close_project(src, wait=0, interrupt=False)
     bundle.clean_linked(src, other=bool(report["other"]))
     with LOCK:
         links = _links(strict=True)
         links[n] = str(src)
         _save_links(links)
+        claim_name(n)
     return n
 
 
@@ -1123,11 +1226,16 @@ def remove_project(name: str) -> str:
         return "unlinked"
     if not (p / "enlens.sqlite").exists():
         raise KeyError(name)
-    close_project(p)  # 0.15.7: Windows cannot move a folder whose database is still open
-    trash = home() / "trash"
-    trash.mkdir(exist_ok=True)
-    dest = trash / f"{name}-{time.strftime('%Y%m%d-%H%M%S')}"
-    move_folder(p, dest)
+    with held_out(p):   # hunt phase 1.5: nothing opens it, nor uses a Workspace of it, while it closes and moves
+        # 0.15.7: Windows cannot move a folder whose database is still open. Hunt phase 1.5: and nowhere is a folder
+        # moved under a connection still writing (on macOS its write went on, into the trash, and said it was saved)
+        if not close_project(p, wait=REMOVE_WAIT):
+            raise FolderInUse(f"{name} could not be moved: a file in it is still open, in ENLENS or another program "
+                              "(a search index, a sync tool, an antivirus check). Wait a moment and try again.")
+        trash = home() / "trash"
+        trash.mkdir(exist_ok=True)
+        dest = trash / f"{name}-{time.strftime('%Y%m%d-%H%M%S')}"
+        move_folder(p, dest)
     return f"moved to {dest}"
 
 
@@ -1209,8 +1317,10 @@ QUICKLOOK_DAYS = 7
 
 
 def _quicklooks(strict: bool = False) -> dict[str, dict]:
-    """The quick looks not kept yet. `strict`: before they are changed and written back (`_read_dict`)."""
-    return _read_dict(home() / "quicklook.json", strict)
+    """The quick looks not kept yet. `strict`: before they are changed and written back (`_read_dict`; a damaged
+    list is set aside and a new one started: it only saves clearing up, and a quick look left off it stays a
+    project)."""
+    return _read_dict(home() / "quicklook.json", strict, keep_going=True)
 
 
 def mark_temporary(name: str, **about) -> None:
@@ -1220,6 +1330,17 @@ def mark_temporary(name: str, **about) -> None:
         data = _quicklooks(strict=True)
         data[name] = {"created_at": time.time(), **about}
         _save_quicklooks(data)
+
+
+def due_now(name: str) -> None:
+    """Hunt phase 1.5: a temporary project the app could not remove just now (a model test's copy whose folder was
+    held): it is removed at the next clean-up (`cleanup_quicklooks`, at the app's next look at its state), and tried
+    again there until it goes, instead of a week later."""
+    with LOCK:
+        data = _quicklooks(strict=True)
+        if name in data:
+            data[name]["created_at"] = 1.0   # (long past; 0 would read as "not known")
+            _save_quicklooks(data)
 
 
 def forget_temporary(name: str) -> bool:
@@ -1271,15 +1392,26 @@ def keep_project(name: str) -> bool:
     return forget_temporary(name)
 
 
-def cleanup_quicklooks(now_: float | None = None) -> list[str]:
-    """Move quick looks older than QUICKLOOK_DAYS days that were not kept to the trash. Returns their names."""
+def expired_quicklooks(now_: float | None = None) -> list[str]:
+    """The quick looks older than QUICKLOOK_DAYS days that were not kept (what `cleanup_quicklooks` would move)."""
+    t = time.time() if now_ is None else now_
+    return [name for name, q in _quicklooks().items()
+            if t - float(q.get("created_at") or t) >= QUICKLOOK_DAYS * 86400]
+
+
+def cleanup_quicklooks(now_: float | None = None, only: Iterable[str] | None = None) -> list[str]:
+    """Move quick looks older than QUICKLOOK_DAYS days that were not kept to the trash. Returns their names. Hunt
+    phase 1: with `only`, just those of them (the app passes the ones no job of is queued or running, marked so that
+    none starts meanwhile: a job would go on writing through the path, into a new quick look of the same file, which
+    gets the same name)."""
     data = _quicklooks()
     if not data:
         return []
     t = time.time() if now_ is None else now_
     moved = []
+    only = None if only is None else set(only)
     for name, q in list(data.items()):
-        if t - float(q.get("created_at") or t) < QUICKLOOK_DAYS * 86400:
+        if t - float(q.get("created_at") or t) < QUICKLOOK_DAYS * 86400 or (only is not None and name not in only):
             continue
         try:
             if name in list_projects():
@@ -1305,7 +1437,7 @@ def record_benchmark(model: str, kinds: dict) -> None:
     """Keep the model test's median seconds per task of each kind (estimates of long runs use them)."""
     p = home() / "benchmarks.json"
     with LOCK:
-        data = _read_dict(p, strict=True)
+        data = _read_dict(p, strict=True, keep_going=True)  # (only estimates: a damaged file set aside, started anew)
         data.setdefault(model, {}).update({k: v.get("seconds_median") for k, v in kinds.items()
                                            if v.get("seconds_median")})
         _write_whole(p, json.dumps(data, indent=2))

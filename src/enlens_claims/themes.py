@@ -763,13 +763,17 @@ def _members_of_one(ws: Workspace, run_id: str, themes: dict, ed: dict, only: in
     per theme, corrected for the passages a person moved."""
     merges, moves = ed["merges"], ed["moves"]
     size: Counter = Counter()
-    for t, n in ws.query("SELECT theme_id, COUNT(*) FROM theme_members WHERE run_id=? GROUP BY theme_id", (run_id,)):
+    # (hunt phase 1.5: members joined with `passages`, as `view` lists them: a member naming a passage this copy does
+    # not hold, from a colleague's run, made the theme's own page say another size than the themes page)
+    for t, n in ws.query("SELECT m.theme_id, COUNT(*) FROM theme_members m JOIN passages p ON "
+                         "p.passage_id=m.passage_id WHERE m.run_id=? GROUP BY m.theme_id", (run_id,)):
         size[_final(merges, t)] += n
     pids = list(moves)
     moved_from: dict[str, int] = {}                      # a moved passage that is a member of the run: its own theme
     for i in range(0, len(pids), 500):
         chunk = pids[i:i + 500]
-        moved_from.update(ws.query(f"SELECT passage_id, theme_id FROM theme_members WHERE run_id=? AND passage_id IN "
+        moved_from.update(ws.query(f"SELECT m.passage_id, m.theme_id FROM theme_members m JOIN passages p ON "
+                                   f"p.passage_id=m.passage_id WHERE m.run_id=? AND m.passage_id IN "
                                    f"({','.join('?' * len(chunk))})", [run_id, *chunk]))
     for pid, raw in moved_from.items():
         size[_final(merges, raw)] -= 1

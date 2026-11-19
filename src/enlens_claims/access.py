@@ -327,16 +327,50 @@ def default(ws: Workspace) -> str:
 
 
 def _write_config(ws: Workspace, changes: dict) -> None:
-    try:
-        cfg = json.loads(ws.config_path.read_text(encoding="utf-8")) if ws.config_path.exists() else {}
-    except (OSError, json.JSONDecodeError):
-        cfg = {}
-    cfg.update(changes)
-    ws.config_path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    # hunt phase 1 (FILES-3): written whole, and a file that does not parse is refused in words, never written over
+    # as if it held nothing (`store.change_config`)
+    from .store import change_config
+
+    change_config(ws.config_path, changes)
     ws._config_cache = None
     held = _WS_FOR_PATH.get(str(ws.root))
     if held is not None:
         held._config_cache = None
+
+
+STANDIN = "ai_access_standin"   # config: documents whose own setting is the app's stand-in until the person answers
+
+
+def mark_standin(ws: Workspace, doc_ids: Iterable[str]) -> None:
+    """Hunt phase 1.5: the own setting of these documents was chosen by the app, not the person (a quick look's
+    document: Only a local AI, since nobody was asked). The person's answer to the project's question replaces it
+    (`answer_standin`); a setting the person gives the document itself ends it (`set_documents`)."""
+    ids = sorted(set(ws.config.get(STANDIN) or []) | {d for d in doc_ids if d})
+    if ids:
+        _write_config(ws, {STANDIN: ids})
+
+
+def standins(ws: Workspace) -> list[str]:
+    """The documents still holding the app's stand-in setting (`mark_standin`)."""
+    held = [d for d in (ws.config.get(STANDIN) or []) if isinstance(d, str)]
+    if not held:
+        return []
+    have = {r[0] for r in ws.query(f"SELECT doc_id FROM documents WHERE doc_id IN ({','.join('?' * len(held))})",
+                                   held)}
+    return [d for d in held if d in have]
+
+
+def answer_standin(ws: Workspace) -> int:
+    """Hunt phase 1.5: the person answered who may read the project's documents: the documents that held the app's
+    stand-in follow that answer now (their own setting is cleared). Returns how many."""
+    ids = standins(ws)
+    if ids:
+        with ws.connect() as cx:
+            cx.execute(f"UPDATE documents SET ai_access=NULL WHERE doc_id IN ({','.join('?' * len(ids))})", ids)
+            relabel(cx)
+    if ws.config.get(STANDIN):
+        _write_config(ws, {STANDIN: None})
+    return len(ids)
 
 
 def set_default(ws: Workspace, value: str) -> str:
@@ -556,6 +590,124 @@ def _core_hooks() -> None:
 
     register_floor(docrole.origin_floor)
     register_hidden(docrole.kept_here)
+    register_floor(words_floor)
+
+
+# hunt phase 1 (QUEUE-1, -2): the payload key of a task that sends words of the documents with no passage or document id
+# beside them: {"terms": the term ids whose wordings the prompt names, "docs": the documents whose titles it names}
+WORDS_KEY = "words_of"
+
+
+def words_floor(cx, payload: Any, dflt: str | None = None) -> str | None:
+    """Words of the documents a task sends with no passage or document id beside them (a concept's wordings in *Other
+    wordings* and *Name the groups*, the titles of the researcher's own documents in a framework from theory) go no
+    further than the documents they come from, as their passages would (`WORDS_KEY` in the payload). A wording is the
+    words of every document it occurs in, so it may go as far as the least restricted of them; a title only as far as
+    its own document. Worked out again whenever the task's setting is (`relabel`, `recheck`): a document made stricter
+    while the task waits makes the task stricter too; without this, a payload with no id was `cloud` for good. The
+    setting the person chose counts, not a reached cap (a cap counts the share of a document's passages sent, and a
+    wording or a title sends none). A wording found in no document any more counts as No AI. None for any other task."""
+    if not isinstance(payload, dict):
+        return None
+    w = payload.get(WORDS_KEY)
+    if not isinstance(w, dict):
+        w = _words_before(cx, payload)
+        if w is None:
+            return None
+    tids = list(dict.fromkeys(t for t in w.get("terms") or [] if isinstance(t, str)))
+    dids = list(dict.fromkeys(d for d in w.get("docs") or [] if isinstance(d, str)))
+    memo = _WORDS_MEMO.get()
+    if memo is None:
+        memo = {}
+    prov = ROUTE_PROVIDER.get()   # whose reading it is (`floor` sets it): the answers kept are for it alone
+    out = [_doc_level(cx, d, dflt, prov, memo) for d in dids]
+    out += [_term_level(cx, t, dflt, prov, memo) for t in tids]
+    return most(out) if out else None
+
+
+# the answers of `words_floor` for the length of one guard call over many tasks (`words_memo`): the settings of
+# documents do not change inside it, and a concept map's terms are shared by many waiting tasks
+_WORDS_MEMO: contextvars.ContextVar = contextvars.ContextVar("enlens_words_memo", default=None)
+
+
+class words_memo:
+    """Around a guard call over many tasks in one transaction (`relabel`, a batch of `next_tasks`): `words_floor`
+    works each term and document out once, not once per task (review of hunt phase 1: thirty waiting group-name tasks
+    of a big project added seconds to every relabel, under the write lock). A memo already open is kept."""
+
+    def __enter__(self):
+        self.token = _WORDS_MEMO.set({}) if _WORDS_MEMO.get() is None else None
+        return self
+
+    def __exit__(self, *exc):
+        if self.token is not None:
+            _WORDS_MEMO.reset(self.token)
+
+
+def _doc_level(cx, d: str, dflt: str | None, prov, memo: dict) -> str:
+    key = ("doc", prov, dflt, d)
+    if key not in memo:
+        memo[key] = levels(cx, [d], budget=False, dflt=dflt).get(d, "none")
+    return memo[key]
+
+
+def _term_level(cx, t: str, dflt: str | None, prov, memo: dict) -> str:
+    """The least strict setting of the documents a term occurs in ("none" when it occurs nowhere now). The documents
+    are read from the passage ids (`store.passage_range`: "<doc_id>:<seq>"; `term_mentions.doc_id` is empty since
+    0.17.2) one seek per document, in the order of the term's places, and the look stops at the first document
+    Claude may read: no term's every mention is read for it."""
+    key = ("term", prov, dflt, t)
+    if key in memo:
+        return memo[key]
+    best, start = "none", ""
+    while True:
+        r = cx.execute("SELECT passage_id FROM term_mentions WHERE term_id=? AND passage_id >= ? ORDER BY passage_id "
+                       "LIMIT 1", (t, start)).fetchone()
+        if r is None:
+            break
+        d = r[0].partition(":")[0]
+        lv = _doc_level(cx, d, dflt, prov, memo)
+        if RANK.get(lv, 2) < RANK[best]:
+            best = lv
+        if best == "cloud":
+            break
+        start = d + ";"   # the next document's places (';' is the character after ':')
+    memo[key] = best
+    return best
+
+
+def _words_before(cx, payload: dict) -> dict | None:
+    """The words a task made before `WORDS_KEY` sends, from its payload (a task waiting in the queue across the
+    update): a group's name (its "concepts" are the first of its "concept_ids", in order), a concept's other
+    wordings (the wordings of the concept whose label the claim names) and a framework's titles of the researcher's
+    own documents (the documents of those titles: every one that bears it; a title no document bears any more counts
+    as No AI). None for any other payload."""
+    ids, shown = payload.get("concept_ids"), payload.get("concepts")
+    if isinstance(ids, list) and isinstance(shown, list) and "map_groups" in payload:
+        out = [t for t in ids[:len(shown)] if isinstance(t, str)]
+        # hunt phase 1.5: a concept named by none of its wordings ("long form (SHORT)") holds the words of all of them
+        more = [r[0] for t in out for r in cx.execute(
+            "SELECT m.term_id FROM concept_terms c JOIN concepts k ON k.concept_id=c.concept_id JOIN terms w ON "
+            "w.term_id=c.term_id JOIN concept_terms m ON m.concept_id=c.concept_id WHERE c.term_id=? AND "
+            "k.label != w.label", (t,))]
+        return {"terms": list(dict.fromkeys(out + more))}
+    term, claim = payload.get("concept"), payload.get("claim")
+    if isinstance(term, str) and isinstance(claim, str) and claim.startswith("the concept: "):
+        members = [r[0] for r in cx.execute("SELECT term_id FROM concept_terms WHERE concept_id=(SELECT concept_id "
+                                            "FROM concept_terms WHERE term_id=?)", (term,))] or [term]
+        q = ",".join("?" * len(members))
+        return {"terms": [t for t, label in cx.execute(f"SELECT term_id, label FROM terms WHERE term_id IN ({q})",
+                                                       members) if label and label in claim] or [term]}
+    titles = payload.get("evidence_titles")
+    if isinstance(titles, list) and titles and "drafts" in payload:
+        from .theoryframe import _clean
+
+        by_title: dict[str, list[str]] = {}
+        for d, title in cx.execute("SELECT doc_id, title FROM documents"):
+            by_title.setdefault(_clean(title, 140) or "untitled", []).append(d)
+        # ("" names no document: `levels` gives a document it does not find No AI)
+        return {"docs": [d for t in titles if isinstance(t, str) for d in by_title.get(t) or [""]]}
+    return None
 
 
 _core_hooks()
@@ -694,16 +846,17 @@ def relabel(cx, task_ids: Iterable[str] | None = None, provider=_LABELS) -> int:
         cx.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)", (LABELS_KEY, json.dumps(known.provider or "")))
     sql = sql.replace("SELECT task_id, payload_json, access", "SELECT task_id, payload_json, access, queued")
     rows = cx.execute(sql, args).fetchall()
-    for i in range(0, len(rows), 500):  # a chunk's passages in one query, then its tasks
-        chunk = []
-        for r in rows[i:i + 500]:
-            try:
-                chunk.append((r, json.loads(r["payload_json"] or "{}")))
-            except (ValueError, TypeError):
-                chunk.append((r, None))
-        known.prefetch(p for _r, pl in chunk for p in ids_in(pl)[0])
-        for r, payload in chunk:
-            n += _relabel_one(cx, r, known, payload)
+    with words_memo():   # each term's and title's setting worked out once for every task (`words_floor`)
+        for i in range(0, len(rows), 500):  # a chunk's passages in one query, then its tasks
+            chunk = []
+            for r in rows[i:i + 500]:
+                try:
+                    chunk.append((r, json.loads(r["payload_json"] or "{}")))
+                except (ValueError, TypeError):
+                    chunk.append((r, None))
+            known.prefetch(p for _r, pl in chunk for p in ids_in(pl)[0])
+            for r, payload in chunk:
+                n += _relabel_one(cx, r, known, payload)
     return n
 
 
@@ -999,6 +1152,9 @@ def set_documents(ws: Workspace, doc_ids: list[str], setting: Any = _KEEP, note:
                                + f": {_providers_words(plist)}.", "document" if one else "documents",
                                doc_ids[0] if one else None, title, data={"documents": list(doc_ids), "providers": plist})
         changed = relabel(cx)
+    if setting is not _KEEP and ws.config.get(STANDIN):   # hunt phase 1.5: the person's own choice now, not a stand-in
+        left = [d for d in ws.config.get(STANDIN) or [] if d not in set(doc_ids)]
+        _write_config(ws, {STANDIN: left or None})
     return {"documents": len(doc_ids), "tasks_changed": changed, "proposed": sorted(held)}
 
 
@@ -1509,13 +1665,15 @@ def sender() -> str | None:
 
 
 def record_sent(cx, task_id: str | None, payload: Any, route: str, feature: str | None = None,
-                context: bool = True, provider: str | None = None, model: str | None = None,
+                context: bool = True, provider: str | None = None, *, model: str | None,
                 person: Any = _UNSET) -> int:
     """Write one ledger row per passage (and, with `context`, the passage shown before it) of this payload, as it
     leaves for a cloud model. A Claude chat is shown the excerpts without their context (`context=False`).
     `provider`: who receives it (stage 1 of other cloud providers; by default Anthropic for Claude's routes).
-    I7 stage 3: each row names the person who sent it (`person`, else `sender()`) and the model (`model`, else the
-    task's), for the AI log."""
+    I7 stage 3: each row names the person who sent it (`person`, else `sender()`) and the model, for the AI log.
+    Hunt phase 1: `model` is required, the model the text is really sent to (None: not known here, as for a chat
+    through the connector). It used to fall back to the task's own model, the one the task was made with, so the log
+    named Opus where the router asked Haiku, and Claude's "haiku" for text Codex read with OpenAI's model."""
     if provider is None:
         provider = ANTHROPIC if route in _ANTHROPIC_ROUTES else providers.OTHER
     pids, _dids = ids_in(payload)
@@ -1530,9 +1688,6 @@ def record_sent(cx, task_id: str | None, payload: Any, route: str, feature: str 
         if is_tombstone(p):     # ("<doc_id>:r1-0005", see reread.py): it is still that document's text that leaves
             docs[p] = p.rsplit(":", 1)[0]
     at = now()
-    if model is None and task_id:
-        got = cx.execute("SELECT model FROM tasks WHERE task_id=?", (task_id,)).fetchone()
-        model = got[0] if got else None
     who = sender() if person is _UNSET else person
     rows = [(p, docs[p], route, task_id, at, feature, provider, who, model) for p in sorted(pids) if p in docs]
     cx.executemany("INSERT INTO ai_sent(passage_id, doc_id, route, task_id, sent_at, feature, provider, person_id, "
@@ -1543,7 +1698,9 @@ def record_sent(cx, task_id: str | None, payload: Any, route: str, feature: str 
 def record_passages(ws: Workspace, passage_ids: Iterable[str], route: str, feature: str, task_id: str | None = None,
                     provider: str | None = None) -> int:
     with ws.connect() as cx:
-        return record_sent(cx, task_id, [{"passage_id": p} for p in passage_ids], route, feature, provider=provider)
+        # (the connector's own chat reads them: ENLENS is not told its model)
+        return record_sent(cx, task_id, [{"passage_id": p} for p in passage_ids], route, feature, provider=provider,
+                           model=None)
 
 
 FEATURES = {"check": "Check", "reread": "Read again", "second": "Second opinion", "label": "Profile (AI pass)",
@@ -1606,8 +1763,13 @@ def upgrade(ws: Workspace) -> dict:
     recorded provenance) enter the ledger with the time of the answer."""
     if not default_chosen(ws):
         _write_config(ws, {"ai_access_default": "local" if _local_only() else "cloud", "ai_access_banner": True})
+    from .store import AI_ACCESS_UPGRADE_DUE
+
     out = {"relabelled": 0, "backfilled": 0}
     with ws.connect() as cx:
+        # hunt phase 1 (FILES-2): the note `Workspace._setup` left that this is still to do goes with the work below,
+        # in this one transaction, so an opening stopped before it is saved does it again the next time
+        cx.execute("DELETE FROM meta WHERE key=?", (AI_ACCESS_UPGRADE_DUE,))
         if cx.execute("SELECT value FROM meta WHERE key='ai_access_upgraded'").fetchone():
             return out
         out["relabelled"] = relabel(cx)
@@ -1656,13 +1818,19 @@ def project_info(ws: Workspace) -> dict:
             team_limit = None
     return {"default": default(ws), "chosen": default_chosen(ws), "banner": bool(ws.config.get("ai_access_banner")),
             "ask": not default_chosen(ws) and (bool(ws.config.get("ai_access_ask")) or bool(lv)),
+            # hunt phase 1.5: documents holding the app's stand-in (a quick look's), and documents with a stricter
+            # setting of their own, so the question card says what is true of them until the person answers
+            "standin": len(standins(ws)),
+            "own_stricter": int(ws.scalar("SELECT COUNT(*) FROM documents WHERE ai_access IN ('local', 'none')") or 0),
             "counts": counts, "labels": LABEL, "who": WHO, "local_only": _local_only(), "promise": PROMISE,
             "ledger_since": ws.meta("ai_sent_since") or None,
             # stage 1 of other cloud providers: who may read the `cloud` documents without their own choice (this
             # person's own, also in a shared project: I7 stage 3), and the team's limit when its owner set one
             "providers_default": providers_default(ws), "shared": shared, "team_limit": team_limit,
-            # I7 stage 3: the provider lists that came from colleagues and were cleared once (settle_own_providers)
-            "providers_reset": ws.meta(PROVIDERS_RESET) if shared else None,
+            # I7 stage 3: the provider lists that came from colleagues and were cleared once (settle_own_providers);
+            # hunt phase 1.5: or narrowed when the project was opened from a zip ("from": "import", bundle.py), in
+            # any project, shared or not
+            "providers_reset": ws.meta(PROVIDERS_RESET) or None,
             "providers_note": team_limit["note"] if team_limit else None, **_route_allows(ws, lv)}
 
 

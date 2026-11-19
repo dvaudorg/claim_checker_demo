@@ -235,7 +235,9 @@ def test_page_files():
     assert '"Get a model on this computer (free, no terminal)"' in access   # folded for people who use Claude
     # "Use a local model" (the automatic choice) counts as set up only when a model answers
     assert 'if (!cc && modelOk && (s.backend || "auto") === "auto") modelOk = hasChatModel((await lookForServers()).servers);' in setup
-    assert "if (opts.test) testBtn.click();" in setup   # a model just downloaded is tested at once
+    # hunt phase 1.5 (the owner's rule: no model starts or loads until its own Start): a model just downloaded is no
+    # longer tested at once; the page says it is there and puts the focus on Save and test, which the person presses
+    assert "testBtn.click()" not in setup and "testBtn.focus();" in setup
     assert 'api("POST", "/api/servers/pull", { models: names(), url: ollama.url, use: opts.use || "" })' in helper
     assert 'use: "ai"' in setup and 'use: "ai"' in settings and 'use: "embed"' in settings and 'use: "restricted"' in access
     # 0.17.0 (design guide): the outside link is the link component (kind "external" opens a new tab with rel noopener)

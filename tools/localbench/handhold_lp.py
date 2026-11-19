@@ -2,7 +2,8 @@
 Scores: P(yes | says the claim), P(yes | says the opposite), P(yes | is about the claim's subject)."""
 import json, math, sys, time
 from pathlib import Path
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
+urlopen = build_opener(ProxyHandler({})).open   # Ollama on this computer: never through a proxy
 HERE = Path(__file__).resolve().parent; DATA = HERE / "data"
 sys.path.insert(0, str(HERE))
 import review as rv

@@ -73,7 +73,8 @@ _LOCAL_TABLES = ("embeddings", "code_vectors", "terms", "term_mentions", "concep
                  "concept_link_sentences", "ai_cache",
                  "agreement_runs")  # I5: the comparisons of this computer's local model with Claude
 # the keys of `meta` a zip for a colleague keeps (besides `codebook_followed:` of shared codebooks and `read_again:`
-# of documents): what a colleague's merge or import reads
+# of documents): what a colleague's merge or import reads. Never `project_needs` (store.PROJECT_LEVEL, hunt phase 1.5):
+# the level this copy's database needs is its own; what a file needs is its `sync_needs`
 _META_KEPT = {"project_uid", "project_uids_known", "bibliography", "corpus_version",
               "roles_upgraded"}  # roles (DESIGN-roles §3.5): a copy made from the zip never pins by 0.17's rule
 
@@ -138,8 +139,24 @@ def items(cx: sqlite3.Connection, root: Path | str | None) -> dict[str, dict[str
     return out
 
 
+def plain_key(kind: str, key: str) -> bool:
+    """Whether `key` can be an item's key. A codebook's key is the name of its file, so one that is not a single plain
+    file name (a path, `..`, a drive, a control character, a trailing dot or space that Windows drops) is nobody's
+    codebook: a colleague's database can say anything, and a key like that must never be built into a path. It need not
+    meet `frameworks.NAME_RE`: a codebook file put there by hand keeps its mark."""
+    if kind != "codebook":
+        return True
+    if not isinstance(key, str) or key in ("", ".", ".."):
+        return False
+    if any(c in key for c in "/\\:") or any(ord(c) < 32 or ord(c) == 127 for c in key):
+        return False
+    return key[-1] not in ". "
+
+
 def exists(cx: sqlite3.Connection, root: Path | str | None, kind: str, key: str) -> bool:
     """Whether the project holds the item now."""
+    if not plain_key(kind, key):
+        return False
     if kind == "check":
         return bool(cx.execute("SELECT 1 FROM hypotheses WHERE hyp_id=?", (key,)).fetchone())
     if kind == "themes":
@@ -163,11 +180,12 @@ def exists(cx: sqlite3.Connection, root: Path | str | None, kind: str, key: str)
 
 
 def rows(cx: sqlite3.Connection) -> dict[tuple[str, str], dict]:
-    """{(kind, key): {"state", "owner", "by", "at", "title"}} of every row of `shares`."""
+    """{(kind, key): {"state", "owner", "by", "at", "title"}} of every row of `shares`, but those whose key cannot be an
+    item's (`plain_key`): the rows of a colleague's database are data, never built into a path."""
     if not has_table(cx):
         return {}
     return {(r[0], r[1]): {"state": r[2], "owner": r[3], "by": r[4], "at": r[5], "title": r[6]}
-            for r in cx.execute("SELECT kind, key, state, owner, by, at, title FROM shares")}
+            for r in cx.execute("SELECT kind, key, state, owner, by, at, title FROM shares") if plain_key(r[0], r[1])}
 
 
 def _partner(cx: sqlite3.Connection, me: str) -> str | None:
@@ -467,8 +485,62 @@ def one(ws, kind: str, key: str) -> dict:
 # ---------------------------------------------------------------------------------------------
 # a colleague's marks (sync/share_merge.py)
 # ---------------------------------------------------------------------------------------------
+def mark_at(r: dict) -> str | None:
+    """When a colleague's mark says it was made, never later than now (hunt phase 1.5, MERGE15-1): a mark dated ahead
+    (a forged "withdrawn" in an owner's name, dated 2999) would count over every mark its owner makes until then. A
+    mark is timed when it is made, so one from the future is clamped to the time it is received; its owner's own later
+    marks then count over it. Not text: none."""
+    at = r.get("at")
+    if not isinstance(at, str) or not at:
+        return None
+    now = _at()
+    return now if at > now else at
+
+
+def signers(ws) -> frozenset[str]:
+    """The people whose own marks reach this copy in files they signed: the members of the project's storage space
+    (sync/space.py checks each of their files against their own key; `merge._Merge.first_hand`). A mark in one of
+    their names is taken only from their own file (`trusted`): in another member's file, a zip brought by hand or a
+    plain shared folder it may be anyone's word. Empty without a storage space (a plain shared folder and a zip carry
+    no signature: there a mark is data relayed by design, docs/ROADMAP.md "Signed share marks"). Hunt phase 1.5,
+    MERGE15-1."""
+    try:
+        from .sync import space
+
+        desc = space.configured(ws)
+        base = space.mirror_of(ws) if desc is not None else None
+        if base is None:
+            return frozenset()
+        state = json.loads((base / ".space-state.json").read_text(encoding="utf-8"))
+        roster = state.get("roster") if isinstance(state, dict) else None
+        if not isinstance(roster, dict):
+            return EVERYONE   # (a space whose list of members this copy has not read yet: closed, see `_Everyone`)
+        return frozenset(str(m.get("person")) for m in space._active(roster).values() if m.get("person"))
+    except (OSError, ValueError, TypeError, AttributeError):
+        return EVERYONE
+
+
+class _Everyone(frozenset):
+    """Everyone counts as a signer (`signers` when the storage space's record of its members cannot be read): no mark
+    is taken but from its own maker's file until the record reads again. Fails closed (review of hunt phase 1.5, wave
+    2): an unreadable record gave the plain relay rules. Not empty, so `bool()` says a space is there."""
+
+    def __contains__(self, item) -> bool:
+        return True
+
+
+EVERYONE = _Everyone({"*"})
+
+
+def trusted(by: str | None, sender: str | None, first_hand: bool, signed: Iterable[str]) -> bool:
+    """Whether a mark (or a note of removal standing for one) made by `by` may count, from a file of `sender`: a mark
+    in the name of someone who signs their own files (`signers`) only from a file known to be theirs (`first_hand`)."""
+    return not (by and by in signed and not (first_hand and by == sender))
+
+
 def receive(cx: sqlite3.Connection, kind: str, key: str, r: dict, me: str, present: bool,
-            had: bool | None = None, sender: str | None = None) -> str | None:
+            had: bool | None = None, sender: str | None = None, first_hand: bool = False,
+            signed: Iterable[str] = ()) -> str | None:
     """A colleague's mark of an item (their row, `r`). Only an item's owner decides about it: a mark about your own item
     changes nothing here, nor one by someone else than its owner; of two marks the later counts. A withdrawal is noted
     also for an item this copy does not hold (`present`), so a third person's copy does not bring it here later.
@@ -476,12 +548,22 @@ def receive(cx: sqlite3.Connection, kind: str, key: str, r: dict, me: str, prese
     just came in has no row yet); None: as `present`. `sender`: whose file the mark came in (a mark is data in a file,
     relayed by design): a private item of someone else's held here (a whole project zip of theirs, or their private
     work from their other account, sync/selfsync.py) changes its state only by a mark in its owner's own file, so no
-    third person's file can publish it. Returns the new state here, or None when nothing changed."""
-    if kind not in KINDS or r.get("state") not in STATES:
+    third person's file can publish it. `first_hand`, `signed`: a mark in the name of a member of the storage space is
+    taken only from a file that member signed (`trusted`). A mark dated ahead counts as made now (`mark_at`). Returns
+    the new state here, or None when nothing changed."""
+    if kind not in KINDS or r.get("state") not in STATES or not plain_key(kind, key):
         return None
+    by = r.get("by")
+    r = {**r, "at": mark_at(r)}
     here = cx.execute("SELECT state, owner, by, at FROM shares WHERE kind=? AND key=?", (kind, key)).fetchone()
     had = present if had is None else had
-    by = r.get("by")
+    if not trusted(by, sender, first_hand, signed):
+        # a relayed "shared" for an item that came in now and that this copy knows nothing of is taken, as everywhere
+        # (review of hunt phase 1.5, wave 2: an honestly relayed item stayed private for good when its owner left the
+        # space before this copy read her part, or her own mark reached this copy before the item); anything else in a
+        # member's name only from their own signed file: a withdrawal, a change of a mark held here
+        if not (r["state"] == "shared" and present and not had and here is None):
+            return None
     if (here is None and had) or (here is not None and here[1] == me):
         return None  # yours: only you decide
     if not present and here is None and r["state"] != "withdrawn":
@@ -696,6 +778,9 @@ def strip(cx: sqlite3.Connection, root: Path | str | None, me: str) -> dict:
             cx.execute("UPDATE sync_removed SET title=NULL WHERE kind=? AND key=?", (kind, key))
         elif (kind, key) not in shared:
             cx.execute("DELETE FROM sync_removed WHERE kind=? AND key=?", (kind, key))
+    # a second person's removal of a note or an entry this copy never held (sync/common.ALSO_REMOVED): this copy's
+    # own record, of others' items; each remover's own file says it
+    cx.execute("DELETE FROM sync_removed WHERE kind IN ('note-also', 'log-also')")
     run_keys = tuple(r[0] + ":" for r in cx.execute("SELECT run_key FROM theme_runs") if r[0])
     for key, title in cx.execute("SELECT key, title FROM sync_removed WHERE kind='review'").fetchall():
         try:
@@ -727,6 +812,16 @@ def strip(cx: sqlite3.Connection, root: Path | str | None, me: str) -> dict:
     cx.execute(f"DELETE FROM results WHERE task_id IN (SELECT task_id FROM tasks WHERE kind IN ({marks}))",
                LOCAL_TASK_KINDS)
     cx.execute(f"DELETE FROM tasks WHERE kind IN ({marks})", LOCAL_TASK_KINDS)
+    # a task of a check's or a theme run's kind that no shared item holds (the search words asked for a concept of the
+    # glossary, `expand:concept:…`; one left by a check removed long ago) is no one's to send: the shared folder never
+    # writes these (ProjectRows), so a zip of what was shared does not hold them either (hunt phase 1, MERGE-3 sweep)
+    theirs = {r["task_id"] for k, key in shared if k in ("check", "themes")
+              for r in rows_of(cx, k, key).get("tasks", [])}
+    marks = ",".join("?" * len(ITEM_TASK_KINDS))
+    for (tid,) in cx.execute(f"SELECT task_id FROM tasks WHERE kind IN ({marks})", ITEM_TASK_KINDS).fetchall():
+        if tid not in theirs:
+            cx.execute("DELETE FROM results WHERE task_id=?", (tid,))
+            cx.execute("DELETE FROM tasks WHERE task_id=?", (tid,))
     # the ledger of what was sent to Claude stays whole (a cap on what Claude may read counts every copy's reading),
     # but a row of work that is not shared no longer names its task (a check's id is in it)
     # (I7 stage 3: nor who sent it, nor on which model: the AI log says only "work not shared with the team")
@@ -749,9 +844,17 @@ def strip(cx: sqlite3.Connection, root: Path | str | None, me: str) -> dict:
 # tasks of these kinds belong to checks and theme runs (sync.fingerprints check_tasks, themes_tasks), never to the project
 ITEM_TASK_KINDS = ("check", "expand", "decompose", "reread", "second", "theme")
 # tasks of these kinds (and their results) are this copy's own, like the tables they fill (sync.LOCAL_ONLY): the AI's
-# draft name for a concept-map group (groupnames.KIND). They never leave in a zip or the shared folder, and never come
-# in from a colleague. Not in ITEM_TASK_KINDS: those belong to a check or a theme run (sync/folder.py)
-LOCAL_TASK_KINDS = ("group_name",)
+# draft name for a concept-map group (groupnames.KIND); the AI's draft definition of a code (codedefine.KIND: the
+# code's name, its group and the passages of its examples, of a codebook that may be private); the framework the AI
+# drafted from theory documents (theoryframe.KIND: the person's focus and the draft codebook's concepts, before it is a
+# codebook). Hunt phase 1 (MERGE-3): the last two went in a zip of what was shared and in the shared folder, though no
+# item covers them. What a colleague needs of them is in the codebook once the person makes or saves it (a draft's
+# words are marked there, `drafted`). They never leave in a zip or the shared folder, and never come in from a
+# colleague. Not in ITEM_TASK_KINDS: those belong to a check or a theme run (sync/folder.py). Hunt phase 1.5 (the
+# owner's item 3): the concepts the AI drafted from one theory document (theorycodes.AI_KIND, `theory_codes`) too, for
+# the same reason: they feed a codebook the person may keep private; the codebook made from them carries its codes and
+# their quoted definitions when it is shared
+LOCAL_TASK_KINDS = ("group_name", "code_definition", "theory_frame", "theory_codes")
 # tables without words of a document in them: a document kept out of the shared folder does not keep these rows out
 _NO_TEXT = {"ai_sent", "people", "bib_items", "bib_links", "research_log", "sync_removed", "runs", "meta",
             "ownership", "proposals", "decisions", "canon",  # 0.18 L2: they name documents, and hold none of their words

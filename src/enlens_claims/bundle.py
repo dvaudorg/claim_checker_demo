@@ -33,11 +33,11 @@ import time
 import unicodedata
 import uuid
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Iterable
 
 from . import __version__
-from .store import Workspace, scratch
+from .store import Workspace, now, scratch, write_config
 
 STORED = {".pdf", ".zip", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".docx", ".xlsx", ".pptx", ".gz"}  # compressed
 MAX_IMPORT = 8 * 1024 ** 3
@@ -60,6 +60,7 @@ def export_project(ws: Workspace, out: str | Path, scope: str = "all") -> dict:
 
     from . import sharing, sync
     from .sync import changes as sync_changes, formats as sync_formats
+    from .store import PROJECT_NEEDS_KEY
 
     if scope not in SCOPES:
         raise ValueError("A project zip holds the whole project or what you shared.")
@@ -90,6 +91,10 @@ def export_project(ws: Workspace, out: str | Path, scope: str = "all") -> dict:
                 else:
                     sharing.materialise(cx, ws.root, stamp["from"]["id"])
                     left_out, shared_books = {}, None
+                # hunt phase 1.5: the level of ENLENS this copy's database needs (store.PROJECT_LEVEL) stays here, as
+                # in a zip of what you shared (`sharing.strip`): the zip's own `sync_needs` says what it needs, and
+                # the copy it becomes records its own level when first opened
+                cx.execute("DELETE FROM meta WHERE key=?", (PROJECT_NEEDS_KEY,))
             if scope == "shared":
                 cx.execute("VACUUM")
         finally:
@@ -235,7 +240,10 @@ def relocate_documents(db: Path, relative, new_root: Path) -> int:
     try:
         with cx:
             for doc_id, path in cx.execute("SELECT doc_id, path FROM documents").fetchall():
-                if not path or not Path(path).is_absolute():
+                # hunt phase 1.5: a path recorded on another kind of computer is absolute there ("/Users/…" from a Mac
+                # read on Windows, "C:\Users\…" from Windows read on a Mac): `Path` here judged it by this computer's
+                # rules, left it as it was, and no document of a folder zipped by hand found its file
+                if not path or not (PurePosixPath(path).is_absolute() or PureWindowsPath(path).is_absolute()):
                     continue
                 rel = relative(Path(path.replace("\\", "/")).parts)
                 if not rel:
@@ -363,7 +371,7 @@ def import_project(zip_path: str | Path, dest: str | Path, merge_only: bool = Fa
     """Unpack a project zip into the folder `dest` (which must not exist yet, or be empty) and open it. The zip is one
     made with export_project, or a project folder zipped by hand (0.13.5). `merge_only` (0.18): unpacked only to be
     merged into a copy (sync.bring_in), not a copy of its own: the sender's copy stays as it was."""
-    from .ingest import ZIP_ERRORS, _safe_extract, zip_name, zip_problem
+    from .ingest import ZIP_ERRORS, _safe_extract, unpacked_names, zip_name, zip_problem
 
     zip_path, dest = Path(zip_path), Path(dest)
     if not zipfile.is_zipfile(zip_path):
@@ -380,8 +388,13 @@ def import_project(zip_path: str | Path, dest: str | Path, merge_only: bool = Fa
             shutil.rmtree(staging)
         staging.mkdir(parents=True)
         try:
+            # hunt phase 1.5: two names that differ only by case or by the form of their accents ("Report.pdf" and
+            # "report.pdf", from a copy on Linux) were unpacked to one file on macOS and Windows, so one document
+            # opened the other's original; they are kept apart as an add keeps them (`ingest.unpack_names`), and the
+            # documents follow the names they were unpacked under
+            renamed = unpacked_names(_Without(zf, prefix), prefix)
             try:
-                _safe_extract(_Without(zf, prefix), staging, [MAX_IMPORT], strip=prefix)
+                _safe_extract(_Without(zf, prefix), staging, [MAX_IMPORT], strip=prefix, distinct=True)
             except ZIP_ERRORS as e:  # 0.14.3: a damaged or password-protected zip, in words
                 raise ValueError(f"This project zip could not be unpacked ({zip_problem(e)}). Ask for a new copy of "
                                  "the file.") from e
@@ -408,35 +421,47 @@ def import_project(zip_path: str | Path, dest: str | Path, merge_only: bool = Fa
         except BaseException:
             shutil.rmtree(staging, ignore_errors=True)
             raise
+    from . import home
+
+    # hunt phase 1 (FILES-5): a project of the data folder takes its name off the quick looks (one whose folder went)
+    if not merge_only and dest.parent.name == "projects" and \
+            dest.parent.resolve() == (home.home() / "projects").resolve():
+        home.claim_name(dest.name)
     ws = Workspace.open(dest)  # opened in staging already: the tables and columns of this version are there
     try:
         sent = json.loads(ws.config_path.read_text(encoding="utf-8")) if ws.config_path.exists() else {}
     except (OSError, ValueError):
         sent = {}
-    ws.config_path.write_text(json.dumps(_clean_config(sent), indent=2), encoding="utf-8")
-    ws._config_cache = None
+    cfg = _clean_config(sent)
     if before_011:
         # 0.11: a project made before per-document AI settings: the app asks once who may read its documents
-        cfg = json.loads(ws.config_path.read_text(encoding="utf-8")) if ws.config_path.exists() else {}
         cfg.pop("ai_access_default", None)
         cfg.pop("ai_access_banner", None)
         cfg["ai_access_ask"] = True
-        ws.config_path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    write_config(ws.config_path, cfg)  # hunt phase 1 (FILES-3): whole, once
+    ws._config_cache = None
     root = dest.resolve()
     files = meta.get("files") if isinstance(meta.get("files"), dict) else {}
     with ws.connect() as cx:
         for doc_id, path in cx.execute("SELECT doc_id, path FROM documents").fetchall():
             arc = files.get(doc_id)
-            if not arc:
+            if not arc or not isinstance(arc, str):
                 continue
-            target = (root / arc).resolve()
+            target = (root / renamed.get(arc, arc)).resolve()
             if target.is_relative_to(root) and target.is_file():
                 cx.execute("UPDATE documents SET path=? WHERE doc_id=?", (str(target), doc_id))
     if prefix and not files:
         # a project folder zipped by hand: its documents still point into the folder it was zipped from
         name = prefix.rstrip("/").rsplit("/", 1)[-1]
-        relocate_documents(dest / "enlens.sqlite", lambda parts: parts[len(parts) - parts[::-1].index(name):]
-                           if name in parts[:-1] else None, root)
+
+        def inside(parts):
+            rel = parts[len(parts) - parts[::-1].index(name):] if name in parts[:-1] else None
+            if rel:  # (a name unpacked under another, as above)
+                path = "/".join(rel)
+                rel = renamed.get(path, renamed.get(unicodedata.normalize("NFC", path), path)).split("/")
+            return rel
+
+        relocate_documents(dest / "enlens.sqlite", inside, root)
     for sub in ("tasks", "results", "exports", "report"):
         (dest / sub).mkdir(exist_ok=True)
     (dest / "bundle.json").unlink(missing_ok=True)
@@ -447,10 +472,90 @@ def import_project(zip_path: str | Path, dest: str | Path, merge_only: bool = Fa
         cx.execute("DELETE FROM removed_docs")
         # roles (§4.11): whose copy this is, so linking its folder later does not take it for another person's
         ws.set_meta(COPY_FOR, me(), cx)
+        # hunt phase 1.5 (MERGE15-1): a share mark the zip dates ahead of this clock counts as made now, as a mark that
+        # comes in a merge does (sharing.mark_at): a "withdrawn" dated 2999 in a zip a copy is made from kept its owner's
+        # later marks from counting here for good (store.py clamps them too when a project opens)
+        at = sharing_now()
+        cx.execute("UPDATE shares SET at=? WHERE typeof(at)='text' AND at > ?", (at, at))
     _forget_folder(ws, sender)
+    # (a colleague's lists and project default are their consent, not this person's: `_forget_folder` cleared the
+    # lists, and the project default is this copy's own; a zip that names this person may only narrow theirs)
+    own = bool(sender) and sender == (_my_id() or "")
+    _providers_asked_again(ws, sent if own and isinstance(sent, dict) else None)
     if not merge_only:
         _adopt(ws, sender)
+    _no_local_drafts(ws, sender)
     return ws
+
+
+def sharing_now() -> str:
+    """Now, as a share mark is timed (sharing._at)."""
+    from .sharing import _at
+
+    return _at()
+
+
+def _my_id() -> str | None:
+    from .home import load_settings
+
+    return load_settings().get("person_id")
+
+
+def _providers_asked_again(ws: Workspace, sent: dict | None = None) -> None:
+    """Hunt phase 1.5 (MERGE15-10): which cloud providers may read each document is consent, and a zip never adds to
+    it, not even one that says it is this person's own. Nothing in a zip can tell this person's own backup from a zip a
+    colleague made and named them in (bundle.json "from", the project's rows and its research log are all written by
+    whoever made the zip; no secret of the person's goes into one), so a list in it may only narrow: each document's
+    list becomes what it allowed AND what this copy's project default allows (`_clean_config` dropped the zip's own
+    default, so that is `access.providers_default`, Anthropic alone). A document that followed the zip's project
+    default (no list of its own) keeps that default's narrowing the same way. Nothing left: an empty list, which allows
+    no provider (`access._own_list`). So an honest exclusion survives a backup or a move (a document kept from Anthropic
+    stays kept from it), and a forged list adds nothing. The person is told in place, in every project
+    (`access.PROVIDERS_RESET`, "from": "import"), to tick again what they want. A colleague's lists were cleared already
+    (`_forget_folder`: their consent is not this person's; the document's AI setting itself is the team's)."""
+    from .access import PROVIDERS_RESET, _own_list, providers_default, relabel
+
+    here = providers_default(ws)
+    theirs_default = None
+    if isinstance(sent, dict) and sent.get("ai_providers_default") is not None:
+        theirs_default = _own_list(json.dumps(sent.get("ai_providers_default")))
+    changed: list[tuple[str, str]] = []
+    with ws.connect() as cx:
+        for doc, raw in cx.execute("SELECT doc_id, ai_providers FROM documents").fetchall():
+            had = _own_list(raw)
+            if had is None:
+                if theirs_default is None:
+                    continue  # (the project's default there was this copy's default too)
+                had = theirs_default
+            keep = [p for p in had if p in here]
+            if raw is not None and sorted(keep) == sorted(had) and _own_list(raw) is not None:
+                continue  # (already within this copy's default: nothing to ask again)
+            if raw is None and sorted(keep) == sorted(here):
+                continue
+            changed.append((json.dumps(keep), doc))
+        if not changed:
+            return
+        cx.executemany("UPDATE documents SET ai_providers=? WHERE doc_id=?", changed)
+        ws.set_meta(PROVIDERS_RESET, {"documents": len(changed), "at": now(), "from": "import"}, cx)
+        relabel(cx)
+
+
+def _no_local_drafts(ws: Workspace, sender: str | None) -> None:
+    """Hunt phase 1.5 (MERGE15-6): the AI's drafts for one computer only (sharing.LOCAL_TASK_KINDS: draft names of the
+    concept map's groups, draft definitions of codes, the concepts drafted from a theory document, the framework drafted
+    from several) never leave in a zip for a colleague or the shared folder, and a merge skips them; a whole-project zip
+    from a colleague on an older version still held them, and a new copy made from it kept them, the colleague's focus
+    and draft codes with them. Kept only in a zip that says it is this person's own (their backup: their own drafts)."""
+    from .home import load_settings
+    from .sharing import LOCAL_TASK_KINDS
+
+    if sender and sender == (load_settings().get("person_id") or ""):
+        return
+    q = ",".join("?" * len(LOCAL_TASK_KINDS))
+    with ws.connect() as cx:
+        cx.execute(f"DELETE FROM results WHERE task_id IN (SELECT task_id FROM tasks WHERE kind IN ({q})) OR kind IN "
+                   f"({q})", (*LOCAL_TASK_KINDS, *LOCAL_TASK_KINDS))
+        cx.execute(f"DELETE FROM tasks WHERE kind IN ({q})", LOCAL_TASK_KINDS)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -818,7 +923,7 @@ def clean_linked(path: str | Path, other: bool) -> dict:
         f = root / "config.json"
         if f.exists():
             shutil.copyfile(f, root / "config.json.before-linking")
-        f.write_text(json.dumps(new, indent=2), encoding="utf-8")
+        write_config(f, new)  # hunt phase 1 (FILES-3): whole
     if other:
         maker = report["other"]
         if (root / "cache").is_dir():

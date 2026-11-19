@@ -25,7 +25,7 @@ def _project(api, corpus, url):
     assert api("POST", "/api/projects", {"name": "P"})[0] == 200
     for f in sorted(corpus.iterdir()):
         assert api("POST", f"/api/projects/P/uploads?batch=b1&name={f.name}", raw=f.read_bytes())[0] == 200
-    st, r = api("POST", "/api/projects/P/ingest", {"batch": "b1"})
+    st, r = api("POST", "/api/projects/P/ingest", {"ai_access": "cloud", "batch": "b1"})
     job = api.wait(r["job"]["id"])
     assert job["state"] == "done", job["error"]
     # 0.7: adding documents builds the glossary and finds the codes by keywords
@@ -120,7 +120,7 @@ def test_profile_concepts_themes_references_and_highlights(api, corpus, ollama):
     # F4: themes by words, a rename, a model pass for the names, the export (on more text: the demo corpus too)
     from pathlib import Path
     demo = Path(__file__).resolve().parent.parent / "tools" / "demo_corpus"
-    st, r = api("POST", "/api/projects/P/ingest", {"path": str(demo)})
+    st, r = api("POST", "/api/projects/P/ingest", {"ai_access": "cloud", "path": str(demo)})
     assert api.wait(r["job"]["id"])["state"] == "done"
     st, r = api("POST", "/api/projects/P/themes", {"k": 5, "seed": 0})
     j = api.wait(r["job"]["id"])
