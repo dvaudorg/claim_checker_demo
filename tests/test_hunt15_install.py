@@ -1458,3 +1458,111 @@ def test_an_add_on_whose_sql_manages_transactions_is_refused_naming_the_statemen
     errs = addons.errors(ws)
     assert errs and errs[0]["addon"] == "drafts" and stmt.rstrip(";").split()[0].upper() in errs[0]["error"].upper()
     assert "savepoint" in errs[0]["error"].lower() or "must not" in errs[0]["error"].lower()
+
+
+# ---------------------------------------------------------------------------------------------
+# CI run 4: a starting app's record is never removed while its process is a live ENLENS app
+# ---------------------------------------------------------------------------------------------
+def _free_port() -> int:
+    import socket
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def test_a_starting_apps_record_survives_and_is_found_once_it_answers():
+    """INSTALL15-26 (CI run 4, Windows: the icon's app was never found): `running()` that looked while the app had
+    written app.json but did not answer yet found a record that "proves nothing" and REMOVED it; the app then ran on,
+    never found again (a second click on the icon while ENLENS starts started a second copy). A record whose process
+    is a live ENLENS app survives a refused connection (it is given back as starting, `busy`), and is found as soon
+    as the address answers."""
+    import http.server
+    import threading
+
+    from enlens_claims.gui import launcher
+    from enlens_claims.gui.server import QuickServer
+
+    port = _free_port()  # nothing listens yet: the connection is refused
+    app = _sleeper("enlens_claims.gui.launch", "--launcher")
+    srv = None
+    try:
+        info = _app_record(port, app.pid)
+        got = launcher.running(timeout=0.3)
+        assert got is not None and got.get("busy") is True and got["pid"] == info["pid"], got
+        assert launcher.info_path().exists()
+
+        class App(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                ok = self.headers.get("X-Enlens-Token") == "T" * 30
+                self.send_response(200 if ok else 401)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"jobs": []}')
+
+            def log_message(self, *a):
+                pass
+
+        srv = QuickServer(("127.0.0.1", port), App)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        got = launcher.running(timeout=1.5)
+        assert got == info, got
+    finally:
+        if srv is not None:
+            srv.shutdown()
+            srv.server_close()
+        app.kill()
+        app.wait(30)
+
+
+def test_a_record_whose_process_is_gone_is_removed():
+    """INSTALL15-26, the other side: the address refuses and the record's process has ended: stale, removed."""
+    import subprocess
+
+    from enlens_claims.gui import launcher
+
+    gone = subprocess.Popen([sys.executable, "-c", "pass"])
+    gone.wait()
+    _app_record(_free_port(), gone.pid)
+    assert launcher.running(timeout=0.3) is None
+    assert not launcher.info_path().exists()
+
+
+def test_a_record_of_another_program_is_removed():
+    """INSTALL15-26: the record's number now belongs to another program (not an ENLENS app): stale, removed."""
+    from enlens_claims.gui import launcher
+
+    other = _sleeper("not-an-app")
+    try:
+        _app_record(_free_port(), other.pid)
+        assert launcher.running(timeout=0.3) is None
+        assert not launcher.info_path().exists()
+    finally:
+        other.kill()
+        other.wait(30)
+
+
+def test_the_app_writes_its_token_file_before_its_record_and_both_once_it_listens(monkeypatch, tmp_path):
+    """INSTALL15-26, the app's side: `serve` writes the token file BEFORE app.json (a `running()` that finds the record
+    always finds the token to prove it with), and both only after the server listens."""
+    import socket
+
+    from enlens_claims.gui import launcher, server
+
+    order: list = []
+
+    def listening(port):
+        with socket.socket() as s:
+            return s.connect_ex(("127.0.0.1", port)) == 0
+
+    monkeypatch.setattr(launcher, "write_token", lambda url, port, tok: order.append(("token", listening(port))))
+    monkeypatch.setattr(launcher, "write_info", lambda url, port: order.append(("info", listening(port))))
+    monkeypatch.setattr(server, "_repair_plugin", lambda: None)
+    monkeypatch.setattr(server, "_repair_icons", lambda: None)
+
+    def stop_at_once(self, poll_interval=0.5):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(server.QuickServer, "serve_forever", stop_at_once)
+    server.serve("127.0.0.1", _free_port(), open_browser=False, launcher=True)
+    assert order == [("token", True), ("info", True)], order

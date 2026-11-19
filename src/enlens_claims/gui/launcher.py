@@ -81,6 +81,20 @@ def _pid_is_enlens_app(pid) -> bool:
     return bool(cmd) and ("enlens_claims.gui.launch" in cmd or "enlens-gui" in cmd)
 
 
+def _answers(url: str) -> bool:
+    """Whether anything accepts a connection at `url`'s address (127.0.0.1:port)."""
+    import socket
+
+    port = _port_of(url)
+    if not port:
+        return False
+    try:
+        with socket.create_connection(("127.0.0.1", int(port)), timeout=1.0):
+            return True
+    except OSError:
+        return False
+
+
 def _timed_out(e: BaseException) -> bool:
     """Whether a request failed because the address did not answer in time (a busy app), not because it refused."""
     return isinstance(e, TimeoutError) or isinstance(getattr(e, "reason", None), TimeoutError)
@@ -147,6 +161,12 @@ def running(timeout: float = 1.5) -> dict | None:
         return info
     if got == "busy":
         return {**info, "busy": True}
+    # hunt phase 1.5 (CI run 4): a record is removed only when its process is gone or is another program. While it
+    # is a live ENLENS app, the record stays: an address that does not answer yet is an app still starting (given
+    # back as busy, so the icon opens it rather than start a second copy); one that answers but does not prove it is
+    # left alone (a record removed while its app ran was never found again)
+    if _pid_is_enlens_app(info.get("pid")):
+        return {**info, "busy": True} if not _answers(url) else None
     _forget_info(info)
     return None
 

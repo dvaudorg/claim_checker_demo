@@ -31,9 +31,10 @@
 - **The install line works for a Windows user name with brackets.** With a user folder such as `C:\Users\Anna [Lab]`
   (so the temporary folder too), the install stopped at "Cannot find path": PowerShell read the brackets as a pattern.
   Every path in the install script is now taken as written.
-- **The icon does not start a second ENLENS beside a busy one.** When the running ENLENS was too busy to answer in a
-  second and a half, the icon took its note for a stale one, removed it and started a second copy of the same data
-  folder. It now asks again, and when the noted ENLENS still runs, opens it.
+- **The icon does not start a second ENLENS beside a busy or starting one.** When the running ENLENS was too busy to
+  answer in a second and a half, or was still starting, the icon took its note for a stale one, removed it and
+  started a second copy of the same data folder. The note is now removed only when the ENLENS it names has ended;
+  while it runs, the icon opens it.
 - **A Claude Code run left going is recognised on a computer without `ps`.** On such a computer (a small Linux) a run
   an earlier ENLENS started was forgotten and went on unseen; its command line is now read from `/proc`.
 - **Stable updates never offer a release candidate.** A candidate published by mistake as a full release (it happened

@@ -2521,15 +2521,17 @@ def serve(host: str = "127.0.0.1", port: int = 8765, open_browser: bool = True, 
     url = f"http://{'127.0.0.1' if host in ('127.0.0.1', '0.0.0.0', '::') else host}:{srv.server_address[1]}/"
     from . import launcher as _l
 
-    if launcher and host == "127.0.0.1":
-        _l.write_info(url, srv.server_address[1])
     # 0.17.2: the page does not hand out the token: the browser opens this link, and the icon and the command line
-    # find the token in a file only this account can read
+    # find the token in a file only this account can read. Hunt phase 1.5 (CI run 4): the token file first, then
+    # app.json, both once the server listens (make_server has bound and listens): a `launcher.running()` that finds
+    # the record finds the token to prove it with, and never a record with no proof to look for
     link = _l.link(url, app.token)
     try:
         _l.write_token(url, srv.server_address[1], app.token)
     except OSError as e:  # never in the way of starting: the link below still opens the app
         print(f"Could not write the token file: {e}", file=sys.stderr)
+    if launcher and host == "127.0.0.1":
+        _l.write_info(url, srv.server_address[1])
     # started from the icon, what is printed goes to a log file (launcher.log_to_file): the link with the token is
     # not written there
     print(f"ENLENS hypothesis checker {__version__} at {url if launcher else link}  (data folder: {home.home()})")
