@@ -1004,10 +1004,10 @@ export async function renderCodebook(view, [name]) {
     try {
       // hunt phase 1 (PAGESB-1): the fields stay open while the save is on its way. What is typed meanwhile changes
       // `st` after its copy was sent; the answer then must not put the sent state back over it (the words vanished and
-      // the bar said nothing was unsaved). So: what was sent, and which code object was sent under which name (a new
-      // code gets its uid in the answer, found by that name)
+      // the bar said nothing was unsaved). So: what was sent, and the code objects sent, in their order (a new code
+      // gets its uid from the answer's `uids`, by its place: the server tidies names, so a name may not match)
       const sentKey = JSON.stringify(st), sentMerges = merges.length;
-      const sentName = new Map(st.codes.map((c) => [c, c.code]));
+      const sentCodes = st.codes.slice();
       const r = await api("PUT", base, { codebook: st, merges, why: why || null });
       drafts.delete(key);
       cb = r.codebook;
@@ -1016,11 +1016,9 @@ export async function renderCodebook(view, [name]) {
       else {
         // edits made after the Save was sent: they stay on screen and unsaved, laid onto the saved codebook (the codes
         // new in what was sent take the uids the save gave them, so the next save does not add them twice)
-        for (const c of st.codes) {
-          if (c.uid || !sentName.has(c)) continue;
-          const got = cb.codes.find((x) => x.code === sentName.get(c));
-          if (got && got.uid) c.uid = got.uid;
-        }
+        // (a code removed meanwhile is given one too: it is no longer in `st`, so it changes nothing)
+        const uids = Array.isArray(r.uids) && r.uids.length === sentCodes.length ? r.uids : [];
+        sentCodes.forEach((c, i) => { if (!c.uid && uids[i]) { c.uid = uids[i]; savedAs.set(c, uids[i]); } });
         merges = merges.slice(sentMerges);
         dirty = true;
         drafts.set(key, { st, merges, base: stateKey(cb) });

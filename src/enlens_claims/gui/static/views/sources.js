@@ -45,6 +45,9 @@ export async function renderSources(view) {
   // and the ones the server stored under another name (two files of one name, from two folders: "notes (2).txt")
   const copied = new Set();
   let renamed = [];
+  // after review: the file being copied now. Its x is off from the moment its copy starts: the reading takes the whole
+  // batch folder, so a file taken off the list while it was copied would be read in all the same
+  let copying = null;
   const fileInput = h("input", { type: "file", multiple: true, accept: ACCEPT, class: "visually-hidden", id: "src-files" });
   const fileList = h("ul", { class: "file-list", hidden: true });
   const addBtn = button({ kind: "main", disabled: true }, icon("upload", { size: 15 }), "Add to the project");
@@ -53,8 +56,9 @@ export async function renderSources(view) {
   const drawFiles = () => {
     fileList.hidden = !files.length;
     replace(fileList, files.map((f, i) => h("li", {}, icon("file-text", { size: 13 }), h("span", { class: "grow docs-file-name" }, f.name), h("span", { class: "fs" }, fmt.bytes(f.size)),
-      iconButton({ icon: "x", size: 12, label: `Remove ${f.name} from the list`, title: copied.has(f) ? "Copied into the project already: it is being added" : null, sm: true,
-        disabled: copied.has(f), onClick: () => { files.splice(i, 1); drawFiles(); } }))));
+      iconButton({ icon: "x", size: 12, label: `Remove ${f.name} from the list`, sm: true,
+        title: copied.has(f) ? "Copied into the project already: it is being added" : copying === f ? "Being copied into the project now: it is added" : null,
+        disabled: copied.has(f) || copying === f, onClick: () => { files.splice(i, 1); drawFiles(); } }))));
     addBtn.disabled = !files.length || needLevel() || adding;
     addWhy.textContent = adding ? "" : !files.length ? "Choose or drop files first." : needLevel() ? "Choose who may read them with AI first." : "";
     addBtn.title = addWhy.textContent;
@@ -209,12 +213,15 @@ export async function renderSources(view) {
         if (!files.includes(f)) continue;
         const total = copied.size + sent.filter((x) => !copied.has(x) && files.includes(x)).length;
         replace(holder.querySelector(".pb"), simpleProgress({ state: "running", seconds: 0, progress: { done: copied.size, total, file: f.name } }, () => `Copying ${f.name} (${copied.size + 1} of ${total})`));
+        copying = f;
+        drawFiles();
         const r = await api("POST", `/api/projects/${P(project)}/uploads?batch=${batch}&name=${encodeURIComponent(f.name)}`, f);
         copied.add(f);
+        copying = null;
         if (r && r.name && r.name !== f.name) renamed.push([f.name, r.name]);
         drawFiles();
       }
-    } catch (e) { showError(e); adding = false; sent = []; copied.clear(); drawFiles(); progressBox.hidden = true; return; }
+    } catch (e) { showError(e); adding = false; sent = []; copied.clear(); copying = null; drawFiles(); progressBox.hidden = true; return; }
     sent = sent.filter((f) => copied.has(f));
     if (!sent.length) { adding = false; drawFiles(); progressBox.hidden = true; return; }   // every file was taken off
     const body = { batch, ai_access: chosenLevel };

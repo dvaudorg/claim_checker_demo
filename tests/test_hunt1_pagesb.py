@@ -56,6 +56,38 @@ await scenario("codebook: typing while Try it runs", async (t) => {
   return { same: now === f, focused: t.focused(), value: now ? now.value : null, focusedIsField: !!now && document.activeElement === now };
 });
 
+// ---- after review (PAGESB-1): new codes keep the ids the save gave them, whatever the server tidied ----------------
+// the server's answer as codebooks.save gives it: names tidied ("Repair " is "Repair"), a new code given an id, and
+// `uids`, the id of each code sent, in the order sent
+const tidy = (x) => x.replace(/\s+/g, " ").trim();
+const savedAs = (body, n) => { const codes = body.codebook.codes.map((c, i) => ({ ...c, code: tidy(c.code), uid: c.uid || `new${n}-${i}` }));
+  return { codebook: { ...body.codebook, codes, editable: true, used: { labels: 0, checks: 0 } }, changes: ["added a code"], uids: codes.map((c) => c.uid) }; };
+async function saveWhileTyping(t, codes, during) {
+  await editor(t, codes);
+  const put = held();
+  let n = 0;
+  t.answer(`PUT ${CB}/repair`, (body) => (++n === 1 ? put.promise.then(() => savedAs(body, n)) : savedAs(body, n)));
+  await t.click(/^Repair/);
+  await t.type("Definition", "Fixing things, by hand");
+  await t.click("Save");
+  await during();                                                         // the save is still on its way
+  put.release();
+  await t.settle();
+  const unsaved = !t.hidden(t.view.querySelector(".cb-savebar"));
+  await t.click("Save");
+  await t.settle();
+  const puts = t.calls.filter((c) => c.method === "PUT");
+  return { unsaved, second: puts.length > 1 ? puts[1].body.codebook.codes.map((c) => [c.uid, c.code]) : null, errors: t.toasts().filter((x) => /refus|name of a code/i.test(String(x))) };
+}
+await scenario("codebook: a new code whose name the server tidies, edited during the save", async (t) =>
+  saveWhileTyping(t, [CODE({ uid: "", code: "Repair " })], () => t.type("Definition", "Fixing things, by hand, together")));
+await scenario("codebook: two new codes sent in one save", async (t) =>
+  saveWhileTyping(t, [CODE({ uid: "", code: "Repair  café" }), CODE({ uid: "", code: "Reuse " })], () => t.type("Definition", "Fixing things, by hand, together")));
+await scenario("codebook: a new code renamed during the save", async (t) =>
+  saveWhileTyping(t, [CODE({ uid: "", code: "Repair " })], () => t.type("Name", "Mending")));
+await scenario("codebook: a new code removed during the save", async (t) =>
+  saveWhileTyping(t, [CODE({ uid: "", code: "Repair " }), CODE({ uid: "u2", code: "Reuse" })], async () => { await t.click("Remove", { within: t.view.querySelector(".cb-open") }); await t.settle(); }));
+
 // ---- the Documents page: adding files ----------------------------------------------------------------------
 async function documents(t) {
   t.state({ settings: {} });
@@ -84,6 +116,29 @@ await scenario("documents: a file removed from the list while the others are cop
   first.release();
   await t.settle();
   return { listed, removable, sent: t.calls.filter((c) => c.path.includes("/uploads")).map((c) => decodeURIComponent(c.path.split("name=")[1])) };
+});
+
+// after review (PAGESB-5): the file being copied right now cannot be taken off the list (the whole batch folder is
+// read in, so a file copied there would be added all the same)
+await scenario("documents: the file being copied is taken off the list", async (t) => {
+  await documents(t);
+  const input = t.view.querySelector("#src-files");
+  input.files = [new File(["aaa"], "one.pdf"), new File(["bbbbbb"], "two.pdf")];
+  input.dispatchEvent(new Event("change"));
+  await t.settle();
+  const first = held();
+  t.answer(/^POST \/api\/projects\/Study\/uploads/, (b, path) => (path.includes("one.pdf") ? first.promise.then(() => ({})) : {}));
+  t.answer("POST /api/projects/Study/ingest", { job: { id: "ji" } });
+  t.answer("GET /api/jobs/ji", { id: "ji", state: "running", progress: {} });
+  await t.click(/^Add these 2 documents/);
+  const rm = t.find("Remove one.pdf from the list");
+  const removable = !!rm && !rm.disabled;
+  const why = rm ? rm.getAttribute("title") : null;
+  if (removable) await t.click(rm);
+  const listedAfter = t.text(t.view.querySelector(".file-list"));
+  first.release();
+  await t.settle();
+  return { removable, why, listedAfter, uploads: t.calls.filter((c) => c.path.includes("/uploads")).map((c) => decodeURIComponent(c.path.split("name=")[1])) };
 });
 
 // the server keeps two files of one name apart now (hunt phase 1, `_free_upload_name`): the page says both were added
@@ -181,6 +236,54 @@ await scenario("note: an edit whose save fails", async (t) => {
   t.answer("PUT /api/projects/Study/notes/n1", t.fail(404, "Not found: n1"));   // removed meanwhile by one's other account
   await t.click("Save", { within: t.dialog() });
   return { kept: typedStill(words), errors: t.toasts() };
+});
+// after review (PAGESB-2): a second press while the save runs is not a second save, in any dialog (lib.js dialog)
+await scenario("note: Keep the note pressed twice while the app is slow", async (t) => {
+  const DOC = "/api/projects/Study/documents/d1";
+  const text = "Repair cafés make repairing an everyday practice again.";
+  t.state({ settings: {} });
+  t.answer(`GET ${DOC}?*`, { doc_id: "d1", title: "Field notes", kind: "md", total_blocks: 1, blocks: [{ n: 0, kind: "paragraph", text, start: 0, end: text.length }] });
+  t.answer(/^GET \/api\/projects\/Study\/documents\/d1\/role/, { role: null });
+  t.answer(`GET ${DOC}/nonscientific-suggestion`, { suggested: false });
+  t.answer(`GET ${DOC}/notes`, { notes: [] });
+  await t.render("views/doc-page.js", "renderDocument", ["d1"], {});
+  const walk = (n) => { for (const c of n.childNodes) { if (c instanceof Text && c.data.includes("everyday")) return c; const f = c.childNodes && walk(c); if (f) return f; } return null; };
+  const node = walk(t.view);
+  const at = node.data.indexOf("everyday practice");
+  t.select(node, at, at + "everyday practice".length);
+  node.parentNode.dispatchEvent(new Event("mouseup", { bubbles: true }));
+  await t.settle(10);
+  await t.click("Note", { within: t.view.querySelector(".dv-selbar") });
+  await t.type("Your note", "Repair as a habit.");
+  const slow = held();
+  t.answer("POST /api/projects/Study/notes", () => slow.promise.then(() => ({ note: { note_id: "n1", doc_id: "d1", start: at, end: at + 17, quote: "everyday practice", text: "Repair as a habit.", colour: "yellow", mine: true } })));
+  const btn = t.find("Keep the note", { within: t.dialog() });
+  await t.click(btn);
+  const busy = btn.getAttribute("aria-busy");
+  await t.click(btn);                                                     // a double click
+  await t.press("Enter", t.field("Your note"), { meta: true });           // and Cmd+Enter
+  slow.release();
+  await t.settle();
+  return { posts: t.calls.filter((c) => c.method === "POST" && c.path.endsWith("/notes")).length, busy, open: t.dialogs().length };
+});
+await scenario("log: an edit saved again after a failed save", async (t) => {
+  t.state({ settings: {} });
+  const e = { entry_id: "e1", kind: "entry", group: "entries", mine: true, can_edit: true, at: "2026-11-18T10:00:00Z", text: "Decided to drop the 2019 reports." };
+  t.answer("GET /api/projects/Study/log?*", { entries: [e], total: 1, groups: { entries: 1 }, group_names: { entries: "Your entries" } });
+  t.answer(/^GET \/api\/projects\/Study\/sharing/, { items: [] });
+  await t.render("views/log.js", "renderLog", [], {});
+  await t.click(t.view.querySelector(".log-more summary"));
+  await t.click(document.querySelector(".log-more [role=menuitem]"));
+  await t.type(t.dialog().querySelector("textarea"), "Decided to drop the 2019 reports: their method changed.");
+  let n = 0;
+  t.answer("PUT /api/projects/Study/log/e1", () => (++n === 1 ? t.fail(401, "no key") : { ok: true }));
+  await t.click("Save", { within: t.dialog() });
+  const failedOpen = t.dialogs().length;
+  const btn = t.find("Save", { within: t.dialog() });
+  const usable = !!btn && !btn.disabled && btn.getAttribute("aria-busy") !== "true";
+  await t.click(btn);
+  await t.settle();
+  return { failedOpen, usable, puts: n, open: t.dialogs().length };
 });
 await scenario("concepts: own words typed while the glossary is made again", async (t) => {
   t.state({ settings: {}, projects: [{ name: "Study", ok: true, documents: 3 }] });
@@ -638,3 +741,71 @@ def test_files_it_cannot_read_are_listed_under_these_could_not_be_read(page):
     said = page["documents: a damaged zip and a kind it does not read"]
     assert "No new document was added" in said and "These could not be read" in said, said
     assert "interviews.zip: damaged zip" in said and "old.doc: an older Word file" in said, said
+
+
+
+@needs_node
+def test_new_codes_keep_the_ids_the_save_gave_them_when_edited_during_the_save(page):
+    """After review, PAGESB-1: the new codes of a save during which the person typed on were matched to their ids by
+    the name sent; the server tidies names ("Repair " is saved "Repair"), so the code kept no id and the next Save was
+    refused (a code removed and one added under its name). The page now takes the ids from the answer's `uids`, in
+    the order sent: also for two new codes, one renamed and one removed while the save was on its way."""
+    one = page["codebook: a new code whose name the server tidies, edited during the save"]
+    assert one["unsaved"] is True and one["second"] == [["new1-0", "Repair "]], one
+    two = page["codebook: two new codes sent in one save"]
+    assert two["second"] == [["new1-0", "Repair  café"], ["new1-1", "Reuse "]], two
+    renamed = page["codebook: a new code renamed during the save"]
+    assert renamed["unsaved"] is True and renamed["second"] == [["new1-0", "Mending"]], renamed
+    removed = page["codebook: a new code removed during the save"]
+    assert removed["unsaved"] is True and removed["second"] == [["u2", "Reuse"]], removed
+
+
+def test_a_codebook_save_answers_the_id_of_each_code_sent(tmp_path):
+    """After review, PAGESB-1, the server's half: `codebooks.save` answers `uids`, the id each code sent has now in the
+    order sent, a new code's included, whatever it tidied in the name; the page's next save with them goes through."""
+    import copy
+
+    from enlens_claims import codebooks, home
+
+    ws = home.create_project("Study")
+    cb = codebooks.create(ws, "cbx", "Cbx")
+    new = lambda name: {"uid": "", "code": name, "description": "Fixing things.", "group": "", "include": "", "exclude": "",  # noqa: E731
+                        "keywords": [], "examples": []}
+    st = {**copy.deepcopy(cb), "codes": [new("Repair "), new("Reuse  of  parts")]}
+    r = codebooks.save(ws, "cbx", copy.deepcopy(st))
+    by_uid = {c["uid"]: c["code"] for c in r["codebook"]["codes"]}
+    assert [by_uid[u] for u in r["uids"]] == ["Repair", "Reuse of parts"], r["uids"]
+    for c, u in zip(st["codes"], r["uids"]):
+        c["uid"] = u
+    st["codes"][0]["description"] = "Fixing things together, in a café."   # typed while the save was on its way
+    again = codebooks.save(ws, "cbx", {**r["codebook"], "codes": st["codes"]})
+    assert again["uids"] == r["uids"] and again["changes"], again["changes"]
+    ws.close_all()
+
+
+
+@needs_node
+def test_the_file_being_copied_cannot_be_taken_off_the_list(page):
+    """After review, PAGESB-5: the x of the file whose upload was under way stayed on; the file left the list and was
+    read in all the same (the ingest reads the whole batch folder), with the batch's AI setting. Its x is now off from
+    the moment its copy starts, and says why."""
+    r = page["documents: the file being copied is taken off the list"]
+    assert r["removable"] is False and r["why"] and "copied" in r["why"], r
+    assert "one.pdf" in r["listedAfter"] and r["uploads"] == ["one.pdf", "two.pdf"], r
+
+
+
+@needs_node
+def test_a_second_press_of_a_dialogs_button_while_it_saves_saves_once(page):
+    """After review, PAGESB-2: the note is saved from inside its dialog now, and the button stayed live while the save
+    ran, so a double click or Cmd+Enter twice on a slow app made two notes on the same words. `dialog()` now ignores a
+    press of an action whose work is still running, and marks it busy, for every dialog."""
+    r = page["note: Keep the note pressed twice while the app is slow"]
+    assert r["posts"] == 1 and r["busy"] == "true" and r["open"] == 0, r
+
+
+@needs_node
+def test_a_dialogs_button_is_usable_again_after_a_failed_save(page):
+    """The guard ends with the work: after a failed save the same button saves again (the research log's edit)."""
+    r = page["log: an edit saved again after a failed save"]
+    assert r == {"failedOpen": 1, "usable": True, "puts": 2, "open": 0}, r

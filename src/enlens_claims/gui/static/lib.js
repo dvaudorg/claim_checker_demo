@@ -583,17 +583,31 @@ export function dialog({ title, body, actions, danger, onOpen, wide, lock, onDis
       if (onDismiss) { asking = true; let go; try { go = await onDismiss(); } finally { asking = false; } if (go === false) return; }
       close(null);
     };
-    const btns = (actions || [{ text: "Close", value: null }]).map((a) =>
-      button({
+    // hunt phase 1 (after review): an action whose onClick is still running (a save sent from the dialog) ignores a
+    // second press (a double click, Enter or Ctrl+Enter again on a slow app sent the save twice: two notes on the same
+    // words) and says it is busy; it is pressable again once its work has ended, failed or not. It is not disabled, so
+    // the focus stays on it.
+    const btns = (actions || [{ text: "Close", value: null }]).map((a) => {
+      let running = false;
+      const b = button({
         kind: a.primary ? (danger ? "confirm" : "main") : "quiet",
         id: a.id,
         icon: a.icon,
         disabled: a.disabled,
         onClick: async () => {
-          if (a.onClick) { const r = await a.onClick(dlg); if (r === false) return; }
+          if (running) return;
+          if (a.onClick) {
+            running = true;
+            b.setAttribute("aria-busy", "true");
+            let r;
+            try { r = await a.onClick(dlg); } finally { running = false; b.removeAttribute("aria-busy"); }
+            if (r === false) return;
+          }
           close(a.value);
         },
-      }, a.text));
+      }, a.text);
+      return b;
+    });
     append(dlg, [
       h("div", { class: "dialog-head" }, h("h2", { id: "dlg-title" }, title),
         iconButton({ icon: "x", label: "Close", onClick: dismiss })),

@@ -693,8 +693,11 @@ def save(ws: Workspace, name: str, state: dict, merges: list[dict] | None = None
             changes.append(f"removed the group {researchlog.quoted(g['group_name'] or g['group'], 60)}")
     if [g["group_name"] for g in new["groups"]] != [g["group_name"] for g in cur["groups"]] and not changes:
         changes.append("changed the groups")
+    # hunt phase 1 (after review): the id each code sent has now, in the order sent (`_clean_state` keeps every code,
+    # in its order), so the page can give a new code its id though the name was tidied ("Repair " is saved "Repair")
+    uids = [c["uid"] for c in new["codes"]]
     if not changes:
-        return {"changes": [], "version_id": None, "codebook": load(ws, name)}
+        return {"changes": [], "version_id": None, "codebook": load(ws, name), "uids": uids}
     # the order labels follow them in: codes coming back from a merge first (by the names they have now), then
     # renames (in two steps through a name of their own when names are swapped), then merges
     renames = [e for e in new_events if e["op"] == "rename"]
@@ -746,7 +749,7 @@ def save(ws: Workspace, name: str, state: dict, merges: list[dict] | None = None
                                                              else "") + ".",
                            "codebook", name, meta["title"], version_id=vid, why=why,
                            data={"changes": changes, "where": where})
-    return {"changes": changes, "version_id": vid, "codebook": load(ws, name)}
+    return {"changes": changes, "version_id": vid, "codebook": load(ws, name), "uids": uids}
 
 
 # ---------------------------------------------------------------------------------------------
