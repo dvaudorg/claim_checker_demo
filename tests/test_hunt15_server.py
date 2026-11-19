@@ -1544,10 +1544,11 @@ def test_nothing_opens_a_project_while_its_folder_is_removed(served, monkeypatch
     _project(api)
     from enlens_claims import home as h
 
+    from enlens_claims.store import held_out
+
     key = str(h.project_path("P").resolve())
     h.close_project(h.project_path("P"))
-    h._REMOVING.add(key)
-    try:
+    with held_out(h.project_path("P")):   # what remove_project marks while it closes and moves the folder
         st, r = api("GET", "/api/state")
         assert st == 200, r
         p = next(x for x in r["projects"] if x["name"] == "P")
@@ -1559,8 +1560,6 @@ def test_nothing_opens_a_project_while_its_folder_is_removed(served, monkeypatch
         with pytest.raises(h.BeingRemoved):
             h.open_project("P")
         assert key not in h._OPEN
-    finally:
-        h._REMOVING.discard(key)
     assert h.open_project("P") is not None
 
 
@@ -1585,3 +1584,127 @@ def test_rows_read_ahead_by_a_loop_that_stops_are_given_by_the_next_fetch(tmp_pa
     cur.execute("SELECT x FROM t WHERE x < 3 ORDER BY x")   # a new statement: nothing of the last one is left
     assert [r[0] for r in cur] == [0, 1, 2]
     ws.close_all()
+
+
+# ---- CI (Windows, run 11): a model test's copy left in the project list ---------------------------------------------
+def _open_on(root) -> int:
+    """How many connections of this process are open on the database in `root`, whatever Workspace holds them."""
+    import gc
+
+    from enlens_claims.store import Workspace
+
+    k, n = os.path.realpath(root), 0
+    for o in gc.get_objects():
+        if isinstance(o, Workspace) and os.path.realpath(o.root) == k:
+            for cx in list(o._all):
+                try:
+                    cx.in_transaction   # (a closed connection refuses)
+                    n += 1
+                except Exception:  # noqa: BLE001
+                    pass
+    return n
+
+
+class _Holder(threading.Thread):
+    """A helper of the app that holds a Workspace of the project and reads it all the time (Claude Code's connector
+    answering a copy's queue, the poller, a job's follow-up)."""
+
+    def __init__(self, ws):
+        super().__init__(daemon=True)
+        self.ws, self.stop, self.reads, self.refused = ws, threading.Event(), 0, 0
+
+    def run(self):
+        while not self.stop.is_set():
+            try:
+                self.ws.scalar("SELECT COUNT(*) FROM documents")
+                self.reads += 1
+            except Exception:  # noqa: BLE001 - being removed, or gone
+                self.refused += 1
+            time.sleep(0.001)
+
+
+def _windows_like(monkeypatch, root):
+    """What Windows does: a folder is not removed while a connection to its database is open."""
+    import shutil
+
+    real_rmtree = shutil.rmtree
+
+    def rmtree(path, *a, **k):
+        if Path(path).resolve() == Path(root).resolve():
+            time.sleep(0.05)      # removing a folder takes a while: a connection opened meanwhile holds it
+            if _open_on(root):
+                return   # (ignore_errors=True: the folder stays)
+        return real_rmtree(path, *a, **k)
+
+    monkeypatch.setattr(shutil, "rmtree", rmtree)
+
+
+def test_a_copy_read_by_a_helper_that_holds_it_is_removed(home, monkeypatch):  # noqa: F811
+    """A helper that HOLDS a Workspace of the copy got a fresh connection after `close_all`, inside the folder being
+    removed: on Windows the copy stayed in the list of projects ('R model test')."""
+    from enlens_claims import taskqueue
+    from enlens_claims.evaluation import _copy
+
+    ref = home.create_project("R")
+    copy = _copy(ref, "R model test")
+    h = _Holder(home.open_project("R model test"))
+    h.start()
+    _windows_like(monkeypatch, copy.root)
+    try:
+        while h.reads < 5:
+            time.sleep(0.01)
+        gone = taskqueue.remove_copy(copy)
+    finally:
+        h.stop.set()
+        h.join(5)
+    assert gone and not copy.root.exists() and "R model test" not in home.list_projects()
+
+
+def test_a_project_the_person_removes_is_not_reopened_by_a_helper_that_holds_it(home, monkeypatch):  # noqa: F811
+    from enlens_claims import store
+
+    home.create_project("P")
+    root = home.project_path("P")
+    real_move = home.move_folder
+
+    def move(src, dest, tries=6):
+        if _open_on(src):
+            raise home.FolderInUse("still open")
+        return real_move(src, dest, tries)
+
+    monkeypatch.setattr(home, "move_folder", move)
+    h = _Holder(home.open_project("P"))
+    h.start()
+    try:
+        while h.reads < 5:
+            time.sleep(0.01)
+        assert home.remove_project("P").startswith("moved to")
+    finally:
+        h.stop.set()
+        h.join(5)
+    assert not root.exists() and h.refused > 0
+    assert not store.is_held_out(root)
+
+
+def test_a_project_whose_removal_failed_works_again(home, monkeypatch):  # noqa: F811
+    home.create_project("P")
+    ws = home.open_project("P")
+    monkeypatch.setattr(home, "move_folder", lambda *a, **k: (_ for _ in ()).throw(home.FolderInUse("held")))
+    with pytest.raises(home.FolderInUse):
+        home.remove_project("P")
+    assert ws.scalar("SELECT 1") == 1 and home.open_project("P").scalar("SELECT 1") == 1
+
+
+def test_a_copy_that_could_not_be_removed_goes_at_the_next_clean_up(home, monkeypatch):  # noqa: F811
+    """A copy still held after its removal was tried stayed in the list for a week (until the quick looks' week was
+    up): it is now due at once, and the app's next look at its state removes it."""
+    from enlens_claims import taskqueue
+
+    ref = home.create_project("R")
+    monkeypatch.setattr(taskqueue, "local_only", lambda: False, raising=False)
+    monkeypatch.setattr(taskqueue, "remove_copy", lambda copy, **k: False)   # held: still there
+    taskqueue.answer_on_copy(ref, [], None, purpose="model test")
+    assert "R model test" in home.list_projects()
+    assert "R model test" in home.expired_quicklooks()
+    home.cleanup_quicklooks()
+    assert "R model test" not in home.list_projects()

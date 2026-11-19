@@ -1111,11 +1111,8 @@ def claim_name(name: str) -> None:
 _OPEN: dict[str, tuple[float, Workspace]] = {}
 
 
-class BeingRemoved(RuntimeError):
-    """Hunt phase 1.5: the project's folder is being moved to the trash: nothing opens it meanwhile."""
+from .store import BeingRemoved, held_out, is_held_out  # noqa: E402  (hunt phase 1.5: a folder being removed)
 
-
-_REMOVING: set[str] = set()   # the folders `remove_project` is moving now (resolved paths)
 REMOVE_WAIT = 12.0            # seconds a removal waits, in all, for the project's connections still in use
 
 
@@ -1125,7 +1122,7 @@ def open_project(name: str) -> Workspace:
     wrote to it and held its database open, so the folder could not move on Windows."""
     path = project_path(name)
     key = str(path.resolve())
-    if key in _REMOVING:
+    if is_held_out(path):
         raise BeingRemoved(f"The project “{name}” is being removed.")
     hit = _OPEN.get(key)
     try:
@@ -1229,9 +1226,7 @@ def remove_project(name: str) -> str:
         return "unlinked"
     if not (p / "enlens.sqlite").exists():
         raise KeyError(name)
-    key = str(p.resolve())
-    _REMOVING.add(key)   # hunt phase 1.5: nothing opens it while its connections close and its folder moves
-    try:
+    with held_out(p):   # hunt phase 1.5: nothing opens it, nor uses a Workspace of it, while it closes and moves
         # 0.15.7: Windows cannot move a folder whose database is still open. Hunt phase 1.5: and nowhere is a folder
         # moved under a connection still writing (on macOS its write went on, into the trash, and said it was saved)
         if not close_project(p, wait=REMOVE_WAIT):
@@ -1241,8 +1236,6 @@ def remove_project(name: str) -> str:
         trash.mkdir(exist_ok=True)
         dest = trash / f"{name}-{time.strftime('%Y%m%d-%H%M%S')}"
         move_folder(p, dest)
-    finally:
-        _REMOVING.discard(key)
     return f"moved to {dest}"
 
 
@@ -1337,6 +1330,17 @@ def mark_temporary(name: str, **about) -> None:
         data = _quicklooks(strict=True)
         data[name] = {"created_at": time.time(), **about}
         _save_quicklooks(data)
+
+
+def due_now(name: str) -> None:
+    """Hunt phase 1.5: a temporary project the app could not remove just now (a model test's copy whose folder was
+    held): it is removed at the next clean-up (`cleanup_quicklooks`, at the app's next look at its state), and tried
+    again there until it goes, instead of a week later."""
+    with LOCK:
+        data = _quicklooks(strict=True)
+        if name in data:
+            data[name]["created_at"] = 1.0   # (long past; 0 would read as "not known")
+            _save_quicklooks(data)
 
 
 def forget_temporary(name: str) -> bool:

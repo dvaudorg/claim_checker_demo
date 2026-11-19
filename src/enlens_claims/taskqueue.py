@@ -1443,17 +1443,43 @@ def remove_copy(copy: Workspace, tries: int | None = None, windows: bool | None 
 
     from . import home
 
+    from .store import held_out
+
     windows = os.name == "nt" if windows is None else windows
     tries = max(1, (12 if windows else 4) if tries is None else tries)
-    for attempt in range(tries):
-        copy.close_all()
-        home.close_project(copy.root)
-        shutil.rmtree(copy.root, ignore_errors=True)
-        if not copy.root.exists():
-            break
-        if attempt + 1 < tries:
-            time.sleep(0.1 * (attempt + 1))
+    # hunt phase 1.5: no Workspace of the copy, whoever holds it (a helper answering its queue), opens its database
+    # again while it is removed (`held_out`): one did, between the closing and the removal, and on Windows the copy
+    # then stayed in the person's list of projects
+    with held_out(copy.root):
+        for attempt in range(tries):
+            copy.close_all()   # (held out: only statements already running are waited for, a long one interrupted)
+            home.close_project(copy.root)
+            shutil.rmtree(copy.root, ignore_errors=True)
+            if not copy.root.exists():
+                break
+            if attempt + 1 < tries:
+                time.sleep(0.1 * (attempt + 1))
     return not copy.root.exists()
+
+
+def _stop_helpers(name: str) -> None:
+    """Hunt phase 1.5: stop the helpers the app started on a scratch copy's queue (Claude Code, an agent CLI) before
+    the copy is removed: they would read it while it goes."""
+    try:
+        from . import claude_setup
+
+        if claude_setup.run_state(name).get("running"):
+            claude_setup.stop_run(name)
+    except Exception:  # noqa: BLE001 - the removal goes on
+        pass
+    try:
+        from . import agentcli
+
+        for route in providers.AGENT_CLIS:
+            if agentcli.run_state(route, name).get("running"):
+                agentcli.stop_run(route, name)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def answer_on_copy(ws: Workspace, items: list[tuple[str, str, dict, str]], backend, purpose: str = "test",
@@ -1521,9 +1547,12 @@ def answer_on_copy(ws: Workspace, items: list[tuple[str, str, dict, str]], backe
                                      for r in sent])
         except Exception:  # noqa: BLE001 - the ledger must not stop the clean-up below
             pass
+        _stop_helpers(name)
         remove_copy(copy)
-        if not copy.root.exists():  # 0.15.7: still there (a file held): moved to the trash later, as a quick look
-            try:
+        try:
+            if not copy.root.exists():
                 home.forget_temporary(name)
-            except Exception:  # noqa: BLE001
-                pass
+            else:   # 0.15.7: still there (a file held): moved to the trash later, as a quick look. Hunt phase 1.5: at
+                home.due_now(name)   # the app's next clean-up, tried again until it goes, not a week later
+        except Exception:  # noqa: BLE001
+            pass

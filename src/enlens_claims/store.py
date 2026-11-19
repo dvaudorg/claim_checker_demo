@@ -964,6 +964,39 @@ def change_config(path: str | Path, changes: dict) -> dict:
         return cfg
 
 
+class BeingRemoved(RuntimeError):
+    """Hunt phase 1.5: the project's folder is being removed: no connection to its database is handed out meanwhile
+    (`held_out`)."""
+
+
+_HELD_OUT: set[str] = set()   # the folders being removed now (`_folder_key`)
+_HELD_OUT_LOCK = threading.Lock()
+
+
+def _folder_key(root: str | Path) -> str:
+    return os.path.normcase(os.path.realpath(str(root)))
+
+
+@contextmanager
+def held_out(root: str | Path):
+    """Hunt phase 1.5: while a project's folder is being removed, no Workspace of it, whoever holds it (a helper
+    thread, a job's follow-up, the connector in this process), opens a connection to its database (`_conn` raises
+    BeingRemoved): one that did reopened the database inside the folder being moved, and on Windows the folder then
+    stayed (a model test's copy left in the project list). If the removal fails, the project works again after."""
+    k = _folder_key(root)
+    with _HELD_OUT_LOCK:
+        _HELD_OUT.add(k)
+    try:
+        yield
+    finally:
+        with _HELD_OUT_LOCK:
+            _HELD_OUT.discard(k)
+
+
+def is_held_out(root: str | Path) -> bool:
+    return bool(_HELD_OUT) and _folder_key(root) in _HELD_OUT
+
+
 _RAW_EXECUTE = sqlite3.Connection.execute   # a plain cursor, for a statement run and read whole under the lock
 _NEW_CURSOR, _CUR_EXECUTE, _FETCHONE = sqlite3.Connection.cursor, sqlite3.Cursor.execute, sqlite3.Cursor.fetchone
 
@@ -1106,6 +1139,7 @@ class Workspace:
         self.scratch = scratch
         self._records_level = not scratch  # hunt phase 1.5: `meta.project_needs` is this copy's own (PROJECT_LEVEL)
         self.db_path = self.root / "enlens.sqlite"
+        self._key = _folder_key(self.root)   # (hunt phase 1.5: `held_out`)
         self.config_path = self.root / "config.json"
         self._local = threading.local()
         self._config_cache: tuple[tuple, dict] | None = None
@@ -1213,6 +1247,8 @@ class Workspace:
             settle_own_providers(self)
 
     def _conn(self) -> sqlite3.Connection:
+        if _HELD_OUT and self._key in _HELD_OUT:   # hunt phase 1.5: its folder is being removed (`held_out`)
+            raise BeingRemoved(f"The project “{self.root.name}” is being removed.")
         cx = getattr(self._local, "cx", None)
         if cx is not None and getattr(self._local, "gen", 0) != self._gen and not getattr(self._local, "depth", 0):
             # 0.15.7: closed by close_all; a new one if this thread goes on using the project. Hunt phase 1.5: never

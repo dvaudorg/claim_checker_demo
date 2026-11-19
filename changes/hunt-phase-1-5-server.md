@@ -42,6 +42,9 @@
   project being removed, and a project's database connections are closed only between two of their steps and outside
   a change being saved: a change is saved whole or not at all, and a project still being written to is not moved to
   the trash (you are asked to try again in a moment).
+- **A model test leaves no "… model test" project behind.** On Windows its scratch copy could stay in the list of
+  projects when a helper was still reading it. Nothing of the app reads a project while its folder is removed now,
+  and a copy that still could not be removed goes at the app's next look instead of a week later.
 - **A hypothesis removed while its check waited says so.** The check ended with the hypothesis's bare id as its
   problem.
 - **Downloaded file names stay whole.** A hypothesis exported from a colleague's copy, whose id holds a quote, or a
