@@ -767,3 +767,62 @@ def test_a_code_whose_text_changed_is_never_matched_by_its_old_vector(loaded):
     new = frameworks.Framework("mine", "Mine", "code", {"Q": frameworks.Code("Q", f"As said: {quote}.")},
                                source="home")
     assert "Q" not in profile.code_vectors(loaded, new, _FarEmbedder())
+
+
+def _a_run_record():
+    from enlens_claims import agentcli, home
+
+    root = home.home() / "projects" / "Q"
+    root.mkdir(parents=True, exist_ok=True)
+    run = {"route": "antigravity", "project": "Q", "procs": [], "started_at": "", "t0": 0.0, "plan": {},
+           "root": str(root.resolve()), "models": {"enlens-labeller in Antigravity #1": "gemini-4-hydrogen-high"}}
+    return agentcli, root, run
+
+
+def test_a_reader_refused_by_windows_at_the_swap_tries_again_before_saying_not_known(monkeypatch):
+    """CI, Windows: a reader that opens the run record at the moment the runner puts the new one in place is refused
+    (PermissionError); `started_model` took that for "no record", and the AI log said "not known". Platform-free: a
+    reader refused twice, then let through, finds the model; one never let through finds none."""
+    agentcli, root, run = _a_run_record()
+    assert agentcli._write_record(run)
+    real = Path.read_text
+    refused = {"left": 2}
+
+    def read_text(self, *a, **k):
+        if self.name.endswith(".run.json") and refused["left"] > 0:
+            refused["left"] -= 1
+            raise PermissionError(13, "The process cannot access the file")
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    assert agentcli.started_model("antigravity", root, "enlens-labeller in Antigravity #1") == (
+        True, "gemini-4-hydrogen-high")
+    refused["left"] = 2   # the record a later app reads to stop the run (`_read_record`): the same
+    assert agentcli._read_record("antigravity", "Q").get("models") == run["models"]
+    refused["left"] = 10 ** 6
+    assert agentcli.started_model("antigravity", root, "enlens-labeller in Antigravity #1") == (False, None)
+
+
+def test_a_writer_refused_by_windows_waits_it_out_and_never_starts_a_helper_without_its_record(monkeypatch):
+    """CI, Windows: the runner's swap is refused while a reader holds the record. Refused twice, the write waits it out
+    (`home._write_whole`) and the record holds the model; refused for good, `_write_record` says so, so `_spawn` starts
+    no helper without its model on record."""
+    import os as _os
+
+    agentcli, root, run = _a_run_record()
+    real = _os.replace
+    refused = {"left": 2}
+
+    def replace(src, dst, *a, **k):
+        if str(dst).endswith(".run.json") and refused["left"] > 0:
+            refused["left"] -= 1
+            raise PermissionError(13, "The process cannot access the file")
+        return real(src, dst, *a, **k)
+
+    monkeypatch.setattr(_os, "replace", replace)
+    assert agentcli._write_record(run) and refused["left"] == 0
+    assert agentcli.started_model("antigravity", root, "enlens-labeller in Antigravity #1")[1] == "gemini-4-hydrogen-high"
+    refused["left"] = 10 ** 6
+    run["models"]["enlens-labeller in Antigravity #2"] = "gemini-4-argon"
+    assert agentcli._write_record(run) is False
+    assert not list(agentcli.runs_folder().glob(".*.part"))   # nothing left beside it

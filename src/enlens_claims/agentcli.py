@@ -907,24 +907,33 @@ def tidy_own_agy_settings() -> dict:
 
 def _record_setup(route: str) -> None:
     p = core.home() / "agent-clis.json"
-    try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-        data = data if isinstance(data, dict) else {}
-    except (OSError, ValueError):
-        data = {}
+    data = _record_json(p) or {}
     data[route] = {"version": __version__, "python": console_python(), "home": str(core.home()), "at": now()}
-    try:
-        p.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    try:   # hunt phase 1.5: written whole, as the run record (another process's `stale` reads it)
+        core._write_whole(p, json.dumps(data, indent=2))
     except OSError:
         pass
 
 
 def _setup_record() -> dict:
+    return _record_json(core.home() / "agent-clis.json") or {}
+
+
+# Hunt phase 1.5 (CI, Windows): the runner rewrites its run record while a helper's connector reads it. Written whole
+# (beside, then put in place), a reader on macOS and Linux finds the old file or the new one; on Windows the file system
+# gives no such read: a reader that opens it at the moment of the swap is refused (PermissionError), and the writer is
+# refused while a reader holds it. Neither side may take that moment for the answer: the writer waits it out
+# (`home._write_whole`), and the reader tries again a few times, a few milliseconds apart, before it concludes there
+# is no record (`home._read_json`). A short retry is the right design here, and only here: it is the file system's
+# own moment, not a wait for something to happen.
+def _record_json(p: Path) -> dict | None:
+    """A small record of this module (the run record, the set-up record) as a dict: None when there is none, or when
+    it stayed unreadable or did not parse after the retries of `home._read_json`."""
     try:
-        data = json.loads((core.home() / "agent-clis.json").read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
+        got = core._read_json(p)
     except (OSError, ValueError):
-        return {}
+        return None
+    return got if isinstance(got, dict) else None
 
 
 def set_up(route: str) -> dict:
@@ -1052,7 +1061,9 @@ def work_folder(route: str, project: str) -> Path:
     return d
 
 
-def _write_record(run: dict) -> None:
+def _write_record(run: dict) -> bool:
+    """Write the run's record; False when it could not be written (`home._write_whole` waits out a reader that holds
+    it on Windows a few times first)."""
     pids = [p["proc"].pid for p in run["procs"] if p["proc"].poll() is None and isinstance(p["proc"].pid, int)]
     try:
         # hunt phase 1: with the project's folder and the model on each helper's command line, by the name it takes
@@ -1064,8 +1075,9 @@ def _write_record(run: dict) -> None:
             {"project": run["project"], "route": run["route"], "pid": pids[0] if pids else 0, "pids": pids,
              "started_at": run["started_at"], "t0": run["t0"], "plan": run["plan"] or {},
              "root": run.get("root") or "", "models": run.get("models") or {}}))
+        return True
     except OSError:
-        pass
+        return False
 
 
 def started_model(route: str, root: Path, taken_by: str | None) -> tuple[bool, str | None]:
@@ -1076,15 +1088,20 @@ def started_model(route: str, root: Path, taken_by: str | None) -> tuple[bool, s
     if not taken_by or route not in ROUTES:
         return False, None
     want = str(Path(root).resolve())
-    for f in runs_folder().glob(f"{route}-*.run.json"):
-        try:
-            rec = json.loads(f.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        models = rec.get("models") if isinstance(rec, dict) else None
-        if isinstance(models, dict) and rec.get("root") == want and taken_by in models:
-            m = models[taken_by]
-            return True, (str(m) if m else None)
+    for attempt in range(3):
+        unread = False
+        for f in runs_folder().glob(f"{route}-*.run.json"):
+            rec = _record_json(f)
+            if rec is None:   # listed, then not there or not readable this moment (Windows, the swap): look again
+                unread = True
+                continue
+            models = rec.get("models")
+            if isinstance(models, dict) and rec.get("root") == want and taken_by in models:
+                m = models[taken_by]
+                return True, (str(m) if m else None)
+        if not unread:
+            break
+        time.sleep(0.01 * (attempt + 1))
     return False, None
 
 
@@ -1097,11 +1114,8 @@ def _model_on_line(args: list[str]) -> str | None:
 
 
 def _read_record(route: str, project: str) -> dict:
-    try:
-        rec = json.loads(_record_path(route, project).read_text(encoding="utf-8"))
-        return rec if isinstance(rec, dict) and isinstance(rec.get("pids"), list) else {}
-    except (OSError, ValueError):
-        return {}
+    rec = _record_json(_record_path(route, project)) or {}   # (retried while Windows refuses it: `_record_json`)
+    return rec if isinstance(rec.get("pids"), list) else {}
 
 
 def _forget_record(route: str, project: str) -> None:
@@ -1362,7 +1376,11 @@ def _spawn(run: dict, g: dict, path: str, opts: set[str], work: Path, ws) -> Non
     # none when the CLI takes no --model), written to the run record before it starts, so the queue names it in the
     # AI log and in each answer's record (taskqueue.next_tasks, submit)
     run.setdefault("models", {})[taken_by] = _model_on_line(args)
-    _write_record(run)
+    if not _write_record(run):
+        # hunt phase 1.5: a helper is never started without its model on record (the AI log would say "not known")
+        run["n"] -= 1
+        raise ValueError("ENLENS could not write its record of this run (another program holds the file in "
+                         f"{runs_folder()}). Press Start {cli(route).title} again in a moment.")
     out = runs_folder() / f"{_key(route, project)}-{run['n']}.out"
     fh = open(out, "w", encoding="utf-8")
     try:
@@ -1628,10 +1646,7 @@ def stop_all_runs() -> list[dict]:
         keys = set(_RUNS)
     try:
         for f in runs_folder().glob("*.run.json"):
-            try:
-                rec = json.loads(f.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                continue
+            rec = _record_json(f)
             if isinstance(rec, dict) and rec.get("route") in ROUTES and rec.get("project"):
                 keys.add((rec["route"], str(rec["project"])))
     except OSError:
