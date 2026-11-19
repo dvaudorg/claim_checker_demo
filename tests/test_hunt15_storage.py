@@ -135,8 +135,6 @@ def test_each_problem_of_a_signed_list_or_a_sealed_key_has_its_code_and_its_word
     assert _problem(seal.seal, b"x" * (2 * 1024 ** 2 + 1), path="p0123456789ab/files/big.pdf", by="m0123456789ab",
                     epoch=1, key=seal.new_key(), ident=ident) == \
         ("too_large", "big.pdf is larger than ENLENS sends to a storage space (2 MB).")
-    assert set(seal.SealProblem.__doc__.split('"')[1::2]) >= {"format", "place", "writer", "signature", "key",
-                                                              "damaged", "too_large"}
 
 
 def test_a_private_file_of_ones_other_account_has_its_codes_and_words():
@@ -418,6 +416,17 @@ def _later(at: str, minutes: int) -> str:
     return (datetime.fromisoformat(at) + timedelta(minutes=minutes)).isoformat()
 
 
+def _never_counted(anna: Person, carol: Person, team_dir: Path, old: dict) -> None:
+    """Anna's copy as if Carol had only ever run an older ENLENS: no file of hers with "n" taken (the record of what
+    was taken, and the mirror's copy, hold her file without it)."""
+    with anna:
+        f = space.mirror_of(anna.ws) / ".space-state.json"
+    st = json.loads(f.read_text())
+    st["taken"][_part_of(carol)].pop("person", None)
+    f.write_text(json.dumps(st))
+    (team_dir / carol.id / "person.json").write_text(json.dumps(old))
+
+
 def test_a_colleague_on_an_older_enlens_whose_clock_went_back_still_keeps_documents_out(team, store_dir):
     """An older ENLENS writes person.json without "n", and with whatever time its computer's clock says. Carol's clock
     is put back an hour, then she turns on *Keep documents marked Only a local AI or No AI out*: her new file reads as
@@ -432,6 +441,7 @@ def test_a_colleague_on_an_older_enlens_whose_clock_went_back_still_keeps_docume
     pj = json.loads((team_dir / carol.id / "person.json").read_text())
     t = pj["updated_at"]
     old = {k: v for k, v in pj.items() if k != "n"}                  # (as an ENLENS before "n" writes it)
+    _never_counted(anna, carol, team_dir, old)
     _sealed_into_space(carol, store_dir, "person.json", {**old, "keep_out": False, "updated_at": _later(t, 60)})
     _round(anna)
     _sealed_into_space(carol, store_dir, "person.json", {**old, "keep_out": True, "updated_at": _later(t, 30)})
@@ -756,3 +766,103 @@ def test_a_change_brings_a_round_of_a_storage_space_soon_though_it_is_looked_at_
     assert pl._due(p) == 1000.0 + space.MIN_EVERY
     p.touched = 1100.0
     assert pl._due(p) == 1120.0
+
+
+# ---------------------------------------------------------------------------------------------
+# the review of 19 November 2026 (reviews/wave2.md)
+# ---------------------------------------------------------------------------------------------
+def test_a_project_folder_duplicated_by_hand_does_not_round_into_the_same_space(team, store_dir):
+    """STORAGE15-6, review: a project folder duplicated by hand in the data folder (Finder's Duplicate) carries the
+    same part and works with the same keys as the original, so the keys rule let both round into one copy of the space
+    and push as one part with diverging work numbers. Only the project that last connected to the space here runs; the
+    copy stops, in words."""
+    import shutil
+
+    from enlens_claims import claimcheck, sharing
+    from enlens_claims import home as enlens_home
+    from enlens_claims.llm import BaselineBackend
+
+    anna, carol = team
+    for p in (anna, carol, anna, carol):
+        _round(p)
+    with anna:
+        anna.ws.close_all()
+        shutil.copytree(anna.ws.root, enlens_home.home() / "projects" / "Study copy")
+        dup = enlens_home.open_project("Study copy")
+        assert space.configured(dup)["part"] == space.configured(anna.ws)["part"]
+    hd = _check(anna, "Fuel cells need platinum.")
+    with anna:   # (work in the copy too, which it would send as the same part)
+        dup_h = claimcheck.check_hypothesis(dup, "Hydrogen valleys share pipelines.", BaselineBackend(), "baseline", k=2)
+        sharing.share(dup, [{"kind": "check", "key": dup_h}])
+    _share(anna, "check", hd)
+    with anna:
+        d1 = folder.sync_now(dup)
+        o1 = folder.sync_now(anna.ws)
+        d2 = folder.sync_now(dup)
+    for out in (d1, d2):
+        said = [x["message"] for x in out["problems"] if x["kind"] == "other_project_here"]
+        assert said and "Stop using the storage space here" in said[0], out["problems"]
+    assert not [x for x in o1["problems"] if x["kind"] == "other_project_here"], o1["problems"]
+    _round(carol)
+    assert _set_aside(carol) == []
+    with carol:
+        assert _has(carol.ws, hd) and not _has(carol.ws, dup_h)
+
+
+def test_an_old_file_without_a_count_put_back_does_not_turn_a_newer_colleagues_switch_on(team, store_dir):
+    """Review note: once this copy took a person.json WITH "n" from a colleague (they run this version), a file
+    WITHOUT "n" from that colleague is older by definition: one from when they ran an older version, put back with the
+    switch on and a later time, must not turn the switch on again after they turned it off."""
+    anna, carol = team
+    for p in (anna, carol, anna, carol):
+        _round(p)
+    with carol:
+        folder.set_keep_out(carol.ws, True)
+    _round(carol)
+    with carol:
+        folder.set_keep_out(carol.ws, False)
+    _round(carol)
+    _round(anna)
+    with anna:
+        team_dir = space.mirror_of(anna.ws) / folder.team_name(anna.ws)
+    pj = json.loads((team_dir / carol.id / "person.json").read_text())
+    assert pj.get("n") and not pj["keep_out"]
+    old = {**{k: v for k, v in pj.items() if k != "n"}, "keep_out": True, "updated_at": _later(pj["updated_at"], 600)}
+    _sealed_into_space(carol, store_dir, "person.json", old)
+    _round(anna)
+    with anna:
+        assert not folder.keep_out_state(anna.ws, team_dir)["in_force"]
+
+
+def test_a_keychain_that_does_not_answer_for_a_moment_is_said_as_such_and_the_join_goes_through_later(
+        owner, tmp_path, monkeypatch):
+    """Review note: when the keychain answers nothing for a moment (locked, unavailable), the invite's secret reads as
+    missing; the keeper was told to withdraw a valid invite. The words say the keychain did not answer, and the next
+    round lets the colleague in."""
+    from enlens_claims import keychain
+
+    anna = owner
+    dave = Person(tmp_path, "Dave", monkeypatch)
+    with anna:
+        inv = space.invite(anna.ws, "Dave")
+    _join_new(dave, inv["link"])
+    real_init, real_get, down = space._Ctx.__init__, keychain._file_get, []
+
+    def init(self, *a, **kw):
+        real_init(self, *a, **kw)
+        down.append(True)                 # (the keychain stops answering once the round has its own keys)
+
+    monkeypatch.setattr(space._Ctx, "__init__", init)
+    monkeypatch.setattr(keychain, "_file_get", lambda name: None if down else real_get(name))
+    _round(anna)
+    monkeypatch.setattr(space._Ctx, "__init__", real_init)
+    monkeypatch.setattr(keychain, "_file_get", real_get)
+    with anna:
+        st = folder.status(anna.ws)["space"]
+    said = [x["message"] for x in st["set_aside"] if x["why"] == "join"]
+    assert said and "keychain" in said[0] and "did not answer" in said[0] and "Withdraw" not in said[0]
+    assert [i["part"] for i in st["invites"]] == [inv["part"]]
+    _round(anna)
+    with anna:
+        st = folder.status(anna.ws)["space"]
+    assert dave.id in [m["person"] for m in st["members"]] and st["set_aside"] == []

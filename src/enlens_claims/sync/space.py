@@ -191,21 +191,20 @@ def _others_using(ws: Workspace | None, space_id: str) -> list[str]:
 
 def _mixed_up_here(ctx: "_Ctx") -> str | None:
     """What to do, in words, when this project cannot work in its storage space on this computer because another
-    project here came to work in the same space (an ENLENS before phase 1's refusal let a second project join it, e.g.
-    the owner trying their own invite link): the keychain's entries and the copy of the space are the space's, not the
-    project's, so the second join replaced this computer's keys, and both projects' rounds would write one copy and one
-    state. A project whose own part the team's list knows by other keys than this computer's (its keys were replaced)
-    and a project whose part was never let in while another uses the space here do nothing in a round; the copy that
-    still holds the keys the team knows goes on. None when nothing is mixed up (hunt phase 1.5). Only while another
-    project here names the space: a part known by other keys with no such project is the roster's word, which the
-    round reads and judges as before (selfsync's `keys_differ`)."""
+    project here works in the same space: the keychain's entries and the copy of the space are the space's, not the
+    project's, so two projects' rounds would write one copy and one state (and push as one part, or with keys the team
+    does not know). It happens when an ENLENS before phase 1's refusal let a second project join (e.g. the owner trying
+    their own invite link: that join replaced this computer's keys), or when a project folder is duplicated by hand in
+    the data folder (the same part and keys). Only while another project here (not an evaluation copy) names the space,
+    this project runs only when it is the one that last connected to the space here (`.space-project.json`, written
+    by `_connect`), its part is in the team's list, and that list knows it by this computer's keys. None when nothing
+    is mixed up (hunt phase 1.5). With no other project here nothing is judged: a part the list knows by other keys
+    is then the roster's word, which the round reads and judges as before (selfsync's `keys_differ`)."""
     others = _others_using(ctx.ws, ctx.id)
     if not others:
         return None
     m = (ctx.roster.get("members") or {}).get(ctx.desc.get("part"))
-    if isinstance(m, dict) and isinstance(m.get("sign"), str):
-        if m["sign"] == ctx.ident.public()["sign"]:
-            return None
+    if isinstance(m, dict) and isinstance(m.get("sign"), str) and m["sign"] != ctx.ident.public()["sign"]:
         then = ("then set up a new storage space in this project and send your colleagues new invite links"
                 if ctx.keeper else "then ask the owner for a new invite link and join with it in this project (Join a "
                                    "team)")
@@ -213,9 +212,21 @@ def _mixed_up_here(ctx: "_Ctx") -> str | None:
                 f"joined the same space here and replaced them, so the team would set aside what this project sends. "
                 f"Choose Stop using the storage space here in ‘{others[0]}’ and in this project, {then}. Your work "
                 f"stays in this project.")
+    if isinstance(m, dict) and _connected_here(ctx):
+        return None
     return (f"Another project on this computer, ‘{others[0]}’, works in the same storage space, and one computer works "
-            f"in a storage space from one project only. Choose Stop using the storage space here in this project "
-            f"(Team page); your work in it stays.")
+            f"in a storage space from one project only. Choose Stop using the storage space here in the one you do "
+            f"not work in (Team page); your work in it stays.")
+
+
+def _connected_here(ctx: "_Ctx") -> bool:
+    """Whether this project is the one that last connected to the space on this computer (`_connect`)."""
+    try:
+        rec = json.loads((ctx.base / _PROJECT_FILE).read_text(encoding="utf-8"))
+        return isinstance(rec, dict) and isinstance(rec.get("root"), str) and \
+            Path(rec["root"]).resolve() == Path(ctx.ws.root).resolve()
+    except (OSError, ValueError):
+        return False
 
 
 def _evaluation_copy(root: Path) -> bool:
@@ -1163,7 +1174,12 @@ def _bind_joins(ctx: _Ctx) -> bool:
             # hunt phase 1.5: an invite whose secret is gone from the keychain lets nobody in: a proof made with an
             # empty key is one any member (who holds the project's key) can make
             join_key = seal.unb64(sec.get("join") or "") if isinstance(sec, dict) else b""
-            if not join_key:
+            if not join_key and keychain.get(_secret_name(ctx.id, "me")) is None:
+                # (this copy's own keys, read at the round's start, are not there either: the keychain did not answer
+                # just now, locked or unavailable; the invite is fine and is tried again)
+                why = ("A key file came for an invite, but this computer's keychain did not answer just now (locked "
+                       "or unavailable), so ENLENS could not check it. It is tried again at the next round.")
+            elif not join_key:
                 why = ("A key file came for an invite whose secret is no longer on this computer, so ENLENS cannot "
                        "tell who wrote it. It was set aside. Withdraw the invite and make a new one.")
             h, data = seal.open_unverified(blob, ctx.epochs)
@@ -1507,9 +1523,12 @@ def _older(ctx: _Ctx, part: str, leaf: str, have: Path, data: bytes) -> bool:
         if not (isinstance(had, list) and len(had) == 2 and isinstance(had[0], str)):
             had = _person_age(folder._json(have) or {})   # (no record yet: the mirror's copy, as taken before)
         at = _person_age(new)
+        if new.get("n") is None and had is not None and (_as_int(had[1]) or 0) > 0:
+            return True   # (a file with "n" was taken: they run a counting ENLENS, so one without it is from before)
         older = had is not None and (at is None or at < tuple(had))
         # hunt phase 1.5: a file without "n" comes from an ENLENS before it was counted, whose "updated_at" goes back
-        # with its computer's clock: older by its time, it may still be the newest. One that turns the switch on is
+        # with its computer's clock: older by its time, it may still be the newest (while no counted file of theirs was
+        # taken, above). One that turns the switch on is
         # taken (the stricter wins: an old one put back can only keep more documents out); one with the switch off
         # stays aside until a time after the newest taken (`_taken` keeps that time)
         return older and not (new.get("n") is None and new.get("keep_out") is True)

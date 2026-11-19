@@ -166,10 +166,11 @@ file before). Their first rounds bring the documents and everything shared; you 
 anything they are listed as *nothing sent yet*. A link works once; *Withdraw* takes back one not used yet. One
 computer works in a space through one project: a link for a space that another project on the computer already works
 in (your own invite link, tried on your own computer) is refused, and ENLENS names the project to open instead. Two
-projects that came to share a space on one computer before that refusal do nothing in their rounds, and the Team tab
-of each says what to do: *Stop using the storage space here* in the one the team never let in, and, in the one whose
-keys it replaced, stop using the space and join again with a new invite link (as the owner, set up a new storage space
-and invite your colleagues again).
+projects on one computer that work in the same space (from before that refusal, or a project folder duplicated by
+hand) are not both run: only the one that last connected to the space goes on, and the Team tab of the other says to
+choose *Stop using the storage space here* in the one you do not work in. Where the second project's join replaced the
+first one's keys, the first also says to stop and join again with a new invite link (as the owner, set up a new
+storage space and invite your colleagues again).
 
 ## On the Team page
 
