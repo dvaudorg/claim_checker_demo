@@ -49,7 +49,8 @@ if fail < 0 or s["calls"] <= fail:
 FAKE_APP = r'''
 import http.server, json, os, socketserver, sys, threading, time
 folder = os.path.dirname(sys.argv[1])
-class Quick(http.server.ThreadingHTTPServer):
+Base = http.server.ThreadingHTTPServer   # the stand-in runs without ENLENS, so QuickServer's one line is written out
+class Quick(Base):
     server_bind = socketserver.TCPServer.server_bind  # (no look-up of this computer's name, as QuickServer)
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a):

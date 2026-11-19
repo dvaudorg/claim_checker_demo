@@ -777,10 +777,9 @@ class _FakeEnlens:
                 self.wfile.write(body)
 
         self.asked: list = []
-        class Quick(http.server.ThreadingHTTPServer):
-            server_bind = socketserver.TCPServer.server_bind  # (no look-up of this computer's name: QuickServer)
+        from enlens_claims.gui.server import QuickServer   # (no look-up of this computer's name)
 
-        self.srv = Quick(("127.0.0.1", 0), H)
+        self.srv = QuickServer(("127.0.0.1", 0), H)
         self.port = self.srv.server_address[1]
         self.url = f"http://127.0.0.1:{self.port}/"
         threading.Thread(target=self.srv.serve_forever, daemon=True).start()

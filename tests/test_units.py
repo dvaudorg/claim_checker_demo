@@ -177,8 +177,9 @@ def test_new_cli_commands(loaded, tmp_path, capsys):
     assert run("profile", "--keywords-only", "--out", str(tmp_path / "profile.xlsx")) == 0
     assert (tmp_path / "profile.xlsx").exists()
     assert run("profile", "--backend", "baseline", "--limit", "3") == 0
-    with pytest.raises(ValueError, match="at least 5"):   # three small documents are too few for themes
-        run("themes", "--k", "2", "--mode", "words")
+    capsys.readouterr()
+    assert run("themes", "--k", "2", "--mode", "words") == 1   # three small documents are too few for themes: said in
+    assert "at least 5" in capsys.readouterr().err             # words with exit code 1 (hunt phase 1), not a traceback
     doc = loaded.query("SELECT doc_id FROM documents WHERE kind='pdf'")[0]["doc_id"]
     assert run("resolve", doc, "--backend", "baseline") == 0
     assert run("annotate", doc, "--layers", "labels", "--out", str(tmp_path / "a.pdf")) == 0
