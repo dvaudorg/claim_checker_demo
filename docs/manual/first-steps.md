@@ -44,7 +44,7 @@ Antigravity](other-agents.md)). A model on this computer needs no terminal:
    beside it, each with its download size, how quick it will be here and what it is good for. *Download …* gets the
    one you chose, with *Also …* for search by meaning (a small one for English, a larger one for many languages), a
    progress bar and *Stop* (Ollama keeps what it has and goes on from there). A model that does not fit is not offered.
-3. The downloaded model becomes the AI and is tested at once.
+3. The downloaded model becomes the AI. *Save and test* tries it; nothing loads until you press it.
 
 Ollama fetches the model from ollama.com; none of your documents are sent. When whoever installed the app already
 chose a local model that answers, this step is skipped. More in [A model on your own computer](local-models.md).

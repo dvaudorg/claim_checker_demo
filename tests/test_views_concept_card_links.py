@@ -92,4 +92,4 @@ def test_a_proposed_needs_link_is_not_confirmed_folds_its_sentence_and_is_accept
     labels = [b["label"] for b in r["buttons"]]
     assert "Yes, right" in labels and "No" in labels
     assert r["puts"] == [{"path": "/api/projects/Study/concepts/links",
-                          "body": {"a": "t1", "b": "t2", "decision": "accept"}}]
+                          "body": {"a": "t1", "b": "t2", "decision": "accept", "source": "pattern"}}]

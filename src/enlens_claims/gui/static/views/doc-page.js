@@ -6,7 +6,7 @@ import { App, api, h, icon, replace, clear, toast, showError, fmt, pageHead, P, 
 import { blockUnit, originalLink } from "./result.js";
 import { colourPicker, editNote, removeNote, useAsEvidence, noteCard } from "./notes.js";
 import { roleBox } from "./doc-role.js";   // 0.18.1 K2: theory documents
-import { keep, kindCount, repeatsTitle, renameDocument } from "./doc-shared.js";
+import { keep, keptHere, kindCount, repeatsTitle, renameDocument } from "./doc-shared.js";
 import { leaveOut } from "./doc-leave-out.js";
 import { readingPanel, pagePanel } from "./doc-reading.js";
 import { codesPanel } from "./doc-codes.js";
@@ -236,7 +236,7 @@ export async function renderDocument(view, [docId], query) {
   const { blockActions, changeLanguage } = leaveOut(ctx);
   ctx.changeLanguage = changeLanguage;   // 0.19: the Reading panel's "Keep only English"
   // 0.15: after a move to the new reader, the folds holding what changed stay open
-  const keptOpen = new Set(keep.place && keep.place.doc === docId ? keep.place.open || [] : []);
+  const keptOpen = new Set(keptHere(docId) ? keep.place.open || [] : []);
   list.appendChild(selBar);
   addBlocks(blocks);
 
@@ -624,7 +624,7 @@ export async function renderDocument(view, [docId], query) {
 
   drawTabs();
   // 0.15: back where the reader was after Restore, Leave out or a move to the new reader
-  const kept = keep.place && keep.place.doc === docId ? keep.place : null;
+  const kept = keptHere(docId) ? keep.place : null;
   keep.place = null;
   if (kept && kept.tab && DOC_TABS.some(([k]) => k === kept.tab)) tab = kept.tab;
   if (tab) { const k = tab; tab = null; openTab(k, false); } else { replace(panelBox, intro); paint(); }

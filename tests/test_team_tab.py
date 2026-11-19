@@ -138,7 +138,7 @@ def test_the_first_invite_while_you_are_the_only_one():
     # the invites and Invite a colleague… stand with the people (the People card), not in the storage space's card
     assert "export function spaceInvites(ctx) {" in space and TEAM.count("...spaceInvites(ctx)") == 2
     people = TEAM[TEAM.index("function peopleSection(ctx) {"):TEAM.index("function sharedSection(ctx) {")]
-    assert "listGroup(null, mine, ...rows, ...joined)), ...spaceInvites(ctx), gone, both, join);" in people
+    assert "listGroup(null, mine, ...rows, ...joined)), ...spaceInvites(ctx), gone, keysLeft, both, join);" in people
     card = space[space.index("function spaceSection(ctx) {"):space.index("export function spaceInvites(ctx) {")]
     assert "inviteDialog" not in card and "Invites not used yet" not in card
 

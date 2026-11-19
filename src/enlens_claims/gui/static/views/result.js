@@ -43,7 +43,9 @@ const originalsCache = new Map();   // key -> promise of the answer
 const originalsKnown = new Map();   // key -> the answer, once it arrived (so a re-draw fills the link at once, without a layout shift)
 export function originalInfo(project, docId) {
   const key = `${project}/${docId}`;
-  if (!originalsCache.has(key)) originalsCache.set(key, api("GET", `/api/projects/${P(project)}/documents/${P(docId)}/file?check=1`).then((r) => { originalsKnown.set(key, r); return r; }).catch(() => null));
+  // hunt phase 1.5: a failed look is not kept (it hid the link for the page's life): the next draw asks again; a
+  // document the app does not know (404) stays unknown
+  if (!originalsCache.has(key)) originalsCache.set(key, api("GET", `/api/projects/${P(project)}/documents/${P(docId)}/file?check=1`).then((r) => { originalsKnown.set(key, r); return r; }).catch((e) => { if (!e || e.status !== 404) originalsCache.delete(key); return null; }));
   return originalsCache.get(key);
 }
 export function forgetOriginals() { originalsCache.clear(); originalsKnown.clear(); }
@@ -92,17 +94,65 @@ export function originalLink(project, docId, page, kind, opts = {}) {
 // 0.19.12: where words selected in an excerpt are in its text, as string indices [start, end), or null: found
 // whatever spaces or line ends the text has between the words (a selection gives them as spaces), and widened to
 // whole words, as the server keeps a selection that cuts a word (textutil.find_selection).
-export function selectionPlace(text, q) {
+// Hunt phase 1.5: `near` (a string index, where the person selected them) picks the occurrence of words that stand
+// more than once nearest to it; without it, the first (as before).
+export function selectionPlace(text, q, near = null) {
   const words = String(q || "").trim().split(/\s+/).filter(Boolean);
   if (!words.length) return null;
-  const re = new RegExp(words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+"), "u");
-  const m = re.exec(String(text || ""));
+  const re = new RegExp(words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+"), "gu");
+  let m = null;
+  for (const x of String(text || "").matchAll(re)) {
+    if (!m) m = x;
+    if (!Number.isInteger(near)) break;
+    if (Math.abs(x.index - near) < Math.abs(m.index - near)) m = x;
+  }
   if (!m) return null;
   let [start, end] = [m.index, m.index + m[0].length];
   const inWord = (ch) => !!ch && /[\p{L}\p{N}]/u.test(ch);
   while (start > 0 && inWord(text[start - 1]) && inWord(text[start])) start -= 1;
   while (end < text.length && inWord(text[end]) && inWord(text[end - 1])) end += 1;
   return [start, end];
+}
+
+// Hunt phase 1.5: where a selection in an excerpt's element starts, as a string index of the excerpt's `text`, or
+// null. The element's text nodes are slices of the text (passageNode, windowNode), apart from the "…" and "more…"
+// around a window and a run-in heading's lead space: each is found in the text after the one before it.
+function selectionIndex(el, text, sel) {
+  const range = sel && sel.rangeCount ? sel.getRangeAt(0) : null;
+  if (!range || !range.startContainer || range.startContainer.nodeType !== 3) return null;
+  const walk = (n, out) => {
+    for (const c of n.childNodes) {
+      if (c.nodeType === 3) out.push(c);
+      else if (!(c.classList && (c.classList.contains("ellip") || c.classList.contains("more-link")))) walk(c, out);
+    }
+    return out;
+  };
+  let from = 0;
+  for (const node of walk(el, [])) {
+    const lead = node.data.length - node.data.trimStart().length;
+    const at = node.data.trim() ? text.indexOf(node.data.slice(lead), from) : -1;
+    if (node === range.startContainer) return at < 0 ? null : at + Math.max(0, range.startOffset - lead);
+    if (at >= 0) from = at + node.data.length - lead;
+  }
+  return null;
+}
+// where the n-th sentence of splitSentences(text) stands in it (string index), or null
+function sentenceIndex(text, sentences, n) {
+  let from = 0;
+  for (let i = 0; i <= n; i++) {
+    const place = selectionPlace(text.slice(from), sentences[i]);
+    if (!place) return null;
+    if (i === n) return from + place[0];
+    from += place[1];
+  }
+  return null;
+}
+
+// The window's title of a result: the answer in the badge's own words (hunt phase 1.5: it said "Not finished" beside a
+// badge saying "Not finished yet"), the hypothesis, the app
+function windowTitle(r) {
+  const known = ((App.state && App.state.statuses) || []).some((x) => x.status === r.status);
+  return `${r.status_text || (known ? App.statusText(r.status) : STATUS_SHORT[r.status]) || r.status} · ${(r.text || "").slice(0, 60)} · ${appName()}`;
 }
 
 // Sentences of an excerpt, for "mark the sentence you mean": split after . ! ? but not after an initial ("M."),
@@ -188,12 +238,20 @@ function windowNode(text, start, end, cls, breaks, [a, b]) {
 
 // 0.18.1 (B5): a retracted or corrected work's document says so on its excerpts. The notices of the last lookup
 // (Bibliography › Check for retractions) are read once when the page opens; no lookup happens here.
-let retractedDocs = {};
+// Hunt phase 1.5: kept per project (it was one object for the module: a slow answer for the project just left landed
+// after this one's and marked its documents, which are known by doc id only)
+const retractedDocs = new Map();   // project -> {doc_id: [notice]}
 async function loadRetractions(project) {
-  try { retractedDocs = (await api("GET", `/api/projects/${P(project)}/retractions`)).by_doc || {}; } catch { retractedDocs = {}; }
+  let by = {};
+  try { by = (await api("GET", `/api/projects/${P(project)}/retractions`)).by_doc || {}; }
+  catch (e) {
+    // hunt phase 1.5: not read is not "none": said, since an excerpt of a retracted work then shows no mark
+    if (e.status !== 404) toast("The notices of retracted or corrected works could not be read just now, so no excerpt is marked. Open the page again to try once more.", "warn", { ttl: 9000, group: "retractions" });
+  }
+  retractedDocs.set(project, by);
 }
-function retractedMark(docId) {
-  const ns = retractedDocs[docId];
+function retractedMark(docId, project) {
+  const ns = (retractedDocs.get(project) || {})[docId];
   if (!ns || !ns.length) return null;
   const bad = ns.some((n) => ["retraction", "withdrawal", "removal"].includes(n.type));
   const what = [...new Set(ns.map((n) => (n.type || "notice").replace(/_/g, " ")))].join(", ");
@@ -294,9 +352,21 @@ export async function renderResult(view, [hypId], query) {
     if (!box.isConnected) return;
     waitTimer = setTimeout(() => {
       if (!box.isConnected) return;
-      if (heldField() || noteDirty) { armWait(); return; }
-      load({ ifChanged: true }).catch(() => {});
+      // hunt phase 1.5 (review note): a field in use holds the redraw, not the look (a cursor left in a comment box
+      // stopped every update): what came in is said above the answers, and drawn when the person asks
+      load({ ifChanged: true, hold: !!(heldField() || noteDirty) }).catch(() => {});
     }, 5000);
+  }
+  // "New answers came in": the result looked at while a field was in use, kept until the person shows it (or the next
+  // look with nothing in use draws it)
+  let heldResult = null;
+  const newBar = h("div", { class: "res-new-answers", role: "status", hidden: true },
+    notice({ kind: "info", icon: "inbox", live: false }, h("p", {}, "New answers came in while you were writing. ",
+      button({ sm: true, onMousedown: (e) => e.preventDefault(), onClick: () => { const r = heldResult; if (!r) return; heldResult = null; current = r; draw(r); } }, "Show them"))));
+  function holdNew(r) {
+    heldResult = r;
+    if (!newBar.isConnected) box.prepend(newBar);
+    newBar.hidden = false;
   }
   // Hunt phase 1 (PAGESA-2, PAGESA-3): a redraw the person did not ask for (a job of this result ended, "Read more
   // excerpts" came back, the look while a check waits) never takes a field out from under their hands. The text field
@@ -350,6 +420,7 @@ export async function renderResult(view, [hypId], query) {
       if (waitsForClaude(r)) armWait();   // as draw() would: look again in a few seconds
       return;
     }
+    if (opts.hold) { holdNew(r); if (waitsForClaude(r)) armWait(); return; }   // a field is in use: said, not drawn
     current = r;
     draw(r);
   }
@@ -418,7 +489,7 @@ export async function renderResult(view, [hypId], query) {
     const anchorTop = anchor ? anchor.getBoundingClientRect().top : null;
     const y = window.scrollY;
     focusAfter = null;
-    document.title = `${(r.status === "waiting" && r.status_text) || STATUS_SHORT[r.status] || r.status} · ${(r.text || "").slice(0, 60)} · ${appName()}`;
+    document.title = windowTitle(r);
 
     const swap = (sel, fresh) => { const old = box.querySelector(sel); if (!old) throw new Error(`nothing at ${sel}`); old.replaceWith(fresh); };
     swap(":scope > .answer", answerCard(r, parts, single, allPassages));
@@ -512,6 +583,7 @@ export async function renderResult(view, [hypId], query) {
   const waitsForClaude = (r) => r.status === "waiting" && !onlyLocalWaits(r);
 
   function draw(r) {
+    heldResult = null; newBar.hidden = true;   // this drawing shows the newest answers
     const y = window.scrollY;
     localJobShown = false;   // 0.13.11: the running "Read them now" is shown once, at the first part that waits
     lazies = [];
@@ -520,7 +592,7 @@ export async function renderResult(view, [hypId], query) {
     const refocus = fa && fa !== document.body && box.contains(fa) && fa.matches("button, a, select") ? { tag: fa.tagName, id: fa.id, text: fa.textContent.trim() } : null;
     const held = heldField();   // hunt phase 1 (PAGESA-2, -3): the text field in use, given back below
     keepNote = noteDirty || (!!held && held.el === noteBox);
-    document.title = `${(r.status === "waiting" && r.status_text) || STATUS_SHORT[r.status] || r.status} · ${(r.text || "").slice(0, 60)} · ${appName()}`;
+    document.title = windowTitle(r);
     clear(box);
     const parts = r.parts || [];
     const single = parts.length === 1 && !r.decomposed;
@@ -1300,7 +1372,8 @@ export async function renderResult(view, [hypId], query) {
   // A follow-up job of this project started earlier (or on another page) and still running: show and follow it.
   async function adoptRunningJobs() {
     let jobs = [];
-    try { jobs = (await api("GET", "/api/jobs")).jobs || []; } catch (_) { return; }
+    // hunt phase 1.5: a failed look is not "nothing runs": looked at again a little later while the page is open
+    try { jobs = (await api("GET", "/api/jobs")).jobs || []; } catch (_) { setTimeout(() => { if (box.isConnected) adoptRunningJobs(); }, 5000); return; }
     const titles = { reread: "Reading one excerpt again", "read-new": "Reading the new documents", "read-unread": "Reading the documents not read yet", "second-opinion": "A second opinion: another model reads the excerpts", stronger: "A stronger model reads the excerpts again", "read-local": READ_LOCAL_TITLE };
     for (const j of jobs) {
       if (j.project !== project || !titles[j.kind] || TERMINAL.has(j.state) || running.has(j.id)) continue;
@@ -1559,7 +1632,7 @@ export async function renderResult(view, [hypId], query) {
     const exRow = (part, p, i) => h("tr", { "data-ex-key": `${part.claim_id}|${p.passage_id}`, class: `row-link ex-row ex-${p.verdict || "none"}${p.reviewed ? " ex-reviewed" : ""}`, tabindex: "0", onClick: () => open(part, p), onKeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(part, p); } } },
         h("td", { class: "num muted" }, String(i + 1)),
         split ? h("td", { "data-label": "Part" }, `Part ${part.part}`) : null,
-        h("td", { "data-label": "Document", class: "ex-doc" }, h("span", { class: "serif" }, p.title || "untitled"), retractedMark(p.doc_id), p.scope_note ? h("div", { class: "small" }, tag({ kind: "attention" }, `about another group: ${p.scope_note}`)) : null),
+        h("td", { "data-label": "Document", class: "ex-doc" }, h("span", { class: "serif" }, p.title || "untitled"), retractedMark(p.doc_id, project), p.scope_note ? h("div", { class: "small" }, tag({ kind: "attention" }, `about another group: ${p.scope_note}`)) : null),
         h("td", { "data-label": "Where", class: "small muted" }, p.location || p.span || ""),
         h("td", { "data-label": "AI's judgement" }, h("span", { class: "it" }, judgementIcon(p.ai_verdict, 12), gradeWords(p.ai_verdict, p.confidence)), p.reread ? h("div", { class: "small muted" }, "read again") : null),
         h("td", { "data-label": "Your judgement" }, yours(p)),
@@ -1780,7 +1853,7 @@ export async function renderResult(view, [hypId], query) {
     const span = quoteSpan(p);
     card.appendChild(h("div", { class: "ev-src" },
       h("span", { class: "title" }, p.title || "untitled"),
-      retractedMark(p.doc_id),
+      retractedMark(p.doc_id, project),
       whereText(p),
       (() => {
         const o = (current && current.parts || []).map((x) => [x, (x.passages || []).find((y) => y.passage_id === p.passage_id && about(y))]).filter(([x, y]) => x.claim_id !== part.claim_id && y);
@@ -1925,7 +1998,25 @@ export async function renderResult(view, [hypId], query) {
     const keepRow = h("label", { class: "it small res-reread-keep", for: "reread-keep" }, keep, " Also save this as my comment on the excerpt");
     const syncKeep = () => { const has = !!note.value.trim(); keep.disabled = !has; keepRow.classList.toggle("muted", !has); };
     note.addEventListener("input", syncKeep);
-    const ok = await dialog({
+    // hunt phase 1.5: sent from the dialog's own button, which stays open with the hint when it fails (it closed
+    // first, and a failed start lost the hint); the comment saved on a first try is not saved again
+    let savedNote = myNote(p);
+    const start = async () => {
+      btn.disabled = true;
+      const hint = note.value.trim();
+      const body = hint ? { note: hint } : {};
+      try {
+        // the hint saved as the comment first (with the judgement the person has, or none), so it stays on the card
+        if (hint && keep.checked && hint !== savedNote) {
+          await api("PUT", `/api/projects/${P(project)}/claims/${P(part.claim_id)}/judgements/${P(p.passage_id)}`, { verdict: myVerdict(p) || null, note: hint });   // 0.14.3: your own verdict, never a colleague's
+          savedNote = hint;
+        }
+        const res = await api("POST", `/api/projects/${P(project)}/claims/${P(part.claim_id)}/reread/${P(p.passage_id)}`, body);
+        followReread(res.job.id);
+        return true;
+      } catch (e) { showError(e); btn.disabled = false; return false; }
+    };
+    await dialog({
       title: "Ask the AI to read this excerpt again?",
       body: h("div", {},
         h("p", {}, "The AI reads only this excerpt again, on its own. Its new judgement replaces its earlier one on this card; the earlier one stays visible."),
@@ -1937,20 +2028,11 @@ export async function renderResult(view, [hypId], query) {
         h("div", { class: "field" }, h("label", { class: "field-label", for: "reread-note" }, myNote(p) ? "Your comment is given to the AI as a hint (change it here, or empty the box for a re-read without a hint)" : "A hint for the AI (optional: leave it empty for a re-read without a hint)"), note,
           h("div", { class: "field-help" }, "The hint is added to the AI's instructions as “A reader noted: …”. The AI may simply follow it, so judge the excerpt yourself afterwards."),
           keepRow)),
-      actions: [{ text: "Cancel", value: false }, { text: "Read it again", value: true, primary: true, id: "dlg-confirm", icon: "play" }],
+      actions: [{ text: "Cancel", value: false }, { text: "Read it again", value: true, primary: true, id: "dlg-confirm", icon: "play", onClick: start }],
       onOpen() { syncKeep(); note.focus(); },
     });
-    if (!ok) return;
-    btn.disabled = true;
-    const hint = note.value.trim();
-    const body = hint ? { note: hint } : {};
-    try {
-      // the hint saved as the comment first (with the judgement the person has, or none), so it stays on the card
-      if (hint && keep.checked && hint !== myNote(p)) {
-        await api("PUT", `/api/projects/${P(project)}/claims/${P(part.claim_id)}/judgements/${P(p.passage_id)}`, { verdict: myVerdict(p) || null, note: hint });   // 0.14.3: your own verdict, never a colleague's
-      }
-      const res = await api("POST", `/api/projects/${P(project)}/claims/${P(part.claim_id)}/reread/${P(p.passage_id)}`, body);
-      followJob(res.job.id, "reread", "The AI is reading this excerpt again", async (job) => {
+    function followReread(jobId) {
+      followJob(jobId, "reread", "The AI is reading this excerpt again", async (job) => {
         const r = job.result || {};
         const b = r.before || {}, a = r.after;
         followNote = `The AI read an excerpt again: was ${gradeWords(b.verdict, b.confidence)}, now ${a ? gradeWords(a.verdict, a.confidence) : "not about this hypothesis"}${a && a.rationale ? ` — ${a.rationale}` : ""}${myVerdict(p) ? ". Your own judgement still counts" : othersInForce(p) ? `. ${othersInForce(p)}’s judgement still counts` : ""}.`;
@@ -1960,7 +2042,7 @@ export async function renderResult(view, [hypId], query) {
         const showIt = () => { const el = findCard(part.claim_id, p.passage_id); if (!el) return; const fl = el.closest("details"); if (fl && !fl.open) { fl.open = true; openFolds.add(fl.dataset.fold); } el.scrollIntoView({ behavior: "smooth", block: "center" }); el.classList.add("ev-flash"); setTimeout(() => el.classList.remove("ev-flash"), 1800); };
         toast(`The AI has read the excerpt again: now ${a ? gradeWords(a.verdict, a.confidence) : "not about this hypothesis"}.`, "ok", { small: true, ttl: 8000, button: inView ? undefined : { text: "Show the excerpt", onClick: showIt } });
       }, { passage_id: p.passage_id });
-    } catch (e) { showError(e); btn.disabled = false; }
+    }
   }
 
   // "quote in paragraph 6 of 8 · the excerpt covers paragraphs 1–6"; with no quote only what the excerpt covers
@@ -1998,10 +2080,19 @@ export async function renderResult(view, [hypId], query) {
     const state = h("span", { class: "muted small", "aria-live": "polite" });
     // hunt phase 1 (PAGESA-1): what is yours on this excerpt, and whose judgement counts when it is not yours
     const mine = myVerdict(p), myComment = myNote(p), other = othersInForce(p);
-    const prev = { verdict: mine || null, note: myComment, quote: p.quote_by === "you" && mine ? p.quote : undefined };   // Undo restores your own verdict and comment (0.14.3)
+    const prev = { verdict: mine || null, note: myComment, quote: p.quote_by === "you" && mine ? p.quote : undefined, quoteStart: p.quote_start };   // Undo restores your own verdict and comment (0.14.3)
     let noteField = null;
     let saving = false;
+    // hunt phase 1.5: the same save pressed again while it is on its way (a double click) is not sent again; another
+    // one (a comment saved on leaving its field, then a judgement picked) still goes
+    const sending = new Set();
     const put = async (verdict, note, msg, opts = {}) => {
+      const same = JSON.stringify([verdict, note, opts.quote]);
+      if (sending.has(same)) return;
+      sending.add(same);
+      try { await putOnce(verdict, note, msg, opts); } finally { sending.delete(same); }
+    };
+    const putOnce = async (verdict, note, msg, opts = {}) => {
       saving = true;
       state.textContent = "Saving…";
       const el = wrap.closest(".ev");
@@ -2014,8 +2105,13 @@ export async function renderResult(view, [hypId], query) {
       const noteNow = note ?? (noteField ? noteField.value.trim() : prev.note);   // a comment typed before picking is saved with the judgement
       const body = { verdict, note: noteNow, threshold };   // 0.18.1: the strictness shown, for what the judgement moved
       if (opts.quote !== undefined) body.quote = opts.quote;   // the sentence the person points to; left out = keep the earlier one
+      // hunt phase 1.5: where it was selected (code points in the excerpt's text), so words that stand twice are kept there
+      if (opts.quote && Number.isInteger(opts.quoteStart)) body.quote_start = opts.quoteStart;
       const pend = pendingQuote.get(pendingKey(p, part));
-      if (verdict && opts.quote === undefined && pend) { body.quote = pend.text; opts = { ...opts, quote: pend.text }; }   // a sentence marked before choosing: saved with the judgement
+      if (verdict && opts.quote === undefined && pend) {   // a sentence marked before choosing: saved with the judgement
+        body.quote = pend.text; opts = { ...opts, quote: pend.text };
+        if (Number.isInteger(pend.start)) body.quote_start = pend.start;
+      }
       if (verdict) pendingQuote.delete(pendingKey(p, part));
       try {
         const saved = await api("PUT", `/api/projects/${P(project)}/claims/${P(part.claim_id)}/judgements/${P(p.passage_id)}`, body);
@@ -2024,6 +2120,7 @@ export async function renderResult(view, [hypId], query) {
           focusAfter = { passage_id: p.passage_id, claim_id: part.claim_id, ...placeOf(p.passage_id, part.claim_id), reason: "your last change was undone." };
           const back = { verdict: prev.verdict, note: prev.note, threshold };
           if (opts.quote !== undefined) back.quote = prev.quote === undefined ? "" : prev.quote;
+          if (back.quote && Number.isInteger(prev.quoteStart)) back.quote_start = prev.quoteStart;   // your sentence where it stood
           try { const undone = await api("PUT", `/api/projects/${P(project)}/claims/${P(part.claim_id)}/judgements/${P(p.passage_id)}`, back); toast("Undone.", "ok", { ttl: 2500, small: true, group: "judge" }); await applyJudgement(undone); }
           catch (e) { showError(e); }
         };
@@ -2032,10 +2129,13 @@ export async function renderResult(view, [hypId], query) {
         fa.undoText = noteWayBack(prev.verdict, verdict, p.read_by);
         fa.undo = fa.undoText ? undo : null;
         const was = statusNow();
-        await applyJudgement(saved);
+        // hunt phase 1.5: the judgement is saved even when the page cannot be drawn again: said so (only the error was)
+        let shown = true;
+        try { await applyJudgement(saved); } catch (e) { shown = false; saving = false; state.textContent = ""; showError(e); }
         const now = statusNow();
-        const change = was && now && was !== now ? ` The answer is now ${(STATUS_SHORT[now] || now).toLowerCase()}.` : "";
-        if (!opts.silent) toast(msg + change, "ok", { ttl: 8000, small: true, group: "judge", button: { text: "Undo", onClick: undo } });
+        const change = shown && was && now && was !== now ? ` The answer is now ${(STATUS_SHORT[now] || now).toLowerCase()}.` : "";
+        const later = shown ? "" : " The page could not show it yet: open it again to see it.";
+        if (!opts.silent || !shown) toast(msg + change + later, shown ? "ok" : "warn", { ttl: 8000, small: true, group: "judge", button: { text: "Undo", onClick: undo } });
       } catch (e) { saving = false; if (opts.onError) opts.onError(e); else showError(e); state.textContent = ""; }
     };
     const aiVerdict = p.ai_verdict || "not_relevant";
@@ -2116,19 +2216,22 @@ export async function renderResult(view, [hypId], query) {
     // (keyboard). Saved with the current judgement and comment; the highlight then moves.
     function markSentence() {
       const msg = h("span", { class: "muted small mark-msg", "aria-live": "polite" });
-      const saveQuote = (text) => {
+      // `near`: where the words were selected (a string index of the excerpt's text), when known
+      const saveQuote = (text, near = null) => {
         let q = (text || "").replace(/…/g, " ").replace(/\s+/g, " ").trim();
         if (!q) { msg.textContent = "Select a sentence in the excerpt first."; return; }
         // 0.19.12: found whatever spaces or line ends the excerpt has there, and widened to whole words (as the
-        // server does), so the highlight shows what is saved
-        const place = selectionPlace(p.text || "", q);
+        // server does), so the highlight shows what is saved; hunt phase 1.5: words that stand twice are kept where
+        // they were selected (the place nearest the selection), and the server is told where (quote_start)
+        const place = selectionPlace(p.text || "", q, near);
         if (!place) { msg.textContent = "The selection must be text from this excerpt."; return; }
         q = (p.text || "").slice(place[0], place[1]).replace(/\s+/g, " ").trim();
+        const at = indexToCp(p.text, place[0]);
         msg.textContent = "";
-        if (current) { put(current, undefined, "Saved: your sentence is highlighted.", { quote: q, onError: (e) => { msg.textContent = e.message || "Could not save the sentence."; } }); return; }
+        if (current) { put(current, undefined, "Saved: your sentence is highlighted.", { quote: q, quoteStart: at, onError: (e) => { msg.textContent = e.message || "Could not save the sentence."; } }); return; }
         // no judgement yet: the sentence is kept on the card (not saved) until a judgement is chosen for it
         // string indices, kept as the app counts, like the quote’s own place
-        pendingQuote.set(pendingKey(p, part), { text: q, start: indexToCp(p.text, place[0]), end: indexToCp(p.text, place[1]) });
+        pendingQuote.set(pendingKey(p, part), { text: q, start: at, end: indexToCp(p.text, place[1]) });
         focusAfter = { passage_id: p.passage_id, claim_id: part.claim_id, ...placeOf(p.passage_id, part.claim_id), anchor: ".judge", anchorTop: wrap.getBoundingClientRect().top, noNote: true };
         redraw();
         const card = findCard(part.claim_id, p.passage_id);
@@ -2139,12 +2242,12 @@ export async function renderResult(view, [hypId], query) {
         const sel = window.getSelection();
         const inside = sel && sel.rangeCount && !sel.isCollapsed && passageEl.contains(sel.anchorNode) && passageEl.contains(sel.focusNode);
         if (!inside) { msg.textContent = sel && !sel.isCollapsed ? "The selection must be inside this excerpt." : "Select a sentence in the excerpt first."; return; }
-        saveQuote(sel.toString());
+        saveQuote(sel.toString(), selectionIndex(passageEl, p.text || "", sel));
       } }, "Use it");
       const sentences = splitSentences(p.text).filter((x) => x.length > 12);
       const pick = selectField({ sm: true, "aria-label": "Or choose a sentence from the excerpt" },
         h("option", { value: "" }, "…or choose a sentence from the list"), sentences.map((x, i) => h("option", { value: String(i) }, x.length > 90 ? x.slice(0, 88) + "…" : x)));
-      const usePick = button({ sm: true, onClick: () => { if (pick.value === "") { msg.textContent = "Choose a sentence from the list first."; pick.focus(); return; } saveQuote(sentences[Number(pick.value)]); } }, "Use this sentence");
+      const usePick = button({ sm: true, onClick: () => { if (pick.value === "") { msg.textContent = "Choose a sentence from the list first."; pick.focus(); return; } saveQuote(sentences[Number(pick.value)], sentenceIndex(p.text || "", sentences, Number(pick.value))); } }, "Use this sentence");
       const remove = p.quote_by === "you" && current ? button({ kind: "quiet", sm: true, onClick: () => put(current, undefined, "Your sentence was removed.", { quote: "" }) }, p.read_by === "you" ? "Remove the highlight" : "Remove my sentence") : null;
       // 0.12: one way at first (select, then the button); the list of sentences (for the keyboard) opens on demand
       const list = h("span", { class: "mark-list", hidden: true }, pick, usePick);
@@ -2158,8 +2261,9 @@ export async function renderResult(view, [hypId], query) {
           if (!sel || !sel.rangeCount || sel.isCollapsed || !passageEl.contains(sel.anchorNode) || !passageEl.contains(sel.focusNode)) return;
           const text = sel.toString();
           if (text.replace(/\s+/g, "").length < 2) return;   // a click, or one letter: not a highlight
+          const near = selectionIndex(passageEl, p.text || "", sel);
           sel.removeAllRanges();
-          saveQuote(text);
+          saveQuote(text, near);
         };
         passageEl.addEventListener("mouseup", () => setTimeout(fromSelection, 0));
         passageEl.addEventListener("touchend", () => setTimeout(fromSelection, 0));

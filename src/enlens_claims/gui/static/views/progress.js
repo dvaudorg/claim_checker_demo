@@ -98,7 +98,8 @@ export class AiRun {
   async stop() {
     if (!this.jobId) return;
     setBusy(this.stopBtn, true);
-    try { await cancelJob(this.jobId); } catch (e) { showError(e); setBusy(this.stopBtn, false); }
+    // hunt phase 1.5: a refused cancel is not a stop: the run goes on, and so does its panel
+    try { await cancelJob(this.jobId); } catch (e) { showError(e); setBusy(this.stopBtn, false); return; }
     if (this.onStop) this.onStop();
   }
 

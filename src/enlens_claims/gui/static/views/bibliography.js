@@ -33,6 +33,9 @@ export async function renderBibliography(view) {
   let data = null;
   let tab = session(`bib-tab:${project}`) || null;
   let picking = false;   // the source card is open over an existing bibliography ("Use another collection or file")
+  // hunt phase 1.5: that card, kept while it is open: a redraw (a retraction check ending) puts the same card back, so
+  // its search, its ticks and the collection chosen stay as they were (it was built anew, from Zotero again)
+  let pickCard = null;
   const filters = new Map();   // hunt phase 1: each list's filter as typed, by its placeholder, kept across drawings
 
   async function load() {
@@ -46,14 +49,17 @@ export async function renderBibliography(view) {
     // use gets the focus and the caret back
     const ae = document.activeElement;
     const typing = ae && body.contains(ae) && ae.classList.contains("bib-filter") ? [ae.placeholder, ae.selectionStart, ae.selectionEnd] : null;
+    const inPick = ae && pickCard && pickCard.contains(ae) ? [ae, ae.selectionStart, ae.selectionEnd] : null;   // (hunt phase 1.5)
     clear(top); clear(body);
     const bib = data && data.bibliography;
     if (!bib) { top.appendChild(sourceCard(false)); return; }
     top.appendChild(summaryCard(bib, data.counts));
-    if (picking) top.appendChild(sourceCard(true));
+    if (picking) top.appendChild(pickCard || (pickCard = sourceCard(true)));
+    else pickCard = null;
     drawLists();
     const again = typing && [...body.querySelectorAll(".bib-filter")].find((x) => x.placeholder === typing[0]);
     if (again) { again.focus({ preventScroll: true }); if (typing[1] != null) again.setSelectionRange(typing[1], typing[2]); }
+    if (inPick && inPick[0].isConnected) { inPick[0].focus({ preventScroll: true }); if (inPick[1] != null && inPick[0].setSelectionRange) inPick[0].setSelectionRange(inPick[1], inPick[2]); }
   }
 
   // ----------------------------------------------------------------- where the bibliography comes from

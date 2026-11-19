@@ -69,13 +69,21 @@ function changesTable(changes) {
 }
 
 // "Why?" before a removal: an optional reason, kept in the research log beside the entry. Returns null (cancelled)
-// or { why } (possibly empty).
-export async function askWhy({ title, message, confirmText = "Remove", danger = true, placeholder }) {
+// or { why } (possibly empty). hunt phase 1.5 (the owner's rule): `save(why)`, when given, is sent from the dialog's own
+// button, so a failed save keeps the dialog open with the words typed and says why there; its answer is { why, result }.
+export async function askWhy({ title, message, confirmText = "Remove", danger = true, placeholder, save }) {
   const ta = textarea({ rows: 3, maxlength: 2000, placeholder: placeholder || "For example: off-topic, a duplicate, outside the scope of the study" });
+  const err = h("p", { class: "field-error", role: "alert" });
   const body = h("div", {}, typeof message === "string" ? h("p", {}, message) : message,
-    h("label", { class: "field" }, h("span", { class: "field-label" }, "Why? (optional, kept in the research log)"), ta));
-  const r = await dialog({ title, body, danger, actions: [{ text: "Cancel", value: false }, { text: confirmText, value: true, primary: true }],
+    h("label", { class: "field" }, h("span", { class: "field-label" }, "Why? (optional, kept in the research log)"), ta), err);
+  let result;
+  const onClick = save ? async () => {
+    err.textContent = "";
+    try { result = await save(ta.value.trim()); } catch (e) { err.textContent = e.message || String(e); ta.focus(); return false; }
+    return true;
+  } : undefined;
+  const r = await dialog({ title, body, danger, actions: [{ text: "Cancel", value: false }, { text: confirmText, value: true, primary: true, onClick }],
     onOpen: () => ta.focus() });
-  return r ? { why: ta.value.trim() } : null;
+  return r ? { why: ta.value.trim(), result } : null;
 }
 

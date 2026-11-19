@@ -281,7 +281,7 @@ def test_the_result_page_draws_long_card_lists_in_pages_and_still_finds_every_ca
 
 def test_a_judgement_changes_only_what_it_changes():
     js = _js("views/result.js")
-    put = _fn(js, "    const put = async (verdict, note, msg, opts = {}) => {", "\n    };\n")
+    put = _fn(js, "    const putOnce = async (verdict, note, msg, opts = {}) => {", "\n    };\n")   # hunt phase 1.5: put() guards putOnce()
     assert "await applyJudgement(saved)" in put and "await load()" not in put
     assert "await applyJudgement(undone)" in js
     apply_ = _fn(js, "  async function applyJudgement(saved) {")

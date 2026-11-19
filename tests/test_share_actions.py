@@ -57,7 +57,7 @@ def test_sharing_says_what_came_with_it_and_unsharing_asks_first():
     assert "r.also" in share and "is shared with it, so colleagues can read its codes" in share
     assert "r.cannot" in share and "is a colleague’s and not shared by them" in share
     unshare = SHARE[SHARE.index("export async function unshareItem"):SHARE.index("export function shareButton")]
-    assert "askWhy(" in unshare and "marked as withdrawn by you" in unshare and "why: ok.why" in unshare
+    assert "askWhy(" in unshare and "marked as withdrawn by you" in unshare and "why: why || undefined" in unshare
     assert 'api("POST", `/api/projects/${P(App.project)}/sharing/unshare`' in unshare
 
 

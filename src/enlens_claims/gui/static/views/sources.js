@@ -69,7 +69,9 @@ export async function renderSources(view) {
     for (const f of list) {
       const ext = (f.name.split(".").pop() || "").toLowerCase();
       if (!OK_EXT.includes(ext)) { refused.push(f.name); continue; }
-      if (!files.some((x) => x.name === f.name && x.size === f.size)) files.push(f);
+      // the same file picked twice is listed once; two files of one name and size from two folders are two (hunt phase
+      // 1.5: one was dropped without a word): their times differ
+      if (!files.some((x) => x.name === f.name && x.size === f.size && x.lastModified === f.lastModified)) files.push(f);
     }
     if (refused.length) {
       const docx = refused.some((n) => /\.(doc|rtf|odt|pptx?|xlsx?)$/i.test(n));
@@ -161,6 +163,8 @@ export async function renderSources(view) {
     bits.push(notice({ kind: added ? "done" : "attention" },
       h("div", {}, h("p", {}, added ? `${added} ${added === 1 ? "document" : "documents"} added.` : "No new document was added.", st.duplicates ? ` ${st.duplicates} ${st.duplicates === 1 ? "was" : "were"} already in the project.` : ""),
         added ? link({ kind: "next", href: "#/hypotheses", class: "docs-check-link" }, "Check a hypothesis") : null)));
+    // hunt phase 1.5: the server's word on earlier documents that still follow a setting nobody chose (ingest.earlier_words)
+    if (st.note) bits.push(notice({ kind: "attention", class: "docs-add-note" }, h("p", {}, st.note)));
     // hunt phase 1.5: Stop pressed while a file was being read (one whose reading never ends is waited for until
     // Stop): which file, and how to add the others
     if (st.stopped && st.not_added) bits.push(notice({ kind: "attention" }, h("p", {}, st.stopped_at
@@ -379,6 +383,13 @@ export async function renderSources(view) {
     drawIndex(r.search);
     const docs = r.documents || [];
     pa = r.ai_access || {};
+    // hunt phase 1.5: a redraw of the whole list (after an add, or once search by meaning is set up) keeps the focus on
+    // the control it was on in a document's row (a tick, say): the same control of that document's new row
+    const at = document.activeElement;
+    const wasRow = at && docsBox.contains(at) ? [...rows].find(([, row]) => row.contains(at)) : null;
+    const cls = wasRow ? (at.getAttribute("class") || "").split(/\s+/).filter(Boolean)[0] : null;
+    const was = cls ? { id: wasRow[0], sel: `${at.tagName.toLowerCase()}.${cls}` } : null;
+    if (was) was.n = [...wasRow[1].querySelectorAll(was.sel)].indexOf(at);
     clear(docsBox); rows.clear();
     for (const id of [...picked]) if (!docs.some((d) => d.doc_id === id)) picked.delete(id);
     if (pa.ask) docsBox.appendChild(accessAskCard(project, pa, reloadDocs));
@@ -780,6 +791,8 @@ export async function renderSources(view) {
     docsBox.append(groupsBox, bulk);
     drawGroups();
     drawBulk();
+    const again = was && rows.get(was.id) && rows.get(was.id).querySelectorAll(was.sel)[Math.max(0, was.n)];
+    if (again) again.focus({ preventScroll: true });
   }
 
   // 0.15.7: the documents an earlier reader read, offered to the new one; the job's progress; what it did
@@ -946,10 +959,12 @@ export async function renderSources(view) {
     // 0.16 (F4): the reason goes into the research log
     const proposal = await removalNote(project, d);   // 0.18 L2: in a collaborator's copy, a proposal to the owner
     const ok = await askWhy({ title: "Remove this document?", confirmText: "Remove", placeholder: "For example: a duplicate, the wrong version, outside the scope",
-      message: h("div", {}, h("p", {}, h("strong", {}, d.title || d.file)), h("p", {}, "It is no longer searched. Results you already have keep their quotes, marked as coming from a removed document. Your notes on it are kept in Notes."), proposal) });
+      message: h("div", {}, h("p", {}, h("strong", {}, d.title || d.file)), h("p", {}, "It is no longer searched. Results you already have keep their quotes, marked as coming from a removed document. Your notes on it are kept in Notes."), proposal),
+      // hunt phase 1.5: sent from the dialog's button, so a refusal keeps the why typed
+      save: (why) => api("DELETE", `/api/projects/${P(project)}/documents/${P(d.doc_id)}${why ? `?why=${encodeURIComponent(why)}` : ""}`) });
     if (!ok) return;
-    try { await api("DELETE", `/api/projects/${P(project)}/documents/${P(d.doc_id)}${ok.why ? `?why=${encodeURIComponent(ok.why)}` : ""}`); toast(proposal ? "Removed from your copy. For the project it waits for the owner (Team › Activity)." : "Document removed.", "ok"); gone(); await App.refresh(); }   // 0.18 L2: proposal
-    catch (e) { showError(e); }
+    toast(proposal ? "Removed from your copy. For the project it waits for the owner (Team › Activity)." : "Document removed.", "ok");   // 0.18 L2: proposal
+    try { gone(); await App.refresh(); } catch (e) { showError(e); }
   }
 
   // ----------------------------------------------------------------- start over

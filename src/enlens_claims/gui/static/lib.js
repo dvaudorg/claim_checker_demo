@@ -390,7 +390,7 @@ export const fmt = {
     return `${Math.floor(m / 60)} h ${m % 60} min`;
   },
   num(n) {
-    return n === null || n === undefined ? "" : Number(n).toLocaleString();
+    return n === null || n === undefined ? "" : Number(n).toLocaleString("en-GB");
   },
   conf(c) {
     return c === null || c === undefined ? "" : Number(c).toFixed(2);
@@ -2250,8 +2250,8 @@ function sentParts(r) {
   // nothing more waits, but Claude Code is at work: show what it was sent and is answering now, not "nothing"
   const from = r.answering ? `${t} is answering ${n === 1 ? "this task" : `these ${n} tasks`} now. Nothing more waits for it, so nothing new is about to be sent. ${n === 1 ? "It is" : "They are"} of ${r.title}, word for word as its helper received ${n === 1 ? "it" : "them"}`
     : `${r.start ? `Tasks ${r.start + 1} to ${r.start + n}` : `The next ${n === 1 ? "task" : `${n} tasks`}`} of ${r.title}, word for word as ${t}'s helper receives them`;
-  const counts = r.answering ? `${r.being_answered.toLocaleString()} being answered now${r.being_answered > n ? ` (the first ${n} shown)` : ""}`
-    : `${r.waiting.toLocaleString()} waiting${r.being_answered ? ` · ${r.being_answered} being answered now` : ""}`;
+  const counts = r.answering ? `${r.being_answered.toLocaleString("en-GB")} being answered now${r.being_answered > n ? ` (the first ${n} shown)` : ""}`
+    : `${r.waiting.toLocaleString("en-GB")} waiting${r.being_answered ? ` · ${r.being_answered} being answered now` : ""}`;
   return [
     h("p", {}, `${from}: the instruction once, then each task's text. Nothing else from this project goes with them: not the documents' files, other passages, your results or your reviews.`),
     h("p", { class: "muted small" }, `${counts} · ${r.helper ? `${r.helper} on ` : "on "}${r.model_id || r.model || cloudName()}. ${t === "Claude Code" ? "Claude Code adds its own instructions for the helper (the same for every project) and its own working" : `The helper’s instructions go with them (the same for every project), and ${t} adds its own working`}; they hold none of your documents.`),
@@ -2509,6 +2509,11 @@ function localSide(o, el) {
   const short = !!(mem && mem.short) || !!o.refused;
   const lines = [];
   let key = "wait";
+  // hunt phase 1.5 (phase 0 P-5): without o.since, when this side began to wait is kept per model and noun, so a side
+  // drawn again (a count changed, the queue's look) does not start its nudge over; a side that runs or is done forgets it
+  const waitKey = `${name}|${noun}`;
+  if (o.running || o.done) LOCAL_WAIT_SINCE.delete(waitKey);
+  const since = () => o.since || LOCAL_WAIT_SINCE.get(waitKey) || (LOCAL_WAIT_SINCE.set(waitKey, Date.now()), LOCAL_WAIT_SINCE.get(waitKey));
   if (o.plain) {   // one line and a state (not yet, stopped): nothing to press
     fillSide(el, o.plain.key, [arWhat(o.plain.what, o.plain.muted), o.plain.line || null]);
     return el;
@@ -2572,7 +2577,7 @@ function localSide(o, el) {
       const hint = yourself ? `Judge ${them} yourself and the model is not needed.${asks ? " Starting it now asks first: the computer may become very slow." : ""}`
         : anyway ? "Start it once memory is free; it is checked again then. Start it anyway asks first: the computer may become very slow." : null;
       const row = aiStart({ where: "local", model: o.model, kind: yourself ? "standard" : "main", compact: o.compact, before: yourself,
-        also: [anyway], hint: hint || undefined, nudge: !yourself && !anyway && !short ? (o.since || true) : false,
+        also: [anyway], hint: hint || undefined, nudge: !yourself && !anyway && !short ? since() : false,
         onClick: async () => {
           if (!(yourself && short)) return go(row.start, false);
           const ok = o.confirm === false || await confirmDialog({ title: `Start ${name} anyway?`, danger: false, confirmText: "Start it anyway", confirmIcon: "play",
@@ -2872,6 +2877,20 @@ function choiceChanged(project, from) {
   }
 }
 
+// Hunt phase 1.5 (phase 0 P-3): a control saved at each pick, whose picks may be answered out of order. A failed save
+// puts the control back to the value last saved, and only when no later pick was made (a first pick that failed after
+// a second was saved put the control back over the saved one). `now()` the value shown; `put(v)` shows v.
+// start() at each pick returns { saved(v), failed() } for its answer.
+export function latestPick(now, put) {
+  let seq = 0, saved = now();
+  return {
+    start() {
+      const n = ++seq;
+      return { saved: (v) => { saved = v; }, failed: () => { if (n === seq) put(saved); } };
+    },
+  };
+}
+
 // 0.13.10: how fast Claude Code works: how many helpers it starts at once (one, two or four). Faster is done sooner
 // and uses the plan's limits faster. The choice is kept (Settings' claude_speed) and shows beside every Start Claude
 // Code and under Settings → AI. "Choose the helpers for this run", folded away, names the helpers one by one.
@@ -2893,13 +2912,14 @@ export function speedPicker(chosen, options = { slower: 1, normal: 2, faster: 4 
   let current = chosen || "normal";
   const line = h("span", { class: "muted small sc-speed-line" });
   const show = (v) => { line.textContent = `${helpersText(options[v] || 2)} at a time${SPEED_NOTE[v] || ""}.`; };
+  const back = latestPick(() => current, (v) => { current = v; group.set(v); show(v); });
   // a choice (radio form): one Tab stop, the arrows move and pick, each pick saved at once
   const group = choice({ sm: true, label: `Speed of ${agentTitle()}`, class: "sc-speed-btns", value: current, options: SPEED_CHOICES,
     onPick: async (v) => {
       if (v === current && !(opts.custom && opts.custom())) return;  // the speed shown, picked again, undoes a choice of helpers
-      const before = current;
+      const pick = back.start();
       current = v; show(v);
-      try { await onPick(v); } catch (e) { current = before; group.set(before); show(before); showError(e); }
+      try { await onPick(v); pick.saved(v); } catch (e) { pick.failed(); showError(e); }
     } });
   show(current);
   const label = opts.label === undefined ? "Speed" : opts.label;
@@ -2937,12 +2957,13 @@ export function thoughtPicker(chosen, onPick = saveThought, opts = {}) {
   let current = chosen || "balanced";
   const line = h("span", { class: "muted small sc-speed-line" });
   const show = (v) => { line.textContent = thoughtNote(v); };
+  const back = latestPick(() => current, (v) => { current = v; group.set(v); show(v); });
   const group = choice({ sm: true, label: `How much thought ${thoughtWho()} gives the tasks`, class: "sc-speed-btns", value: current, options: THOUGHT_CHOICES,
     onPick: async (v) => {
       if (v === current) return;
-      const before = current;
+      const pick = back.start();
       current = v; show(v);
-      try { await onPick(v); if (opts.onSaved) opts.onSaved(v); } catch (e) { current = before; group.set(before); show(before); showError(e); }
+      try { await onPick(v); pick.saved(v); if (opts.onSaved) opts.onSaved(v); } catch (e) { pick.failed(); showError(e); }
     } });
   show(current);
   const label = opts.label === undefined ? "Thought" : opts.label;
@@ -3005,7 +3026,7 @@ function helpersFold(project, q, onChange) {
       sel.addEventListener("change", () => { C().counts[r.helper] = Number(sel.value); draw(); onChange(); refocus(id); });
       return h("div", { class: "sc-helper" + (value(r) === 0 ? " sc-helper-off" : "") },
         h("label", { class: "sc-helper-name", for: id }, cap(r.name), h("span", { class: "muted mono" }, ` ${r.models.join(", ")}`)),
-        h("span", { class: "sc-helper-what muted", id: `${id}-what` }, `${r.kinds.join(", ")} · ${r.waiting.toLocaleString()} waiting`), sel);
+        h("span", { class: "sc-helper-what muted", id: `${id}-what` }, `${r.kinds.join(", ")} · ${r.waiting.toLocaleString("en-GB")} waiting`), sel);
     });
     const named = rows.reduce((s, r) => s + value(r), 0);
     const n = Object.keys(C().counts).length ? Math.min(total(), named) : total();

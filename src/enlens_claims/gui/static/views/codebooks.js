@@ -157,6 +157,7 @@ export async function newCodebook(start = "fresh", opts = {}) {
   // everything as typed and the reason in it; it was a toast after the dialog had gone, and the title, name and choices
   // had to be made again. The same fields are shown each time, so what was typed stays.
   const theoryMemo = {};
+  const themeMemo = new Map();   // hunt phase 1.5: the themes ticked and the names chosen, kept for the next try
   for (;;) {
     const r = await dialog({
       title: "New codebook", wide: true,
@@ -185,7 +186,7 @@ export async function newCodebook(start = "fresh", opts = {}) {
       body.source = { file: await fileBase64(f), filename: f.name };
     }
     if (start === "themes") {
-      const picked = await pickThemes(where === "home");
+      const picked = await pickThemes(where === "home", themeMemo);
       if (!picked) return;
       body.source = { codes: picked };
     }
@@ -248,7 +249,9 @@ async function importSummary(cb) {
 // The themes found (this project's, and with `all` every project's) to start from: tick the ones to keep. 0.16.1:
 // each code name is words of the theme's name, as short as the documents allow (codenames.py); − and + make it less
 // or more specific before you edit it.
-async function pickThemes(all) {
+// `memo` (hunt phase 1.5): what was ticked and which name was chosen for each theme, kept from an earlier try (New
+// codebook opened again after a refusal asked the themes again with the first set ticked and the names as offered)
+async function pickThemes(all, memo = new Map()) {
   const base = `/api/projects/${P(App.project)}/codebooks/sources`;
   let runs;
   try { runs = (await api("GET", `${base}${all ? "?all=1" : ""}`)).runs; } catch (e) { showError(e); return null; }
@@ -262,10 +265,12 @@ async function pickThemes(all) {
   runs.forEach((run, i) => {
     const fs = h("fieldset", { class: "cb-run" }, h("legend", {}, `${run.here ? "Themes" : `Themes of ${run.project}`} found on ${fmt.dateShort(run.created_at)}`,
       h("span", { class: "muted small" }, ` · ${plural(run.themes.length, "theme")}`)));
-    for (const t of run.themes) {
-      const cb = h("input", { type: "checkbox", checked: i === 0 });
+    run.themes.forEach((t, ti) => {
+      const key = JSON.stringify([run.project || "", run.created_at || "", ti, t.name || ""]);
+      const kept = memo.get(key);
+      const cb = h("input", { type: "checkbox", checked: kept ? kept.checked : i === 0 });
       const names = t.names && t.names.length ? t.names : [t.code.code];
-      let at = Math.min(Math.max(t.pick || 0, 0), names.length - 1);
+      let at = Math.min(Math.max(kept ? kept.at : t.pick || 0, 0), names.length - 1);
       const strong = h("strong", { class: "cb-theme-code" });
       const less = iconButton({ icon: "minus", size: 12, sm: true, class: "cb-step", label: `${t.name}: less specific name` });
       const more = iconButton({ icon: "plus", size: 12, sm: true, class: "cb-step", label: `${t.name}: more specific name` });
@@ -286,13 +291,13 @@ async function pickThemes(all) {
       less.setAttribute("aria-label", `${t.name}: less specific name`);
       more.setAttribute("aria-label", `${t.name}: more specific name`);
       show();
-      boxes.push([cb, t, move]);
+      boxes.push([cb, t, move, key, () => at]);
       const unsure = t.sure === false ? tag({ kind: "attention", title: "The documents could not show whether this name is specific enough: its words are rare in them, or in another language. Check it." }, "check it") : null;
       fs.appendChild(h("label", { class: "cb-theme" }, cb, h("span", {},
         h("span", { class: "cb-theme-name" }, strong, h("span", { class: "cb-steps" }, less, more), unsure,
           h("span", { class: "muted small" }, ` · ${plural(t.size, "passage")}`), from),
         h("span", { class: "cb-theme-desc" }, t.code.described ? t.code.description : `Key terms: ${t.code.keywords.join(", ") || "none"}`))));
-    }
+    });
     list.appendChild(fs);
   });
   const everyTicked = (d) => { for (const [cb, , move] of boxes) if (cb.checked) move(d); };
@@ -305,6 +310,7 @@ async function pickThemes(all) {
       list),
     actions: [{ text: "Cancel", value: null }, { text: "Make the codebook", value: true, primary: true }] });
   if (!r) return null;
+  for (const [cb, , , key, atNow] of boxes) memo.set(key, { checked: cb.checked, at: atNow() });
   const picked = boxes.filter(([cb]) => cb.checked).map(([, t]) => t.code);
   if (!picked.length) { toast("Tick at least one theme.", "info"); return null; }
   // two themes with the same name become two codes: the second gets a number (the name cut before a word to fit)
@@ -1106,10 +1112,11 @@ export async function renderCodebook(view, [name]) {
   }
   async function removeCodebook() {
     const r = await askWhy({ title: `Remove the codebook “${cb.title}”?`, confirmText: "Remove",
-      message: `${cb.where === "home" ? "It is removed for all your projects. " : ""}Labels made with it stay: they are results. History keeps the codebook, so the research log can bring it back.` });
+      message: `${cb.where === "home" ? "It is removed for all your projects. " : ""}Labels made with it stay: they are results. History keeps the codebook, so the research log can bring it back.`,
+      // hunt phase 1.5: sent from the dialog's button, so a refusal keeps the why typed
+      save: (why) => api("DELETE", `${base}${why ? `?why=${encodeURIComponent(why)}` : ""}`) });
     if (!r) return;
-    try { await api("DELETE", `${base}${r.why ? `?why=${encodeURIComponent(r.why)}` : ""}`); drafts.delete(key); forgetFrameworks(); toast("Codebook removed.", "ok"); location.hash = "#/codebooks"; }
-    catch (e) { showError(e); }
+    drafts.delete(key); forgetFrameworks(); toast("Codebook removed.", "ok"); location.hash = "#/codebooks";
   }
 
   const onUnload = (e) => { if (dirty) { e.preventDefault(); e.returnValue = ""; } };

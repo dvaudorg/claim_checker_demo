@@ -96,6 +96,9 @@ export function aiLabelCard({ project, framework, docIds = null, watchers, onEnd
   }
 
   function draw(plan) {
+    // hunt phase 1.5: a redraw while the person is in "Read at most" (a comparison or a run ends, the plan is read
+    // again) keeps the field's focus and what is typed there, even before it is committed
+    const inLimit = body.contains(document.activeElement) && document.activeElement.classList.contains("pf-limit") ? document.activeElement : null;
     const run = plan.run || {};
     const where = App.privacy();
     const toRead = plan.to_read || 0;
@@ -177,6 +180,7 @@ export function aiLabelCard({ project, framework, docIds = null, watchers, onEnd
       h("div", {}, h("dt", {}, "Seconds per passage"), h("dd", {}, run.seconds_per_task ? String(run.seconds_per_task) : "not measured yet")),
       run.last ? h("div", {}, h("dt", {}, "Last labelling run"), h("dd", {}, `${fmt.date(run.last.started_at)} · ${shown(run.last.model)} · ${plural(run.last.tasks || 0, "passage")}`)) : null)));
     replace(body, bits);
+    if (inLimit) { limIn.value = inLimit.value; limIn.focus(); }
   }
 
   function compareNote(r) {
@@ -215,7 +219,12 @@ export function aiLabelCard({ project, framework, docIds = null, watchers, onEnd
     follow(r.job.id);
   }
 
+  let following = null;
   function follow(jobId) {
+    // hunt phase 1.5: a second press (or another tab) gets the run already under way back from the server, and the page
+    // may find it running as well: followed once (two watchers said its end twice)
+    if (running && following === jobId) return;
+    following = jobId;
     running = true;
     body.hidden = true;
     watchers.push(jobCard(jobBox, jobId, "The AI labels passages", labelLabel, (job) => {

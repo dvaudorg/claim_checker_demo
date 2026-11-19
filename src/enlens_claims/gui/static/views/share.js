@@ -81,10 +81,12 @@ export async function unshareItem(item, opts = {}) {
   const ok = await askWhy({ title: `Unshare “${shortTitle(item.title || item.key, 50)}”?`, confirmText: "Unshare", danger: false,
     placeholder: "For example: not ready yet, shared by mistake",
     message: h("div", {}, h("p", {}, `It stops going to your colleagues from now on. What they already have of it stays with them, marked as withdrawn by you: nothing is taken from anyone's copy.`),
-      h("p", { class: "muted small" }, "You can share it again later.")) });
+      h("p", { class: "muted small" }, "You can share it again later.")),
+    // hunt phase 1.5: sent from the dialog's button, so a refusal keeps the why typed
+    save: (why) => api("POST", `/api/projects/${P(App.project)}/sharing/unshare`, { items: [{ kind: item.kind, key: item.key }], why: why || undefined }) });
   if (!ok) return null;
   try {
-    const r = await api("POST", `/api/projects/${P(App.project)}/sharing/unshare`, { items: [{ kind: item.kind, key: item.key }], why: ok.why || undefined });
+    const r = ok.result;
     toast((r.withdrawn || []).length ? `Unshared “${name}”: it is no longer sent. Colleagues keep what they had, marked as withdrawn.` : `“${name}” was not shared.`, "ok", { group: "share" });
     if (opts.onDone) opts.onDone(r);
     return r;

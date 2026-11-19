@@ -1,7 +1,7 @@
 // Documents, shared by the list (sources.js) and a document's page (doc-page.js and the panels beside its text): how a
 // document was read and the offer of a move to the new reader, the reader's kinds of block in words, where the reader
 // was before a repaint, and a job the page started earlier.
-import { api, h, icon, fmt, P, TERMINAL, session, link, tag, dialog, input, toast } from "../lib.js";
+import { App, api, h, icon, fmt, P, TERMINAL, session, link, tag, dialog, input, toast } from "../lib.js";
 
 // Whether a name (a file's, a work's in the bibliography) only repeats the document's title, whatever its case, its
 // punctuation and a file's extension: "About Repair Café - Repairing for a Sustainable Future.html" says no more than
@@ -80,8 +80,10 @@ const KIND_PLURAL = { title: ["title", "titles"], heading: ["heading", "headings
 export const kindCount = (k, n) => `${fmt.num(n)} ${(KIND_PLURAL[k] || [k, k])[n === 1 ? 0 : 1]}`;
 
 // where the reader was before a block was restored or left out (0.15), a move to the new reader (doc-reading.js), kept
-// for the next drawing of the document page (doc-page.js): `keep.place` is {doc, y, tab, focus, open}
+// for the next drawing of the document page (doc-page.js): `keep.place` is {project, doc, y, tab, focus, open}
 export const keep = { place: null };
+// hunt phase 1.5: the place is this project's (a copy of a project has the same document ids)
+export const keptHere = (docId) => !!keep.place && keep.place.doc === docId && keep.place.project === App.project;
 // a job this page started earlier (kept for this tab), if it is still running
 export async function stillRunning(key) {
   const j = session(key);

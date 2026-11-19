@@ -209,7 +209,7 @@ def test_a_look_answered_after_a_save_does_not_put_the_judgement_back():
 
 def test_while_a_check_waits_the_page_is_drawn_again_only_when_its_answer_changed():
     js = _js("views/result.js")
-    assert "load({ ifChanged: true })" in _fn(js, "  function armWait()")
+    assert "load({ ifChanged: true" in _fn(js, "  function armWait()")   # hunt phase 1.5: with `hold` while a field is in use
     load = _fn(js, "  async function load(opts = {})")
     assert "JSON.stringify(r) === JSON.stringify(current)" in load and "if (waitsForClaude(r)) armWait();" in load
 

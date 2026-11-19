@@ -1917,7 +1917,8 @@ def adding_access(ws: Workspace, ai_access: str | None, by_ai: bool = False) -> 
     - no setting given while the project's default was never chosen ("missing": documents never become readable by an
       AI through silence; with a chosen default, it applies);
     - `by_ai` (the connector) and a setting looser than the project's chosen default ("looser": an AI does not open
-      documents wider than the person chose; the person can, in the app's Documents page or the command line).
+      documents wider than the person chose; the person can, in the app's Documents page or the command line; the page
+      offers a document's own setting and the setting of documents being added, not the project's default once chosen).
     A given setting becomes the project's default only when no document follows an unchosen default (a project
     without documents, as the app's first Add); otherwise it is the new documents' own, and the earlier ones keep
     following the default nobody chose: one answer about new files must not change who may read the others."""
@@ -1939,8 +1940,9 @@ def adding_access(ws: Workspace, ai_access: str | None, by_ai: bool = False) -> 
         if by_ai and access.RANK[v] < access.RANK[dflt]:
             raise AccessChoice("looser", dflt, f"This project's documents are set to \"{access.LABEL[dflt]}\", "
                                f"and \"{access.LABEL[v]}\" would let more AI read the new ones. Nothing was added. "
-                               "Add them with that setting or a stricter one; the person can change it for a "
-                               "document or for the project in the app's Documents page.")
+                               "Add them with that setting or a stricter one; the person can add them with "
+                               "another setting in the app's Documents page (\"Who may read these documents with "
+                               "AI?\"), and change a document's own setting there, in its details.")
         return {"ai_access": v, "set_default": False, "earlier": 0}
     earlier = int(ws.scalar("SELECT COUNT(*) FROM documents WHERE ai_access IS NULL") or 0)
     return {"ai_access": v, "set_default": earlier == 0, "earlier": earlier}

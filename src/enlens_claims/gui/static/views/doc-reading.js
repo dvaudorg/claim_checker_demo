@@ -204,7 +204,7 @@ function rereadBox(ctx) {
     if (done.state !== "done") { replace(box, notice({ kind: "error" }, h("p", {}, done.error || "The document could not be moved; nothing was changed."))); return; }
     const r = (done.result || {}).report || {};
     toast(`Read with the new reader: ${plural(movedCount(r), "result")} moved${(r.not_placed || []).length ? `, ${fmt.num(r.not_placed.length)} without a place` : ""}.`, "ok");
-    keep.place = { doc: docId, y: 0, tab: "reading", focus: "dv-read-h" };
+    keep.place = { project: App.project, doc: docId, y: 0, tab: "reading", focus: "dv-read-h" };
     window.dispatchEvent(new HashChangeEvent("hashchange"));
   }
   const first = drawStart(false);

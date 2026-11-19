@@ -1801,6 +1801,15 @@ def _remove_member_unlocked(ws: Workspace, part: str) -> dict:
     ctx = _Ctx(ws, desc)
     if not ctx.keeper:
         raise SpaceProblem("Only the owner's copy can remove a colleague from the storage space.", "not_keeper")
+    # hunt phase 1.5: the keys alone are not the right to remove. After a hand-over the old owner is a Member whose copy
+    # keeps the keys until its next round hands them on (`_hand_over_if_owner_changed`); docs/manual/roles.md: only
+    # the Owner (or a Co-owner) removes people
+    from .. import ownership
+
+    if not ownership.may_write(ws._conn()):
+        raise SpaceProblem("You are a Member of this project: only its owner (or a Co-owner) removes a colleague. This "
+                           "computer still keeps the storage space's keys; they go to the owner's copy by themselves "
+                           "at the next round in which the owner is in the storage space.", "not_owner")
     try:
         _read_roster(ctx)
         roster = json.loads(json.dumps(ctx.roster))

@@ -610,7 +610,9 @@ next round, as its maker); `POST …/unshare` stops it going from here at once a
   withdrawn (its keys deleted; in a drive, the folder no longer shared with its account where ENLENS can).
 - `DELETE /api/projects/<p>/space/members/<part>` → the status with `"warnings": [text]`: the colleague's keys are
   deleted (in a drive, the folder no longer shared with them where ENLENS can; what is left to do also stays in
-  `"left_to_do"`) and the project's key is replaced for those who stay. The keeper's copy only.
+  `"left_to_do"`) and the project's key is replaced for those who stay. The keeper's copy only, and only when its
+  person is the Owner or a Co-owner (a 400 of kind `not_owner` otherwise: after a hand-over, until the next round
+  hands the keys on).
 - `POST /api/projects/<p>/space/move {"service": "b2", "key_id", "app_key"} | {"service": "r2", "token",
   "account_id"?} | {"service": "webdav", "address", "user", "password"}` → `{"job": view}`: a new space; every member gets a part and keys there, sealed to them in the old
   space, and their copies follow at their next round. The `result` has `"moved": {"told": n, "not_told": [names]}`

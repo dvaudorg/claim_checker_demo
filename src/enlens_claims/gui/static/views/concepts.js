@@ -84,7 +84,8 @@ export async function renderConcepts(view, params, query) {
     const qs = new URLSearchParams({ offset: String(offset), limit: String(PAGE), sort });
     if (q) qs.set("q", q);
     let g;
-    try { g = await api("GET", `/api/projects/${P(project)}/terms?${qs}`); } catch (e) { failedLoad(listBox, e); listBox.setAttribute("aria-busy", "false"); return; }
+    // hunt phase 1.5: an older request that fails after a newer one was drawn is dropped too (it drew its error over it)
+    try { g = await api("GET", `/api/projects/${P(project)}/terms?${qs}`); } catch (e) { if (my !== seq) return; failedLoad(listBox, e); listBox.setAttribute("aria-busy", "false"); return; }
     if (my !== seq) return;
     listBox.setAttribute("aria-busy", "false");
     draw(g);
@@ -471,7 +472,7 @@ export async function renderConcept(view, [termId], query) {
     const actions = h("div", { class: "btn-row ct-link-acts" });
     if (proposed) {
       actions.append(
-        button({ sm: true, onClick: (e) => saveLink({ a: lk.a, b: lk.b, decision: "accept" }, e.currentTarget, "Accepted.") }, icon("check", { size: 13 }), lk.relation === "same" ? "Yes, the same" : "Yes, right"),
+        button({ sm: true, onClick: (e) => saveLink({ a: lk.a, b: lk.b, decision: "accept", source: lk.source }, e.currentTarget, "Accepted.") }, icon("check", { size: 13 }), lk.relation === "same" ? "Yes, the same" : "Yes, right"),
         button({ kind: "quiet", sm: true, onClick: (e) => saveLink({ a: lk.a, b: lk.b, decision: "reject" }, e.currentTarget, "Rejected.", { undo: true }) }, icon("x", { size: 13 }), lk.relation === "same" ? "No, not the same" : "No"));
       if (lk.source === "meaning") actions.append(...withAI(aiButton({ sm: true, disabled: jobRunning, onClick: (e) => judgePair(lk, e.currentTarget) }, "Judge this pair")));
     } else if (lk.source !== "abbreviation") {

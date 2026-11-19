@@ -84,14 +84,36 @@ function teamSwitch(id, label, checked, help) {
   return sw;
 }
 
-// a dialog that asks for an optional reason: {why} or null
-function reasonDialog({ title, message, confirmText, danger = false, help }) {
+// a dialog that asks for an optional reason: {why} or null. hunt phase 1.5 (the owner's rule): `save(why)`, when given,
+// is sent from the dialog's own button, so a failed save keeps the dialog open with the reason typed and says why there;
+// the answer is then {why, result}
+function reasonDialog({ title, message, confirmText, danger = false, help, save }) {
   const reason = input({ maxlength: 500, autocomplete: "off", id: "owner-dlg-reason" });
+  const err = h("p", { class: "field-error", role: "alert" });
   const body = h("div", {}, ...(Array.isArray(message) ? message : [message]).map((m) => (typeof m === "string" ? h("p", {}, m) : m)),
-    field("Reason (optional)", reason, { help, class: "owner-dlg-field" }));   // its help is the field's (owner-dlg-reason-help)
+    field("Reason (optional)", reason, { help, class: "owner-dlg-field" }), err);   // its help is the field's (owner-dlg-reason-help)
   reason.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); const b = document.getElementById("owner-dlg-ok"); if (b) b.click(); } });
-  return dialog({ title, body, danger, actions: [{ text: "Cancel", value: null }, { text: confirmText, value: true, primary: true, id: "owner-dlg-ok" }],
-    onOpen: () => reason.focus() }).then((ok) => (ok ? { why: reason.value.trim() } : null));
+  let result;
+  const onClick = save ? async () => {
+    err.textContent = "";
+    try { result = await save(reason.value.trim()); } catch (e) { err.textContent = e.message || String(e); reason.focus(); return false; }
+    return true;
+  } : undefined;
+  return dialog({ title, body, danger, actions: [{ text: "Cancel", value: null }, { text: confirmText, value: true, primary: true, id: "owner-dlg-ok", onClick }],
+    onOpen: () => reason.focus() }).then((ok) => (ok ? { why: reason.value.trim(), result } : null));
+}
+
+// hunt phase 1.5: a request with an optional reason, sent from the reason dialog (`call(why)`); then as `act`: the toast,
+// the tab read again, the focus on the section. A refusal that means the thing changed meanwhile (403, 404, 409) reads
+// the tab again once the dialog is closed.
+async function askAndAct(ctx, ask, call, said, kind = "ok", focus = "owner") {
+  let failed = null;
+  const ok = await reasonDialog({ ...ask, save: (why) => call(why).then((r) => { failed = null; return r; }, (e) => { failed = e; throw e; }) });
+  if (!ok) {
+    if (failed && (failed.status === 403 || failed.status === 404 || failed.status === 409)) { await ctx.refresh({ force: true }); ctx.focusHeading("owner"); }
+    return null;
+  }
+  return act(ctx, null, async () => ok.result, said, kind, focus);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -186,11 +208,10 @@ function claimBox(ctx) {
 function takeOverBox(ctx, v) {
   const b = button({ sm: true, id: "owner-take-over" }, "Take over");
   b.addEventListener("click", async () => {
-    const ok = await reasonDialog({ title: "Take the project over?", confirmText: "Take it over",
+    await askAndAct(ctx, { title: "Take the project over?", confirmText: "Take it over",
       message: [v.can_take_over, `You then decide about its documents; the proposals that wait become yours to answer. ${ownerName(v) === "the owner" ? "The owner" : ownerName(v)} can no longer accept or decline them.`],
-      help: "Kept in the research log, for the team." });
-    if (!ok) return;
-    await act(ctx, b, () => api("POST", OWNER_API.takeOver(P(ctx.project)), ok.why ? { why: ok.why } : {}), "You are the owner of this project now.");
+      help: "Kept in the research log, for the team." },
+    (why) => api("POST", OWNER_API.takeOver(P(ctx.project)), why ? { why } : {}), "You are the owner of this project now.");
   });
   return notice({ kind: "attention", role: "note", class: "owner-notice" }, h("p", {}, `${v.can_take_over} You can take the project over.`), h("div", { class: "btn-row" }, b));
 }
@@ -202,14 +223,13 @@ function handOverPicker(ctx, v) {
   const b = button({ kind: "quiet", sm: true, class: "owner-hand-over", id: "owner-hand-over" }, "Hand over…");
   b.addEventListener("click", async () => {
     const sel = select({ id: "owner-dlg-to" }, others.map((x) => h("option", { value: x.id }, x.name)));
-    const ok = await reasonDialog({ title: "Hand this project over?", confirmText: "Hand it over",
+    const chosen = () => others.find((x) => x.id === sel.value) || others[0];
+    await askAndAct(ctx, { title: "Hand this project over?", confirmText: "Hand it over",
       message: [field("To", sel),
         "They will decide about its documents from now on; proposals that wait become theirs to answer. You stay in the team.",
         driveHandOverNote(ctx)].filter(Boolean),
-      help: "Kept in the research log, for the team." });
-    if (!ok) return;
-    const to = others.find((x) => x.id === sel.value) || others[0];
-    await handOver(ctx, to, ok.why, b);
+      help: "Kept in the research log, for the team." },
+    (why) => handOverCall(ctx, chosen(), why), () => handedOverText(chosen()));
   });
   return [" ", b];
 }
@@ -221,10 +241,8 @@ function driveHandOverNote(ctx) {
   return `The project’s folder “${dav.folder}” stays in your drive at ${dav.host}: after the hand-over, only you can share it with colleagues or stop sharing it. The new owner can take full control by moving the team to a folder in their own drive (Move to another storage space, on the Team page).`;
 }
 
-async function handOver(ctx, to, why, btn) {
-  await act(ctx, btn, () => api("POST", OWNER_API.handOver(P(ctx.project)), why ? { to: to.id, why } : { to: to.id }),
-    `${to.name} is the owner now. Their copy learns it with your next round or file.`);
-}
+const handOverCall = (ctx, to, why) => api("POST", OWNER_API.handOver(P(ctx.project)), why ? { to: to.id, why } : { to: to.id });
+const handedOverText = (to) => `${to.name} is the owner now. Their copy learns it with your next round or file.`;
 
 // one request of the section; then the tab is read again and the focus goes to the section's heading
 async function act(ctx, btn, call, said, kind = "ok", focus = "owner") {
@@ -433,27 +451,24 @@ function removedSection(ctx) {
 // the owner's Accept. Removing a document, or letting more AI read one, asks first, with an optional reason (kept in
 // the research log; the proposer sees it); any other change is accepted at once.
 async function accept(ctx, p, btn) {
-  let why = "";
+  const send = (why) => api("POST", OWNER_API.accept(P(ctx.project), P(p.id)), why ? { reason: why } : {});
   if (p.kind === "remove" || p.kind === "loosen") {
     const inForce = !!(ctx.status && ctx.status.keep_out && ctx.status.keep_out.in_force);
-    const ok = await reasonDialog(p.kind === "remove"
+    await askAndAct(ctx, p.kind === "remove"
       ? { title: `Remove “${shortTitle(p.title, 70)}” from every copy of the project?`, confirmText: "Remove it", danger: true, help: reasonHelp(p),
         message: "Each copy removes it with its next round or file, after a backup. Checks keep what they read of it, as records. What the shared folder already holds of it stays there for now." }
       : { title: `Let more AI read “${shortTitle(p.title, 70)}”?`, confirmText: "Accept", help: reasonHelp(p),
-        message: loosenConfirm(p, inForce) });
-    if (!ok) return;
-    why = ok.why;
+        message: loosenConfirm(p, inForce) }, send, () => acceptedText(p));
+    return;
   }
-  await act(ctx, btn, () => api("POST", OWNER_API.accept(P(ctx.project), P(p.id)), why ? { reason: why } : {}), () => acceptedText(p));
+  await act(ctx, btn, () => send(""), () => acceptedText(p));
 }
 
 // the owner's Decline…: a dialog asks for an optional reason (docs/DESIGN.md 5.5)
-async function decline(ctx, p, btn) {
-  const ok = await reasonDialog({ title: "Decline this proposal?", confirmText: "Decline", help: reasonHelp(p),
-    message: [`${proposer(p).who} ${proposer(p).verb} ${p.what}.`, p.kind === "add" ? "Declined, the document leaves the other copies and stays in the proposer’s copy only." : "Declined, nothing changes in the project."] });
-  if (!ok) return;
-  const why = ok.why;
-  await act(ctx, btn, () => api("POST", OWNER_API.decline(P(ctx.project), P(p.id)), why ? { reason: why } : {}), () => declinedText(p));
+async function decline(ctx, p, btn) {   // (`btn`: the dialog's own button guards a second press now)
+  await askAndAct(ctx, { title: "Decline this proposal?", confirmText: "Decline", help: reasonHelp(p),
+    message: [`${proposer(p).who} ${proposer(p).verb} ${p.what}.`, p.kind === "add" ? "Declined, the document leaves the other copies and stays in the proposer’s copy only." : "Declined, nothing changes in the project."] },
+  (why) => api("POST", OWNER_API.decline(P(ctx.project), P(p.id)), why ? { reason: why } : {}), () => declinedText(p));
 }
 
 // what happens to the owner's reason
@@ -666,12 +681,11 @@ async function samePerson(ctx, v, id, name, current) {
 }
 
 async function makeOwner(ctx, id, name) {
-  const ok = await reasonDialog({ title: `Hand this project over to ${name}?`, confirmText: "Hand it over",
+  await askAndAct(ctx, { title: `Hand this project over to ${name}?`, confirmText: "Hand it over",
     message: ["They will decide about its documents from now on; proposals that wait become theirs to answer. You stay in the team.",
       driveHandOverNote(ctx)].filter(Boolean),
-    help: "Kept in the research log, for the team." });
-  if (!ok) return;
-  await handOver(ctx, { id, name }, ok.why, null);
+    help: "Kept in the research log, for the team." },
+  (why) => handOverCall(ctx, { id, name }, why), handedOverText({ id, name }));
 }
 
 // ---------------------------------------------------------------------------------------------
