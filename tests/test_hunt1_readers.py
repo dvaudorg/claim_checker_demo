@@ -371,14 +371,16 @@ def test_the_page_offers_reader_7_as_the_server_does(tmp_path):
     views = Path(__file__).resolve().parents[1] / "src" / "enlens_claims" / "gui" / "static" / "views"
     src = (views / "doc-shared.js").read_text(encoding="utf-8")
     m = re.search(r"^export function newReaderFor\(d, latest\) \{.*?^\}", src, re.S | re.M)
-    docs = [{"reader": r, "kind": k} for r in (5, 6, 7) for k in ("pdf", "html", "text", "docx")]
+    docs = [{"reader": r, "kind": k} for r in (4, 5, 6, 7) for k in ("pdf", "html", "text", "docx")]
     probe = tmp_path / "probe.mjs"
     probe.write_text(m.group(0) + f"\nconsole.log(JSON.stringify({json.dumps(docs)}.map((d) => newReaderFor(d, 7))));\n",
                      encoding="utf-8")
     r = subprocess.run([NODE, str(probe)], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
     offered = {(d["reader"], d["kind"]) for d, yes in zip(docs, json.loads(r.stdout)) if yes}
-    assert offered == {(5, k) for k in ("pdf", "html", "text", "docx")} | {(6, "html"), (6, "text"), (6, "docx")}
+    # (after review: a reader-4 text file too, which the page's own rule left out when the server said nothing)
+    assert offered == {(r, k) for r in (4, 5) for k in ("pdf", "html", "text", "docx")} | {(6, "html"), (6, "text"),
+                                                                                          (6, "docx")}
     assert offered == {(d["reader"], d["kind"]) for d in docs
                        if languages.new_reader_changes(d["reader"], None, d["kind"], 7)}
     assert re.search(r"^export const reader = \{ latest: 7 \};", src, re.M) and "export const READER_7_NEWS = " in src
@@ -498,3 +500,109 @@ def test_word_and_text_files_of_reader_6_move_to_reader_7(tmp_path, monkeypatch)
         assert "Wartość ścieków" in text["raport.txt"]
     finally:
         ws.close_all()
+
+
+# ---- after review (reading.md, must fix 2 and 3): reader 7 reads no honest file worse than reader 6 ----------------
+def _semantic(folder: Path, ext: str) -> Path:
+    """Six paragraphs of four sentences, one sentence per line, a blank line between paragraphs ("semantic line
+    breaks", as many write Markdown, and as corpora store text one sentence per line)."""
+    paras = ["\n".join(f"Sentence {s} of paragraph {p} says something about water and the people who carry it."
+                       for s in range(4)) for p in range(6)]
+    path = folder / f"semantic{ext}"
+    path.write_text(("# Notes\n\n" if ext == ".md" else "") + "\n\n".join(paras) + "\n", encoding="utf-8")
+    return path
+
+
+@pytest.mark.parametrize("ext", [".md", ".txt"])
+def test_one_sentence_per_line_with_blank_lines_between_paragraphs_keeps_its_paragraphs(tmp_path, ext):
+    """Reader 7's rule of short sentences one per line is for a text file without blank lines: with a blank line
+    between paragraphs, the person's paragraphs stay, and no passage runs from one into the next."""
+    path = _semantic(tmp_path, ext)
+    d6, d7 = _build(path, 6), _build(path, 7)
+    body = [b for b in d7.blocks if b.kind == "body"]
+    assert len(body) == 6 == len([b for b in d6.blocks if b.kind == "body"])
+    for p in d7.passages:
+        t = d7.text[p.start:p.end]
+        assert len(set(re.findall(r"of paragraph (\d)", t))) <= 1, t[:120]
+    assert measure.fingerprint(d7) == measure.fingerprint(d6)
+
+
+@pytest.mark.parametrize("text, enc", [
+    ("Lab notes. We added 5 µg of salt to each sample and waited an hour before the next reading. " * 6, "cp1252"),
+    ("Le café était très bon à Genève, et 5 µg de sel suffisaient. " * 10, "cp1252"),
+    ("Le café était très bon à Genève, où l'on parle français. " * 10, "cp1252"),
+    ("Die Größe der Wälder ändert sich, und die Bürger müssen mehr Wasser sparen. " * 8,
+     "cp1252"),
+    ("¿Qué pasó en España? ¡El niño dijo que la mañana fue fría! " * 8, "cp1252"),
+    ("Copyright © 2020 The Authors. The reservoir held water through the dry season. " * 4, "cp1252"),
+    ("La col·lecció de l'any és gran i la intel·ligència també. " * 8, "cp1252"),
+    ("A ação e a informação são importantes para as mães. " * 8, "cp1252"),
+    ("Søren og Åse bor på øen, hvor æblerne er små. " * 8, "cp1252"),
+    ("The room was 20 m² at 21 °C and ½ full, ¾ of it dry, § 12, ±3 %. " * 8, "cp1252"),
+    ("Mesafe çok uzun, ama şehirdeki çocuklar ğüzel bir okula gidiyor. " * 8, "cp1254"),
+])
+def test_western_files_read_as_reader_6_read_them(tmp_path, text, enc):
+    """ISO-8859-2 is taken only where the Windows reading shows signs of it: a Western text whose only bytes beyond
+    ASCII are letters ("µ", French "è" and "à") or a sign outside words ("©", "¿") reads as reader 6 read it."""
+    data = text.encode(enc)
+    assert ingest.decode_text(data) == ingest.decode_text(data, reader=6)
+    if enc == "cp1252" and "m²" not in text:   # (signs alone, no accented letter: readers 1 to 6 already took
+        assert ingest.decode_text(data) == text   # Windows-1250 for that line, and reader 7 does not change it)
+
+
+@pytest.mark.parametrize("text", [
+    "Wartość ścieków w źródłach była niska. ",
+    "Wartość ścieków w źródłach była niska, ale mieszkańcy skarżyli się na zapach. ",
+    "Hodnota odpadních vod ve zdrojích byla nízká, ale obyvatelé si stěžovali na zápach. ",
+    "Ľudia v obci si sťažovali na kvalitu vody, ktorá bola veľmi zlá. ",
+])
+def test_central_european_latin_2_files_keep_their_letters(text):
+    data = (text * 20).encode("iso8859-2")
+    assert ingest.decode_text(data) == text * 20
+
+
+def _honest(folder: Path) -> dict[str, Path]:
+    """Files a person may well add, each read by reader 7 exactly as by reader 6."""
+    rng = random.Random(21)
+    files: dict[str, str] = {}
+    files["poem.txt"] = "\n\n".join("\n".join(f"the {rng.choice(['river', 'hill', 'wind'])} keeps its {w}"
+                                              for w in ("silence", "promise", "slow turning", "name"))
+                                    for _ in range(8))
+    files["addresses.txt"] = "\n\n".join(f"Ms Ada Example {i}\n{i} Mill Lane\nOld Town\nAB{i} 2CD\nUnited Kingdom"
+                                         for i in range(1, 12))
+    mail = []
+    for k in range(6):
+        mail += textwrap.wrap(" ".join(_sentence(rng) for _ in range(3)), 72)
+        mail.append("")
+        if k % 2:
+            mail += ["> " + x for x in textwrap.wrap(" ".join(_sentence(rng) for _ in range(2)), 70)] + [""]
+    files["email.txt"] = "Hi Ada,\n\n" + "\n".join(mail) + "\nBest wishes,\nBen\n"
+    files["notes.md"] = ("# Field notes\n\n## The wells\n\n" + " ".join(_sentence(rng) for _ in range(4))
+                         + "\n\n- The first well was dry.\n- The second well was full.\n- The third well was shared."
+                         "\n\n## The river\n\n" + " ".join(_sentence(rng) for _ in range(5)) + "\n")
+    files["transcript.txt"] = "\n\n".join(f"{'I' if i % 2 == 0 else 'R'}: {_sentence(rng)}" for i in range(60))
+    out = {name: folder / name for name in files}
+    for name, text in files.items():
+        out[name].write_text(text + "\n", encoding="utf-8")
+    out["semantic.md"] = _semantic(folder, ".md")
+    out["semantic.txt"] = _semantic(folder, ".txt")
+    for name, text, enc in (("german.txt", "Die Größe der Wälder ändert sich, und die Bürger müssen sparen. ", "cp1252"),
+                            ("spanish.txt", "¿Qué pasó en España? ¡El niño dijo que la mañana fue fría! ", "cp1252"),
+                            ("micro.txt", "We added 5 µg of salt to each sample before the reading. ", "cp1252"),
+                            ("french.txt", "Le café était très bon à Genève, et 5 µg de sel suffisaient. ", "cp1252"),
+                            ("turkish.txt", "Mesafe çok uzun, ama şehirdeki çocuklar güzel bir okula gidiyor. ",
+                             "cp1254")):
+        out[name] = folder / name
+        out[name].write_bytes((text * 12).encode(enc))
+    return out
+
+
+def test_honest_files_read_by_reader_7_as_by_reader_6(tmp_path):
+    """Widened after review: reader 7 changes only what it sets out to change. Each of these files (a poem, an
+    address list, a hard-wrapped e-mail with quoted lines, Markdown with headings and a list, a transcript with a
+    blank line between turns and no line that comes back, one sentence per line with blank lines between paragraphs,
+    German, Spanish, French and English Windows-1252 text, Turkish Windows-1254 text, which ENLENS does not claim to
+    decode) reads exactly as by reader 6."""
+    worse = [name for name, path in _honest(tmp_path).items()
+             if measure.fingerprint(_build(path, 7)) != measure.fingerprint(_build(path, 6))]
+    assert not worse

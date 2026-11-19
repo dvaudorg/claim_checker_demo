@@ -297,20 +297,40 @@ def _single_byte(data: bytes, reader: int | None = None) -> str:
 # Hunt phase 1 (READERS-5), reader 7: a Polish, Czech or Slovak text saved as ISO-8859-2 (Latin-2, by older Unix and
 # Linux tools and corpora) was read as Windows-1250, which puts other letters at 0xA1 to 0xBF: "Wartość ścieków"
 # came out "Warto¶ć ¶cieków", with no warning, and those words could not be searched or quoted. Latin-2 is taken only
-# when it reads clearly better: a byte in 0x80 to 0x9F rules it out (control characters there; Windows-1250 puts
-# š, ś, ž, ź and quotation marks there), and it must fit one language strictly better than the reading chosen
-# above; on a tie that reading stays (an English Windows-1252 text whose only such byte is "©" reads "Š" in Latin-2,
-# as good a fit, and stays Windows-1252; Hungarian reads the same in both).
+# when it reads clearly better. A byte in 0x80 to 0x9F rules it out (control characters there; Windows-1250 puts
+# š, ś, ž, ź and quotation marks there). Then Latin-2 is taken when its letters fit one language strictly better
+# than the Windows reading's, "µ", "ª" and "º" not counted as letters there (after review: "µ" is a letter of no
+# alphabet, so a Western text whose one sign beyond ASCII was "µ" read as Slovak, "5 ľg", and a French one with it
+# "trčs bon ŕ Genčve"); or when, where the two readings differ, the Windows reading shows signs rather than letters
+# at most places, two of them inside words ("Warto¶æ", "by³a": a short Polish text whose other letters fit Danish as
+# well). On a tie the Windows reading stays: an English text with "©" or "µ", a French, German or Spanish one,
+# Hungarian (the same in both).
 _C1 = re.compile(rb"[\x80-\x9f]")
+_NOT_LETTERS = "µªº"   # letters to Python, signs in a Western text: of no alphabet
+_NO_SIGNS = str.maketrans("", "", _NOT_LETTERS)
 
 
 def _latin2(data: bytes, best: str) -> str:
-    """`best` (the Windows-1250 or -1252 reading), or the ISO-8859-2 reading when it fits one language strictly
-    better and the file has no byte that rules it out."""
+    """`best` (the Windows-1250 or -1252 reading), or the ISO-8859-2 reading when, where the two differ, it fits one
+    language strictly better or the Windows reading shows signs inside words, and no byte rules it out."""
     if _C1.search(data):
         return best
     l2 = data.decode("iso8859-2")
-    return l2 if l2 != best and _fits(l2) > _fits(best) else best
+    if l2 == best or len(l2) != len(best):
+        return best
+    if _fits(l2) > _fits(best.translate(_NO_SIGNS)):
+        return l2
+    diff = [i for i, (a, b) in enumerate(zip(best, l2)) if a != b]
+
+    def letter(i: int) -> bool:
+        return 0 <= i < len(best) and best[i].isalpha()
+
+    # (a letter of a word, not a mark Latin-2 puts there, such as "ˇ", which Python counts as a letter: Catalan
+    # "col·lecció" in Windows-1252 has "·" between letters, which Latin-2 reads "ˇ")
+    lettered = [i for i in diff if unicodedata.category(l2[i]) in ("Lu", "Ll")]
+    signs = [i for i in lettered if not best[i].isalpha() or best[i] in _NOT_LETTERS]
+    inside = [i for i in signs if not best[i].isalpha() and letter(i - 1) and letter(i + 1)]
+    return l2 if len(inside) >= 2 and len(signs) > 0.5 * len(lettered) else best
 
 
 def _mostly_utf8(data: bytes) -> str | None:

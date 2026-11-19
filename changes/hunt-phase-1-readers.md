@@ -21,8 +21,10 @@
 - **Adding a newer zip from the same place no longer replaces the originals of documents added from the older one.**
   Both zips were unpacked into one folder, so the first document's original file was overwritten: it was then
   reported as changed since it was added, and could no longer be opened beside its text or read with the new reader.
-  Each zip now unpacks into a folder of its own, and the same zip added again does not make a second copy. Documents
-  added before keep the files they recorded.
+  Each zip now unpacks into a folder named after its place and its contents, so a newer zip gets a folder of its own
+  and the same zip added again unpacks onto its own copy. A zip first added with an earlier version is unpacked once
+  more, into a new folder, when it is added again (its documents are not added twice). Documents added before keep
+  the files they recorded.
 - **Two files in one zip whose names differ only by capital letters or by how an accent is written** ("Report.pdf"
   and "report.pdf") were written to one file on a Mac or a Windows computer, and one document was lost. The second is
   now unpacked as "report (2).pdf".

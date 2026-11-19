@@ -25,13 +25,13 @@ export const reader = { latest: 7 };  // ingest.READER, as the list of documents
 // (`new_reader_changes`); without that word, a reader-5 document of another kind than a PDF is not offered it (nor a
 // reader-4 text file)
 // 0.20.4: reader 7 reads text files, Word files and web pages otherwise and PDFs as reader 6 did, so a reader-6 PDF is
-// not offered it (the server says so too)
+// not offered it, and a reader-4 text file is again (the server says so too)
 export function newReaderFor(d, latest) {
   const r = d.reader || 1;
   // 0.19: the server says whether the new reader would read it otherwise (languages.new_reader_changes: reader 6
   // changes a PDF, and a document in two languages one of whose passages holds both)
   if (typeof d.new_reader_changes === "boolean") return r < latest && d.new_reader_changes;
-  return r < latest && !(r === 3 && latest === 4 && !["text", "docx"].includes(d.kind)) && !(r === 4 && latest >= 5 && d.kind === "text")
+  return r < latest && !(r === 3 && latest === 4 && !["text", "docx"].includes(d.kind)) && !(r === 4 && (latest === 5 || latest === 6) && d.kind === "text")
     && !(r === 5 && latest === 6 && d.kind !== "pdf") && !(r === 6 && latest === 7 && d.kind === "pdf");
 }
 export const READER_7_NEWS = "The new reader reads text files, Word files and web pages otherwise. Where every line is a paragraph of its own (an interview with a blank line between turns), a question or answer that comes back is no longer set aside as a running head. A text file of short paragraphs, one per line, gets a paragraph per line, so a quote is cited by its own paragraph. A Word file's text box is read once, as a paragraph of its own after the one that holds it (its words were read twice, joined to that paragraph). A text saved as ISO-8859-2 (Polish, Czech, Slovak) keeps its letters. PDFs read the same.";

@@ -143,13 +143,17 @@ same. The four changes came from a search for faults in how ENLENS reads (Novemb
 - **Short paragraphs, one per line.** A text file without blank lines whose lines nearly all end a sentence, the next
   starting with a capital (survey answers, notes saved by Word as plain text), was read as one or two paragraphs when
   its lines were shorter than 160 characters, so every quote in it was cited as paragraph 1. Reader 7 takes each line
-  as a paragraph, whatever its length. Text wrapped to one width reads as before.
+  as a paragraph, whatever its length. Text wrapped to one width, and text written one sentence per line with a blank
+  line between its paragraphs, read as before.
 - **A Word file's text box** was read twice (Word keeps the box and an older copy of it), joined to the last word of
   the paragraph that holds it. Reader 7 reads it once, as a paragraph of its own after that paragraph.
 - **ISO-8859-2.** A Polish, Czech or Slovak text file or web page saved as ISO-8859-2 (Latin-2, by older Unix and
   Linux tools), with no encoding named in it, was read as Windows-1250: ą, ś, ź, š, ž came out as ±, ¶, Ľ and the
   like, and those words could not be found. Reader 7 reads such a file as ISO-8859-2 when that clearly fits one
-  language better; a file saved as Windows-1250 or -1252 reads as before.
+  language better, or when the other reading shows signs such as ¶ or ± inside words; a file saved as Windows-1250 or
+  -1252 (French, German, Spanish, English with "µ" or "©") reads as before. A file names no encoding, so this is a
+  guess: a very short Latin-2 text, or one whose only such letters ISO-8859-2 and Windows-1250 write alike, can
+  still come out wrong. Saving the file as UTF-8 settles it.
 
 Text files, Word files and web pages read by reader 6 are offered reader 7 (whether one reads otherwise is known only
 by reading it again: the preview of the move says what changes); PDFs read by reader 6 are not.

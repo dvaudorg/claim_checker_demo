@@ -17,15 +17,17 @@ read as by reader 6. No model is used. Four things change (found by the bug hunt
 2. **A text file whose lines are short sentences, one per line** (`paragraph_lines`). Reader 4 takes each line of a
    text file without blank lines as a paragraph only when long lines (over 160 characters) hold most of its text, so
    Word's "plain text" of short paragraphs (survey answers, notes) was one paragraph, every quote cited as paragraph
-   1. Reader 7 also takes each line as a paragraph when nearly every line that runs straight on into the next ends a
-   sentence and the next starts with a capital, whatever the line length; in text hard-wrapped to one width few lines
-   end a sentence, so it reads as before.
+   1. Reader 7 also takes each line as a paragraph when the file has (nearly) no blank lines, and nearly every line
+   that runs straight on into the next ends a sentence and the next starts with a capital, whatever the line length;
+   in text hard-wrapped to one width few lines end a sentence, and text written one sentence per line with blank
+   lines between its paragraphs has its paragraphs, so both read as before.
 3. **A Word file's text box** (`ingest._read_docx`): read once, as paragraphs of its own after the paragraph that
    holds it. Word keeps a text box twice (the shape and an older copy of it); readers 1 to 6 read both, joined to the
    holding paragraph's last word.
 4. **A text file or web page saved as ISO-8859-2** (Latin-2; `ingest.decode_text`): Polish, Czech and Slovak letters
    (ą, ś, ź, š, ž, ť, ľ) came out as other characters (±, ¶, Ľ), as Windows-1250 puts them elsewhere. Latin-2 is taken
-   when it fits one language strictly better and no byte rules it out; Windows-1250 and -1252 files read as before.
+   when no byte rules it out and it fits one language strictly better ("µ" not counted as a letter), or the Windows
+   reading shows signs inside words (`ingest._latin2`); Windows-1250 and -1252 files read as before.
 """
 from __future__ import annotations
 
@@ -37,6 +39,8 @@ LONE_SHARE = 0.8
 # capital, for a text file to be one paragraph per line by rule 2
 SENTENCE_LINES_MIN = 8
 SENTENCE_SHARE = 0.9
+# ... and at most this share of the lines that follow another on their page have a blank line before them
+BLANK_SHARE_MAX = 0.05
 
 
 def lone_lines(seq) -> bool:
@@ -69,9 +73,15 @@ def paragraph_lines(pages) -> bool:
 
     if reader4.paragraph_lines(pages):
         return True
-    pairs = [(a.text.strip(), b.text.strip()) for p in pages for a, b in zip(p, p[1:])
-             if a.top is None and b.top is None and not a.furniture and not b.furniture and not b.blank_before
+    every = [(a, b) for p in pages for a, b in zip(p, p[1:])
+             if a.top is None and b.top is None and not a.furniture and not b.furniture
              and a.text.strip() and b.text.strip()]
+    # (after review) only in a file without blank lines between its paragraphs: text written one sentence per line
+    # with a blank line between paragraphs (Markdown so written, corpora stored a sentence a line) has its paragraphs
+    # already, and making each of its lines one lost them
+    if sum(1 for _a, b in every if b.blank_before) > BLANK_SHARE_MAX * len(every):
+        return False
+    pairs = [(a.text.strip(), b.text.strip()) for a, b in every if not b.blank_before]
     if len(pairs) < SENTENCE_LINES_MIN:
         return False
     ends = sum(1 for a, b in pairs if _ENDS_SENTENCE.search(a) and _STARTS_UPPER.match(b))
