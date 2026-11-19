@@ -49,7 +49,8 @@ documents, the bibliography's files), the command line (`enlens ingest --ai-acce
 the default once it is chosen. The connector refuses a setting looser than the chosen default (only the person opens
 documents wider). A setting given for new documents becomes the default only when no earlier document follows an
 unchosen one; otherwise it is the new documents' own. A quick look at one document asks nobody: its document is
-*Only a local AI*, and the quick look's default stays unchosen, so keeping it as a project asks.
+*Only a local AI*, and the quick look's default stays unchosen, so keeping it as a project asks; the answer then
+applies to that document too, unless the person gave it a setting of its own (`access.answer_standin`).
 
 ## Each document's AI setting
 

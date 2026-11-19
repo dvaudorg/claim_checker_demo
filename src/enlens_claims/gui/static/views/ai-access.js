@@ -63,6 +63,20 @@ export function accessChoice({ value = null, name = "ai-access", many = true, on
   return wrap;
 }
 
+// What is true until the person answers (hunt phase 1.5): a quick look's document is kept to a local AI by the app
+// (`standin`), and a document with a stricter setting of its own keeps it; only the others may be read by Claude.
+function askWords(info) {
+  const i = info || {};
+  const total = Object.values(i.counts || {}).reduce((a, b) => a + (Number(b) || 0), 0);
+  const standin = Number(i.standin) || 0, own = Number(i.own_stricter) || 0;
+  const out = ["Say it once for the whole project; you can change single documents below."];
+  if (standin) out.push(`Until you choose, ${standin === 1 ? "the quick look’s document is" : `the quick look’s ${standin} documents are`} read by a local AI only; your answer applies to ${standin === 1 ? "it" : "them"} too.`);
+  if (own > standin) out.push("Documents with a stricter setting of their own keep it.");
+  if (!own) out.push("Until you choose, Claude may read them, as before.");
+  else if (own < total) out.push("Until you choose, Claude may read those without a setting of their own, as before.");
+  return out.join(" ");
+}
+
 // A project without a default (made before 0.11 and imported, or made through the connector): asked once.
 export function accessAskCard(project, info, onDone) {
   let picked = null;
@@ -75,7 +89,7 @@ export function accessAskCard(project, info, onDone) {
   });
   return card({ class: "access-ask", "aria-label": "Who may read these documents with AI" },
     h("h2", {}, icon("cloud", { size: 16 }), "Who may read this project's documents with AI?"),
-    h("p", { class: "muted" }, "Say it once for the whole project; you can change single documents below. Until you choose, Claude may read them, as before."),
+    h("p", { class: "muted" }, askWords(info)),
     pick, h("div", { class: "btn-row aia-actions" }, btn));
 }
 

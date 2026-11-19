@@ -7,8 +7,8 @@ import json
 import time
 import traceback
 
-from .api_common import ApiError, Job, _usable_embedder, once, restricted, start_lock
-from .. import bibliography, embed, frameworks, home, taskqueue
+from .api_common import ApiError, Cancelled, Job, _usable_embedder, once, restricted, start_lock
+from .. import bibliography, embed, frameworks, home, ingest, taskqueue
 from ..llm import BackendError
 from ..store import now as _now
 
@@ -109,7 +109,10 @@ class LibraryMixin:
                 raise ValueError("This document was removed while its move waited its turn: nothing was moved.")
             # said in words for a researcher, and nothing changed, when it cannot be done now (0.18: a ValueError, so
             # the job's error is these words, also after the move waited its turn and something changed meanwhile)
-            report = reread.move(ws, doc_id, person)
+            try:   # (hunt phase 1.5: Stop reaches the move, which then changes nothing)
+                report = reread.move(ws, doc_id, person, should_stop=job.cancel.is_set)
+            except ingest.Stopped:
+                raise Cancelled() from None
             stats = {"report": report}
             emb = home.make_embedder(s)
             if emb is not None and not job.cancel.is_set():
@@ -200,7 +203,9 @@ class LibraryMixin:
                 title = titles.get(doc_id, "")
                 job.progress = {"done": i, "total": len(doc_ids), "file": title, "phase": "reading"}
                 try:
-                    r = reread.move(ws, doc_id, person, keep_all=not keep_unplaced)
+                    r = reread.move(ws, doc_id, person, keep_all=not keep_unplaced, should_stop=job.cancel.is_set)
+                except ingest.Stopped:   # (hunt phase 1.5: Stop before it wrote: this one is left as it was)
+                    break
                 except reread.WouldLose as e:
                     kept.append({"doc_id": doc_id, "title": title, "reason": str(e),
                                  "not_placed": len(e.report.get("not_placed") or [])})

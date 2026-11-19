@@ -26,3 +26,12 @@
   meanwhile** (a round of the shared folder can move a document whose new reading the owner accepted). The run ends
   and skips the passages that were read again (they are asked again for the new reading); *Read again* says in words
   that the AI's answer was not kept, instead of "unknown task".
+  The run's closing message says how many passages (or stretches) it did not read for that reason.
+- **A *Leave out* of text the new reader no longer has does not hold a document back.** Nothing is left to leave
+  out, so it is not counted as work without a place, and *Move the ones that move cleanly* moves the document.
+- **A *Leave out* follows only the new blocks that hold its text together.** When one sentence of a left-out
+  paragraph now stands far away, the blocks in between are no longer left out with it.
+- **A note that lost its place cites no page.** The notes export gave it the earlier reading's page; it now says
+  *(place lost)*.
+- **The preview and the message after a move name notes and blocks as what they are** (*2 notes and highlights find
+  their place*), instead of counting them as results.

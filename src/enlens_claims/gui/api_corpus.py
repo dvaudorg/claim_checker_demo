@@ -282,6 +282,8 @@ class CorpusApi:
             lambda job, be, model, prog: theoryframe.read(ws, be, model, prog, job.cancel.is_set, job=job.id),
             withdraw=(theorycodes.AI_KIND, theoryframe.KIND))
         job.scope = "theory-draft"
+        if restricted(ws, d["doc_ids"]):   # hunt phase 1.5: a notification does not name the theory's document
+            job.note_title = "The AI reads the theory of a framework"
         theoryframe.mark_running(ws, job.id)
         return {"job": job.view()}
 

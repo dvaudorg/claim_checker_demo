@@ -164,23 +164,48 @@ def start_lock(project: str) -> threading.Lock:
         return _START_LOCKS.setdefault(project, threading.Lock())
 
 
+_STARTING: dict[tuple, dict] = {}   # (project, kind, key) -> {"done": Event, "job"}: a start under way (`once`)
+
+
 def once(app, project: str, kind: str, key, start: Callable[[], "Job"], clash: Callable[["Job"], bool] | None = None,
          words: str = "") -> "Job":
     """Hunt phase 1.5 (the owner's rule): the server, not only the page's buttons, guards against a double start. A
     second start of the same work (`key`) in the same project gets the job already queued or running back; one of
     other work of the same kind that would clash with a live one (`clash`) is a 409 in `words`. `start()` makes the
-    job (its plain mistakes are still reported at once)."""
-    with start_lock(project):
-        live = [j for j in app.jobs.all() if j.project == project and j.kind == kind
-                and j.state in ("queued", "running")]
-        for j in live:
-            if getattr(j, "start_key", None) == key:
-                return j
-        if clash is not None and any(clash(j) for j in live):
-            raise ApiError(409, words)
+    job (its plain mistakes are still reported at once). The project's lock covers the look and the mark of a start
+    under way only: `start()` itself (which may wake a local model for half a minute) runs outside it, and a second
+    press meanwhile waits for that start alone and gets its job."""
+    from types import SimpleNamespace
+
+    mark = (project, kind, key)
+    while True:
+        with start_lock(project):
+            live = [j for j in app.jobs.all() if j.project == project and j.kind == kind
+                    and j.state in ("queued", "running")]
+            for j in live:
+                if getattr(j, "start_key", None) == key:
+                    return j
+            pending = _STARTING.get(mark)
+            if pending is None:
+                others = [SimpleNamespace(kind=kind, start_key=m[2]) for m in _STARTING
+                          if m[0] == project and m[1] == kind]
+                if clash is not None and any(clash(j) for j in live + others):
+                    raise ApiError(409, words)
+                mine = _STARTING[mark] = {"done": threading.Event(), "job": None}
+                break
+        pending["done"].wait(120)
+        if pending["job"] is not None:
+            return pending["job"]
+        # (that start failed, in words to its own request: this one tries for itself)
+    try:
         job = start()
         job.start_key = key
+        mine["job"] = job
         return job
+    finally:
+        with start_lock(project):
+            _STARTING.pop(mark, None)
+        mine["done"].set()
 
 
 def restricted(ws, doc_ids) -> bool:

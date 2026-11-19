@@ -288,7 +288,7 @@ def counts(ws: Workspace) -> dict[str, int]:
 def table(ws: Workspace) -> list[dict]:
     out = []
     for n in sorted(search(ws, limit=100000)["notes"], key=lambda n: ((n["title"] or "").lower(), n["start"])):
-        out.append({"Document": n["title"] or n["doc_id"], "Page": n["page"] if n["page"] is not None else "",
+        out.append({"Document": n["title"] or n["doc_id"], "Page": n["page"] if n["page"] is not None and not n["lost"] else "",
                     "Words": n["quote"], "Note": n["text"] or "", "Colour": n["colour"], "Who": n["who"],
                     "Made (UTC)": n["created_at"], "Changed (UTC)": n["edited_at"] or "",
                     "Found in the text now": "no" if n["lost"] else ("yes" if n["present"] else "document removed")})
@@ -306,7 +306,8 @@ def markdown(ws: Workspace, project: str) -> str:
         if t != title:
             title = t
             lines += [f"## {t}" + ("" if n["present"] else " (removed from the project)"), ""]
-        page = f"p. {n['page']}: " if n["page"] is not None else ""
+        # (hunt phase 1.5: a note whose words a new reading no longer has cites no page)
+        page = "(place lost) " if n["lost"] else f"p. {n['page']}: " if n["page"] is not None else ""
         quote = one_line(n["quote"] or "")
         who = "" if n["mine"] else f" ({n['who']})"
         lines.append(f"- {page}> {quote}{who}")
@@ -399,7 +400,8 @@ def move(cx: sqlite3.Connection, doc_id: str, new_text: str, page_spans: list | 
         if got is None:
             lost += 1
             at = min(int((start or 0) * scale), len(new_text))
-            cx.execute("UPDATE notes SET start=?, end=? WHERE note_id=?", (at, at, nid))
+            # (and no page: the page it had is the earlier reading's, and an export would cite it as this one's)
+            cx.execute("UPDATE notes SET start=?, end=?, page=NULL WHERE note_id=?", (at, at, nid))
             continue
         page = max(0, bisect.bisect_right(starts, got[0]) - 1) + 1 if starts else None
         cx.execute("UPDATE notes SET start=?, end=?, page=? WHERE note_id=?", (*got, page, nid))

@@ -338,6 +338,41 @@ def _write_config(ws: Workspace, changes: dict) -> None:
         held._config_cache = None
 
 
+STANDIN = "ai_access_standin"   # config: documents whose own setting is the app's stand-in until the person answers
+
+
+def mark_standin(ws: Workspace, doc_ids: Iterable[str]) -> None:
+    """Hunt phase 1.5: the own setting of these documents was chosen by the app, not the person (a quick look's
+    document: Only a local AI, since nobody was asked). The person's answer to the project's question replaces it
+    (`answer_standin`); a setting the person gives the document itself ends it (`set_documents`)."""
+    ids = sorted(set(ws.config.get(STANDIN) or []) | {d for d in doc_ids if d})
+    if ids:
+        _write_config(ws, {STANDIN: ids})
+
+
+def standins(ws: Workspace) -> list[str]:
+    """The documents still holding the app's stand-in setting (`mark_standin`)."""
+    held = [d for d in (ws.config.get(STANDIN) or []) if isinstance(d, str)]
+    if not held:
+        return []
+    have = {r[0] for r in ws.query(f"SELECT doc_id FROM documents WHERE doc_id IN ({','.join('?' * len(held))})",
+                                   held)}
+    return [d for d in held if d in have]
+
+
+def answer_standin(ws: Workspace) -> int:
+    """Hunt phase 1.5: the person answered who may read the project's documents: the documents that held the app's
+    stand-in follow that answer now (their own setting is cleared). Returns how many."""
+    ids = standins(ws)
+    if ids:
+        with ws.connect() as cx:
+            cx.execute(f"UPDATE documents SET ai_access=NULL WHERE doc_id IN ({','.join('?' * len(ids))})", ids)
+            relabel(cx)
+    if ws.config.get(STANDIN):
+        _write_config(ws, {STANDIN: None})
+    return len(ids)
+
+
 def set_default(ws: Workspace, value: str) -> str:
     v = clean(value)
     if v == "cloud" and _local_only():
@@ -1117,6 +1152,9 @@ def set_documents(ws: Workspace, doc_ids: list[str], setting: Any = _KEEP, note:
                                + f": {_providers_words(plist)}.", "document" if one else "documents",
                                doc_ids[0] if one else None, title, data={"documents": list(doc_ids), "providers": plist})
         changed = relabel(cx)
+    if setting is not _KEEP and ws.config.get(STANDIN):   # hunt phase 1.5: the person's own choice now, not a stand-in
+        left = [d for d in ws.config.get(STANDIN) or [] if d not in set(doc_ids)]
+        _write_config(ws, {STANDIN: left or None})
     return {"documents": len(doc_ids), "tasks_changed": changed, "proposed": sorted(held)}
 
 
@@ -1780,6 +1818,10 @@ def project_info(ws: Workspace) -> dict:
             team_limit = None
     return {"default": default(ws), "chosen": default_chosen(ws), "banner": bool(ws.config.get("ai_access_banner")),
             "ask": not default_chosen(ws) and (bool(ws.config.get("ai_access_ask")) or bool(lv)),
+            # hunt phase 1.5: documents holding the app's stand-in (a quick look's), and documents with a stricter
+            # setting of their own, so the question card says what is true of them until the person answers
+            "standin": len(standins(ws)),
+            "own_stricter": int(ws.scalar("SELECT COUNT(*) FROM documents WHERE ai_access IN ('local', 'none')") or 0),
             "counts": counts, "labels": LABEL, "who": WHO, "local_only": _local_only(), "promise": PROMISE,
             "ledger_since": ws.meta("ai_sent_since") or None,
             # stage 1 of other cloud providers: who may read the `cloud` documents without their own choice (this

@@ -18,7 +18,8 @@
 
 - **A quick look's document is for a local AI only.** Nobody is asked who may read the one document of a quick look,
   so no cloud AI may: it is marked *Only a local AI*, and the Claude connector cannot read its text. Keep it as a
-  project and ENLENS asks who may read it, as for a new project.
+  project and ENLENS asks who may read it, as for a new project; your answer then applies to that document too,
+  unless you gave it a setting of its own meanwhile. Until you answer, the question says so.
 - **Documents are never added for Claude without anyone choosing.** A request to add documents (or the
   bibliography's files) to a project whose AI setting was never chosen, without saying who may read them, took
   *Claude may read it*; it now adds nothing and says to choose. The Documents page always asked first, so adding
@@ -27,7 +28,10 @@
 - **Notifications name no document marked *Only a local AI* or *No AI*.** A notification shows on the lock screen,
   and its text could hold such a document's title (reading it with the new reader, drafting its concepts), a person
   named in it (following references) or its file name (in a problem's message, or as the name of a quick look). It
-  now says "a document" (or "a quick look") instead. A hypothesis's text is still shown.
+  now says "a document" (or "a quick look") instead. A hypothesis's text and the project's name are always shown
+  whole.
+- **A label or references run that met a document read again says so in its notification.** The passages of that
+  document wait for the next run; the notification says how many.
 
 ### Fixed
 

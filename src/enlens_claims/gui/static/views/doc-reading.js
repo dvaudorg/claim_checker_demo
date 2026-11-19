@@ -5,7 +5,18 @@ import { App, api, h, icon, replace, clear, toast, showError, fmt, watchJob, ses
 import { keep, newReaderFor, readerNews, reader, kindCount } from "./doc-shared.js";
 
 // 0.15 (A0): how many results a move to the new reader places (reread.move's counts, per kind of result)
-const movedCount = (r) => Object.values((r && r.counts) || {}).reduce((a, c) => a + (c.moved || 0), 0);
+// hunt phase 1.5: a person's notes and highlights, and their blocks left out or restored, are counted apart from the
+// results and said as what they are
+const OWN = { note: ["note or highlight", "notes and highlights"], block: ["block you left out or restored", "blocks you left out or restored"] };
+const isResult = (k) => !(k in OWN);
+const movedCount = (r, pick = isResult) => Object.entries((r && r.counts) || {}).reduce((a, [k, c]) => a + (pick(k) ? c.moved || 0 : 0), 0);
+// "3 notes and highlights find their place, 1 does not." for the kinds of OWN that the move touches
+function ownLines(r, lost) {
+  return Object.keys(OWN).filter((k) => (r.counts || {})[k]).map((k) => {
+    const c = r.counts[k], n = c.moved || 0, miss = lost.filter((x) => x.kind === k).length, [one, many] = OWN[k];
+    return ` ${fmt.num(n)} ${n === 1 ? one : many} ${n === 1 ? "finds its" : "find their"} place${miss ? `, ${fmt.num(miss)} ${miss === 1 ? "does" : "do"} not` : ""}.`;
+  }).join("");
+}
 
 // ---- 0.15: how the document was read (A5), and moving it to the new reader (A0)
 export function readingPanel(ctx) {
@@ -167,7 +178,9 @@ function rereadBox(ctx) {
     const moved = movedCount(r);
     const aside = Array.isArray(r.left_out) ? r.left_out : [];  // placed, in text the new reader leaves out
     const go = button({ kind: "main", sm: true, onClick: () => move(go) }, icon("check", { size: 13 }), "Move it to the new reader");
-    const summary = h("p", { class: "small", tabindex: "-1" }, moved || lost.length ? [h("strong", {}, plural(moved, "result")), moved === 1 ? " finds its place" : " find their place", " in the new reading", lost.length ? [", ", h("strong", {}, `${fmt.num(lost.length)} ${lost.length === 1 ? "does" : "do"} not`)] : "", "."]
+    const lostR = lost.filter((x) => isResult(x.kind));
+    const own = ownLines(r, lost);
+    const summary = h("p", { class: "small", tabindex: "-1" }, moved || lost.length || own ? [moved || lostR.length ? [h("strong", {}, plural(moved, "result")), moved === 1 ? " finds its place" : " find their place", " in the new reading", lostR.length ? [", ", h("strong", {}, `${fmt.num(lostR.length)} ${lostR.length === 1 ? "does" : "do"} not`)] : "", "."] : "", own]
       : "Nothing in your results points into this document yet: it is simply read again.");
     // hunt phase 1.5: a reader that changes some files of a kind is offered to every file of it: say which this is
     const same = r.same_reading === true ? h("p", { class: "small dv-same-reading" }, "The new reader reads this document exactly as before: the same text and passages. Moving it changes only the number of the reader that read it.")
@@ -203,7 +216,8 @@ function rereadBox(ctx) {
     try { done = await w.promise; } catch (e) { showError(e); return; }
     if (done.state !== "done") { replace(box, notice({ kind: "error" }, h("p", {}, done.error || "The document could not be moved; nothing was changed."))); return; }
     const r = (done.result || {}).report || {};
-    toast(`Read with the new reader: ${plural(movedCount(r), "result")} moved${(r.not_placed || []).length ? `, ${fmt.num(r.not_placed.length)} without a place` : ""}.`, "ok");
+    const missR = (r.not_placed || []).filter((x) => isResult(x.kind)).length;
+    toast(`Read with the new reader: ${plural(movedCount(r), "result")} moved${missR ? `, ${fmt.num(missR)} without a place` : ""}.${ownLines(r, r.not_placed || [])}`, "ok");
     keep.place = { project: App.project, doc: docId, y: 0, tab: "reading", focus: "dv-read-h" };
     window.dispatchEvent(new HashChangeEvent("hashchange"));
   }

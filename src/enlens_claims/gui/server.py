@@ -1620,6 +1620,8 @@ class App(LibraryMixin, QueueMixin):
             if plan["earlier"]:
                 stats["note"] = ingest.earlier_words(ws, plan["earlier"])
             stats["documents_added"] = [d for d in document_overview(ws) if d["doc_id"] not in before]
+            if own_access is not None:   # hunt phase 1.5: the app's stand-in, which the person's answer replaces
+                access.mark_standin(ws, [d["doc_id"] for d in stats["documents_added"]])
             emb = home.make_embedder(s)
             if emb is not None and stats["added"] and not job.cancel.is_set():
                 job.progress = {"done": 0, "total": 0, "file": "", "phase": "embedding"}
@@ -2099,9 +2101,21 @@ class Handler(BaseHTTPRequestHandler, DocumentsApi, ExploreApi, ChecksApi, Setup
     app: App
     server_version = f"enlens/{__version__}"
     protocol_version = "HTTP/1.1"
-    # hunt phase 1.5: how long the connection waits for a client that sends nothing more (seconds; socketserver sets
-    # it on the socket). A body shorter than its Content-Length, on a connection kept open, held a thread for ever
-    timeout = 120
+    # hunt phase 1.5: how long the connection waits for a client that sends nothing more while a request is read
+    # (seconds). A body shorter than its Content-Length, on a connection kept open, held a thread for ever. Only reading
+    # is limited: the answer is written without a limit (`end_headers`), so a download paused for long is not cut off
+    read_timeout = 120
+
+    def handle_one_request(self):
+        self.connection.settimeout(self.read_timeout)
+        super().handle_one_request()
+
+    def end_headers(self):
+        try:
+            self.connection.settimeout(None)   # writing the answer, however slowly the client takes it
+        except OSError:
+            pass
+        super().end_headers()
 
     def log_message(self, fmt, *args):  # quiet: the terminal shows only problems
         pass

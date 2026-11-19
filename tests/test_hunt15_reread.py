@@ -141,7 +141,8 @@ def _survey(folder: Path, name: str = "survey.txt", n: int = 40, seed: int = 5) 
         s = f"Answer {i + 1}: " + _sentence(rng)
         lines.append(s[:150].rsplit(" ", 1)[0].rstrip(",.") + "." if len(s) > 150 else s)
     path = folder / name
-    path.write_text("\r\n".join(lines) + "\r\n", encoding="utf-8")
+    # bytes, so the file is the same on every system (write_text would make "\r\n" into "\r\r\n" on Windows)
+    path.write_bytes(("\r\n".join(lines) + "\r\n").encode("utf-8"))
     return path
 
 
@@ -425,8 +426,10 @@ def test_a_label_run_under_way_when_the_document_is_moved_ends_well_and_labels_t
         if not p:
             assert reread.is_tombstone(lab["passage_id"])
             continue
-        if lab["quote"]:
-            assert _same(lab["quote"], lab["quote"]) and reread._packed(lab["quote"]) in reread._packed(p[0][0])
+        if lab["quote"]:   # its quote is words of the passage it names now, at its offsets
+            assert reread._packed(lab["quote"]) in reread._packed(p[0][0])
+            if lab["start"] is not None:
+                assert _same(_text(ws)[lab["start"]:lab["end"]], lab["quote"])
     assert out["read"] + out["failed"] + out["skipped_restricted"] <= len(pids)
 
 
@@ -658,3 +661,258 @@ def test_a_text_starts_here_mark_on_a_block_the_new_reader_cuts_otherwise_holds(
                reread._packed(new[b["start"]:b["end"]]) in head]
     reported = [e for e in rep["not_placed"] if e["kind"] == "block"]
     assert before_out and (all(not b["included"] for b in out_now) or reported)
+
+
+# ---- round 2: Windows CI, and the review of wave 5 -------------------------------------------------------------------
+def _shapes() -> dict[str, str]:
+    """Text files of the shapes the readers' line rules look at: short answers one per line (readers 4 and 7), long
+    paragraphs between blank lines, text wrapped at 70 characters (reader 3), an interview with a line that comes back
+    (readers 3 and 7), sentences one per line with blank lines between paragraphs."""
+    import textwrap
+
+    rng = random.Random(5)
+    lines = []
+    for i in range(40):
+        s = f"Answer {i + 1}: " + _sentence(rng)
+        lines.append(s[:150].rsplit(" ", 1)[0].rstrip(",.") + "." if len(s) > 150 else s)
+    paras = [" ".join(_sentence(rng) for _ in range(5)) for _ in range(8)]
+    turns = []
+    for i in range(60):
+        if i % 12 == 0:
+            turns.append("Interview 3 - confidential draft")
+        turns.append(f"Speaker {i % 2}: We answered the question number {i} as well as we could at the time.")
+    return {"lines": "\n".join(lines) + "\n", "paras": "\n\n".join(paras) + "\n",
+            "wrapped": "\n\n".join("\n".join(textwrap.wrap(p, 70)) for p in paras) + "\n",
+            "interview": "\n\n".join(turns) + "\n",
+            "sentence_lines": "\n\n".join("\n".join(_sentence(rng) for _ in range(4)) for _ in range(6)) + "\n"}
+
+
+@pytest.mark.parametrize("reader", [1, 2, 3, 4, 5, 6, 7])
+def test_a_text_file_with_windows_line_ends_reads_as_the_same_file_with_unix_ones(tmp_path, reader):
+    """Windows CI cut the survey into other blocks than macOS: was ENLENS reading a text file made on Windows (line
+    ends "\\r\\n") otherwise than the same text with "\\n"? Every reader, every shape of text, written as bytes: the
+    same text, paragraphs, blocks and passages with "\\n", "\\r\\n" and "\\r" (old Mac files). (The CI difference was the
+    test's own: `write_text` of "\\r\\n" writes "\\r\\r\\n" on Windows, a blank line between every two lines.)"""
+    for name, text in _shapes().items():
+        got = {}
+        for eol in ("\n", "\r\n", "\r"):
+            p = tmp_path / f"{name}.txt"
+            p.write_bytes(text.replace("\n", eol).encode("utf-8"))
+            d = ingest.read_document(p, reader=reader, ocr=OFF)
+            got[eol] = (d.text, [(q.start, q.end, q.section) for q in d.passages],
+                        [(b.start, b.end, b.kind) for b in (getattr(d, "blocks", None) or [])])
+        assert got["\r\n"] == got["\n"] == got["\r"], (name, reader)
+
+
+def test_a_failure_inside_read_again_leaves_no_half_answered_task(paper, monkeypatch):
+    """Review wave 5 (REREAD15-21): a KeyError from inside `tasks.run_one` while the task is still there skipped the
+    clean-up, leaving `reread:<claim>:<passage>:1` behind; the next *Read again* numbered itself 2 beside it."""
+    from enlens_claims import judgements, tasks
+    from enlens_claims.llm import BaselineBackend
+
+    ws, doc = paper
+    cid, at = _check(ws, [(Q_WATER, "supports")])
+    pid = at[Q_WATER]
+
+    def broken(*a, **k):
+        raise KeyError("a lookup inside the run")
+
+    with monkeypatch.context() as mp:
+        mp.setattr(tasks, "run_one", broken)
+        with pytest.raises(KeyError, match="lookup inside"):
+            judgements.reread_excerpt(ws, cid, pid, BaselineBackend(), "baseline")
+    assert not ws.query("SELECT 1 FROM tasks WHERE task_id LIKE ?", (f"reread:{cid}:{pid}:%",))
+    judgements.reread_excerpt(ws, cid, pid, BaselineBackend(), "baseline")
+    assert [r[0] for r in ws.query("SELECT task_id FROM tasks WHERE task_id LIKE ?", (f"reread:{cid}:{pid}:%",))] \
+        == [f"reread:{cid}:{pid}:1"]
+
+
+def test_the_earlier_reading_is_kept_as_the_manual_says_and_no_way_back_is_promised(paper):
+    """Review wave 5 (REREAD15-17): the rule's "moving back to the earlier reading" against the documents. Nothing
+    offers it: the manual says a copy keeps the reading it has, a colleague's copy keeps theirs, and an owner's
+    accept taken back leaves a new reading that "cannot go back" in the copy that made it. What it says is kept: the
+    earlier reading's fingerprint (so a colleague still on it is known as the same document) and each check's
+    excerpt as it was shown."""
+    from enlens_claims.sync import text_fp
+
+    root = Path(__file__).resolve().parent.parent
+    manual = {n: " ".join((root / "docs/manual" / n).read_text("utf-8").split())
+              for n in ("reading.md", "roles.md", "how-two-copies-come-together.md")}
+    assert "A document read by an older reader keeps that reading" in manual["reading.md"]
+    assert "each copy keeps the reading it has" in manual["reading.md"]
+    assert "A new reading that cannot go back stays in the copy that made it" in manual["roles.md"]
+    assert "Each of you keeps the reading you have" in manual["how-two-copies-come-together.md"]
+    ws, doc = paper
+    old = _text(ws)
+    cid = _check(ws, [(Q_WATER, "supports")])[0]
+    reread.move(ws, doc)
+    assert text_fp(old) in json.loads(ws.scalar("SELECT old_fps FROM documents"))
+    it = next(x for x in claimcheck.result(ws, cid)["passages"] if x["quote"] == Q_WATER)
+    assert it["earlier_reading"] and it["earlier_reader"] == 1 and it["text"] in old
+    c = reread.check(ws, doc)
+    assert not c["ok"] and "already" in c["reason"]   # the only move is forward
+
+
+def _block_plan(tmp_path, old_text: str, old_cuts: list[tuple[int, int]], new_text: str,
+                new_cuts: list[tuple[int, int]], left: int):
+    """`_carry_choices` on a made-up pair of readings: blocks (and a passage each) at `old_cuts` and `new_cuts`, the
+    person's *Leave out* on old block `left`."""
+    from types import SimpleNamespace
+
+    ws = Workspace.create(tmp_path / "wsb")
+    with ws.connect() as cx:
+        cx.execute("INSERT INTO documents(doc_id, title, text, n_chars, reader) VALUES ('db', 'B', ?, ?, 6)",
+                   (old_text, len(old_text)))
+        for n, (a, b) in enumerate(old_cuts):
+            cx.execute("INSERT INTO blocks(doc_id, n, start, end, kind, included) VALUES ('db', ?, ?, ?, 'body', ?)",
+                       (n, a, b, 0 if n == left else 1))
+        a, b = old_cuts[left]
+        cx.execute("INSERT INTO block_choices(doc_id, fp, included, kind, person_id, at) VALUES ('db', ?, 0, 'body', "
+                   "'me', 'x')", (reader2.block_fp(old_text[a:b]),))
+    old = [reread._P(f"db:{n:04d}", n, a, b, old_text[a:b], "body", None) for n, (a, b) in enumerate(old_cuts)]
+    new = [reread._P(f"db:{n:04d}", n, a, b, new_text[a:b], "body", None) for n, (a, b) in enumerate(new_cuts)]
+    m = reread._Map(old_text, old, new_text, new, [], False)
+    plan, choices = reread._Plan(), {r[0]: r[1] for r in ws.query("SELECT fp, included FROM block_choices")}
+    blocks = [SimpleNamespace(start=a, end=b, kind="body") for a, b in new_cuts]
+    reread._carry_choices(ws._conn(), "db", m, new_text, blocks, choices, plan, lambda *a: None)
+    out = [choices.get(reader2.block_fp(new_text[a:b])) for a, b in new_cuts]
+    return plan, out
+
+
+def _joined(parts: list[str]) -> tuple[str, list[tuple[int, int]]]:
+    text, cuts = "", []
+    for p in parts:
+        cuts.append((len(text), len(text) + len(p)))
+        text += p + "\n\n"
+    return text, cuts
+
+
+def test_a_left_out_block_whose_sentence_moved_far_does_not_leave_out_the_blocks_between(tmp_path):
+    """Review wave 5 note (a): a left-out block whose words are not found whole took the span from its first to its
+    last sentence found; one sentence now far away (a box the new reader puts at the end) stretched it over every
+    block between, all then left out."""
+    s = [f"The left out paragraph says sentence number {w} about the wells in the dry valley." for w in
+         ("one", "two", "three", "four")]
+    others = [f"Another paragraph, number {i}, talks about the harvest and the market in the town." for i in range(8)]
+    old_text, old_cuts = _joined(others[:2] + [" ".join(s)] + others[2:])
+    new_text, new_cuts = _joined(others[:2] + [" ".join(s[:3]) + " Plus words the old reader did not have."]
+                                 + others[2:] + [s[3]])
+    plan, out = _block_plan(tmp_path, old_text, old_cuts, new_text, new_cuts, left=2)
+    assert out[2] == 0                       # the paragraph that holds most of it stays left out
+    assert all(x is None for x in out[3:9])  # the blocks between are not touched
+    assert not plan.not_placed
+
+
+def test_a_left_out_block_whose_text_the_new_reader_no_longer_has_is_settled_not_lost(tmp_path):
+    """Review wave 5 note (b): a *Leave out* of text the new reading does not have at all left nothing to leave out,
+    yet counted as a result with no place, so *Move the ones that move cleanly* kept the document back."""
+    others = [f"Another paragraph, number {i}, talks about the harvest and the market in the town." for i in range(6)]
+    gone = "Zqx vbn wqp mmr lkj the garbled block an older reader made of a figure's labels, nnz."
+    old_text, old_cuts = _joined(others[:3] + [gone] + others[3:])
+    new_text, new_cuts = _joined(others)
+    plan, out = _block_plan(tmp_path, old_text, old_cuts, new_text, new_cuts, left=3)
+    assert not plan.not_placed and plan.counts["block"].get("settled") == 1
+    assert all(x is None for x in out)
+
+
+def test_a_note_without_a_place_cites_no_page_in_the_exports(paper):
+    """Review wave 5 note (d): a note the move left without a place kept the earlier reading's page, and the notes
+    export cited it as this reading's."""
+    ws, doc = paper
+    text = _text(ws)
+    bad = _bad_words(text)
+    at = text.index(bad)
+    nid = notes.add(ws, doc, at, at + len(bad), bad, text="Odd words.")["note_id"]
+    assert ws.scalar("SELECT page FROM notes WHERE note_id=?", (nid,)) == 2
+    reread.move(ws, doc)
+    assert ws.scalar("SELECT page FROM notes WHERE note_id=?", (nid,)) is None
+    md = notes.markdown(ws, "Study")
+    line = next(x for x in md.splitlines() if x.startswith("- ") and "45-67" in x)
+    assert line.startswith("- (place lost) >") and "p. 2" not in line
+    row = next(r for r in notes.table(ws) if r["Words"] == bad)
+    assert row["Page"] == "" and row["Found in the text now"] == "no"
+
+
+VIEWS = r"""
+await scenario("profile: a label run that met a document read again says so", async (t) => {
+  t.state({ settings: { backend: "claude_code" } });
+  t.answer("GET /api/projects/Study/profile/plan?*", { passages: 10, with_candidates: 6, already_read: 0, to_read: 6, run: { now: { model: "haiku" }, changed: [] } });
+  t.answer("GET /api/jobs/jl", { id: "jl", kind: "label", state: "done", progress: {}, result: { read: 4, changes: {}, read_again_meanwhile: 2 } });
+  const m = await t.module("views/profile.js");
+  const card = m.aiLabelCard({ project: "Study", framework: "sdg", watchers: [] });
+  document.getElementById("view").appendChild(card.el);
+  await t.settle(10);
+  card.follow("jl");
+  await t.settle(3000);
+  return t.toasts().filter((x) => x.startsWith("The AI read"));
+});
+await scenario("references: a run that met a document read again says so", async (t) => {
+  t.state({ settings: { backend: "claude_code" } });
+  t.answer("GET /api/projects/Study/documents/d1/references", { status: { windows_total: 5, windows_read: 0 }, chains: [] });
+  t.answer("POST /api/projects/Study/documents/d1/references", { job: { id: "jr" } });
+  t.answer("GET /api/jobs/jr", { id: "jr", state: "done", progress: {}, result: { windows: 5, read: 1, failed: 0, already_read: 0, chains: 0, read_again_meanwhile: 4 } });
+  const m = await t.module("views/doc-lookup.js");
+  const panel = m.refsPanel({ docBase: "/api/projects/Study/documents/d1", paint: () => {}, project: "Study", docId: "d1", watchers: [], jumpTo: () => {}, tab: "refs" });
+  document.getElementById("view").appendChild(panel.el || panel);
+  await t.settle(10);
+  await t.click("Follow the references in this document");
+  await t.settle(3000);
+  return t.toasts().filter((x) => x.startsWith("The AI read"));
+});
+const DOC = "/api/projects/Study/documents/d1";
+await scenario("document page: the preview and the toast name notes and blocks as what they are", async (t) => {
+  t.state({ settings: {} });
+  t.answer(`GET ${DOC}?*`, { doc_id: "d1", title: "Report", file: "report.txt", kind: "text", total_blocks: 1, reader: 6, new_reader: 7,
+    new_reader_changes: true, reading: { reader: 6, quality: "good" },
+    blocks: [{ n: 0, kind: "body", text: "The wells ran dry in the summer.", start: 0, end: 32 }] });
+  t.answer(/^GET \/api\/projects\/Study\/documents\/d1\/role/, { role: null });
+  t.answer(`GET ${DOC}/nonscientific-suggestion`, { suggested: false });
+  t.answer(`GET ${DOC}/notes`, { notes: [] });
+  t.answer(`GET ${DOC}/file?*`, {});
+  await t.render("views/doc-page.js", "renderDocument", ["d1"], { tab: "reading" });
+  const rep = { ok: true, counts: { check: { moved: 3, not_placed: 0 }, note: { moved: 2, not_placed: 1 }, block: { moved: 1, not_placed: 0 } },
+    not_placed: [{ kind: "note", kind_text: "a note or highlight on the text", quote: "45-67 2 The", why: "Its words are not in the new reading where they were." }],
+    left_out: [], warnings: [], same_reading: false, reading: { quality: "good", body_passages: 3, warnings: [] } };
+  t.answer(`GET ${DOC}/reread`, rep);
+  t.answer(`POST ${DOC}/reread`, { job: { id: "jm" } });
+  t.answer("GET /api/jobs/jm", { id: "jm", state: "done", progress: {}, result: { report: { ...rep, moved: true } } });
+  t.answer(/^GET \/api\/jobs\/jm/, { id: "jm", state: "done", progress: {}, result: { report: { ...rep, moved: true } } });
+  await t.click("Read with the new reader");
+  await t.settle();
+  const preview = t.text(t.view.querySelector(".dv-reread p"));
+  await t.click("Move it to the new reader");
+  await t.settle(3000);
+  return { preview, toasts: t.toasts().filter((x) => x.startsWith("Read with the new reader")) };
+});
+"""
+
+
+@pytest.fixture(scope="module")
+def views(tmp_path_factory):
+    from _views import NODE, run_views
+
+    if not NODE:
+        pytest.skip("node is not installed")
+    return run_views(VIEWS, tmp_path_factory.mktemp("reread15"))
+
+
+def test_a_label_run_that_met_a_moved_document_says_so_on_the_page(views):
+    """Review wave 5 note (c): the run's result counted the passages not read (`read_again_meanwhile`), no page said
+    it."""
+    (line,) = views["profile: a label run that met a document read again says so"]
+    assert "2 passages were not read: their document was read with the new reader meanwhile" in line
+
+
+def test_a_references_run_that_met_a_moved_document_says_so_on_the_page(views):
+    (line,) = views["references: a run that met a document read again says so"]
+    assert "4 stretches not read: the document was read with the new reader meanwhile" in line
+
+
+def test_the_preview_and_the_toast_count_notes_and_blocks_as_what_they_are(views):
+    """Review wave 5 note (e): notes and block choices were counted as "results"."""
+    got = views["document page: the preview and the toast name notes and blocks as what they are"]
+    assert got["preview"].startswith("3 results find their place in the new reading."), got
+    assert "2 notes and highlights find their place, 1 does not." in got["preview"]
+    assert "1 block you left out or restored finds its place." in got["preview"]
+    (toast,) = got["toasts"]
+    assert toast.startswith("Read with the new reader: 3 results moved.") and "2 notes and highlights" in toast

@@ -42,11 +42,12 @@ def _add(api, name, docs, batch="b0", ai_access="cloud", names=None):
 
     for i, text in enumerate(docs):
         fname = names[i] if names else f"{batch}-d{i}.txt"
-        assert api("POST", f"/api/projects/{name}/uploads?batch={batch}&name={quote(fname)}", raw=text.encode())[0] == 200
+        assert api("POST", f"/api/projects/{quote(name)}/uploads?batch={batch}&name={quote(fname)}",
+                   raw=text.encode())[0] == 200
     body = {"batch": batch}
     if ai_access is not None:
         body["ai_access"] = ai_access
-    st, r = api("POST", f"/api/projects/{name}/ingest", body)
+    st, r = api("POST", f"/api/projects/{quote(name)}/ingest", body)
     assert st == 200, r
     job = api.wait(r["job"]["id"])
     assert job["state"] == "done", job
@@ -851,10 +852,287 @@ def test_a_body_shorter_than_its_length_does_not_hold_the_connection_for_ever(se
     _project(api)
     from enlens_claims.gui import server
 
-    monkeypatch.setattr(server.Handler, "timeout", 1)
+    monkeypatch.setattr(server.Handler, "read_timeout", 1)
     t0 = time.time()
     out = _raw(api, _head(api, "POST", "/api/projects/P/notes", {"Content-Length": "100",
                                                                   "Content-Type": "application/json"}) + b'{"a": ',
                wait=10)
     assert time.time() - t0 < 8, "the server waited for the rest of the body"
     assert b"500" not in out.split(b"\r\n", 1)[0], out[:300]
+
+
+# =====================================================================================================================
+# Review wave 5 (reviews/wave5.md): the server's points
+# =====================================================================================================================
+def _kept_quick_look(api):
+    from urllib.parse import quote
+
+    assert api("PUT", "/api/settings", {"backend": "baseline", "embed_backend": "off"})[0] == 200
+    name = _quick_look(api)
+    assert api("POST", f"/api/projects/{quote(name)}/keep", {})[0] == 200
+    return name, quote(name)
+
+
+@pytest.mark.parametrize("answer", ["cloud", "local", "none"])
+def test_the_answer_to_who_may_read_after_keeping_a_quick_look_reaches_its_document(served, answer):
+    """The quick look's "Only a local AI" is the app's stand-in until the person answers: the answer is the
+    document's setting then (it stayed local, and a check skipped it while the person believed Claude read it)."""
+    api, _app = served
+    name, q = _kept_quick_look(api)
+    from enlens_claims import access
+
+    st, r = api("PUT", f"/api/projects/{q}/ai-access", {"default": answer})
+    assert st == 200, r
+    ws = _ws(name)
+    assert set(access.levels(ws, provider=None).values()) == {answer}
+    assert ws.scalar("SELECT COUNT(*) FROM documents WHERE ai_access IS NOT NULL") == 0   # it follows the answer
+    assert r["ai_access"]["standin"] == 0
+
+
+def test_a_quick_looks_document_set_by_hand_keeps_its_setting(served):
+    api, _app = served
+    name, q = _kept_quick_look(api)
+    from enlens_claims import access
+
+    ws = _ws(name)
+    doc = ws.scalar("SELECT doc_id FROM documents")
+    st, r = api("PUT", f"/api/projects/{q}/documents/ai-access", {"doc_ids": [doc], "ai_access": "none"})
+    assert st == 200, r
+    assert api("PUT", f"/api/projects/{q}/ai-access", {"default": "cloud"})[0] == 200
+    assert access.levels(_ws(name), provider=None) == {doc: "none"}
+
+
+def test_the_question_card_says_what_is_true_of_a_quick_looks_document(served):
+    """The card said "Until you choose, Claude may read them, as before", untrue for the quick look's document."""
+    api, _app = served
+    name, q = _kept_quick_look(api)
+    info = api("GET", f"/api/projects/{q}/documents")[1]["ai_access"]
+    assert info["ask"] and info["standin"] == 1 and info["own_stricter"] == 1, info
+    from _views import NODE, run_views
+
+    if not NODE:
+        pytest.skip("node is not installed")
+    probe = r"""
+await scenario("card", async (t) => {
+  t.state({ settings: {} });
+  const m = await t.module("views/ai-access.js");
+  const out = {};
+  for (const [k, info] of Object.entries(INFOS)) {
+    const el = m.accessAskCard("Study", info, () => {});
+    out[k] = t.text(el);
+  }
+  return out;
+});
+""".replace("INFOS", json.dumps({
+        "quicklook": info,
+        "old": {**info, "standin": 0, "own_stricter": 0, "counts": {"cloud": 3, "local": 0, "none": 0}},
+        "mixed": {**info, "standin": 0, "own_stricter": 1, "counts": {"cloud": 2, "local": 1, "none": 0}}}))
+    import tempfile
+
+    out = run_views(probe, Path(tempfile.mkdtemp(dir=_ws(name).root)))["card"]
+    assert "Claude may read them, as before" not in out["quicklook"], out
+    assert "quick look" in out["quicklook"] and "local AI" in out["quicklook"], out
+    assert "Until you choose, Claude may read them, as before." in out["old"], out
+    assert "Claude may read them, as before" not in out["mixed"] and "setting of their own" in out["mixed"], out
+
+
+# ---- notifications: only what comes from a document is hidden; the hypothesis and the project's name stay ----------
+STEM_HYP = "Does open data improve water reporting in the metadata of Data and policy reports?"
+
+
+def _stem_project(api, level):
+    """A project "Data and policy" with one document added from data.txt, marked `level`."""
+    assert api("PUT", "/api/settings", {"backend": "baseline", "embed_backend": "off"})[0] == 200
+    from urllib.parse import quote
+
+    assert api("POST", "/api/projects", {"name": "Data and policy"})[0] == 200
+    _add(api, "Data and policy", [_doc_text("open data for water reporting")], batch="d", ai_access=level,
+         names=["data.txt"])
+    return quote("Data and policy")
+
+
+@pytest.mark.parametrize("level", LEVELS)
+@pytest.mark.parametrize("ends", ["done", "error"])
+def test_a_notification_keeps_the_hypothesis_and_the_project_name_whole(served, monkeypatch, level, ends):
+    api, app = served
+    q = _stem_project(api, level)
+    from enlens_claims import claimcheck
+
+    title = _ws("Data and policy").scalar("SELECT title FROM documents")
+    if ends == "error":
+        def fail(*a, **k):
+            raise ValueError(f"The excerpts of “{title}” (data.txt) could not be read.")
+
+        monkeypatch.setattr(claimcheck, "check_hypothesis", fail)
+    st, r = api("POST", f"/api/projects/{q}/checks", {"text": STEM_HYP})
+    assert st == 200, r
+    job = app.jobs.get(r["job"]["id"])
+    text = _notification(app, job, monkeypatch)
+    assert STEM_HYP in text and "· Data and policy" in text, text
+    if ends == "error":
+        assert ("data.txt" in text) is _shown(level), text
+        assert (f"“{title}”" in text) is _shown(level), text
+
+
+@pytest.mark.parametrize("level", LEVELS)
+def test_reading_a_theory_for_a_framework_names_the_document_only_when_a_cloud_ai_may_read_it(served, monkeypatch,
+                                                                                               level):
+    """The theory framework's job ("The AI reads the theory for “<title>”") had no `note_title`."""
+    api, app = served
+    doc_id = _secret_project(api, level)
+    from enlens_claims import theoryframe
+    from enlens_claims.gui import server
+
+    title = _ws("P").scalar("SELECT title FROM documents WHERE doc_id=?", (doc_id,))
+    draft = {"doc_ids": [doc_id], "title": title, "state": "draft"}
+    monkeypatch.setattr(server.Handler, "_theory_draft", lambda self, ws: draft)
+    monkeypatch.setattr(server.Handler, "_theory_job", lambda self, d: None)
+    monkeypatch.setattr(theoryframe, "offer", lambda *a, **k: {"offered": True})
+    monkeypatch.setattr(theoryframe, "read", lambda *a, **k: {})
+    monkeypatch.setattr(theoryframe, "mark_running", lambda *a, **k: None)
+    st, r = api("POST", "/api/projects/P/codebook-theory/draft/read", {})
+    assert st == 200, r
+    job = app.jobs.get(r["job"]["id"])
+    text = _notification(app, job, monkeypatch)
+    assert (SECRET in text) is _shown(level), text
+
+
+# ---- the start lock covers the look and the start only --------------------------------------------------------------
+def test_a_slow_wake_of_the_model_holds_no_other_start_in_the_project(served, monkeypatch, gate):
+    api, app = served
+    _project(api, docs=[_doc_text("wind")])
+    from enlens_claims import profile, themes
+
+    monkeypatch.setattr(profile, "pass1_status", lambda ws, fw: {"done": True})
+    monkeypatch.setattr(profile, "run_labels", lambda *a, **k: {})
+    monkeypatch.setattr(themes, "choose_mode", lambda *a, **k: "terms")
+    monkeypatch.setattr(themes, "run", lambda *a, **k: gate.wait(30) and "r1")
+    real, waking = app.backend, threading.Event()
+
+    def slow(*a, **k):   # Ollama woken, answering only after a while
+        waking.set()
+        gate.wait(30)
+        return real(*a, **k)
+
+    monkeypatch.setattr(app, "backend", slow)
+    out = {}
+    t = threading.Thread(target=lambda: out.update(label=api("POST", "/api/projects/P/profile/label", {"framework": "sdg"})))
+    t.start()
+    assert waking.wait(10)
+    t0 = time.time()
+    st, r = api("POST", "/api/projects/P/themes", {"k": 5})
+    assert st == 200 and time.time() - t0 < 3, (st, r, time.time() - t0)
+    # a second press of the label run meanwhile gets the first one's job once it has started
+    t2 = threading.Thread(target=lambda: out.update(again=api("POST", "/api/projects/P/profile/label", {"framework": "sdg"})))
+    t2.start()
+    time.sleep(0.3)
+    gate.set()
+    t.join(20)
+    t2.join(20)
+    assert out["label"][0] == out["again"][0] == 200, out
+    assert out["label"][1]["job"]["id"] == out["again"][1]["job"]["id"], out
+
+
+# ---- Stop before the move writes leaves the document as it was ------------------------------------------------------
+@pytest.mark.parametrize("many", [False, True])
+def test_stop_before_the_new_reader_writes_leaves_the_document_as_it_was(served, monkeypatch, many):
+    api, app = served
+    _project(api, docs=[_doc_text("wind")])
+    from enlens_claims import reread
+
+    doc = _ws("P").scalar("SELECT doc_id FROM documents")
+    seen = {}
+
+    def move(ws, doc_id, person, **kw):
+        seen.update(kw)
+        stop = kw.get("should_stop")
+        if stop is None:   # (the old call: no Stop reaches the move, which writes)
+            return {"counts": {}, "moved": True}
+        job = next(j for j in app.jobs.all() if j.kind in ("reread", "new_reader"))
+        app.jobs.cancel(job)   # Stop pressed while the document is read
+        assert stop()
+        from enlens_claims import ingest   # what the real move raises then, before it writes (reread.move)
+
+        raise ingest.Stopped("Stopped: the document was not moved, and nothing was changed.")
+
+    monkeypatch.setattr(reread, "move", move)
+    job = app.start_new_reader_many("P", [doc], "me") if many else app.start_new_reader("P", doc, "me")
+    t0 = time.time()
+    while job.state in ("queued", "running") and time.time() - t0 < 20:
+        time.sleep(0.02)
+    assert seen.get("should_stop") is not None, "the move was not given Stop"
+    assert job.state in ("cancelled", "done") and not (job.result or {}).get("moved"), (job.state, job.result)
+
+
+# ---- the early 4xx: the client reads the words, not a reset ---------------------------------------------------------
+def test_a_large_chunked_upload_gets_the_411_words_not_a_reset(served):
+    api, _app = served
+    _project(api)
+    from urllib.parse import urlparse
+
+    u = urlparse(api.base)
+    s = socket.create_connection((u.hostname, u.port), timeout=10)
+    got = b""
+    try:
+        s.sendall(_head(api, "POST", "/api/projects/P/uploads?batch=ch&name=a.txt", {"Transfer-Encoding": "chunked"}))
+        chunk = b"x" * 65536
+        piece = f"{len(chunk):x}\r\n".encode() + chunk + b"\r\n"
+        try:
+            for _ in range(48):   # 3 MB, more than the socket buffers hold
+                s.sendall(piece)
+            s.sendall(b"0\r\n\r\n")
+        except OSError:
+            pass
+        while True:
+            try:
+                b = s.recv(65536)
+            except OSError:
+                break
+            if not b:
+                break
+            got += b
+    finally:
+        s.close()
+    assert got.startswith(b"HTTP/1.1 411") and b"Content-Length" in got, got[:200]
+
+
+def test_a_paused_download_is_not_cut_off(served, monkeypatch, tmp_path):
+    """The two-minute limit is for reading a request; a download the person pauses longer is not cut off."""
+    api, _app = served
+    from enlens_claims.gui import server
+
+    big = tmp_path / "big.bin"
+    big.write_bytes(os.urandom(1 << 20) * 24)   # 24 MB
+    monkeypatch.setattr(server.Handler, "read_timeout", 1)
+    monkeypatch.setattr(server.Handler, "get_state", lambda self, q: self._stream(big, "application/octet-stream"))
+    from urllib.parse import urlparse
+
+    u = urlparse(api.base)
+    s = socket.create_connection((u.hostname, u.port), timeout=20)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 65536)
+    try:
+        s.sendall(_head(api, "GET", "/api/state", {"Connection": "close"}))
+        time.sleep(3)   # paused, past the limit
+        got = 0
+        while True:
+            b = s.recv(1 << 20)
+            if not b:
+                break
+            got += len(b)
+    finally:
+        s.close()
+    assert got > 24 * (1 << 20), got
+
+
+# ---- a run that met a document read again meanwhile says so (the server's job line: the notification) --------------
+def test_a_label_run_that_met_a_document_read_again_says_so_in_its_notification(served, monkeypatch):
+    api, app = served
+    _project(api, docs=[_doc_text("wind")])
+    from enlens_claims import profile
+
+    monkeypatch.setattr(profile, "pass1_status", lambda ws, fw: {"done": True})
+    monkeypatch.setattr(profile, "run_labels", lambda *a, **k: {"read": 3, "failed": 0, "read_again_meanwhile": 2})
+    st, r = api("POST", "/api/projects/P/profile/label", {"framework": "sdg"})
+    assert st == 200, r
+    text = _notification(app, app.jobs.get(r["job"]["id"]), monkeypatch)
+    assert "2 passages" in text and "read again" in text, text

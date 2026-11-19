@@ -1055,7 +1055,9 @@ project's default. The setting is enforced where tasks are made and run (see `ac
   the provider of the main route is treated as `local` for that route; Claude Code's queue and the connector always
   count as `anthropic`. A model server on another computer is a provider (`other`, or a known one by its address).
 - `PUT /api/projects/<p>/ai-access` `{"default": "cloud"|"local"|"none"}` and/or `{"dismiss_banner": true}` →
-  `{"ai_access": {…}}`.
+  `{"ai_access": {…}}`. The default given also reaches the documents holding the app's stand-in setting (a quick
+  look's document); `ai_access.standin` counts those still holding it and `ai_access.own_stricter` the documents
+  with a setting of their own stricter than `cloud`.
 - `POST /api/projects/<p>/ingest` takes `ai_access` (who may read the new documents; the first answer in a project
   becomes its default) and `ai_note`. Without `ai_access`, a project whose default was never chosen answers 400 in words
   and adds nothing; with a chosen default, the default applies. When earlier documents follow a default nobody chose,

@@ -95,6 +95,9 @@ class DocumentsApi:
         ws = self.app.ws(name)
         if body.get("default"):
             access.set_default(ws, body["default"])
+            # hunt phase 1.5: the person's answer to the project's question reaches the documents that held the app's
+            # stand-in (a quick look's Only a local AI), not only those without a setting
+            access.answer_standin(ws)
         if "providers_default" in body:   # stage 1 of other cloud providers
             try:
                 access.set_providers_default(ws, body["providers_default"])

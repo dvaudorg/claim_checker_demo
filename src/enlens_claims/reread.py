@@ -1324,16 +1324,30 @@ def _carry_choices(cx, doc_id: str, m: _Map, new_text: str, new_blocks: list, ch
     meta = {r[0]: (r[1], r[2]) for r in cx.execute("SELECT fp, person_id, at FROM block_choices WHERE doc_id=?",
                                                    (doc_id,))}
 
-    def inside(i: int) -> list[int]:
-        """The new blocks that hold old block i's text: its words found again near where they were, else the span its
-        sentences are found in (`_Map.anchors`); a new block counts when most of it is in that span."""
+    def inside(i: int) -> list[int] | None:
+        """The new blocks that hold old block i's text: its words found again near where they were, else the span of
+        its sentences found in a row in the new text (`_Map.anchors`, each after the one before and close to it: a
+        sentence that now stands far away does not stretch the span over the blocks between); a new block counts when
+        most of it is in that span. [] when the text cannot be followed so; None when none of its words are in the
+        new reading at all (hunt phase 1.5: a choice about text the new reader no longer has is settled, not lost)."""
         a, b = rows[i][1], rows[i][2]
         got = m.place(m.t1[a:b], a, None)
         if got is None:
-            spans = [(na, nb) for x, y, na, nb, _p in m.anchors if x >= a and y <= b]
-            if not spans or sum(y - x for x, y, *_r in m.anchors if x >= a and y <= b) < 0.6 * len(m.t1[a:b].strip()):
+            mine = [(x, y, na, nb) for x, y, na, nb, _p in m.anchors if x >= a and y <= b]
+            if not mine:
+                return None if not m.f.all(m.t1[a:b]) else []
+            runs, run = [], [mine[0]]
+            for prev, cur in zip(mine, mine[1:]):
+                if cur[2] >= prev[2] and cur[2] - prev[3] <= 200:
+                    run.append(cur)
+                else:
+                    runs.append(run)
+                    run = [cur]
+            runs.append(run)
+            best = max(runs, key=lambda r: sum(y - x for x, y, *_r in r))
+            if sum(y - x for x, y, *_r in best) < 0.6 * len(m.t1[a:b].strip()):
                 return []
-            got = (min(s for s, _e in spans), max(e for _s, e in spans))
+            got = (min(r[2] for r in best), max(r[3] for r in best))
         out = []
         for j, nb in enumerate(new_blocks):
             size = len(new_text[nb.start:nb.end].strip())
@@ -1356,6 +1370,11 @@ def _carry_choices(cx, doc_id: str, m: _Map, new_text: str, new_blocks: list, ch
         what = "A block you left out of the text" if not int(value) else "A block you restored to the text"
         for i in [k for k, f in enumerate(old_fps) if f == fp]:
             js = inside(i)
+            if js is None:
+                # its text is not in the new reading: nothing is left to leave out (or restore), and nothing is lost:
+                # counted apart (`settled`), so "Move the ones that move cleanly" moves the document
+                plan.counts["block"]["settled"] = plan.counts["block"].get("settled", 0) + 1
+                continue
             if not js:
                 lost(i, what)
                 continue
