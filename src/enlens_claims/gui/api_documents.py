@@ -398,9 +398,15 @@ def _wait_for_round(jobs, name: str) -> None:
         while True:
             job = jobs.busy(name)
             left = end - time.monotonic()
-            if job is None or not job.background or left <= 0:
+            if job is None or not _cannot_stop(job) or left <= 0:
                 return
             jobs.turns.wait(min(left, 0.25))
+
+
+def _cannot_stop(job) -> bool:
+    """A job the person cannot stop, waited for briefly by a removal: a round the app started by itself, or a job that
+    has ended whose `ended` listeners still run (hunt phase 1.5)."""
+    return bool(job.background) or job.state not in ("queued", "running")
 
 
 def busy_with(job, what: str) -> None:
@@ -411,6 +417,9 @@ def busy_with(job, what: str) -> None:
         return
     if job.background:
         raise ApiError(409, f"“{job.project}” is being brought up to date with your team: try again in a moment.",
+                       kind="busy", extra={"job_id": job.id})
+    if job.state not in ("queued", "running"):   # (hunt phase 1.5: it has ended; what follows its end still runs)
+        raise ApiError(409, f"“{job.project}” is finishing work that has just ended: try again in a moment.",
                        kind="busy", extra={"job_id": job.id})
     title = job.title if len(job.title) <= 80 else job.title[:79].rstrip() + "…"
     doing = "is waiting to run" if job.state == "queued" else "is still running"

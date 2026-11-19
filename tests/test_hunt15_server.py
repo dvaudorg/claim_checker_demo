@@ -1213,3 +1213,151 @@ def test_the_drain_after_a_refusal_is_bounded(served, monkeypatch):
     monkeypatch.setattr(server.Handler, "LINGER_BYTES", 1024 ** 2)
     got, closed, took = _refused_while_sending(api, head, 0, forever=True, seconds=25)
     assert got.startswith(b"HTTP/1.1 413") and took < 15, (got[:200], took)   # and after a bounded number of bytes
+
+
+# ---- CI (macOS): removing a project as a finished job's hook reads it crashed the app (segmentation fault) ----------
+CLOSE_UNDER_USE = r"""
+import sys, tempfile, threading, time
+sys.path.insert(0, sys.argv[1])
+from enlens_claims.store import Workspace
+
+ws = Workspace.create(tempfile.mkdtemp())
+with ws.connect() as cx:
+    cx.execute("CREATE TABLE t(x)")
+    cx.executemany("INSERT INTO t VALUES (?)", [(i,) for i in range(2000)])
+stop = threading.Event()
+
+def use(mode):   # threads using the project as the app's do: a scalar, a cursor read row by row, one read in steps
+    while not stop.is_set():
+        try:
+            if mode == 0:
+                ws.scalar("SELECT count(*) FROM t")
+            elif mode == 1:
+                for _r in ws._conn().execute("SELECT x FROM t"):
+                    pass
+            else:
+                cur = ws._conn().execute("SELECT x FROM t")
+                cur.fetchone()
+                cur.fetchall()
+        except Exception:
+            pass   # (a closed connection is refused in words: what must never happen is a crash)
+
+def long():   # one long statement, interrupted by close_all
+    try:
+        ws._conn().execute("WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 200000000) "
+                           "SELECT count(*) FROM c").fetchone()
+    except Exception:
+        pass
+
+ts = [threading.Thread(target=use, args=(i % 3,)) for i in range(6)]
+for t in ts:
+    t.start()
+t0 = time.time()
+while time.time() - t0 < 3:
+    ws.close_all()
+    time.sleep(0.001)
+stop.set()
+for t in ts:
+    t.join(60)
+lt = threading.Thread(target=long)
+lt.start()
+time.sleep(0.5)
+t0 = time.time()
+ws.close_all()   # waits for the long statement, then interrupts it, and closes
+took = time.time() - t0
+lt.join(60)
+print("ok", round(took, 1))
+"""
+
+
+def test_closing_a_projects_connections_while_threads_use_them_never_crashes(tmp_path):
+    """`Workspace.close_all` closed connections other threads were inside: the interpreter died (exit 139, a
+    segmentation fault) within seconds. Run apart, so a crash fails this test instead of the test run."""
+    import subprocess
+    import sys
+
+    import enlens_claims
+
+    src = str(Path(enlens_claims.__file__).resolve().parent.parent)
+    p = subprocess.run([sys.executable, "-c", CLOSE_UNDER_USE, src], capture_output=True, text=True, timeout=180)
+    assert p.returncode == 0 and "ok" in p.stdout, (p.returncode, p.stderr[-2000:])
+
+
+def test_a_closed_project_can_still_be_moved_at_once(tmp_path):
+    """What close_all is for (Windows: an open database file cannot be moved): after it returns, the folder moves."""
+    import shutil
+
+    from enlens_claims.store import Workspace
+
+    ws = Workspace.create(tmp_path / "p")
+    ws.scalar("SELECT 1")
+    done = threading.Event()
+    threading.Thread(target=lambda: (ws.scalar("SELECT 1"), done.set()), daemon=True).start()
+    done.wait(5)
+    ws.close_all()
+    shutil.move(str(tmp_path / "p"), str(tmp_path / "q"))
+    assert (tmp_path / "q" / "enlens.sqlite").exists()
+
+
+def test_a_removal_waits_for_what_follows_a_jobs_end(served):
+    """A job whose state is "done" while its `ended` listeners still read the project (api_owner.after_job) is not
+    ended for a removal: it waits for them, briefly, or says to try again in a moment."""
+    api, app = served
+    _project(api, docs=[_doc_text("wind")])
+    in_hook, go_on, seen = threading.Event(), threading.Event(), []
+
+    def hook(job):
+        if job.project == "P" and job.kind == "keywords":
+            in_hook.set()
+            go_on.wait(30)
+            seen.append(app.ws("P").scalar("SELECT COUNT(*) FROM documents"))   # it still reads the project
+
+    app.jobs.ended.append(hook)
+    job = app.jobs.start("keywords", "Codes by keywords", "P", lambda job: {}, uses_model=False)
+    assert in_hook.wait(10) and job.state == "done"
+    threading.Timer(0.8, go_on.set).start()
+    t0 = time.time()
+    st, r = api("DELETE", "/api/projects/P", {"confirm": "P"})
+    assert st == 200, r
+    assert time.time() - t0 >= 0.7 and seen == [1], (time.time() - t0, seen)
+
+
+def test_a_hook_that_runs_on_says_try_again_in_a_moment(served, monkeypatch):
+    api, app = served
+    _project(api)
+    from enlens_claims.gui import api_documents
+
+    monkeypatch.setattr(api_documents, "ROUND_WAIT", 0.5)
+    in_hook, go_on = threading.Event(), threading.Event()
+    app.jobs.ended.append(lambda job: job.project == "P" and (in_hook.set(), go_on.wait(30)))
+    app.jobs.start("keywords", "Codes by keywords", "P", lambda job: {}, uses_model=False)
+    try:
+        assert in_hook.wait(10)
+        st, r = api("DELETE", "/api/projects/P", {"confirm": "P"})
+        assert st == 409 and "try again in a moment" in r["error"], r
+    finally:
+        go_on.set()
+
+
+def test_a_project_being_removed_is_not_opened_by_the_apps_own_threads(served, monkeypatch):
+    api, app = served
+    _project(api)
+    from types import SimpleNamespace
+
+    from enlens_claims import home as h
+    from enlens_claims.gui import api_owner
+    from enlens_claims.gui.api_common import ApiError
+    from enlens_claims.sync import folder
+
+    opened = []
+    real = h.open_project
+    monkeypatch.setattr(h, "open_project", lambda name, *a, **k: opened.append(name) or real(name, *a, **k))
+    with app.jobs.removal(["P"]) as free:
+        assert free == {"P"}
+        with pytest.raises(ApiError) as e:
+            app.ws("P")
+        assert e.value.status == 409 and "being removed" in e.value.message
+        # the hook after a round of the shared folder (it starts the readings due) opens nothing
+        api_owner.after_job(app, SimpleNamespace(project="P", kind=folder.JOB, state="done"))
+        assert opened == []
+    assert app.ws("P") is not None

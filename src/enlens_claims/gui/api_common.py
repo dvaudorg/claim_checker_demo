@@ -72,6 +72,10 @@ class Job:
         # hunt phase 1.5: the title a notification gives a job about a document marked Only a local AI or No AI (its
         # own title, or its error, would name it on a lock screen: notify.note_for); None: its title
         self.note_title: str | None = None
+        # hunt phase 1.5: the job's `ended` listeners have run (Jobs.start sets it False until then). Its state says
+        # "done" at once for the page; whoever waits for a project's jobs to end (a removal, quitting) waits for this,
+        # as a listener still reads the project (a removal closed its connection under it, and the app crashed)
+        self.settled = True
 
     def view(self, full: bool = True) -> dict:
         end = self.finished or time.time()
@@ -437,12 +441,18 @@ class Jobs:
                     job.tracker.finish()
                 with self.turns:  # 0.18: the jobs that wait for this one look again now
                     self.turns.notify_all()
-                for listener in list(self.ended):
-                    try:
-                        listener(job)
-                    except Exception:  # noqa: BLE001 - a listener never stops the job's thread from ending well
-                        traceback.print_exc()
+                try:
+                    for listener in list(self.ended):
+                        try:
+                            listener(job)
+                        except Exception:  # noqa: BLE001 - a listener never stops the job's thread from ending well
+                            traceback.print_exc()
+                finally:
+                    with self.turns:   # (hunt phase 1.5: now it has ended for those who wait on it: `settled`)
+                        job.settled = True
+                        self.turns.notify_all()
 
+        job.settled = False
         threading.Thread(target=run, daemon=True, name=f"job-{kind}-{job.id}").start()
         return job
 
@@ -524,8 +534,10 @@ class Jobs:
         """Hunt phase 1: a job of the project that is queued or running (the earliest), if any. A project is not
         removed while one is: the job keeps the Workspace it opened, and its next connection opens the database by its
         path, which after a new project of the same name is made is that project's (it wrote the old project's
-        documents into the new one). Call it with the lock held when the removal must not race a new job."""
-        mine = [j for j in self.jobs.values() if j.project == project and j.state in ("queued", "running")]
+        documents into the new one). Call it with the lock held when the removal must not race a new job. Hunt phase
+        1.5: a job that has ended but whose `ended` listeners still run (they read the project) counts too."""
+        mine = [j for j in self.jobs.values() if j.project == project
+                and (j.state in ("queued", "running") or not getattr(j, "settled", True))]
         return min(mine, key=lambda j: j.created) if mine else None
 
     @contextmanager

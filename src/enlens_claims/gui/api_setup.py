@@ -120,17 +120,22 @@ class SetupApi:
         running = [j for j in self.app.jobs.all() if j.state in ("queued", "running")]
         for j in running:
             self.app.jobs.cancel(j)  # 0.18 (M6): the jobs waiting for their turn leave at once
+        stopped = len(running)
+        # (hunt phase 1.5: a job that has just ended is waited for too while what follows its end runs)
+        running += [j for j in self.app.jobs.all() if j not in running and not getattr(j, "settled", True)]
         self._stop_claude_runs()
 
         def later():
             t0 = time.time()
             time.sleep(0.4)
-            while any(j.state in ("queued", "running") for j in running) and time.time() - t0 < 20:
+            # (hunt phase 1.5: and until what follows each end has run: `Job.settled`)
+            while any(j.state in ("queued", "running") or not getattr(j, "settled", True) for j in running) \
+                    and time.time() - t0 < 20:
                 time.sleep(0.2)
             finish()
 
         threading.Thread(target=later, daemon=True).start()
-        return len(running)
+        return stopped
 
     def _stop_claude_runs(self) -> None:
         """0.14.3: Claude Code runs started from the app live in their own session, so they outlive it: stop them

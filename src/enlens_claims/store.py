@@ -962,8 +962,115 @@ def change_config(path: str | Path, changes: dict) -> dict:
         return cfg
 
 
+_RAW_EXECUTE = sqlite3.Connection.execute   # a plain cursor, for a statement run and read whole under the lock
+_NEW_CURSOR, _CUR_EXECUTE, _FETCHONE = sqlite3.Connection.cursor, sqlite3.Cursor.execute, sqlite3.Cursor.fetchone
+
+
+class _Cur(sqlite3.Cursor):
+    """Hunt phase 1.5: a cursor whose every step runs holding its connection's lock (`_Cx._use`), so `close_all` never
+    closes a connection another thread is inside (closing it freed the statement under that thread's step, and the
+    app crashed: a removal just as a finished job's hook read the project). Rows are taken in batches when iterated,
+    so the lock costs little per row."""
+
+    def execute(self, sql, parameters=()):
+        with self.connection._use:
+            return super().execute(sql, parameters)
+
+    def executemany(self, sql, seq):
+        with self.connection._use:
+            return super().executemany(sql, seq)
+
+    def executescript(self, script):
+        with self.connection._use:
+            return super().executescript(script)
+
+    def fetchone(self):
+        with self.connection._use:
+            return _FETCHONE(self)
+
+    def fetchmany(self, size=None):
+        with self.connection._use:
+            return super().fetchmany(self.arraysize if size is None else size)
+
+    def fetchall(self):
+        with self.connection._use:
+            return super().fetchall()
+
+    def __next__(self):
+        with self.connection._use:
+            return super().__next__()
+
+    def __iter__(self):
+        while True:
+            with self.connection._use:
+                rows = super().fetchmany(256)
+            if not rows:
+                return
+            yield from rows
+
+
 class _Cx(sqlite3.Connection):
-    """0.15.7: a connection a workspace can keep track of (a plain sqlite3.Connection cannot be weakly referenced)."""
+    """0.15.7: a connection a workspace can keep track of (a plain sqlite3.Connection cannot be weakly referenced).
+    Hunt phase 1.5: `_use` is held while a statement of it runs (`_Cur`, and the connection's own calls below); `close`
+    takes it too, so a connection is never closed from under the thread that uses it (`Workspace.close_all`)."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self._use = threading.RLock()
+
+    def cursor(self, factory=_Cur):
+        return super().cursor(factory)
+
+    def execute(self, sql, parameters=()):   # (the base class's own calls: the hot path of every statement)
+        cur = _NEW_CURSOR(self, _Cur)
+        with self._use:
+            _CUR_EXECUTE(cur, sql, parameters)
+        return cur
+
+    def executemany(self, sql, seq):
+        cur = self.cursor()
+        cur.executemany(sql, seq)
+        return cur
+
+    def executescript(self, script):
+        cur = self.cursor()
+        cur.executescript(script)
+        return cur
+
+    def commit(self):
+        with self._use:
+            return super().commit()
+
+    def rollback(self):
+        with self._use:
+            return super().rollback()
+
+    def backup(self, *a, **kw):
+        with self._use:
+            return super().backup(*a, **kw)
+
+    def close(self):
+        with self._use:
+            return super().close()
+
+    def close_from_elsewhere(self, wait: float = 2.0, after_interrupt: float = 10.0) -> bool:
+        """Close this connection from another thread: when no statement of it runs (waiting `wait` s for the one that
+        does, then interrupting it and waiting `after_interrupt` s more). False when it could not be closed safely:
+        the thread that uses it closes it at its next use (`Workspace._conn`)."""
+        if not self._use.acquire(timeout=wait):
+            try:
+                self.interrupt()
+            except sqlite3.Error:
+                pass
+            if not self._use.acquire(timeout=after_interrupt):
+                return False
+        try:
+            super().close()
+        except sqlite3.Error:
+            pass
+        finally:
+            self._use.release()
+        return True
 
 
 class Workspace:
@@ -1089,7 +1196,13 @@ class Workspace:
     def _conn(self) -> sqlite3.Connection:
         cx = getattr(self._local, "cx", None)
         if cx is not None and getattr(self._local, "gen", 0) != self._gen:
-            cx = None  # 0.15.7: closed by close_all; a new one if this thread goes on using the project
+            # 0.15.7: closed by close_all; a new one if this thread goes on using the project (hunt phase 1.5: closed
+            # here, by its own thread, when close_all could not close it safely)
+            try:
+                cx.close()
+            except sqlite3.Error:
+                pass
+            cx = None
         if cx is None:
             # transactions are ours, see connect(); check_same_thread=False only lets close_all close it from another
             # thread: each connection is still used by the thread that opened it alone
@@ -1121,9 +1234,14 @@ class Workspace:
         with self._all_lock:
             cxs = list(self._all)
             self._gen += 1
+        # hunt phase 1.5: never from under a thread inside a statement of it (that crashed the app): each is closed
+        # once no statement of it runs (a long one is interrupted); this thread's own is simply closed
         for cx in cxs:
             try:
-                cx.close()
+                if isinstance(cx, _Cx):
+                    cx.close_from_elsewhere()
+                else:
+                    cx.close()
             except sqlite3.Error:
                 pass
 
@@ -1184,11 +1302,16 @@ class Workspace:
             trim_log(cx, self.db_path)
 
     # ---- small helpers ---------------------------------------------------------------------
+    # (hunt phase 1.5: the statement and its rows under the connection's lock, as one step: `_Cx._use`)
     def query(self, sql: str, args: tuple | list = ()) -> list[sqlite3.Row]:
-        return self._conn().execute(sql, tuple(args)).fetchall()
+        cx = self._conn()
+        with cx._use:
+            return _RAW_EXECUTE(cx, sql, tuple(args)).fetchall()
 
     def scalar(self, sql: str, args: tuple | list = ()) -> Any:
-        row = self._conn().execute(sql, tuple(args)).fetchone()
+        cx = self._conn()
+        with cx._use:
+            row = _RAW_EXECUTE(cx, sql, tuple(args)).fetchone()
         return row[0] if row else None
 
     def meta(self, key: str, default: Any = None) -> Any:

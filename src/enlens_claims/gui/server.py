@@ -155,6 +155,8 @@ class App(LibraryMixin, QueueMixin):
         return self.session_key or home.env_key() or home.stored_key()
 
     def ws(self, name: str):
+        if name in self.jobs.removing:   # hunt phase 1.5: a hook that starts late never opens a project being removed
+            raise ApiError(409, f"The project “{name}” is being removed.")
         if name not in home.list_projects():
             raise ApiError(404, f"No project called {name!r}.")
         try:
