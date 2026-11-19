@@ -1350,18 +1350,26 @@ def keep_project(name: str) -> bool:
     return forget_temporary(name)
 
 
-def cleanup_quicklooks(now_: float | None = None, busy: Iterable[str] = ()) -> list[str]:
+def expired_quicklooks(now_: float | None = None) -> list[str]:
+    """The quick looks older than QUICKLOOK_DAYS days that were not kept (what `cleanup_quicklooks` would move)."""
+    t = time.time() if now_ is None else now_
+    return [name for name, q in _quicklooks().items()
+            if t - float(q.get("created_at") or t) >= QUICKLOOK_DAYS * 86400]
+
+
+def cleanup_quicklooks(now_: float | None = None, only: Iterable[str] | None = None) -> list[str]:
     """Move quick looks older than QUICKLOOK_DAYS days that were not kept to the trash. Returns their names. Hunt
-    phase 1: one in `busy` (a job of it is queued or running) waits for a later look: its job would go on writing
-    through the path, into a new quick look of the same file (which gets the same name)."""
+    phase 1: with `only`, just those of them (the app passes the ones no job of is queued or running, marked so that
+    none starts meanwhile: a job would go on writing through the path, into a new quick look of the same file, which
+    gets the same name)."""
     data = _quicklooks()
     if not data:
         return []
     t = time.time() if now_ is None else now_
     moved = []
-    busy = set(busy)
+    only = None if only is None else set(only)
     for name, q in list(data.items()):
-        if t - float(q.get("created_at") or t) < QUICKLOOK_DAYS * 86400 or name in busy:
+        if t - float(q.get("created_at") or t) < QUICKLOOK_DAYS * 86400 or (only is not None and name not in only):
             continue
         try:
             if name in list_projects():

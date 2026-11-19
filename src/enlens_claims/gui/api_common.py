@@ -11,7 +11,8 @@ import time
 import traceback
 import uuid
 from pathlib import Path
-from typing import Any, Callable
+from contextlib import contextmanager
+from typing import Any, Callable, Iterable
 
 from .progress import Tracker
 from .. import claimcheck, llm
@@ -219,6 +220,7 @@ class Jobs:
         self.model_lock = threading.Lock()
         self.ended: list[Callable[[Job], Any]] = []   # 0.18: called with every job that ends (the poller listens)
         self._seq = 0
+        self.removing: set[str] = set()   # hunt phase 1: projects being removed: no job starts in them (`removal`)
 
     def start(self, kind: str, title: str, project: str | None, fn: Callable[[Job], Any], uses_model: bool,
               unique: bool = False, lane: str | None = None, serial: str | None = None, background: bool = False,
@@ -243,6 +245,10 @@ class Jobs:
         job.lane = lane if lane is not None else LANE_OF_KIND.get(kind)
         job.serial, job.background, job.scope = serial, background, scope
         with self.lock:
+            if project is not None and project in self.removing:   # hunt phase 1: see `removal`
+                if if_free:
+                    return None
+                raise ApiError(409, f"The project “{project}” is being removed: nothing more can start in it.")
             if unique:
                 same = [j for j in self.jobs.values() if j.kind == kind and j.project == project
                         and j.state in ("queued", "running")]
@@ -452,6 +458,31 @@ class Jobs:
         documents into the new one). Call it with the lock held when the removal must not race a new job."""
         mine = [j for j in self.jobs.values() if j.project == project and j.state in ("queued", "running")]
         return min(mine, key=lambda j: j.created) if mine else None
+
+    @contextmanager
+    def removal(self, projects: Iterable[str], refuse: Callable[[Job], None] | None = None):
+        """Hunt phase 1 (after review): the projects of `projects` that no job of is queued or running, marked as being
+        removed for the time of the `with` (yielded as a set): `start` refuses a job in them, so none can start between
+        this look and the end of the removal. `refuse(job)`, when given, is called with a busy project's job (it raises,
+        to refuse the removal in words); else a busy project is left out. The look and the mark are one step under the
+        lock, and the removal itself runs after it: it takes home.LOCK and moves a folder (seconds on Windows, or a
+        copy to another disk), and with the lock held the job list, every job start and every finishing job waited."""
+        with self.lock:
+            free = set()
+            for name in projects:
+                job = self.busy(name)
+                if job is not None:
+                    if refuse is not None:
+                        refuse(job)
+                    continue
+                if name not in self.removing:
+                    free.add(name)
+            self.removing |= free
+        try:
+            yield free
+        finally:
+            with self.lock:
+                self.removing -= free
 
     def holder(self, project: str, kind: str, lane: str | None = None) -> Job | None:
         """0.18: the job a new job of `kind` (and `lane`) in `project` would wait for now, if any (the poller asks)."""

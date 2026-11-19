@@ -47,10 +47,13 @@ class DocumentsApi:
             raise ApiError(400, "Confirm by sending the project's name as 'confirm'.")
         if name not in home.list_projects():
             raise ApiError(404, f"No project called {name!r}.")
-        # hunt phase 1: never from under a job of the project (Jobs.busy says why); the look and the removal are one
-        # step under the jobs' lock, so no job of the project starts in between (a quick look's Discard comes here too)
-        with self.app.jobs.lock:
-            busy_with(self.app.jobs.busy(name), "remove the project")
+        # hunt phase 1: never from under a job of the project (Jobs.busy says why); the project is marked as being
+        # removed under the jobs' lock, so no job of it starts until the removal has ended (Jobs.removal), and the
+        # folder is moved after the lock (a quick look's Discard comes here too)
+        what = "discard the quick look" if home.is_temporary(name) else "remove the project"
+        with self.app.jobs.removal([name], refuse=lambda job: busy_with(job, what)) as free:
+            if name not in free:   # (another removal of it is under way)
+                raise ApiError(409, "This project is being removed already.")
             try:
                 return {"result": home.remove_project(name)}
             except home.FolderInUse as e:  # 0.15.7 (Windows): said in words, not "something went wrong"

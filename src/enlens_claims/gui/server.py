@@ -270,12 +270,16 @@ class App(LibraryMixin, QueueMixin):
     def state(self) -> dict:
         try:
             # quick looks not kept go to the trash after a week; hunt phase 1: not one whose job is queued or running
-            # (as a removal waits for it, gui/api_documents.py `delete_project`), and the look and the move are one step
-            # under the jobs' lock, so no job of it starts in between
-            with self.jobs.lock:
-                busy = {j.project for j in self.jobs.jobs.values() if j.state in ("queued", "running") and j.project}
-                home.cleanup_quicklooks(busy=busy)
-        except OSError:
+            # (as a removal waits for it, gui/api_documents.py `delete_project`); the others are marked as being
+            # removed, so no job of them starts until they have gone (Jobs.removal), and moved after the jobs' lock
+            expired = home.expired_quicklooks()
+            if expired:
+                with self.jobs.removal(expired) as free:
+                    if free:
+                        home.cleanup_quicklooks(only=free)
+        except (OSError, ValueError):
+            # (ValueError: home.Damaged, a damaged links.json the removal reads: the state still answers, and the
+            # action that needs the list tells the person; the file is set aside, so the next look mends it)
             pass
         s = self.settings()
         projects = [self.project_summary(n) for n in home.list_projects()]

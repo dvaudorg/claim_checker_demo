@@ -300,7 +300,8 @@ def test_a_join_proof_with_an_accented_letter_is_refused_not_an_error():
 # The sweep (SERVER-3): every route of the route table, each field it reads given a value of the wrong kind; never 500
 # ---------------------------------------------------------------------------------------------------------------------
 # Routes the sweep leaves alone: they quit or restart the app, install or download, open a window or a terminal, start
-# Claude Code or a model, reach the network, write the keychain, or remove the project the sweep works in. Each is a
+# Claude Code or a model, reach the network, or remove the project the sweep works in (the API key routes are
+# swept: the keychain is the file one in the sweep's home, which the test checks). Each is a
 # decision about a side effect, not about input (their input readers are the shared ones the sweep does reach).
 SWEEP_SKIP = {
     "post_quit", "post_restart", "post_update", "get_update",                        # the app itself
@@ -308,7 +309,6 @@ SWEEP_SKIP = {
     "get_local_status", "post_benchmark", "post_repeatable", "get_provider_models",   # a local model or a server
     "post_install_claude_code", "post_claude_sign_in", "post_agent_install", "post_agent_sign_in", "post_agent_tidy",
     "post_claude_code_start", "post_claude_code_stop", "post_queue_run",              # Claude Code or an agent
-    "post_key", "delete_key", "post_provider_key", "delete_provider_key",             # the keychain
     "post_choose_folder", "post_notify_test",                                         # a window, a notification
     "get_zotero", "get_zotero_collections", "get_zotero_works", "post_bibliography", "post_bibliography_files",
     "post_references", "post_retractions_check",                                      # Zotero, Crossref
@@ -441,6 +441,9 @@ def test_no_route_answers_500_to_a_field_of_the_wrong_kind(swept, method, patter
 
     api, _app, ids, root = swept
     monkeypatch.setenv("ENLENS_HOME", str(root / "home"))   # (conftest gives every test a home of its own)
+    from enlens_claims import keychain
+
+    assert keychain.backend() == "file"   # the API key routes are swept: never the system's keychain
     monkeypatch.chdir(root)
     path = _fill(pattern, ids)
     body_keys, query_keys = _keys_of(handler)
@@ -522,3 +525,134 @@ def test_read_the_new_documents_pressed_twice_by_queue_starts_one_round(served, 
             t0 = time.monotonic()
             while j.state in ("queued", "running") and time.monotonic() - t0 < 20:
                 time.sleep(0.05)
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# After review (SERVER-1 and the leads): a removal does not hold every job up; the words fit the button
+# ---------------------------------------------------------------------------------------------------------------------
+def _in_thread(fn):
+    """Run fn() in a thread: (thread, box) with box["out"] once it has answered."""
+    box = {}
+    t = threading.Thread(target=lambda: box.update(out=fn()), daemon=True)
+    t.start()
+    return t, box
+
+
+def test_a_slow_removal_holds_no_other_project_up_and_nothing_starts_in_the_one_removed(served, monkeypatch):
+    """The removal looked for a running job and moved the folder under the jobs' lock: while the move took (home.LOCK
+    held by the connector, Windows retrying a held file for 5 s, a copy to another disk) the job list, every job start
+    and every finishing job waited, so every page with jobs froze. The project is now marked as being removed under
+    the lock and moved after it: the job list and a job in another project go on, and a job in the project being
+    removed is refused in words."""
+    from enlens_claims import home as _home
+
+    api, _app = served
+    _project(api, "Q")
+    _project(api)
+    assert api("POST", "/api/projects/Q/uploads?batch=b1&name=a.txt", raw=_doc_text("forests").encode())[0] == 200
+    assert api("POST", "/api/projects/P/uploads?batch=b1&name=a.txt", raw=_doc_text("rivers").encode())[0] == 200
+    moving, go_on = threading.Event(), threading.Event()
+    real = _home.remove_project
+
+    def slow_remove(name):
+        moving.set()
+        go_on.wait(20)
+        return real(name)
+
+    monkeypatch.setattr(_home, "remove_project", slow_remove)
+    remover, removed = _in_thread(lambda: api("DELETE", "/api/projects/P", {"confirm": "P"}))
+    try:
+        assert moving.wait(10)
+        lister, listed = _in_thread(lambda: api("GET", "/api/jobs"))
+        starter, started = _in_thread(lambda: api("POST", "/api/projects/Q/ingest", {"batch": "b1"}))
+        refused, refusal = _in_thread(lambda: api("POST", "/api/projects/P/ingest", {"batch": "b1"}))
+        for t in (lister, starter, refused):
+            t.join(5)
+        assert listed.get("out", (None,))[0] == 200, "the job list waited for the removal"
+        assert started.get("out", (None,))[0] == 200, "a job in another project waited for the removal"
+        st, r = refusal.get("out", (None, None))
+        assert st == 409 and "being removed" in r["error"], r
+    finally:
+        go_on.set()
+        remover.join(20)
+    assert removed["out"][0] == 200, removed
+    api.wait(started["out"][1]["job"]["id"])
+
+
+def test_discarding_a_busy_quick_look_says_discard(served, tmp_path, monkeypatch):
+    """The refusal named the wrong button for a quick look: "… then remove the project"; its button is Discard."""
+    from enlens_claims import home as _home
+
+    api, _app = served
+    _project(api)
+    name = _home.create_quicklook("report.pdf").root.name
+    job_id, go_on = _held_ingest(api, monkeypatch, tmp_path, project=name)
+    try:
+        st, r = api("DELETE", f"/api/projects/{name}", {"confirm": name})
+        assert st == 409 and "discard" in r["error"].lower() and "remove the project" not in r["error"], r
+    finally:
+        go_on.set()
+    api.wait(job_id)
+
+
+def test_the_state_answers_when_the_list_of_linked_projects_is_damaged(served):
+    """A quick look whose week is up is moved to the trash at GET /api/state; with links.json damaged the removal
+    raised home.Damaged (a ValueError), which the state request did not catch: the whole page answered 500. The person
+    is told about the damaged file by the action that needs the list."""
+    import json as _json
+
+    from enlens_claims import home as _home
+
+    api, _app = served
+    _project(api)
+    name = _home.create_quicklook("report.pdf").root.name
+    f = _home.home() / "quicklook.json"
+    data = _json.loads(f.read_text())
+    data[name]["created_at"] -= 8 * 86400
+    f.write_text(_json.dumps(data))
+    (_home.home() / "links.json").write_text("{ not json")
+    st, r = api("GET", "/api/state")
+    assert st == 200, r
+
+
+def test_a_slow_look_for_unread_documents_holds_no_other_project_up(served, monkeypatch):
+    """`post_read_unread` held the app's one ONE_START lock across its search for unread documents, so a press in any
+    other project that looks for its own job first (Read the new documents, a new theme, the new reader) waited behind
+    it. The lock now belongs to the project."""
+    from enlens_claims import claimcheck
+
+    api, _app = served
+    hids = {}
+    for p in ("Q", "P"):
+        _project(api, p, docs=[_doc_text("solar power"), _doc_text("wind energy")])
+        st, r = api("POST", f"/api/projects/{p}/checks", {"text": "The solar power programme was studied in regions."})
+        hids[p] = api.wait(r["job"]["id"])["result"]["hyp_id"]
+    searching, go_on = threading.Event(), threading.Event()
+    real = claimcheck.unread_documents
+
+    def slow(ws, hyp_id, *a, **kw):
+        if hyp_id == hids["P"]:
+            searching.set()
+            go_on.wait(20)
+        return real(ws, hyp_id, *a, **kw)
+
+    monkeypatch.setattr(claimcheck, "unread_documents", slow)
+    first, _ = _in_thread(lambda: api("POST", f"/api/projects/P/hypotheses/{hids['P']}/read-unread", {}))
+    try:
+        assert searching.wait(10)
+        other, answer = _in_thread(lambda: api("POST", f"/api/projects/Q/hypotheses/{hids['Q']}/read-new", {}))
+        other.join(5)
+        assert answer.get("out", (None,))[0] == 200, "a press in another project waited for the search"
+    finally:
+        go_on.set()
+        first.join(20)
+    api.wait(answer["out"][1]["job"]["id"])
+
+
+@pytest.mark.parametrize("path", ["/api/settings/key", "/api/settings/provider-key"])
+def test_an_api_key_that_is_not_text_is_refused_in_words(served, path):
+    """A list or an object as the key went through str() and was kept as the key ("['x']")."""
+    api, _app = served
+    for bad in (["sk-x"], {"a": 1}, 7):
+        st, r = api("POST", path, {"key": bad, "provider": "openai", "remember": True})
+        assert st == 400 and "key" in r["error"].lower(), (bad, r)

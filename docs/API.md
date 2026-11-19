@@ -368,7 +368,8 @@ is not one, 409 when no Ollama answers on this computer (or at the address in Se
 file (a shared-folder record, file paths of the other computer, and what was stored for speed go; the documents and
 the work stay) and links it. `DELETE /api/projects/<p>` `{"confirm": "<p>"}` → `{"result": "unlinked" | "moved to …/trash/…"}`;
 409 with `"kind": "busy"` and the `job_id` while a job of the project is queued or running (its message names the job:
-stop it or wait, then remove the project). A quick look is not moved to the trash at the end of its week while a job of
+stop it or wait, then remove the project). While the removal runs, a job started in the project is a 409 ("is being
+removed"). A quick look is not moved to the trash at the end of its week while a job of
 it runs either.
 
 `GET /api/projects/<p>/export.zip` → the whole project as one zip, to give to a colleague or move to another
@@ -1974,7 +1975,8 @@ codes, where each example was found, the groups and their order. The old routes 
   [{"name", "size", "code": {"code", "description", "described", "keywords", "examples"}}]}]}`: the sets of themes a
   codebook can start from (removed themes left out); `all` adds those of every project.
 - `PUT /api/projects/<p>/codebooks/<name> {"codebook": {…as above…}, "merges"?: [{"from": uid, "into": uid}], "why"?}`
-  → `{"changes": [words], "version_id", "codebook"}`: writes the editor's state. A code without a `uid` is new; one
+  → `{"changes": [words], "version_id", "codebook", "uids"}`: writes the editor's state (`uids`: the id each code sent
+  has now, in the order sent, a new one's included). A code without a `uid` is new; one
   that is gone is removed (its labels wait), unless named in `merges` (its labels go to the other). A bundled codebook
   is a 400. Each saved change keeps the earlier state as a version and goes into the research log with `why`.
 - `DELETE /api/projects/<p>/codebooks/<name>[?why=]` → `{"deleted"}`. Labels made with it stay.

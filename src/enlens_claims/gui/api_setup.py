@@ -11,7 +11,7 @@ import threading
 import time
 from pathlib import Path
 
-from .api_common import ApiError, Job, XLSX, _csv, _disposition, _filename, _int, _str  # noqa: F401
+from .api_common import ApiError, Job, XLSX, _body_text, _csv, _disposition, _filename, _int, _str  # noqa: F401
 from .. import access, bibliography, claimcheck, home, ollama_setup, taskqueue
 from ..claude_setup import setup_info as claude_setup_info
 
@@ -36,7 +36,7 @@ class SetupApi:
             raise ApiError(403, "Cloud models are switched off on this computer by whoever installed ENLENS: a Claude "
                                 "API key cannot be used here.")
         body = self._body()
-        key = str(body.get("key") or "").strip()
+        key = (_body_text(body, "key") or "").strip()   # hunt phase 1: a list here was kept as the key "['…']"
         if not key:
             raise ApiError(400, "Give the API key.")
         self.app.session_key = key
@@ -65,7 +65,7 @@ class SetupApi:
                                 "key cannot be used here.")
         body = self._body()
         try:
-            home.set_cloud_key(self._provider(body.get("provider")), str(body.get("key") or ""))
+            home.set_cloud_key(self._provider(body.get("provider")), _body_text(body, "key") or "")
         except ValueError as e:
             raise ApiError(400, str(e)) from None
         return {"providers": self.app.providers_state()}

@@ -8,12 +8,25 @@ from __future__ import annotations
 import io
 import json
 import re
+import threading
 import time
 from pathlib import Path
 
-from .api_common import ONE_START, ApiError, XLSX, _csv, _disposition, _filename, _float, _int, _str, _usable_embedder
+from .api_common import ApiError, XLSX, _csv, _disposition, _filename, _float, _int, _str, _usable_embedder
 from .. import claimcheck, home, sync, taskqueue
 from ..llm import BackendError
+
+
+_READING_LOCKS: dict[str, threading.Lock] = {}
+_READING_LOCKS_GUARD = threading.Lock()
+
+
+def _reading_lock(project: str) -> threading.Lock:
+    """Hunt phase 1 (after review): one lock per project for "Read the new documents" and "read unread": the look for
+    a job already at it and the start are one step. It holds a search for unread documents, so it is the project's
+    own: the app's one ONE_START held every other project's presses (a new theme, the new reader) behind it."""
+    with _READING_LOCKS_GUARD:
+        return _READING_LOCKS.setdefault(project, threading.Lock())
 
 
 class ChecksApi:
@@ -370,8 +383,8 @@ class ChecksApi:
         waiting and ended in error ("Grade the passages already shown first (submit_grades)", the connector's words),
         and two presses at the same moment could both make a round of the same documents. A press for hypotheses a
         job reads already gives that job back; one that covers others too waits until it has finished. The look and
-        the start are one step (ONE_START)."""
-        with ONE_START:
+        the start are one step (`_reading_lock`: the project's own, so no other project waits for it)."""
+        with _reading_lock(name):
             with self.app.jobs.lock:
                 live = [j for j in self.app.jobs.jobs.values()
                         if j.project == name and j.state in ("queued", "running")]
@@ -401,7 +414,7 @@ class ChecksApi:
         ws = self.app.ws(name)
         if not ws.scalar("SELECT 1 FROM hypotheses WHERE hyp_id=?", (hyp_id,)):
             raise ApiError(404, "No such hypothesis.")
-        with ONE_START:   # hunt phase 1: the look and the start as one step (two presses at the same moment)
+        with _reading_lock(name):   # hunt phase 1: the look and the start as one step (two presses at one moment)
             with self.app.jobs.lock:   # a second press, or a second tab: the same job, never a second round beside it
                 live = [j for j in self.app.jobs.jobs.values()
                         if j.project == name and j.state in ("queued", "running")]
