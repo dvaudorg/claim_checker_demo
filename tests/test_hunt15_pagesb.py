@@ -791,7 +791,7 @@ def test_a_place_kept_for_a_document_is_not_used_in_a_copy_of_its_project(page):
 def test_the_changelog_tells_people_to_look_again_at_labels_given_before_the_fix():
     """OLD DATA: NOTE KEPT. A label stores only its span; nothing records where the person had selected, so a label
     on the first of two places cannot be told from one meant there."""
-    text = (ROOT / "changes" / "hunt-phase-1-pagesb.md").read_text(encoding="utf-8")
+    text = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     assert "labels given this way before keep their place" in " ".join(text.split())
 
 

@@ -303,7 +303,7 @@ def test_a_zip_first_added_before_its_folder_was_named_by_content_is_unpacked_on
     for (d,) in ws.query("SELECT doc_id FROM documents"):
         assert sources.original_file(ws, d)["available"]
     assert "A zip first added with an earlier version is unpacked once more" in " ".join(
-        (ROOT / "changes/hunt-phase-1-readers.md").read_text("utf-8").split())
+        (ROOT / "CHANGELOG.md").read_text("utf-8").split())
 
 
 # ---- 8. a guessed encoding is shown --------------------------------------------------------------------------------
