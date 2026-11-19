@@ -360,19 +360,24 @@ def _clean_text(v: Any, n: int = 2000) -> str:
     return " ".join(str(v or "").split())[:n]
 
 
-def _clean_state(st: dict) -> dict:
-    """The editor's state as sent, cleaned and checked. Raises ValueError naming the problem."""
+def _clean_state(st: dict, kept: dict[str, str] | None = None, draft: bool = False) -> dict:
+    """The editor's state as sent, cleaned and checked. Raises ValueError naming the problem. `kept`: the codebook's
+    codes as saved ({uid: name}): two of them whose names count as one (`name_key`) but that were saved so before (a
+    CSV of before this check) still save for any other change; only adding a code under such a name, or renaming one
+    into it, is refused. `draft`: *Try it*, which refuses no such pair."""
     codes = []
-    names: dict[str, str] = {}
+    names: dict[str, tuple[str, str]] = {}
     groups = []
+    listed: set[str] = set()
     as_written: dict[str, str] = {}   # a group by `name_key`: the group as first written
     for g in st.get("groups") or []:
         if not isinstance(g, dict):
             continue
         key = _clean_text(g.get("group"), 60)
-        if name_key(key) in as_written:
+        if key in listed:
             continue
-        as_written[name_key(key)] = key
+        listed.add(key)
+        as_written.setdefault(name_key(key), key)
         groups.append({"group": key, "group_name": _clean_text(g.get("group_name"), 120)})
     for i, c in enumerate(st.get("codes") or [], 1):
         if not isinstance(c, dict):
@@ -386,17 +391,21 @@ def _clean_state(st: dict) -> dict:
                              "more in its definition.")
         if not desc:
             raise ValueError(f"The code {code!r} has no definition. Say in a sentence what it is about.")
-        low = name_key(code)   # "Kő" typed and "Kő" from a Mac file (decomposed) are one name, as "kő" and "Kő" are
-        if low in names:
-            raise ValueError(f"Two codes are called {code!r}: give each its own name.")
-        names[low] = code
         uid = str(c.get("uid") or "")
+        low = name_key(code)   # "Kő" typed and "Kő" from a Mac file (decomposed) are one name, as "kő" and "Kő" are
+        if low in names and not draft:
+            other, other_uid = names[low]
+            if not (kept and code != other and kept.get(uid) == code and kept.get(other_uid) == other):
+                raise ValueError(f"Two codes are called {code!r}: give each its own name.")
+        names.setdefault(low, (code, uid))
         group = _clean_text(c.get("group"), 60)
-        # a group written another way only by case or accent form is the group already there, as it was written
-        if name_key(group) not in as_written:
-            as_written[name_key(group)] = group
-            groups.append({"group": group, "group_name": ""})
-        group = as_written[name_key(group)]
+        # a group written another way only by case or accent form, and not listed as it is, is the group already
+        # there, as it was written (groups listed as they are stay as they are)
+        if group not in listed:
+            group = as_written.setdefault(name_key(group), group)
+            if group not in listed:
+                listed.add(group)
+                groups.append({"group": group, "group_name": ""})
         kws = []
         for k in (c.get("keywords") or []):
             k = _clean_text(k, 80).replace(";", ",")
@@ -574,8 +583,8 @@ def save(ws: Workspace, name: str, state: dict, merges: list[dict] | None = None
     where, f = locate(ws, name)
     if where == "bundled":
         raise ValueError("The SDG codebooks ship with the app: make a copy to change one.")
-    new = _clean_state(state)
     cur = state_of(ws, name)
+    new = _clean_state(state, kept={c["uid"]: c["code"] for c in cur["codes"]})
     fw = frameworks.get(name, ws)
     meta = json.loads(json.dumps(fw.meta or {}))
     at = now()
@@ -920,36 +929,51 @@ def _moves_any(cx, name: str, events: list[dict], only: set | None = None) -> in
 # making, moving, copying and removing codebooks
 # ---------------------------------------------------------------------------------------------
 def name_held(ws: Workspace, name: str, cx=None, everywhere: bool = False) -> bool:
+    return held_where(ws, name, cx, everywhere) is not None
+
+
+def held_where(ws: Workspace, name: str, cx=None, everywhere: bool = False) -> str | None:
     """Whether a removed codebook's work still holds the name: its labels or its read passages (done `label:<name>:…`
     tasks) in this project, or its earlier versions (`history/<name>/`, here or in the folder for all projects).
     All of them are keyed by the bare name, and `remove` keeps them so the codebook can come back (History › Restore):
     a new codebook of the name took them over (it counted the old labels, listed them under *Removed codes*, and the
     AI never read those passages for it). `cx`: the connection to read with (inside a sync's write). `everywhere`: a
     codebook to be kept with all projects shows in every project, so the earlier versions kept in any of them count too
-    (`remove` always keeps one; another project's labels cannot be read from here)."""
+    (`remove` always keeps one; another project's labels cannot be read from here), unless that project has a codebook
+    of the name of its own now (its history is that codebook's: nothing there was removed). A project that cannot be
+    read (a damaged one, one on a drive not plugged in) is passed over. Returns None when the name is free, else where
+    it is held: "" (here, or with all projects) or the other project's name."""
     q = cx.execute if cx is not None else ws._conn().execute
     if q("SELECT 1 FROM labels WHERE framework=? LIMIT 1", (name,)).fetchone():
-        return True
+        return ""
     head = f"label:{name}:"
     if q("SELECT 1 FROM tasks WHERE task_id >= ? AND task_id < ? AND +status='done' LIMIT 1",
          (head, head[:-1] + ";")).fetchone():
-        return True
+        return ""
     if _version_files(ws, name):
-        return True
+        return ""
     if everywhere:
         from . import home
 
+        here = Path(ws.root).resolve()
         for pname in home.list_projects():
-            d = _version_dir(home.project_path(pname) / "frameworks", name)
-            if d.is_dir() and any(_VID.fullmatch(p.stem) for p in d.glob("c*.json")):
-                return True
-    return False
+            try:
+                f = home.project_path(pname) / "frameworks"
+                if f.resolve().parent == here or (f / f"{name}.csv").is_file():
+                    continue   # this project (looked at above), or one whose own codebook of the name lives
+                d = _version_dir(f, name)
+                if d.is_dir() and any(_VID.fullmatch(p.stem) for p in d.glob("c*.json")):
+                    return pname
+            except OSError:
+                continue
+    return None
 
 
-def held_message(name: str) -> str:
-    return (f"A removed codebook called {name!r} still has its labels or its earlier versions, kept under that name: a "
-            "new codebook of the name would take them over. Bring it back from History (Restore), or choose another "
-            "name.")
+def held_message(name: str, where: str | None = None) -> str:
+    there = f" in the project {where!r}" if where else ""
+    return (f"A removed codebook called {name!r} still has its labels or its earlier versions{there}, kept under that "
+            f"name: a new codebook of the name would take them over. Bring it back from History{there} (Restore), or "
+            "choose another name.")
 
 
 def _free_name(ws: Workspace, name: str, where: str = "project") -> str:
@@ -962,8 +986,9 @@ def _free_name(ws: Workspace, name: str, where: str = "project") -> str:
         raise ValueError("Give the codebook a short name: letters, digits, - or _ (and not 'sdg' or 'sdg_goals').")
     if n in frameworks.available(ws) or (_home_folder() / f"{n}.csv").exists():
         raise ValueError(f"A codebook called {n!r} exists already: choose another name.")
-    if name_held(ws, n, everywhere=where == "home"):
-        raise ValueError(held_message(n))
+    held = held_where(ws, n, everywhere=where == "home")
+    if held is not None:
+        raise ValueError(held_message(n, held))
     return n
 
 
@@ -1376,7 +1401,7 @@ def theme_sources(ws: Workspace, all_projects: bool = False) -> list[dict]:
 
 
 def _draft(state: dict) -> frameworks.Framework:
-    clean = _clean_state(state)
+    clean = _clean_state(state, draft=True)
     gname = {g["group"]: g["group_name"] for g in clean["groups"]}
     codes = {c["code"]: Code(c["code"], c["description"], c["group"], gname.get(c["group"], ""), c["include"],
                              c["exclude"], tuple(c["keywords"])) for c in clean["codes"]}

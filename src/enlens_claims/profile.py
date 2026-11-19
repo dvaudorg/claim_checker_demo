@@ -343,7 +343,10 @@ def make_label_tasks(ws: Workspace, framework: str, passage_ids: list[str], mode
     """`label` tasks for these passages (each with its candidates, up to MAX_CANDIDATES)."""
     from .tasks import _insert_task, replace_task
 
+    from .codebooks import _events
+
     fw = frameworks.get(framework, ws)
+    events_known = _events(fw.meta or {})
     n = 0
     with ws.connect() as cx:
         for pid in passage_ids:
@@ -366,7 +369,11 @@ def make_label_tasks(ws: Workspace, framework: str, passage_ids: list[str], mode
                                        # 0.16: when to use the code and when not, only when the codebook says
                                        **({"include": fw.codes[c].include} if fw.codes[c].include else {}),
                                        **({"exclude": fw.codes[c].exclude} if fw.codes[c].exclude else {})}
-                                      for c in cands if c in fw.codes]}
+                                      for c in cands if c in fw.codes],
+                       # the codebook's renames and merges this question already shows (`_as_asked`): by their ids, as
+                       # times to the second (and a colleague's own clock) cannot tell a change just before it from one
+                       # just after. Not in the prompt, so not in the task's id or its kept answer's key either
+                       "codebook_events": [e["id"] for e in events_known]}
             tid = f"label:{fw.name}:{pid}"
             if _failed_on_the_codebook(cx, tid):
                 # its answers were refused because the codebook changed under it (before answers with the names a
@@ -392,7 +399,11 @@ def _failed_on_the_codebook(cx, task_id: str) -> bool:
         errs = json.loads(r[0]) if r and r[0] else []
     except ValueError:
         return False
-    return any(isinstance(e, str) and (": unknown code " in e or e.startswith("Unknown framework ")) for e in errs)
+    return any(isinstance(e, str) and (": unknown code " in e or _CHANGED_SINCE in e or
+                                       e.startswith("Unknown framework ")) for e in errs)
+
+
+_CHANGED_SINCE = "was renamed or merged since this task was made"
 
 
 def store_labels(cx, t, payload: dict, obj: dict, model: str) -> tuple[bool, list[str]]:
@@ -415,9 +426,16 @@ def store_labels(cx, t, payload: dict, obj: dict, model: str) -> tuple[bool, lis
     # each label's code: the code a name the task was shown has become since (renamed, merged, removed), else the code
     # of that name in the codebook now
     got = []
-    for lb in out.labels:
+    unsure = []
+    for i, lb in enumerate(out.labels):
         then = as_asked(lb.code)
+        if then == "unsure":
+            unsure.append(f"labels[{i}]: the code {lb.code!r} {_CHANGED_SINCE}, and another code is called so now; "
+                          "this answer cannot say which it means")
+            then = None
         got.append((lb, *then, True) if then else (lb, fw.normalise(lb.code), None, False))
+    if unsure:
+        return False, unsure
     named = {code for _lb, code, merged, _m in got if code and merged is None}
     merged_into: dict[str, str] = {}   # a label that went into a code by a merge: {its row's code: the name it had}
     mapped_seen: set[str] = set()
@@ -473,21 +491,31 @@ def _get(t, key: str):
         return None
 
 
-def _as_asked(fw: frameworks.Framework, payload: dict, asked_at: str) -> Callable[[str], tuple | None]:
+def _as_asked(fw: frameworks.Framework, payload: dict, asked_at: str) -> Callable[[str], tuple | str | None]:
     """A label task shows the codebook's codes as they were when it was made, and a queue for Claude Code can wait
     for hours: an answer naming a code by the name it was shown lands where the codebook's changes since have taken
     that code, as the labels made before them were moved (codebooks.follow). Returns `resolve(name)`: (the code now,
     the name it had when it was merged into it, or None), or None for a name the task was not shown or that no change
     since touched (it is then read as a code of the codebook now). Only the names the task showed, and only the changes
     made since it was made (a later code may have taken an old name: it keeps its own). A code removed since keeps its
-    name: its label waits under Removed codes with the code's other labels."""
+    name: its label waits under Removed codes with the code's other labels.
+
+    "Since" is the changes the task does not know (`codebook_events`, the ids it was made with). A task made before
+    they were kept is never guessed for: only changes dated strictly after it count, and an answer whose name was
+    changed since and is a code's name now as well gives "unsure" (refused, as before: a wrong code is worse)."""
     shown = [c.get("code") for c in payload.get("candidates") or [] if isinstance(c, dict) and c.get("code")]
     meta = fw.meta or {}
-    if not shown or not asked_at:
+    known = payload.get("codebook_events")
+    if not shown or (known is None and not asked_at):
         return lambda name: None
     from .codebooks import _events, checked_events
 
-    since = [e for e in checked_events(_events(meta))[0] if str(e.get("at") or "") >= asked_at]
+    ok = checked_events(_events(meta))[0]
+    if isinstance(known, list):
+        ids = set(known)
+        since = [e for e in ok if e["id"] not in ids]
+    else:
+        since = [e for e in ok if str(e.get("at") or "") > asked_at]
 
     def resolve(name: str) -> tuple | None:
         name = str(name or "").strip()
@@ -503,8 +531,12 @@ def _as_asked(fw: frameworks.Framework, payload: dict, asked_at: str) -> Callabl
                 cur, merged = e["to"], cur
             elif e["op"] == "unmerge" and e["from"] == cur and merged is not None and e.get("was") == merged:
                 cur, merged = e["to"], None
+        if cur == hit and cur in fw.codes:
+            return None
+        if not isinstance(known, list) and fw.normalise(name):
+            return "unsure"   # a task of before: the name is a code's now too, and its time cannot say which
         if cur in fw.codes:
-            return (cur, merged) if cur != hit else None
+            return cur, merged
         return cur, None   # removed since it was asked: its label waits for it under Removed codes
 
     return resolve

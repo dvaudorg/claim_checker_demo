@@ -33,6 +33,7 @@ from . import home as core
 # Anthropic, as before. CLAUDE stays the name of Anthropic for what imports it.
 CLAUDE = access.ANTHROPIC
 from .sources import document_overview  # noqa: E402
+from .store import DamagedConfig  # noqa: E402
 
 
 def route() -> str:
@@ -149,7 +150,7 @@ def _projects(fn, unreadable: list[str] | None = None):
     for name in core.list_projects():
         try:
             got = fn(name, core.open_project(name))
-        except (sqlite3.DatabaseError, OSError):
+        except (sqlite3.DatabaseError, OSError, DamagedConfig):  # (hunt phase 1: a settings file that does not read)
             if unreadable is not None:
                 unreadable.append(name)
             continue

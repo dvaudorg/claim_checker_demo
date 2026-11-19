@@ -555,3 +555,153 @@ def test_a_colleagues_new_code_named_like_mine_but_for_its_accent_form_comes_in_
     with ben:
         names = [c.code for c in frameworks.get("water", ben.ws).codes.values()]
         assert len({frameworks.name_key(n) for n in names}) == len(names), names
+
+
+# =====================================================================================================================
+# After review (reviews/reading.md): CONCEPTS-4 by the changes a task knows, not by the clock; CONCEPTS-1 and a live
+# codebook elsewhere; CONCEPTS-8 without casefold; a clash copy's name within 40 characters
+# =====================================================================================================================
+def test_a_task_made_in_the_same_second_as_a_rename_chain_reads_its_answer_as_the_codebook_it_showed(demo, monkeypatch):
+    """Review, must fix: one save renames Commuting to Travel and gives Wellbeing the name Commuting; a task made in that
+    second shows the codebook after the save. Its answer "Commuting" means the former Wellbeing, and was stored under
+    Travel (the save's events counted as "since" by their time, to the second)."""
+    from enlens_claims import store, tasks
+
+    fixed = "2026-11-19T10:00:05+00:00"
+    for mod in (store, codebooks, profile, tasks):
+        monkeypatch.setattr(mod, "now", lambda: fixed, raising=False)
+    _codebook(demo)
+    st = codebooks.state_of(demo, "remote")
+    st["codes"][0]["code"], st["codes"][1]["code"] = "Travel", "Commuting"
+    codebooks.save(demo, "remote", st)
+    pid, text = demo.query("SELECT passage_id, text FROM passages WHERE section='body' AND text LIKE '%commut%' "
+                           "ORDER BY passage_id LIMIT 1")[0]
+    profile.make_label_tasks(demo, "remote", [pid], "m", all_passages=True)
+    payload = json.loads(demo.scalar("SELECT payload_json FROM tasks WHERE task_id=?", (f"label:remote:{pid}",)))
+    if "Commuting" not in [c["code"] for c in payload["candidates"]]:
+        payload["candidates"].append({"code": "Commuting", "description": "How workers feel."})
+        with demo.connect() as cx:
+            cx.execute("UPDATE tasks SET payload_json=? WHERE task_id=?", (json.dumps(payload), f"label:remote:{pid}"))
+    ok, errs = _answer(demo, pid, " ".join(text.split()[:6]), "Commuting")
+    assert ok, errs
+    assert [r[0] for r in demo.query("SELECT code FROM labels WHERE passage_id=? AND source='model'", (pid,))] == \
+        ["Commuting"]
+
+
+def test_a_colleagues_rename_dated_before_the_task_but_unknown_to_it_still_maps_the_answer(demo):
+    """Review: a colleague's events keep their own computer's time; one dated before the task was made but arriving
+    after it is a change the task never showed, and its answer follows it."""
+    pid, quote = _waiting(demo)
+    st = codebooks.state_of(demo, "remote")
+    st["codes"][0]["code"] = "Travel"
+    codebooks.save(demo, "remote", st)
+    side = demo.root / "frameworks" / "remote.json"
+    meta = json.loads(side.read_text(encoding="utf-8"))
+    for e in meta["events"]:
+        e["at"] = "2020-01-01T00:00:00+00:00"   # their clock: long before the task
+    side.write_text(json.dumps(meta), encoding="utf-8")
+    ok, errs = _answer(demo, pid, quote, "Commuting")
+    assert ok, errs
+    assert [r[0] for r in demo.query("SELECT code FROM labels WHERE passage_id=? AND source='model'", (pid,))] == \
+        ["Travel"]
+
+
+def test_a_task_made_before_the_fix_is_mapped_only_by_later_changes_and_never_guessed(demo):
+    """Review: a task without the record of the changes it knows (made before this fix) maps an answer only through
+    changes dated strictly after it, and refuses it, as before, when the name is a code's name now as well."""
+    pid, quote = _waiting(demo)
+    tid = f"label:remote:{pid}"
+    payload = json.loads(demo.scalar("SELECT payload_json FROM tasks WHERE task_id=?", (tid,)))
+    payload.pop("codebook_events")
+    with demo.connect() as cx:
+        cx.execute("UPDATE tasks SET payload_json=?, created_at='2026-01-01T00:00:00+00:00' WHERE task_id=?",
+                   (json.dumps(payload), tid))
+    st = codebooks.state_of(demo, "remote")
+    st["codes"][0]["code"] = "Travel"
+    codebooks.save(demo, "remote", st)
+    ok, errs = _answer(demo, pid, quote, "Commuting")
+    assert ok, errs
+    assert [r[0] for r in demo.query("SELECT code FROM labels WHERE passage_id=? AND source='model'", (pid,))] == \
+        ["Travel"]
+    st = codebooks.state_of(demo, "remote")
+    st["codes"][1]["code"] = "Commuting"           # Wellbeing now takes the old name
+    codebooks.save(demo, "remote", st)
+    ok, errs = _answer(demo, pid, quote, "Commuting")
+    assert not ok and "renamed or merged since this task was made" in errs[0]
+
+
+def test_a_live_codebook_of_another_project_does_not_hold_the_name_and_an_unreadable_project_is_passed_over(
+        tmp_path, monkeypatch):
+    """Review, should fix: project A's own live codebook "interviews" has versions; B's new "interviews" kept with all
+    projects was refused as "removed". A removed one is named with its project; a project that cannot be read is
+    passed over."""
+    from enlens_claims import home
+
+    a, b = home.create_project("A"), home.create_project("B")
+    _fresh(a, "interviews", "project", "A's own")
+    assert (a.root / "frameworks" / "history" / "interviews").is_dir()
+    codebooks.create(b, "interviews", "Interviews", "home", "fresh")
+    _fresh(a, "gone", "project", "A's, removed")
+    codebooks.remove(a, "gone")
+    with pytest.raises(ValueError, match="in the project 'A'"):
+        codebooks.create(b, "gone", "Gone", "home", "fresh")
+    real = home.project_path
+
+    def unplugged(name):
+        if name == "A":
+            raise OSError("the drive is not plugged in")
+        return real(name)
+
+    monkeypatch.setattr(home, "project_path", unplugged)
+    assert codebooks.create(b, "other", "Other", "home", "fresh")["name"] == "other"
+
+
+def test_masse_and_masse_with_sharp_s_stay_two_names(ws):
+    """Review, should fix: `casefold` made "Maße" and "Masse" one name."""
+    cb = codebooks.create(ws, "de", "Deutsch", "project", "fresh")
+    st = json.loads(json.dumps(cb))
+    st["codes"] = [_code("Masse", "Mass"), _code("Maße", "Dimensions")]
+    codebooks.save(ws, "de", st)
+    assert sorted(frameworks.get("de", ws).codes) == ["Masse", "Maße"]
+    assert frameworks.get("de", ws).normalise("MASSE") == "Masse"
+
+
+def test_a_codebook_saved_with_two_names_that_now_count_as_one_still_saves_other_changes(ws):
+    """Review: a codebook on disk from before the check, with "Kő" composed and decomposed (a CSV of before), opens and
+    saves for any other change; adding a code under such a name, or renaming one into it, is refused."""
+    import unicodedata
+
+    nfc, nfd = unicodedata.normalize("NFC", "Kő"), unicodedata.normalize("NFD", "Kő")
+    folder = ws.root / "frameworks"
+    folder.mkdir(exist_ok=True)
+    (folder / "old.csv").write_text(f"code,description\n{nfc},Typed\n{nfd},From a Mac\nB,Bee\n", encoding="utf-8")
+    st = codebooks.load(ws, "old")
+    assert len(st["codes"]) == 3
+    st["codes"][-1]["description"] = "A bee, reworded"
+    codebooks.save(ws, "old", st)
+    st = codebooks.state_of(ws, "old")
+    assert sorted(c["code"] for c in st["codes"]) == sorted([nfc, nfd, "B"])
+    with pytest.raises(ValueError, match="Two codes are called"):
+        codebooks.save(ws, "old", {**st, "codes": st["codes"] + [_code(nfc.lower())]})
+    renamed = [dict(c, code=nfc.lower()) if c["code"] == "B" else c for c in st["codes"]]
+    with pytest.raises(ValueError, match="Two codes are called"):
+        codebooks.save(ws, "old", {**st, "codes": renamed})
+
+
+def test_a_colleagues_version_of_a_codebook_with_a_long_name_comes_in_listed(anna_and_ben):
+    """Notes: the clash copy "<name>-<6 characters>" of a codebook named with 35 characters or more went past the 40 a
+    name may have, came in as files and was never listed."""
+    anna, ben = anna_and_ben
+    long = "a" * 38
+    with anna:
+        frameworks.save(anna.ws, long, "code,description\nA,Water use of electrolysis\n")
+    with ben:
+        frameworks.save(ben.ws, long, "code,description\nA,Water\n")
+    rep = ben.bring_in(anna.send())
+    copy = rep["codebooks"]["clash"][0]["name"]
+    assert len(copy) <= 40
+    with ben:
+        assert copy in frameworks.available(ben.ws)
+    from enlens_claims.sync.codebook_merge import clash_name
+
+    assert len(clash_name("b" * 40, "0123456789")) == 40

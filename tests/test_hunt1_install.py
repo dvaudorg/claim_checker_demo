@@ -918,3 +918,40 @@ def test_the_handover_job_carries_where_the_app_proves_it_came_back():
 
     job = update.handover_job({"version": "9.9.9"}, "0.0.1", Path("."), ["uv"], ["python"])
     assert job["token_dir"] == str(launcher.token_dir(home.home())) and job["home"] == str(home.home())
+
+
+# ---- after the review of the fixes (reviews/surface.md, reviews/sync.md) ---------------------------------------------
+
+def test_the_command_line_shows_a_fault_of_its_own_as_a_fault_and_a_refusal_in_words(monkeypatch, capsys):
+    """`cli.main` turned every ValueError into one "Problem:" line, a damaged file's JSONDecodeError and a UnicodeError
+    among them, with no way to see where it happened (cli.py, `main`)."""
+    import json as _json
+
+    from enlens_claims import cli
+
+    monkeypatch.delenv("ENLENS_DEBUG", raising=False)
+    monkeypatch.setattr(cli, "_main", lambda argv=None: (_ for _ in ()).throw(ValueError("themes need at least 5")))
+    assert cli.main(["x"]) == 1 and "Problem: themes need at least 5" in capsys.readouterr().err
+    monkeypatch.setenv("ENLENS_DEBUG", "1")                      # the way to see where a "refusal" came from
+    with pytest.raises(ValueError):
+        cli.main(["x"])
+    monkeypatch.delenv("ENLENS_DEBUG")
+    for fault in (_json.JSONDecodeError("Expecting value", "", 0), UnicodeDecodeError("utf-8", b"\xff", 0, 1, "bad")):
+        monkeypatch.setattr(cli, "_main", lambda argv=None, f=fault: (_ for _ in ()).throw(f))
+        with pytest.raises(type(fault)):                         # never dressed up as a refusal
+            cli.main(["x"])
+
+
+def test_one_project_with_a_damaged_settings_file_does_not_stop_the_connector_for_the_others():
+    """`mcp_server._projects` skipped a project with a damaged database, but a config.json that does not read
+    (store.DamagedConfig) stopped the connector's look through every project."""
+    from enlens_claims import home, mcp_server
+
+    good = home.create_project("Sound")
+    bad = home.create_project("Broken")
+    bad.config_path.write_text("{ not json", encoding="utf-8")
+    home.close_project(bad.root)
+    seen, unreadable = [], []
+    assert mcp_server._projects(lambda name, ws: seen.append((name, bool(ws.config))) and None, unreadable) is None
+    assert ("Sound", True) in seen and unreadable == ["Broken"]
+    assert good.root.exists()

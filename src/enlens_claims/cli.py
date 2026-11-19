@@ -112,9 +112,13 @@ def main(argv: list[str] | None = None) -> int:
     except FileNotFoundError as e:
         print(f"Problem: {e}", file=sys.stderr)
         return 1
+    except (json.JSONDecodeError, UnicodeError):  # (after the review of that sweep) these two are ValueErrors too, and
+        raise                                     # are never a refusal in words: a file that does not read, or a fault
     except ValueError as e:  # hunt phase 1 (INSTALL-6's sweep): ENLENS's refusals in words (an unknown kind of task,
-        print(f"Problem: {e}", file=sys.stderr)  # a document no AI may read…) ended in a traceback; the connector says
-        return 1                                 # the same messages as words (`mcp_server._friendly`)
+        if os.environ.get("ENLENS_DEBUG"):       # a document no AI may read…) ended in a traceback; the connector says
+            raise                                # the same messages as words (`mcp_server._friendly`). ENLENS_DEBUG=1
+        print(f"Problem: {e}", file=sys.stderr)  # shows where it happened, for the day the "refusal" is a fault of
+        return 1                                 # ENLENS's own
 
 
 def _main(argv: list[str] | None = None) -> int:

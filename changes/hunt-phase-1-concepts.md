@@ -6,14 +6,18 @@
   blocked those code names), skipped every passage the old one's AI had read, and showed the old versions as its own.
   Now the name is refused while that work remains, with a sentence saying to restore the codebook from History or to
   choose another name. This holds for every way of making a codebook (fresh, copy, CSV, .qdc, themes, theory), for
-  one kept with all projects (another project's removed codebook of the name counts too), and for a colleague's
+  one kept with all projects (another project's removed codebook of the name counts too, and the message names that
+  project; a project's own codebook still in use there does not), and for a colleague's
   codebook that arrives under such a name: it comes in beside yours, marked as their version. A codebook made before
   this version under a removed one's name keeps what it took over. Can change results.
 - **An answer to a label task that waited while you changed the codebook is no longer lost.** The AI answers with the
   code names its task showed; after a rename the answer was refused three times and the passage was never labelled,
   after a merge likewise, and after removing a code the whole answer (the passage's other codes too) was refused.
   Now the label lands on the renamed code, on the code it was merged into, or under *Removed codes*. Tasks that failed
-  this way before, or while their codebook was removed, are asked again by the next labelling run. Can change results.
+  this way before, or while their codebook was removed, are asked again by the next labelling run. A task knows which
+  changes it already showed, so a change made in the same second, or a colleague's dated by a clock that is off, never
+  sends a label to the wrong code; for a task made before this version, an answer that could mean two codes is
+  refused, as before. Can change results.
 - **A label task asked before a code was reworded counts as labelled with the earlier wording.** The code shows
   *earlier wording* and *Label them again* reaches those passages too.
 - **Label them again reads every passage it names.** After a run that read every passage, a passage the AI labelled
@@ -41,3 +45,7 @@
   "Kő" from a Mac file (the accent as a separate character) are refused as two codes in the editor and a CSV import,
   named apart in a .qdc import and in a merge with a colleague's codebook, and found by the AI's answers either way.
   Names stay as written. A codebook's name keeps the letter of an accented one ("kőzet" is "kozet"), however written.
+  "Maße" and "Masse" stay two names. A codebook saved before with such a pair still saves any other change; only
+  adding or renaming a code into such a pair is refused.
+- **A colleague's version of a codebook with a long name is listed.** When both changed a codebook whose name had 35
+  characters or more, their version came in under a name too long to be listed, so it could not be opened.

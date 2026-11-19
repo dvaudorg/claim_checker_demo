@@ -45,6 +45,13 @@ def _event_order(e: dict) -> tuple:
     return str(e.get("at") or ""), seq, str(e.get("id") or "")
 
 
+def clash_name(name: str, fp: str) -> str:
+    """The name a colleague's version of codebook `name` comes in under beside yours: "<name>-<6 of its fingerprint>",
+    the name cut so the whole stays within a codebook name's 40 characters (`NAME_RE`): longer, the copy came in as
+    files but was never listed, so it could not be opened, and their labels with it."""
+    return f"{name[:40 - 7]}-{fp[:6]}"
+
+
 class CodebookRules:
     def _codebooks(self, cx: sqlite3.Connection) -> None:
         """The colleague's codebooks: a new one comes in; one of yours they changed (and you did not) is brought up to
@@ -84,7 +91,7 @@ class CodebookRules:
                     # a codebook of this copy was removed under the name, and its labels or versions are kept under
                     # it (codebooks.name_held); theirs, never exchanged with it, is another codebook: it comes in
                     # beside, as a codebook both made under one name does, and their labels go with it
-                    new = f"{name}-{fp_in[:6]}"
+                    new = clash_name(name, fp_in)
                     self.fw[name] = new
                     self._take_codebook(src, dest, name, new)
                     self.codebook_marks.append((new, name))
@@ -112,7 +119,7 @@ class CodebookRules:
             # 0.18: both changed a codebook they have exchanged before: code by code
             if seen_here.get(name, set()) & seen_there.get(name, set()) and self._merge_codes(cx, src, dest, name):
                 continue
-            new = f"{name}-{fp_in[:6]}"
+            new = clash_name(name, fp_in)
             self.fw[name] = new
             self._take_codebook(src, dest, name, new)
             self.codebook_marks.append((new, name))

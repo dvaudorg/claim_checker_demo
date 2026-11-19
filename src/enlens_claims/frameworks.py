@@ -34,8 +34,9 @@ def name_key(name: str | None) -> str:
     """What two names of codes or groups are compared by: one name when they differ only by case or by how an accent
     is written ("ő" as one character, as typed, or as "o" and a combining accent, as macOS writes file names and many
     Mac exports do). Two such codes look the same to a person while their labels never meet. Each name is kept as
-    written: only the comparison folds (labels stored under a name stay under it)."""
-    return unicodedata.normalize("NFC", str(name or "")).casefold()
+    written: only the comparison folds (labels stored under a name stay under it). Lower case, not `casefold`: that
+    makes "Maße" (dimensions) and "Masse" (mass), two words, one name."""
+    return unicodedata.normalize("NFC", str(name or "")).lower()
 
 
 @dataclass(frozen=True)
