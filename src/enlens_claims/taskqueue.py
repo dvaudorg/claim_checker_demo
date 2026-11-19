@@ -740,7 +740,7 @@ def next_tasks(ws: Workspace, kind: str | None = None, n: int | None = None, mod
 
         system = prompts.system_prompt(k)
         cap = min(TOKEN_BUDGET, CONNECTOR_CAP - 2000 - estimate_tokens(system))
-        with ws.connect() as cx:
+        with ws.connect() as cx, access.words_memo():   # (a term shared by the batch's tasks is looked up once)
             dflt = access._default_from_cx(cx)  # once per batch, not per task
             for t in itertools.chain(cand, rest()):
                 if len(picked) >= size:

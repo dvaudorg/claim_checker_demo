@@ -277,3 +277,124 @@ def test_a_task_made_before_the_update_leaves_the_queue_too(project):
     for kind in ("expand", "group_name"):
         got = taskqueue.next_tasks(project, kind)
         assert not got.get("tasks"), got
+
+
+def _old_words_level(cx, term: str) -> str:
+    """`words_floor`'s answer for one term as first written: every mention, joined to its passage's document."""
+    docs = {r[0] for r in cx.execute("SELECT DISTINCT p.doc_id FROM term_mentions m JOIN passages p ON "
+                                     "p.passage_id=m.passage_id WHERE m.term_id=?", (term,))}
+    lv = access.levels(cx, docs, budget=False) if docs else {}
+    return min((lv.get(d, "none") for d in docs), key=access.RANK.__getitem__, default="none")
+
+
+def test_the_guard_on_words_reads_each_term_once_per_relabel_whatever_the_number_of_tasks(project):
+    """Review of hunt phase 1: `words_floor` read every mention of every term of each waiting group-name or
+    other-wordings task, for each task, on every relabel (under the write lock). The work is bounded now: a term is
+    looked at once per relabel however many tasks name it, one seek per document at most, stopping at the first
+    document Claude may read; and the answer is the one the full reading gave."""
+    terms_all = [r[0] for r in project.query("SELECT term_id FROM terms ORDER BY tf DESC LIMIT 8")]
+    terms_all = list(dict.fromkeys(terms_all + [terms.find_term(project, "battery")]))   # in No AI documents only
+    n_docs = project.scalar("SELECT COUNT(*) FROM documents")
+    none, others = _no_ai_storage(project)
+    access.set_documents(project, others[:1], "local")
+
+    def tasks_of(n):
+        with project.connect() as cx:
+            cx.execute("DELETE FROM tasks WHERE kind='group_name'")
+            for i in range(n):
+                tasks._insert_task(cx, f"group_name:cost{i}", "group_name", "haiku",
+                                   {"concepts": [], "concept_ids": terms_all, "passages": [],
+                                    access.WORDS_KEY: {"terms": terms_all}})
+
+    def reads():
+        seen: list[str] = []
+        cx = project._conn()
+        cx.set_trace_callback(lambda sql: seen.append(sql) if "term_mentions" in sql else None)
+        try:
+            with project.connect() as c:
+                access.relabel(c)
+        finally:
+            cx.set_trace_callback(None)
+        return len(seen)
+
+    tasks_of(3)
+    few = reads()
+    tasks_of(30)
+    many = reads()
+    assert 0 < few == many <= len(terms_all) * n_docs, (few, many)
+    got = set()
+    with project.connect() as cx:   # the same answer as reading every mention
+        for t in terms_all:
+            with access.reading_for(None):
+                lv = access.words_floor(cx, {access.WORDS_KEY: {"terms": [t]}})
+                assert lv == _old_words_level(cx, t), t
+                got.add(lv)
+    assert {"cloud", "none"} <= got
+
+
+def test_a_framework_task_made_before_the_update_keeps_no_title_of_a_document_marked_no_ai_since(tmp_path,
+                                                                                                    monkeypatch):
+    """Review of hunt phase 1: a framework task waiting across the update has no `words_of`, so the titles of the
+    researcher's own documents in it stayed unguarded. `_words_before` finds their documents by title."""
+    import test_theory_framework as ttf
+
+    from enlens_claims import theoryframe
+
+    gen = ttf.project.__wrapped__(tmp_path, monkeypatch)
+    ws, meadows, practice, evidence = next(gen)
+    try:
+        ttf._started(ws, meadows, practice)
+        r = theoryframe.read(ws, ttf.FakeModel(), "claude-sonnet-5-5")
+        payload = json.loads(ws.scalar("SELECT payload_json FROM tasks WHERE task_id=?", (r["frame_task"],)))
+        payload.pop(access.WORDS_KEY)   # as an earlier version made it
+        with ws.connect() as cx:
+            assert access.label_payload(cx, payload, provider=access.ANTHROPIC) == "cloud"
+        access.set_documents(ws, [evidence], "none")
+        with ws.connect() as cx:
+            assert access.label_payload(cx, payload, provider=access.ANTHROPIC) == "none"
+    finally:
+        next(gen, None)
+
+
+def test_a_limited_run_answers_free_tasks_when_a_helper_holds_the_first_ones(loaded):
+    """Review of hunt phase 1 (QUEUE-6): `enlens run <kind> --limit N` took the first N pending tasks; when a helper
+    held all of them, the run did nothing though free tasks remained."""
+    from helpers_mixed_corpus import Local
+
+    pids = [r[0] for r in loaded.query("SELECT passage_id FROM passages WHERE section='body' ORDER BY passage_id "
+                                       "LIMIT 5")]
+    with tasks.queueing():
+        profile.make_label_tasks(loaded, "sdg", pids, "haiku")
+    held = {t["task_id"] for t in taskqueue.next_tasks(loaded, "label", n=2)["tasks"]}
+    assert held == set(sorted(r[0] for r in loaded.query("SELECT task_id FROM tasks WHERE kind='label'"))[:2])
+    stats = tasks.run(loaded, "label", Local(), limit=2, model="m")
+    asked = {r[0] for r in loaded.query("SELECT DISTINCT task_id FROM results")}
+    assert len(asked) == 2 and not (asked & held), (asked, held)
+    assert stats["left_to_the_helper_answering_them"] == 2
+
+
+def test_run_names_the_model_in_the_ai_log_as_the_apps_own_runs_do(loaded):
+    """Review of hunt phase 1: `enlens run` on the Claude API asked and logged the task's alias ("haiku") where the
+    app's runs (`run_one`) send and log the API id: one model spelled two ways in the AI log."""
+    from enlens_claims import ailog, routing
+    from enlens_claims.llm import AnthropicBackend
+
+    asked = []
+
+    class Block:
+        type, text = "text", '{"labels": [], "note": "nothing here"}'
+
+    class Msgs:
+        def create(self, **kw):
+            asked.append(kw["model"])
+            return type("M", (), {"content": [Block()]})()
+
+    be = AnthropicBackend(client=type("C", (), {"messages": Msgs()})())
+    be.router = routing.from_settings({"backend": "anthropic", "anthropic_model": "claude-opus-5-5"})
+    pid = loaded.scalar("SELECT passage_id FROM passages WHERE section='body' ORDER BY passage_id LIMIT 1")
+    profile.make_label_tasks(loaded, "sdg", [pid], "haiku")
+    tasks.run(loaded, "label", be)
+    assert asked == ["claude-haiku-5-5"]
+    rows = ailog.entries(loaded)["rows"]
+    assert rows and {r["model"] for r in rows} == {"claude-haiku-5-5"}, [r["model"] for r in rows]
+    assert {r[0] for r in loaded.query("SELECT model FROM results")} == {"claude-haiku-5-5"}

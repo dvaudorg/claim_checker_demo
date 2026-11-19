@@ -24,3 +24,9 @@
   says "Waiting for your local model" when only those wait. The same holds for the app's own count of what waits, for `/enlens-run` without a project (it no longer lists a project where only the local model's tasks wait),
   and for the "still waiting" a Claude Code helper is told after a batch (an app's helper run no longer ends a helper
   as failed because of tasks it was never meant to take). Results are not changed.
+- **`enlens run <kind> --limit N` answers N tasks a helper is not answering.** When a Claude Code helper held the
+  first N tasks, the run stopped with nothing done. On the Claude API it now names the model in the AI log and the
+  answers' records as the app's own runs do ("claude-haiku-5-5", not "haiku"); the model asked is the same.
+- **Changing a document's AI setting stays quick with many waiting *Name the groups* tasks.** The check of their
+  concepts read every place each concept occurs, once per task, while the project was locked for writing; it now
+  looks at each concept once, and stops at the first document the AI may read.

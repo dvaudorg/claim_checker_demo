@@ -581,22 +581,72 @@ def words_floor(cx, payload: Any, dflt: str | None = None) -> str | None:
             return None
     tids = list(dict.fromkeys(t for t in w.get("terms") or [] if isinstance(t, str)))
     dids = list(dict.fromkeys(d for d in w.get("docs") or [] if isinstance(d, str)))
-    out = list(levels(cx, dids, budget=False, dflt=dflt).values()) if dids else []
-    where: dict[str, set[str]] = {}
-    for t in tids:
-        where[t] = {r[0] for r in cx.execute("SELECT DISTINCT p.doc_id FROM term_mentions m JOIN passages p ON "
-                                             "p.passage_id=m.passage_id WHERE m.term_id=?", (t,))}
-    seen = {d for ds in where.values() for d in ds}
-    lv = levels(cx, seen, budget=False, dflt=dflt) if seen else {}
-    for ds in where.values():
-        out.append(min((lv.get(d, "none") for d in ds), key=RANK.__getitem__, default="none"))
+    memo = _WORDS_MEMO.get()
+    if memo is None:
+        memo = {}
+    prov = ROUTE_PROVIDER.get()   # whose reading it is (`floor` sets it): the answers kept are for it alone
+    out = [_doc_level(cx, d, dflt, prov, memo) for d in dids]
+    out += [_term_level(cx, t, dflt, prov, memo) for t in tids]
     return most(out) if out else None
+
+
+# the answers of `words_floor` for the length of one guard call over many tasks (`words_memo`): the settings of
+# documents do not change inside it, and a concept map's terms are shared by many waiting tasks
+_WORDS_MEMO: contextvars.ContextVar = contextvars.ContextVar("enlens_words_memo", default=None)
+
+
+class words_memo:
+    """Around a guard call over many tasks in one transaction (`relabel`, a batch of `next_tasks`): `words_floor`
+    works each term and document out once, not once per task (review of hunt phase 1: thirty waiting group-name tasks
+    of a big project added seconds to every relabel, under the write lock). A memo already open is kept."""
+
+    def __enter__(self):
+        self.token = _WORDS_MEMO.set({}) if _WORDS_MEMO.get() is None else None
+        return self
+
+    def __exit__(self, *exc):
+        if self.token is not None:
+            _WORDS_MEMO.reset(self.token)
+
+
+def _doc_level(cx, d: str, dflt: str | None, prov, memo: dict) -> str:
+    key = ("doc", prov, dflt, d)
+    if key not in memo:
+        memo[key] = levels(cx, [d], budget=False, dflt=dflt).get(d, "none")
+    return memo[key]
+
+
+def _term_level(cx, t: str, dflt: str | None, prov, memo: dict) -> str:
+    """The least strict setting of the documents a term occurs in ("none" when it occurs nowhere now). The documents
+    are read from the passage ids (`store.passage_range`: "<doc_id>:<seq>"; `term_mentions.doc_id` is empty since
+    0.17.2) one seek per document, in the order of the term's places, and the look stops at the first document
+    Claude may read: no term's every mention is read for it."""
+    key = ("term", prov, dflt, t)
+    if key in memo:
+        return memo[key]
+    best, start = "none", ""
+    while True:
+        r = cx.execute("SELECT passage_id FROM term_mentions WHERE term_id=? AND passage_id >= ? ORDER BY passage_id "
+                       "LIMIT 1", (t, start)).fetchone()
+        if r is None:
+            break
+        d = r[0].partition(":")[0]
+        lv = _doc_level(cx, d, dflt, prov, memo)
+        if RANK.get(lv, 2) < RANK[best]:
+            best = lv
+        if best == "cloud":
+            break
+        start = d + ";"   # the next document's places (';' is the character after ':')
+    memo[key] = best
+    return best
 
 
 def _words_before(cx, payload: dict) -> dict | None:
     """The words a task made before `WORDS_KEY` sends, from its payload (a task waiting in the queue across the
-    update): a group's name (its "concepts" are the first of its "concept_ids", in order) and a concept's other
-    wordings (the wordings of the concept whose label the claim names). None for any other payload."""
+    update): a group's name (its "concepts" are the first of its "concept_ids", in order), a concept's other
+    wordings (the wordings of the concept whose label the claim names) and a framework's titles of the researcher's
+    own documents (the documents of those titles: every one that bears it; a title no document bears any more counts
+    as No AI). None for any other payload."""
     ids, shown = payload.get("concept_ids"), payload.get("concepts")
     if isinstance(ids, list) and isinstance(shown, list) and "map_groups" in payload:
         return {"terms": [t for t in ids[:len(shown)] if isinstance(t, str)]}
@@ -607,6 +657,15 @@ def _words_before(cx, payload: dict) -> dict | None:
         q = ",".join("?" * len(members))
         return {"terms": [t for t, label in cx.execute(f"SELECT term_id, label FROM terms WHERE term_id IN ({q})",
                                                        members) if label and label in claim] or [term]}
+    titles = payload.get("evidence_titles")
+    if isinstance(titles, list) and titles and "drafts" in payload:
+        from .theoryframe import _clean
+
+        by_title: dict[str, list[str]] = {}
+        for d, title in cx.execute("SELECT doc_id, title FROM documents"):
+            by_title.setdefault(_clean(title, 140) or "untitled", []).append(d)
+        # ("" names no document: `levels` gives a document it does not find No AI)
+        return {"docs": [d for t in titles if isinstance(t, str) for d in by_title.get(t) or [""]]}
     return None
 
 
@@ -746,16 +805,17 @@ def relabel(cx, task_ids: Iterable[str] | None = None, provider=_LABELS) -> int:
         cx.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)", (LABELS_KEY, json.dumps(known.provider or "")))
     sql = sql.replace("SELECT task_id, payload_json, access", "SELECT task_id, payload_json, access, queued")
     rows = cx.execute(sql, args).fetchall()
-    for i in range(0, len(rows), 500):  # a chunk's passages in one query, then its tasks
-        chunk = []
-        for r in rows[i:i + 500]:
-            try:
-                chunk.append((r, json.loads(r["payload_json"] or "{}")))
-            except (ValueError, TypeError):
-                chunk.append((r, None))
-        known.prefetch(p for _r, pl in chunk for p in ids_in(pl)[0])
-        for r, payload in chunk:
-            n += _relabel_one(cx, r, known, payload)
+    with words_memo():   # each term's and title's setting worked out once for every task (`words_floor`)
+        for i in range(0, len(rows), 500):  # a chunk's passages in one query, then its tasks
+            chunk = []
+            for r in rows[i:i + 500]:
+                try:
+                    chunk.append((r, json.loads(r["payload_json"] or "{}")))
+                except (ValueError, TypeError):
+                    chunk.append((r, None))
+            known.prefetch(p for _r, pl in chunk for p in ids_in(pl)[0])
+            for r, payload in chunk:
+                n += _relabel_one(cx, r, known, payload)
     return n
 
 
