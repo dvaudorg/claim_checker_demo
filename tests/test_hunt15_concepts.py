@@ -862,18 +862,33 @@ def test_a_project_made_and_used_as_the_app_does_can_be_removed_with_its_codeboo
     assert "A" not in home.list_projects()
 
 
+@pytest.mark.parametrize("tie", ["anna_earlier", "ben_earlier", "same_second_anna_id_first",
+                                 "same_second_ben_id_first"])
 @pytest.mark.parametrize("anna_first", [True, False])
-def test_two_colleagues_merging_two_codes_into_each_other_keep_one_code_with_every_label(anna_and_ben, anna_first):
+def test_two_colleagues_merging_two_codes_into_each_other_keep_one_code_with_every_label(anna_and_ben, anna_first,
+                                                                                         tie, monkeypatch):
     """Wave 4 note (pre-existing): Anna merges A into B, Ben merges B into A; after one exchange each way BOTH copies
     held a codebook with no codes, every label waiting under Removed codes. Now the earlier merge stands and the later
     one is undone, the same in both copies whichever file comes first: one code, every label of the passage under it,
-    nothing waiting, and the research log says so."""
+    nothing waiting, and the research log says so. CI: the two merges made in the same second (a tie of times, broken
+    by the events' ids, which are random) gave two codes in some runs: each case is made on purpose here."""
+    import itertools
+    import types
+
     anna, ben = anna_and_ben
     pid, a, b = _team_codebook(anna, ben)
-    with anna:
-        _merge(anna.ws, "cb", "A", "B")
-    with ben:
-        _merge(ben.ws, "cb", "B", "A")
+    when = {"anna_earlier": ("2026-11-19T10:00:00+00:00", "2026-11-19T10:00:05+00:00"),
+            "ben_earlier": ("2026-11-19T10:00:05+00:00", "2026-11-19T10:00:00+00:00")}.get(
+        tie, ("2026-11-19T10:00:00+00:00",) * 2)
+    lead = ("0", "f") if tie != "same_second_ben_id_first" else ("f", "0")
+    for p, at, first_hex in ((anna, when[0], lead[0]), (ben, when[1], lead[1])):
+        n = itertools.count()
+        monkeypatch.setattr(codebooks, "now", lambda at=at: at)
+        monkeypatch.setattr(codebooks, "uuid", types.SimpleNamespace(
+            uuid4=lambda n=n, h=first_hex: types.SimpleNamespace(hex=h + f"{next(n):031x}")))
+        with p:
+            _merge(p.ws, "cb", *(("A", "B") if p is anna else ("B", "A")))
+    monkeypatch.undo()
     first, second = (anna, ben) if anna_first else (ben, anna)
     first.bring_in(second.send())
     second.bring_in(first.send())
@@ -881,6 +896,10 @@ def test_two_colleagues_merging_two_codes_into_each_other_keep_one_code_with_eve
     kept = []
     for p in (anna, ben):
         with p:
+            # (roles, H8: a colleague's merge waits for this person's word before it moves their own labels; Anna made
+            # the codebook, so in her copy Ben's merge, when it is the one that stands, is offered: she follows it)
+            if any(o["name"] == "cb" for o in codebooks.offers(p.ws)):
+                codebooks.answer_offer(p.ws, "cb", True)
             codes = list(frameworks.get("cb", p.ws).codes)
             assert len(codes) == 1, codes
             kept.append(codes[0])

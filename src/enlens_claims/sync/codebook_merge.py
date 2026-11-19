@@ -201,6 +201,10 @@ class CodebookRules:
                 and not (e.get("id") in seen_ids or seen_ids.add(e.get("id")))]
         opposite = opposite_merges(both)
         back = {later["uid"] for _first, later in opposite}
+        # ... and the code the standing merge took away goes, though the undone merge (made here or there) went into it
+        # and so changed it: "removed there, unchanged here" would keep it, and both codes stayed (CI, which merge
+        # stood depended on the events' random ids when both were made in one second)
+        gone = {first["uid"] for first, _later in opposite}
         out: list[dict] = []
         theirs_in: set[str] = set()  # the codes taken from their version (new there, or newer there)
         for uid, mc in m_codes.items():
@@ -208,6 +212,10 @@ class CodebookRules:
             tc = t_codes.get(uid)
             if tc is None and uid in back:   # merged away there by the later of two opposite merges: it stays
                 out.append(mc)
+                continue
+            if tc is None and uid in gone and uid in t_removed:   # merged away there by the standing merge: it goes
+                m_removed[uid] = t_removed[uid]
+                rep["removed"].append(mc["code"])
                 continue
             if tc is None:
                 if uid in t_removed and known(mfp, seen_there, uid):  # they removed or merged it, you did not change it
