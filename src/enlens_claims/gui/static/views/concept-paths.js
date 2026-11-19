@@ -59,7 +59,7 @@ export function pathsCard(project, termId, label) {
   });
   other.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); go.click(); } });
   return card({ class: "section", title: "Paths to another concept", titleId: "cp-h" },
-    h("p", { class: "muted small" }, "How the documents get from this concept to another: through links you accepted, and concepts mentioned together more often than by chance. Each step shows the passages that join its two concepts. Theory documents are left out."),
+    h("p", { class: "muted small" }, "How the documents get from this concept to another: through links you accepted, and concepts mentioned together more often than by chance. Each step shows the passages that join its two concepts. Theory and working documents are left out."),
     h("div", { class: "row ct-add-form" }, h("span", { class: "serif" }, shortTitle(label, 40)), other, dl, go), out);
 }
 
@@ -114,6 +114,6 @@ export function timeCard(project, termId) {
     h("div", { class: "btn-row" }, run));
   });
   return card({ class: "section", title: "Over time and across groups", titleId: "cp-t-h" },
-    h("p", { class: "muted small" }, "How the concept is worded, and what it is mentioned with, by publication year or in two sets of documents you pick (policy against academic, one country against another). Theory documents are left out."),
+    h("p", { class: "muted small" }, "How the concept is worded, and what it is mentioned with, by publication year or in two sets of documents you pick (policy against academic, one country against another). Theory and working documents are left out."),
     h("div", { class: "btn-row" }, byYear), groupsFold, out);
 }

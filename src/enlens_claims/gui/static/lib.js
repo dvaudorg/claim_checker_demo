@@ -813,6 +813,9 @@ export const App = {
     if (b === "baseline") return { where: "none", label: "Demo mode", short: "A stand-in, not an AI: results are not findings", plain: "No AI model: a simple word-overlap stand-in. Results are not findings.", detail: "offline demo", icon: "alert-triangle" };
     const labels = (App.state && App.state.backend_labels) || {};
     const model = b === "ollama" ? (s.ollama_model || "no model chosen") : b === "openai" ? (s.openai_model || "first model listed") : (s.ollama_model || s.openai_model || "first model found");
+    // a model server on another computer: still the local route, but the text leaves this computer
+    const far = App.state && App.state.providers && App.state.providers.route_address;
+    if (far) return { where: "local", label: "A model on another computer", short: "The AI runs on another computer", plain: "The AI runs on another computer. Only documents you allow go there.", detail: `${labels[b] || b} · ${model} · ${far}`, icon: "network" };
     return { where: "local", label: "A model on this computer", short: "The AI runs on this computer", plain: "The AI runs on this computer. Your documents never leave it.", detail: `${labels[b] || b} · ${model}`, icon: "house" };
   },
   modelConfigured() {

@@ -79,7 +79,7 @@ export function codesPanel(ctx) {
     replace(head, h("div", { class: "dv-fw" }, h("label", { class: "field-label", for: "dv-fw" }, "Codebook"), sel));
     clear(listBox);
     if (missingFw) listBox.appendChild(notice({ kind: "attention", class: "dv-status-notice" },
-      h("p", {}, `The codebook “${missingFw}” is kept in another project, so the SDG targets are shown. Codebooks › move it to all projects makes it available everywhere.`)));
+      h("p", {}, `The codebook “${missingFw}” is kept in another project, so the SDG targets are shown. Codebooks › Keep it with all my projects makes it available everywhere.`)));
     const p1 = prof.pass1 || {};
     if (!p1.done) {
       clear(aiBox); ai = null;

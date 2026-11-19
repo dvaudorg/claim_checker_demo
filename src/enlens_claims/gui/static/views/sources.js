@@ -189,7 +189,7 @@ export async function renderSources(view) {
       + renamed.map(([a, b]) => `${a} as “${b}”`).join(", ") + "."));
     if (st.excluded && st.excluded.length) bits.push(h("p", { class: "muted small" }, `Left out: ${st.excluded.join(", ")}`));
     if (st.not_in_manifest && st.not_in_manifest.length) bits.push(h("p", { class: "muted small" }, `Not named in the manifest: ${st.not_in_manifest.slice(0, 10).join(", ")}${st.not_in_manifest.length > 10 ? "…" : ""}`));
-    if (st.glossary_error || st.codes_error) bits.push(notice({ kind: "attention" }, h("div", {}, h("p", {}, "The documents were added, but " + (st.glossary_error ? "the glossary of terms" : "the codes found by keywords") + " could not be updated. Update them from the Concepts or Profile page."), fold({}, "Technical details", h("div", { class: "mono small" }, st.glossary_error || st.codes_error)))));
+    if (st.glossary_error || st.codes_error) bits.push(notice({ kind: "attention" }, h("div", {}, h("p", {}, "The documents were added, but " + (st.glossary_error ? "the glossary of terms" : "the codes found by keywords") + " could not be updated. Update them from the Concepts or Codes page."), fold({}, "Technical details", h("div", { class: "mono small" }, st.glossary_error || st.codes_error)))));
     if (st.semantic_index_error) bits.push(notice({ kind: "attention" }, h("div", {}, h("p", {}, "The documents were added, but search by meaning could not be set up for them, so they are searched by their words only."), fold({}, "Technical details", h("div", { class: "mono small" }, st.semantic_index_error)))));
     // 0.13: the works of the bibliography the new documents are
     const bib = st.bibliography;
@@ -344,7 +344,7 @@ export async function renderSources(view) {
   const GROUPINGS = {
     ai: { label: "AI setting", always: true, of: (d) => d.ai_access, groups: [
       { key: "cloud", name: LEVEL.cloud.many, short: LEVEL.cloud.short, icon: LEVEL.cloud.icon, get sub() { return cloudSub(); } },
-      { key: "local", name: LEVEL.local.many, short: LEVEL.local.short, icon: LEVEL.local.icon, sub: "Read only by a model on this computer, or by you. Never sent to Claude." },
+      { key: "local", name: LEVEL.local.many, short: LEVEL.local.short, icon: LEVEL.local.icon, sub: "Read only by a model on this computer, or by you. Never sent to the cloud." },
       { key: "none", name: LEVEL.none.many, short: LEVEL.none.short, icon: LEVEL.none.icon, sub: "Only you judge their excerpts. Search, the keyword codes, concepts and themes still work." }] },
     role: { label: "Role", always: true, of: (d) => roles[d.doc_id] || "evidence", groups: [
       { key: "evidence", name: "Evidence", icon: "file-text", sub: "What hypotheses are checked against, and what themes, codes and key terms are made from." },

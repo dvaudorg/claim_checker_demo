@@ -1366,10 +1366,10 @@ function exploreSection(s) {
   fwSel.addEventListener("change", async () => { try { await save({ profile_framework: fwSel.value }); } catch (_) { /* shown */ } });
   const k = rangeControl("Themes per set", { min: 2, max: 60, step: 1, value: s.themes_k ?? 20, help: "How many themes a new set looks for. A small project gets fewer." });
   k.input.addEventListener("change", async () => { try { await save({ themes_k: k.input.valueAsNumber }); } catch (_) { /* shown */ } });
-  return sectionCard("explore", "Exploring", "The defaults of the Profile and Themes pages. You can change both on those pages too.",
+  return sectionCard("explore", "Exploring", "The defaults of the Codes and Themes pages. You can change both on those pages too.",
     setting("Codebook of the profiles", fwSel, { help: team
       ? `This project uses the team’s default: “${team.title}” (set by the owner). This setting still applies to your other projects.`
-      : "Which codes the Profile page and a document’s Codes panel look for, and new documents get." }),
+      : "Which codes the Codes page and a document’s Codes panel look for, and new documents get." }),
     k,
     h("p", { class: "small", id: "s-frameworks" }, link({ kind: "next", href: "#/codebooks" }, "Open Codebooks"), " ", h("span", { class: "muted" }, "to make, change or copy a codebook.")));
 }
@@ -1603,10 +1603,10 @@ function helpSection() {
 // 0.11: every passage sent to Claude, as a table for records such as a data management plan (a row of Your data)
 function ledgerSection() {
   const project = App.project;
-  return setting("What was sent to Claude", project ? downloadButton({ onClick: () => download(`/api/projects/${P(project)}/ai-sent.csv`).catch(showError) }, `Download the list for “${project}” (CSV)`)
+  return setting("What was sent to the cloud", project ? downloadButton({ onClick: () => download(`/api/projects/${P(project)}/ai-sent.csv`).catch(showError) }, `Download the list for “${project}” (CSV)`)
     : h("p", { class: "muted small" }, "Open a project first."), { id: "s-ledger",
-    help: "Every passage sent to Claude, with when, by which route and for which feature.",
-    about: ["What was sent to Claude", "ENLENS writes down every passage it sends to Claude (Claude Code, the Claude API, or a Claude chat through the connector) at the moment it leaves. The Documents page shows the share of each document; this is the whole list as a spreadsheet file."] });
+    help: "Every passage sent to a cloud AI, with when, by which route and for which feature.",
+    about: ["What was sent to the cloud", "ENLENS writes down every passage it sends to a cloud AI at the moment it leaves. The Documents page shows the share of each document; this is the whole list as a spreadsheet file."] });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1614,11 +1614,26 @@ function ledgerSection() {
 function dataSection() {
   const st = App.state || {};
   const n = (st.projects || []).length;
-  return sectionCard("data", "Your data", "Everything the app keeps lives in one folder on this computer.",
+  return sectionCard("data", "Your data", "Your projects and settings live in one folder on this computer.",
     setting("Data folder", h("code", { class: "path set-path", title: st.home || "" }, ...String(st.home || "").split(/(?<=[\/\\])/).flatMap((seg) => [seg, h("wbr")])),
       { about: ["The data folder", "Each project is a folder with a database, the added files and the settings. Removed projects go to a trash folder inside the data folder."] }),
     setting("Projects", h("p", { class: "set-projects" }, `${n} ${n === 1 ? "project" : "projects"} · `, link({ href: "#/projects" }, "Manage projects"))),
     ledgerSection());
+}
+
+// What the app reaches over the network. The 0.8.2 line ("This computer only · nothing is loaded from the
+// internet") stopped being true with update checks, team storage, cloud AI and Crossref lookups.
+function networkText(st) {
+  const reach = st.any_host ? "Other computers on your network can open the app (started with --host)."
+    : "Only this computer can open the app.";
+  const online = ["GitHub, to check for a new version and to download it when you press Update",
+    st.local_only ? null : "the cloud AI you choose (Claude, Codex, Antigravity): only the passages of a task",
+    "the team storage space you set up (Backblaze B2, Cloudflare R2, WebDAV)",
+    "Crossref, when you look up retractions",
+    "ollama.com or Anthropic's installer, when you press Install Ollama or Set up Claude"].filter(Boolean);
+  return [reach, h("div", { class: "muted small" }, "It goes online only to reach:"),
+    h("ul", { class: "small net-list" }, ...online.map((t) => h("li", {}, t))),
+    st.local_only ? h("div", { class: "muted small" }, "Cloud AI is switched off on this computer.") : null];
 }
 
 // Technical › This installation: the version and how it was installed and is updated, the network, the text
@@ -1632,13 +1647,13 @@ function installationSection() {
   return { id: "installation", title: "This installation", summary: `${appName()} ${v}${how ? `, installed ${how[0]}` : ""}`,
     body: [h("dl", { class: "kv-grid" },
       h("div", { class: "kv" }, h("dt", {}, "Version"), h("dd", {}, `ENLENS ${v}`, installedWith(st.installation))),
-      h("div", { class: "kv" }, h("dt", {}, "Network"), h("dd", {}, "This computer only · nothing is loaded from the internet")),
       h("div", { class: "kv" }, h("dt", {}, "Text recognition (OCR) for scanned PDFs"), h("dd", {}, ocr.available ? `installed (Tesseract${ocr.languages && ocr.languages.length ? `, languages: ${ocr.languages.join(", ")}` : ""})`
         : ["not available", ocr.missing && ocr.missing.length ? h("div", { class: "muted small" }, `Missing: ${ocr.missing.map((m) => ({ tesseract: "the Tesseract program (tesseract-ocr)", pypdfium2: "the Python package pypdfium2", pillow: "the Python package pillow" }[m] || m)).join("; ")}.${ocr.missing.includes("tesseract") ? " How to get Tesseract: Settings › Documents." : ""}${ocr.missing.some((m) => m !== "tesseract") ? " The Python parts: pip install 'enlens-claims[ocr]', then restart the app." : ""}`) : null])),
       // hunt phase 1.5: the add-ons that could not be loaded, and those left out of the open project (GET /api/state
       // `addon_problems`), one line each; nothing when there are none
       problems.length ? h("div", { class: "kv" }, h("dt", {}, problems.length === 1 ? "An add-on could not be loaded" : "Add-ons that could not be loaded"),
-        h("dd", {}, problems.map((e) => h("div", { class: "addon-problem small" }, `${e.addon}: ${e.error}${e.project ? ` (project ${e.project})` : ""}`)))) : null)] };
+        h("dd", {}, problems.map((e) => h("div", { class: "addon-problem small" }, `${e.addon}: ${e.error}${e.project ? ` (project ${e.project})` : ""}`)))) : null,
+      h("div", { class: "kv kv-wide" }, h("dt", {}, "Network"), h("dd", {}, ...networkText(st))))] };
 }
 
 // ---------------------------------------------------------------------------------------------

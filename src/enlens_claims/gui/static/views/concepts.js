@@ -96,7 +96,7 @@ export async function renderConcepts(view, params, query) {
     clear(statusBox); clear(listBox); clear(judgeBox);
     if (!g.built) {
       filters.hidden = true;
-      listBox.appendChild(emptyState("network", "No glossary yet", "The glossary lists the terms your documents use, how often and in which documents, and groups the ones that mean the same thing (an abbreviation and its long form, for example). It is made on this computer in a few seconds to a minute; nothing is sent anywhere.",
+      listBox.appendChild(emptyState("network", "No glossary yet", "The glossary lists the terms your documents use, how often and in which documents, and groups the ones that mean the same thing (an abbreviation and its long form, for example). It takes seconds to a minute to make.",
         jobBox.hidden ? button({ kind: "main", onClick: (e) => build(e.currentTarget) }, icon("network", { size: 14 }), "Make the glossary") : null));
       return;
     }

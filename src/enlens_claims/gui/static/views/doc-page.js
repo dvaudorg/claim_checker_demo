@@ -531,7 +531,7 @@ export async function renderDocument(view, [docId], query) {
     const head = h("p", { class: "muted small" });
     const el = h("section", { class: "dv-panel", "aria-labelledby": "dv-notes-h" },
       h("h2", { id: "dv-notes-h", class: "dv-panel-title" }, "Your notes"), head, listEl,
-      h("p", { class: "small" }, h("a", { href: "#/notes" }, "All notes of the project"), " · notes stay on this computer and go with the project when you share it."));
+      h("p", { class: "small" }, h("a", { href: "#/notes" }, "All notes of the project"), " · notes stay on this computer unless you share them."));
     function refresh() {
       replace(head, docNotes.length ? `${plural(docNotes.length, "note")} on this document. Click one to find it in the text.` : "None yet. Select words in the text, then choose Highlight or Note.");
       clear(listEl);
