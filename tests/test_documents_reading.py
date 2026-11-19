@@ -247,4 +247,5 @@ def test_the_windows_files_end_their_lines_once(tmp_path, monkeypatch):
     monkeypatch.setattr(launcher, "_com_shortcut", lambda *a: False)
     cmd = launcher._windows_shortcut(tmp_path, str(tmp_path / "python.exe"), ["-m", "enlens_claims.gui.launch"])
     raw = cmd.read_bytes()
-    assert b"\r\r" not in raw and raw.count(b"\r\n") == raw.count(b"\n") == 4
+    # (5 lines since hunt phase 1, INSTALL-7: `setlocal DisableDelayedExpansion`, so a "!" in a path stays one)
+    assert b"\r\r" not in raw and raw.count(b"\r\n") == raw.count(b"\n") == 5

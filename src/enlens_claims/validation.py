@@ -96,8 +96,19 @@ def _codes(v: str | None) -> list[str]:
 
 
 def _rows(path: Path) -> list[dict]:
-    with path.open(encoding="utf-8-sig", newline="") as f:
-        return [{(k or "").strip(): (v or "").strip() for k, v in r.items()} for r in csv.DictReader(f)]
+    """A gold-set CSV's rows. Hunt phase 1: with commas or semicolons (Excel saves semicolons in most European
+    locales), told by the header line as for the codebook beside it (frameworks._delimiter: the hypotheses' text
+    holds commas), and a row with more cells than the header names is said plainly instead of crashing."""
+    from .frameworks import _delimiter, lines
+
+    text = path.read_text(encoding="utf-8-sig")
+    out = []
+    for n, r in enumerate(csv.DictReader(lines(text), delimiter=_delimiter(text)), 1):
+        if None in r:
+            raise ValueError(f"{path.name}, row {n}: more cells than the header names. Save it as CSV with commas "
+                             "or semicolons, with any cell that holds the separator in quotes.")
+        out.append({(k or "").strip(): (v or "").strip() for k, v in r.items()})
+    return out
 
 
 def load_gold(folder: str | Path | None = None) -> dict:
@@ -455,15 +466,27 @@ def quote_failures(items: list[dict], kinds: tuple[str, ...]) -> dict:
 
 
 def repeatability(p1: dict, p2: dict, codes: list[str]) -> dict:
-    a = {it["id"]: it["got"] or "no answer" for it in p1["checks"]}
-    b = {it["id"]: it["got"] or "no answer" for it in p2["checks"]}
-    cp = [(a[i], b[i]) for i in a if i in b]
+    # hunt phase 1: a check or a passage left unanswered in both passes is left out, as the acceptance runs do
+    # (evaluation._repeatability): two failures are not the same answer twice, and counting them made a model that
+    # fails look more repeatable. One left unanswered in one pass only still counts, as a disagreement.
+    a = {it["id"]: it["got"] for it in p1["checks"]}
+    b = {it["id"]: it["got"] for it in p2["checks"]}
+    cp = [(a[i] or "no answer", b[i] or "no answer") for i in a if i in b and (a[i] or b[i])]
     la = {it["key"]: it for it in p1["labels"]}
-    lp = [(la[it["key"]], it) for it in p2["labels"] if it["key"] in la]
+    both = [(la[it["key"]], it) for it in p2["labels"] if it["key"] in la]
+    lp = [(x, y) for x, y in both if not (x["got"] is None and y["got"] is None)]
     pairs = [p for x, y in lp for p in _code_pairs(x["got"], y["got"], codes, [])]
-    return {"checks": {"n": len(cp), "same_status": _share([x == y for x, y in cp]), "kappa": kappa(cp)},
+    return {"checks": {"n": len(cp), "same_status": _share([x == y for x, y in cp]), "kappa": kappa(cp),
+                       "unanswered_twice": sum(1 for i in a if i in b and not (a[i] or b[i]))},
             "labels": {"n": len(lp), "same_codes": _share([set(x["got"] or []) == set(y["got"] or []) for x, y in lp]),
-                       "code_agreement": _share([x == y for x, y in pairs]), "kappa": kappa(pairs)}}
+                       "code_agreement": _share([x == y for x, y in pairs]), "kappa": kappa(pairs),
+                       "unanswered_twice": len(both) - len(lp)}}
+
+
+def _twice(part: dict, one: str, many: str) -> str:
+    """The repeatability line's note of what it left out (a run scored before hunt phase 1 has no such count)."""
+    n = int(part.get("unanswered_twice") or 0)
+    return f"; {n} {one if n == 1 else many} unanswered in both passes left out" if n else ""
 
 
 def score(run: dict) -> dict:
@@ -751,9 +774,10 @@ def to_markdown(run: dict, gold_fingerprint: str | None = None) -> str:
         L += ["The whole run was made a second time, in a new project, and the two passes compared with each other "
               "(not with the gold set).", "",
               f"- Checks: the same verdict for {_pct(rp['checks']['same_status'])} of {rp['checks']['n']} hypotheses "
-              f"(kappa {_k(rp['checks']['kappa'])}).",
+              f"(kappa {_k(rp['checks']['kappa'])}){_twice(rp['checks'], 'hypothesis', 'hypotheses')}.",
               f"- Labels: the same codes for {_pct(rp['labels']['same_codes'])} of {rp['labels']['n']} passages; "
-              f"{_pct(rp['labels']['code_agreement'])} of code decisions the same (kappa {_k(rp['labels']['kappa'])}).",
+              f"{_pct(rp['labels']['code_agreement'])} of code decisions the same (kappa {_k(rp['labels']['kappa'])})"
+              f"{_twice(rp['labels'], 'passage', 'passages')}.",
               ""]
         sec = s["passes"][1]
         L += [f"Against the gold set, the second pass had the right verdict for {_pct(sec['checks']['accuracy'])} of "

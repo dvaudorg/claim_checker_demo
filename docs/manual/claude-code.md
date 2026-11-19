@@ -30,7 +30,9 @@ checklist then shows three ticks.
 - ENLENS finds the `claude` program on the PATH or where its installers put it; `ENLENS_CLAUDE=/path/to/claude` names
   it.
 - When ENLENS is moved or installed again (a new Python), it writes the plugin again on its next start and adds it
-  again, quietly. The Claude desktop app's connector entry is pointed at the new Python too when the old one is gone.
+  again, quietly. If Claude Code refuses it, the installer's last lines (or the app's log) say so, Claude Code keeps
+  the plugin it had, and ENLENS tries again at its next start; *Set up Claude* or `enlens claude-setup` try at once.
+  The Claude desktop app's connector entry is pointed at the new Python too when the old one is gone.
 
 ## Start Claude Code
 

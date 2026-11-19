@@ -1087,7 +1087,8 @@ export async function renderResult(view, [hypId], query) {
       // 0.14.3: worded for the reason the app gives (checks already on the top model are not "unset")
       const why = current.stronger_reason;
       noStronger = h("p", { class: "ask-fact" },
-        why === "top_model" ? ["Checks already run on the strongest model your plan uses. ", h("a", { href: "#/settings/routing" }, "Turn on “Let the auditor use Fable”"), " for a stronger one."]
+        why === "strongest_model" ? ["Checks already run on Fable, the strongest model: there is no stronger one to ask."]
+        : why === "top_model" ? ["Checks already run on the strongest model your plan uses. ", h("a", { href: "#/settings/routing" }, "Turn on “Let the auditor use Fable”"), " for a stronger one."]
         : why === "model_per_task_off" ? ["The model for each task is switched off. ", h("a", { href: "#/settings/routing" }, "Turn it on in Settings"), "."]
         : why === "one_local_model" ? ["Only one local model is set. ", h("a", { href: "#/settings/routing" }, "Add a second local model in Settings"), "."]
         : ["No stronger model is set. ", h("a", { href: "#/settings/routing" }, "Set one in Settings"), "."]);

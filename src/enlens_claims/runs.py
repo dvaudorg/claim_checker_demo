@@ -199,7 +199,9 @@ def provenance_table(ws: Workspace, task_ids: list[str] | None = None, kinds: tu
                     "Context length": s.get("num_ctx") or "",
                     "Reasoning": s.get("think") if s.get("think") is not None else "",
                     "Reasoning budget": s.get("think_budget") or "",
-                    "Temperature": "" if cc else s.get("temperature", 0),
+                    # hunt phase 1: none where none was recorded (the Claude API, Codex, Antigravity, a cloud model
+                    # that refused it: 0.18.1 stopped recording one, as none is sent); an older answer keeps its own
+                    "Temperature": "" if cc or s.get("temperature") is None else s["temperature"],
                     "Answers": r["n"], "Of them from the stronger model (stepped up)": int(r["stepped"] or 0),
                     "First claimed": r["claimed"] or "", "First": r["first"] or "", "Last": r["last"] or ""})
     if not out:

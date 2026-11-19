@@ -66,3 +66,36 @@ def windows_command_line(pid: int) -> str | None:
         return ctypes.wstring_at(s.Buffer, s.Length // 2) if s.Buffer and s.Length else ""
     finally:
         k32.CloseHandle(handle)
+
+
+# Hunt phase 1 (INSTALL-7): a line of a command file (.cmd, .bat) is read by cmd.exe, not passed to CreateProcess, so
+# subprocess.list2cmdline's quoting (spaces and tabs only) does not hold there: in `start "" python … --home
+# D:\R&D\enlens` cmd.exe ended the line at "&", started ENLENS on the data folder D:\R and ran "D\enlens" as a command.
+# Every argument written into a command file goes through `cmd_quote`, and the file holds the line CMD_LITERAL_BANG
+# before any line that uses one.
+CMD_LITERAL_BANG = "setlocal DisableDelayedExpansion\r\n"  # "!" stays a "!" (no delayed expansion)
+
+
+def cmd_quote(arg: str) -> str:
+    """`arg` as one argument on a line of a command file: always in double quotes, so cmd.exe reads & | < > ^ ( ) and
+    spaces in it as themselves; % doubled (a command file expands %NAME% even inside quotes); a " inside written as
+    "" (cmd.exe stays inside the quotes, and the program's own reading, the Microsoft C rules Python uses, gives one
+    "); backslashes before a " or at the end doubled, so a folder ending in \\ does not swallow the closing quote. A
+    line break cannot be written on one line: refused. ! is left alone: the file switches delayed expansion off
+    (CMD_LITERAL_BANG)."""
+    arg = str(arg)
+    if "\r" in arg or "\n" in arg or "\0" in arg:
+        raise ValueError(f"A command file cannot hold this argument on one line: {arg!r}")
+    out: list[str] = []
+    slashes = 0
+    for ch in arg:
+        if ch == "\\":
+            slashes += 1
+            continue
+        if ch == '"':
+            out.append("\\" * (slashes * 2) + '""')
+        else:
+            out.append("\\" * slashes + ch)
+        slashes = 0
+    out.append("\\" * (slashes * 2))
+    return '"' + "".join(out).replace("%", "%%") + '"'

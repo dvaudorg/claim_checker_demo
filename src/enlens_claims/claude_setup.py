@@ -348,6 +348,8 @@ def install(check: bool = False) -> dict:
             steps.append({"step": line, "ok": code == 0, "text": re.sub(r"\x1b\[[0-9;]*m", "", text)[-600:]})
             if code != 0:
                 break
+    if path and all(x["ok"] for x in steps):
+        _forget_refused()  # (INSTALL-5: Claude Code took the plugin; nothing to try again at the next start)
     _STATUS["value"] = None
     return {"steps": steps, "status": status(refresh=True), "commands": commands(root)}
 
@@ -482,9 +484,22 @@ def _forget_record(project: str, pid: int | None = None) -> None:
             pass
 
 
-def _pid_runs_enlens(pid: int) -> bool:
+def _runs_this(cmd: str, project: str | None) -> bool:
+    """Whether a command line is a Claude Code run of ENLENS, and with `project` the run of that project (run_args puts
+    its name in quotes after the slash command; Windows shows those quotes as \\")."""
+    if SLASH not in cmd:
+        return False
+    if project is None:
+        return True
+    name = project.replace('"', "")
+    return f'{SLASH} "{name}"' in cmd or f'{SLASH} \\"{name}\\"' in cmd
+
+
+def _pid_runs_enlens(pid: int, project: str | None = None) -> bool:
     """Whether process `pid` is alive and is a Claude Code run of ENLENS (not another program that was given the number
-    since)."""
+    since), and with `project`, that project's run. Hunt phase 1 (INSTALL-2's sweep): a record whose number another
+    project's run was given since counted as this project's, so Stop ended that other run; and without `ps` the
+    number alone counted, so Stop could end any program: a number proves nothing, only the command line does."""
     if pid <= 0:
         return False
     if os.name == "nt":  # 0.15.7: by its command line, as below (it was the number alone, from tasklist)
@@ -494,7 +509,7 @@ def _pid_runs_enlens(pid: int) -> bool:
             cmd = windows_command_line(pid)
         except (OSError, AttributeError, ValueError):
             return False
-        return cmd is not None and SLASH in cmd
+        return cmd is not None and _runs_this(cmd, project)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -509,11 +524,11 @@ def _pid_runs_enlens(pid: int) -> bool:
         r = subprocess.run(["ps", "-ww", "-o", "command=", "-p", str(pid)], capture_output=True, text=True,
                            timeout=15)  # console: not on Windows
     except (OSError, subprocess.SubprocessError):
-        return True  # no ps: the number is all there is
+        return False  # no ps: the number alone is no proof (hunt phase 1)
     cmd = r.stdout or ""
     if r.returncode != 0 or not cmd.strip():
         return False  # gone (or a zombie that ps no longer lists)
-    return SLASH in cmd
+    return _runs_this(cmd, project)
 
 
 def _end_process(pid: int, proc=None, wait: float = 10.0, alive=None) -> None:
@@ -572,7 +587,7 @@ def run_state(project: str) -> dict:
         rec = _read_record(project)  # 0.14.3: a run an earlier app started and that still works
         if not rec:
             return {"running": False}
-        if not _pid_runs_enlens(rec["pid"]):
+        if not _pid_runs_enlens(rec["pid"], project):
             _forget_record(project, rec["pid"])
             return {"running": False}
         plan = rec.get("plan") or {}
@@ -654,8 +669,8 @@ def stop_run(project: str) -> dict:
                 r["proc"].terminate()
     else:
         rec = _read_record(project)
-        if rec and _pid_runs_enlens(rec["pid"]):
-            _end_process(rec["pid"])
+        if rec and _pid_runs_enlens(rec["pid"], project):
+            _end_process(rec["pid"], alive=lambda p: _pid_runs_enlens(p, project))
         if rec:
             _forget_record(project, rec["pid"])
     return run_state(project)
@@ -687,12 +702,54 @@ def stop_all_runs() -> list[dict]:
 # ---------------------------------------------------------------------------------------------
 # 0.10: the plugin follows the installation; "Set up Claude" installs Claude Code and opens the sign-in
 # ---------------------------------------------------------------------------------------------
+def _refused_path() -> Path:
+    """Hunt phase 1 (INSTALL-5): the note that Claude Code refused the plugin last time ENLENS rewrote it (beside the
+    data folder's plugin folder, not in it: Claude Code copies that folder)."""
+    return core.home() / "claude-plugin-refused.json"
+
+
+def _note_refused(why: str, steps: list[dict]) -> None:
+    failed = next((x for x in steps if not x["ok"]), None)
+    try:
+        core._write_whole(_refused_path(), json.dumps({
+            "version": __version__, "python": sys.executable, "reason": why,
+            "step": " ".join(failed["args"]) if failed else "", "text": failed["text"] if failed else "",
+            "at": time.strftime("%Y-%m-%d %H:%M:%S")}, indent=2))
+    except OSError:
+        pass  # (then the next start cannot know: the words of this run still say it)
+
+
+def _forget_refused() -> None:
+    try:
+        _refused_path().unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def refused_words(r: dict) -> str:
+    """What to tell the person when Claude Code refused a rewritten plugin (r: what repair() returned), or ""."""
+    if not r.get("refused"):
+        return ""
+    said = " ".join(str(r.get("refused_text") or "").split())[-200:]
+    return ("Claude Code did not take the ENLENS plugin written for this installation"
+            + (f" (it answered: {said})" if said else "") + ", so it still uses the earlier one. ENLENS tries again "
+            "when it next starts; or press Set up Claude in Settings → AI, or run `enlens claude-setup`.")
+
+
 def stale() -> str:
     """Why the written plugin no longer fits this installation ("" when it fits, or when none was written): the
-    connector it starts is another Python (ENLENS moved, or another copy wrote it) or another data folder."""
+    connector it starts is another Python (ENLENS moved, or another copy wrote it) or another data folder. Hunt phase
+    1 (INSTALL-5): also when Claude Code refused the plugin last time it was rewritten (its own copy is the old one,
+    though the files here are new), so a later start tries again."""
     plug = plugin_folder()
     if not (plug / ".mcp.json").exists():
         return ""
+    try:
+        refused = json.loads(_refused_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        refused = None
+    if isinstance(refused, dict):
+        return "Claude Code refused it last time" + (f" ({refused.get('reason')})" if refused.get("reason") else "")
     try:
         cfg = json.loads((plug / ".mcp.json").read_text(encoding="utf-8"))["mcpServers"][SERVER]
     except (OSError, ValueError, KeyError, TypeError):
@@ -746,11 +803,24 @@ def repair(run_claude: bool = True) -> dict:
     if path:
         for args in ([path, "plugin", "marketplace", "add", str(root)], [path, "plugin", "install", f"{PLUGIN}@{MARKETPLACE}"]):
             code, text = _run(args, timeout=120)
-            out["steps"].append({"args": args[1:], "ok": code == 0, "text": text[-300:]})
+            out["steps"].append({"args": args[1:], "ok": code == 0, "text": re.sub(r"\x1b\[[0-9;]*m", "", text)[-300:]})
             if code != 0:
                 break
         else:
             out["refreshed"] = refresh_in_claude_code(path)
+        # hunt phase 1 (INSTALL-5): repaired only when Claude Code took it (as agentcli.repair says it): the files
+        # were rewritten whatever Claude Code answered, and "now uses this installation" was said after a refusal
+        # while Claude Code kept its own, older copy. A refusal is noted, so stale() sees it and a later start tries
+        # again; the words say what happened (refused_words).
+        done = out["steps"] + out.get("refreshed", [])
+        if all(x["ok"] for x in done):
+            _forget_refused()
+        else:
+            bad = next(x for x in done if not x["ok"])
+            out.update(repaired=False, refused=True, refused_step=" ".join(bad["args"]), refused_text=bad["text"])
+            _note_refused(why, done)
+    elif run_claude:
+        _forget_refused()  # no Claude Code on this computer any more: nothing to try again
     _STATUS["value"] = None
     try:
         from . import mcp_server

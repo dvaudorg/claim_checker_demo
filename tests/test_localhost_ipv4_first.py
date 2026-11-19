@@ -24,7 +24,8 @@ STATIC = Path(llm.__file__).parent / "gui" / "static"
 
 
 class _Fake:
-    """urllib.request.urlopen in place: records each request and answers as `answer(url)` says."""
+    """llm.direct_open (this computer, no proxy) or urllib.request.urlopen in place: records each request and answers
+    as `answer(url)` says."""
 
     def __init__(self, answer):
         self.answer, self.seen = answer, []
@@ -42,7 +43,7 @@ def _refused(url):
 
 def test_localhost_goes_to_127_0_0_1_with_everything_kept(monkeypatch):
     fake = _Fake(lambda url: "answer")
-    monkeypatch.setattr(urllib.request, "urlopen", fake)
+    monkeypatch.setattr(llm, "direct_open", fake)   # hunt phase 1: this computer is opened without a proxy
     req = urllib.request.Request("http://localhost:11434/api/chat?x=1", data=b"{}", method="POST",
                                  headers={"Content-Type": "application/json"})
     assert llm.local_urlopen(req, timeout=7) == "answer"
@@ -54,7 +55,7 @@ def test_localhost_goes_to_127_0_0_1_with_everything_kept(monkeypatch):
 
 def test_a_server_on_ipv6_only_is_still_reached(monkeypatch):
     fake = _Fake(_refused)
-    monkeypatch.setattr(urllib.request, "urlopen", fake)
+    monkeypatch.setattr(llm, "direct_open", fake)   # hunt phase 1: this computer is opened without a proxy
     assert llm.local_urlopen("http://localhost:1234/v1/models", timeout=1) == "via localhost"
     assert [s[0] for s in fake.seen] == ["http://127.0.0.1:1234/v1/models", "http://localhost:1234/v1/models"]
 
@@ -64,7 +65,7 @@ def test_a_timeout_is_not_tried_twice(monkeypatch):
         raise URLError(TimeoutError("timed out"))
 
     fake = _Fake(slow)
-    monkeypatch.setattr(urllib.request, "urlopen", fake)
+    monkeypatch.setattr(llm, "direct_open", fake)   # hunt phase 1: this computer is opened without a proxy
     with pytest.raises(URLError):
         llm.local_urlopen("http://localhost:11434/api/version", timeout=0.6)
     assert len(fake.seen) == 1
@@ -73,10 +74,15 @@ def test_a_timeout_is_not_tried_twice(monkeypatch):
 @pytest.mark.parametrize("url", ["http://127.0.0.1:11434/api/tags", "http://[::1]:11434/api/tags",
                                  "http://gpu-box.lan:11434/api/tags", "https://example.org/v1/models"])
 def test_other_addresses_are_opened_as_they_are(monkeypatch, url):
-    fake = _Fake(lambda u: "ok")
-    monkeypatch.setattr(urllib.request, "urlopen", fake)
+    # hunt phase 1: a loopback address is opened as it is without a proxy (llm.direct_open), another computer's
+    # through urllib's own urlopen (and the proxy the system names)
+    here, there = _Fake(lambda u: "ok"), _Fake(lambda u: "ok")
+    monkeypatch.setattr(llm, "direct_open", here)
+    monkeypatch.setattr(urllib.request, "urlopen", there)
     llm.local_urlopen(url)
-    assert fake.seen[0][0] == url
+    local = "127.0.0.1" in url or "[::1]" in url
+    assert (here if local else there).seen[0][0] == url
+    assert not (there if local else here).seen
 
 
 def test_the_model_servers_use_it_unless_given_another_opener():
@@ -116,13 +122,13 @@ def test_the_quick_look_finds_ollama_at_localhost(ollama_on_ipv4, monkeypatch):
     """The look the card makes every few seconds: what failed on Windows."""
     port = ollama_on_ipv4
     asked = []
-    real = urllib.request.urlopen
+    real = llm.direct_open
 
     def recording(req, *a, **kw):
         asked.append(req.full_url if hasattr(req, "full_url") else req)
         return real(req, *a, **kw)
 
-    monkeypatch.setattr(urllib.request, "urlopen", recording)
+    monkeypatch.setattr(llm, "direct_open", recording)   # hunt phase 1: this computer is opened without a proxy
     monkeypatch.setattr(llm, "OPENAI_PORTS", ())
     llm._DETECTED.clear()
     assert llm.ollama_version(f"http://localhost:{port}", 0.6) == "0.40.16"

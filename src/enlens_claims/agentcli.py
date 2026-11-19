@@ -1011,12 +1011,13 @@ def _resolve_agy_model(model_id: str, effort: str | None, available: list[str]) 
     return cands[0], None
 
 
-def helper_prompt(route: str, project: str, kind: str, model: str, helper: str) -> str:
-    """One helper process's prompt: MARKER, the helper's own instructions, the batch to take."""
+def helper_prompt(route: str, project: str, kind: str, model: str, helper: str, taken_by: str | None = None) -> str:
+    """One helper process's prompt: MARKER, the helper's own instructions, the batch to take. `taken_by`: the name
+    its batches are taken under (`_spawn`: one per helper process, so the run counts each helper's own)."""
     title = cli(route).title
     q = json.dumps
     call = (f"next_tasks(project={q(project, ensure_ascii=False)}, kind={q(kind)}, model={q(model)}, "
-            f"helper={q(helper)}, taken_by={q(f'{helper} in {title}', ensure_ascii=False)})")
+            f"helper={q(helper)}, taken_by={q(taken_by or f'{helper} in {title}', ensure_ascii=False)})")
     return (f"{MARKER} You are a helper of ENLENS, started by the ENLENS app to answer its task queue.\n\n"
             f"{helper_body(helper)}\n\n"
             f"Project: {project}. Kind: {kind}. Model: {model}. Helper: {helper}.\n"
@@ -1166,8 +1167,30 @@ def _say(run: dict, line: str) -> None:
 
 
 def _claims_since(ws, taken_by: str, since: str) -> int:
+    """The batches one helper process took (its own `taken_by`, `_spawn`)."""
     return int(ws.scalar("SELECT COUNT(*) FROM task_claims WHERE taken_by=? AND claimed_at >= ?", (taken_by, since))
                or 0)
+
+
+def _group_waits(run: dict, ws, group: tuple) -> bool:
+    """Whether work of a helper's own group (kind, model, helper) still waits for the queue, as next_tasks would hand
+    it to that helper. Hunt phase 1: `_reap` asked whether any task of the kind waited, so a helper of one group (the
+    stepped-up labels on the middle model) that found its batches taken by its colleague counted as a failed helper
+    while the first-step labels waited for another helper."""
+    from .taskqueue import PAGE, _lent, _waiting_count, _waiting_rows, effective_helper, effective_model, mix_kinds
+
+    kind, model, helper = group
+    if _waiting_count(ws, kind) <= 0:
+        return False
+    r, lent = run.get("router"), mix_kinds()
+    if r is None:
+        return True
+
+    def mine(rows):
+        return any(effective_model(t, r) == model and effective_helper(t, r) == helper and not _lent(t, lent)
+                   for t in rows)
+    rows = _waiting_rows(ws, kind, PAGE)
+    return mine(rows) or (len(rows) >= PAGE and mine(_waiting_rows(ws, kind)))
 
 
 def _spawn(run: dict, g: dict, path: str, opts: set[str], work: Path, ws) -> None:
@@ -1175,14 +1198,18 @@ def _spawn(run: dict, g: dict, path: str, opts: set[str], work: Path, ws) -> Non
     r = run["router"]
     model_id = r.api_id(g["model"]) or g["model"]
     effort = r.effort(g["kind"])
-    prompt = helper_prompt(route, project, g["kind"], g["model"], g["helper"])
+    run["n"] += 1
+    # hunt phase 1: each helper process takes its batches under a name of its own, so the run counts each helper's
+    # batches once: under the group's shared name, two helpers at work at once each counted the other's too (the
+    # report said more batches than were taken, and a helper that took nothing did not count as failed)
+    taken_by = f"{g['helper']} in {cli(route).title} #{run['n']}"
+    prompt = helper_prompt(route, project, g["kind"], g["model"], g["helper"], taken_by)
     args = run_args(route, path, prompt, model_id, effort, work, opts, run["available"])
     if route == "antigravity":   # enforced for every helper, not once a run: a run starts them for hours
         prepare_agy_home()
         _write_agy_connector(work)
         if always_proceeds():
             raise ValueError(ALWAYS_PROCEED.format(path=enlens_agy_settings_path()))
-    run["n"] += 1
     out = runs_folder() / f"{_key(route, project)}-{run['n']}.out"
     fh = open(out, "w", encoding="utf-8")
     try:
@@ -1191,7 +1218,6 @@ def _spawn(run: dict, g: dict, path: str, opts: set[str], work: Path, ws) -> Non
                                 start_new_session=os.name != "nt", **no_window())
     finally:
         fh.close()
-    taken_by = f"{g['helper']} in {cli(route).title}"
     run["procs"].append({"proc": proc, "group": (g["kind"], g["model"], g["helper"]), "out": out, "since": now(),
                          "taken_by": taken_by, "model_id": model_id, "waited": g.get("waiting", 0)})
     run["started"] += 1
@@ -1203,8 +1229,6 @@ def _spawn(run: dict, g: dict, path: str, opts: set[str], work: Path, ws) -> Non
 def _reap(run: dict, ws) -> dict | None:
     """Look at the helper processes that ended. Returns {"limit"} or {"fatal"} when the run must end. Without `ws`
     (the run is ending) they are only cleared away."""
-    from .taskqueue import _waiting_count
-
     end = None
     for p in [x for x in run["procs"] if x["proc"].poll() is not None]:
         run["procs"].remove(p)
@@ -1232,7 +1256,7 @@ def _reap(run: dict, ws) -> dict | None:
         elif o["signed_out"]:
             end = {"fatal": f"{cli(run['route']).title} is not signed in: sign in once from Settings → AI, then press "
                             f"Start {cli(run['route']).title} again. ({o['message']})"}
-        elif not o["ok"] or (took == 0 and _waiting_count(ws, p["group"][0]) > 0):
+        elif not o["ok"] or (took == 0 and _group_waits(run, ws, p["group"])):
             run["failed_in_row"] += 1
             why = o["message"] or "it ended without taking a batch"
             _say(run, f"A helper ended without answering ({p['taken_by']}): {why}")

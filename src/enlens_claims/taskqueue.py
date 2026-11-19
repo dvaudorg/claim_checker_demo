@@ -768,9 +768,12 @@ def next_tasks(ws: Workspace, kind: str | None = None, n: int | None = None, mod
                 if got:
                     picked.append({"task_id": t["task_id"], "prompt": user, "payload_json": full["payload_json"]})
                     budget += cost
-                    # 0.11: the passages of this task leave the computer now, with the batch
+                    # 0.11: the passages of this task leave the computer now, with the batch; hunt phase 1: under
+                    # the model that reads them, as the answer records it (submit_answers): the provider's own id
+                    # on Codex and Antigravity (the line-up), Claude's alias on Claude Code, never the task's
+                    # stored model (Claude's "haiku" for text sent to OpenAI, or the first model after a step up)
                     access.record_sent(cx, t["task_id"], json.loads(full["payload_json"]), title, k,
-                                       provider=prov, person=me)
+                                       provider=prov, model=r.api_id(m) if r.lineup else m, person=me)
             if not picked:
                 continue
             cx.execute("INSERT INTO task_claims(claim_id, kind, model, helper, route, taken_by, task_ids_json, claimed_at, "
@@ -1425,12 +1428,16 @@ def answer_on_copy(ws: Workspace, items: list[tuple[str, str, dict, str]], backe
         return raws, secs
     finally:
         try:
-            sent = copy.query("SELECT passage_id, doc_id, route, task_id, sent_at, feature FROM ai_sent")
+            # hunt phase 1: with the provider, the person and the model the copy's ledger names (Codex's text went to
+            # OpenAI under OpenAI's model; a row carried without them read as Anthropic's in the AI log)
+            sent = copy.query("SELECT passage_id, doc_id, route, task_id, sent_at, feature, provider, person_id, model "
+                              "FROM ai_sent")
             if sent:
                 with ws.connect() as wcx:
-                    wcx.executemany("INSERT INTO ai_sent(passage_id, doc_id, route, task_id, sent_at, feature) "
-                                    "VALUES (?,?,?,?,?,?)",
-                                    [(r[0], r[1], r[2], None, r[4], f"{r[5]} ({purpose})") for r in sent])
+                    wcx.executemany("INSERT INTO ai_sent(passage_id, doc_id, route, task_id, sent_at, feature, provider, "
+                                    "person_id, model) VALUES (?,?,?,?,?,?,?,?,?)",
+                                    [(r[0], r[1], r[2], None, r[4], f"{r[5]} ({purpose})", r[6], r[7], r[8])
+                                     for r in sent])
         except Exception:  # noqa: BLE001 - the ledger must not stop the clean-up below
             pass
         remove_copy(copy)

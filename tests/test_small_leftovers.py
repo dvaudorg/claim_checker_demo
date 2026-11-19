@@ -438,13 +438,11 @@ def test_the_setup_probe_says_whether_an_ollama_answers(version_server):
 
 
 def test_the_setup_probe_waits_at_most_a_second_and_a_half(version_server, monkeypatch):
-    import urllib.request
-
-    from enlens_claims import ollama_setup
+    from enlens_claims import llm, ollama_setup
 
     seen = []
-    real = urllib.request.urlopen
-    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=None: seen.append(timeout) or real(req, timeout=timeout))
+    real = llm.direct_open   # hunt phase 1: this computer is opened without a proxy
+    monkeypatch.setattr(llm, "direct_open", lambda req, timeout=None: seen.append(timeout) or real(req, timeout=timeout))
     ollama_setup.answers(version_server["url"])
     assert seen == [1.5]
     version_server["wait"] = 2.5
@@ -454,13 +452,11 @@ def test_the_setup_probe_waits_at_most_a_second_and_a_half(version_server, monke
 
 
 def test_detecting_local_servers_finds_an_ollama_with_its_version_and_keeps_its_time_limit(version_server, monkeypatch):
-    import urllib.request
-
     from enlens_claims import llm
 
     seen = []
-    real = urllib.request.urlopen
-    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=None: seen.append(
+    real = llm.direct_open   # hunt phase 1: this computer is opened without a proxy
+    monkeypatch.setattr(llm, "direct_open", lambda req, timeout=None: seen.append(
         (getattr(req, "full_url", req), timeout)) or real(req, timeout=timeout))
     monkeypatch.setattr(llm, "OPENAI_PORTS", ())
     version_server["body"] = b'{"version": "0.40.1"}'

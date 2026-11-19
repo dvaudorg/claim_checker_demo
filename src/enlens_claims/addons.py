@@ -205,7 +205,11 @@ def overview(ws, taken) -> dict:
 
 
 # -------------------------------------------------------------------------------------------------- 0.13.6: the database
-_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# hunt phase 1 (INSTALL-8): matched whole (`fullmatch`): with `match` and `$`, a name ending in a line break passed
+# ("ai_note\n"), SQLite added the column as "ai_note", and every later opening tried to add it again and failed with
+# "duplicate column name", so no project could be opened or made, in words that named no add-on
+_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_TYPE = re.compile(r"[A-Za-z0-9_ ()'.,-]+")
 
 
 def database() -> list[dict]:
@@ -218,7 +222,8 @@ def database() -> list[dict]:
         cols = []
         for mg in migrations or []:
             table, col, typ = mg
-            if not (_NAME.match(table) and _NAME.match(col) and re.match(r"^[A-Za-z0-9_ ()'.,-]+$", typ)):
+            if not (isinstance(table, str) and isinstance(col, str) and isinstance(typ, str)
+                    and _NAME.fullmatch(table) and _NAME.fullmatch(col) and _TYPE.fullmatch(typ)):
                 raise ValueError(f"The add-on {n} names a column ENLENS cannot add: {mg!r}")
             cols.append((table, col, typ))
         out.append({"addon": n, "schema": schema or "", "migrations": cols, "indexes": indexes or ""})

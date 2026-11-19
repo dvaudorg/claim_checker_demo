@@ -149,13 +149,15 @@ def replace_task(cx, task_id: str, kind: str, model: str, payload: dict) -> bool
     return True
 
 
-def _send(ws: Workspace, t, backend) -> None:
-    """Before a backend is asked: the guard (0.11), and the ledger when the text leaves this computer."""
+def _send(ws: Workspace, t, backend, model: str | None) -> None:
+    """Before a backend is asked: the guard (0.11), and the ledger when the text leaves this computer. `model` is the
+    model about to be asked (hunt phase 1: the router's choice or the stronger model after a step up, which the
+    task's own `model` column does not follow), so the AI log names the model that really reads the text."""
     access.require(backend, t, ws)
     if access.is_cloud(backend) and getattr(backend, "name", "") not in providers.AGENT_ROUTES:
         with ws.connect() as cx:
             access.record_sent(cx, t["task_id"], json.loads(t["payload_json"]), access.route_name(backend), t["kind"],
-                               provider=access.provider_of(backend))
+                               provider=access.provider_of(backend), model=model)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1319,7 +1321,7 @@ def run_one(ws: Workspace, task_id: str, backend, model: str | None = None) -> t
             return True, []  # 0.18.1 (H4): the same question was answered before, and the answer fits this text
         asked = {**dict(t), "kind": form} if form else t
         system, user = render(ws, asked)
-        _send(ws, t, backend)
+        _send(ws, t, backend, call)
         raw, problem = _complete(backend, asked, system, user, call)
         used = "baseline" if getattr(backend, "name", "") == "baseline" else call
         was_again = t["status"] == "done"
@@ -1581,7 +1583,7 @@ def answer_locally_first(ws: Workspace, task_id: str, backend, model: str) -> st
                 break
             asked = {**dict(t), "kind": form} if form else t
             system, user = render(ws, asked)
-            _send(ws, t, backend)
+            _send(ws, t, backend, model)
             raw, problem = _complete(backend, asked, system, user, model)
             ok, _e = ingest_result(ws, task_id, raw, model=model, provenance=_provenance(backend, model),
                                    route=_route_name(backend), problem=problem, claim=claim, as_kind=form)
@@ -1739,7 +1741,7 @@ def answer_again(ws: Workspace, task_id: str, backend) -> bool:
             return False
         system, user = render(ws, t)
         call = model_for(t, backend)
-        _send(ws, t, backend)
+        _send(ws, t, backend, call)
         raw, problem = _complete(backend, t, system, user, call)
         ok, _e = ingest_result(ws, task_id, raw, model=call, provenance=_provenance(backend, call),
                                route=_route_name(backend), problem=problem)
@@ -1819,7 +1821,7 @@ def run(ws: Workspace, kind: str, backend, limit: int | None = None, model: str 
                 continue
             try:
                 system, user = render(ws, t)
-                _send(ws, t, backend)
+                _send(ws, t, backend, model or t["model"])
                 raw, problem = _complete(backend, t, system, user, model or t["model"])
                 used = "baseline" if backend.name == "baseline" else (model or t["model"])
                 ingest_result(ws, t["task_id"], raw, model=used, provenance=_provenance(backend, used),
@@ -1893,7 +1895,7 @@ def export(ws: Workspace, kind: str, batch_size: int = 25, limit: int | None = N
                 # the file queue's tasks are for Claude (a chat, or Claude Code), as "Claude may read it" said
                 if access.recheck(cx, tid, dflt, provider=access.ANTHROPIC) != "cloud":
                     continue
-                row = cx.execute("SELECT status, prompt_version FROM tasks WHERE task_id=? AND status IN ('pending', "
+                row = cx.execute("SELECT status, prompt_version, model FROM tasks WHERE task_id=? AND status IN ('pending', "
                                  "'retry') AND (claimed_by IS NULL OR claimed_by='' OR claimed_at < ?)",
                                  (tid, _cutoff())).fetchone()
                 if row is None:
@@ -1904,8 +1906,9 @@ def export(ws: Workspace, kind: str, batch_size: int = 25, limit: int | None = N
                 cx.execute("UPDATE tasks SET status='exported', prompt_version=COALESCE(NULLIF(?, ''), "
                            "prompt_version), claimed_by=NULL, claimed_at=NULL WHERE task_id=?", (prompts.VERSIONS.get(kind), tid))
                 before[tid] = (row[0], row[1])
+                # (whoever answers a file is not known here: the AI log names the model the task was made for)
                 access.record_sent(cx, tid, json.loads(payloads[tid]), "file queue", kind, provider=access.ANTHROPIC,
-                                   person=me)
+                                   model=row[2], person=me)
                 todo.append(tid)
     if report is not None:
         report["held"] = held

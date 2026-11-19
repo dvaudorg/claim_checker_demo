@@ -49,7 +49,9 @@ enlens detect                                                       # local serv
 
 `check` (or `hypothesis`) prints, as JSON, the answer, the balance, and per part the judged passages with quotes and
 the passages read without result. Options: `--decompose`, `--framework NAME --code CODE` (`--target` still works for
-SDG targets), `--k`, `--per-doc`, `--no-expand`, `--threshold`, `--embed-model` and `--embed-url`.
+SDG targets), `--k`, `--per-doc`, `--no-expand`, `--threshold`, `--embed-model` and `--embed-url`. `check`, `batch`
+and `history` count a judgement from the Strictness of Settings, as the app does (`--threshold` sets another for that
+command), and name the value used in their output (`confidence_threshold`).
 
 **Backends** (`--backend`, on every model command):
 

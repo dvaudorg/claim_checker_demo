@@ -157,7 +157,9 @@ def test_report_rendering():
     assert "## Limits" in one and "invented" in one and "English only" in one
     assert "the gold set has changed" not in one
     two = v.to_markdown(v.make_run([_pass(), _pass()], GOLD, date="2026-11-13"), gold_fingerprint="other")
-    assert "the same verdict for 100% of 5 hypotheses" in two
+    # hunt phase 1 (BACKENDS-9): H5, unanswered in both passes, is left out of repeatability, and the report says so
+    assert "the same verdict for 100% of 4 hypotheses" in two
+    assert "1 hypothesis unanswered in both passes left out" in two
     assert "the gold set has changed since this run (now `other`)" in two
 
 

@@ -112,6 +112,9 @@ def main(argv: list[str] | None = None) -> int:
     except FileNotFoundError as e:
         print(f"Problem: {e}", file=sys.stderr)
         return 1
+    except ValueError as e:  # hunt phase 1 (INSTALL-6's sweep): ENLENS's refusals in words (an unknown kind of task,
+        print(f"Problem: {e}", file=sys.stderr)  # a document no AI may read…) ended in a traceback; the connector says
+        return 1                                 # the same messages as words (`mcp_server._friendly`)
 
 
 def _main(argv: list[str] | None = None) -> int:
@@ -243,7 +246,8 @@ def _main(argv: list[str] | None = None) -> int:
                                        "API models.verify in config.json)")
         p.add_argument("--embed-model", help="semantic search with this embedding model (after `enlens embed`)")
         p.add_argument("--embed-url", help="address of the embedding server (default: --url)")
-        p.add_argument("--threshold", type=float, help="confidence from which grades count (default from config)")
+        p.add_argument("--threshold", type=float, help="confidence from which grades count (default: the Strictness "
+                                                       "of Settings, as in the app)")
         backend_args(p)
 
     for name, text in (("check", "check one claim or hypothesis against the documents in the workspace"),
@@ -256,7 +260,8 @@ def _main(argv: list[str] | None = None) -> int:
     p.add_argument("--out", help="write one row per graded passage to this CSV")
     check_args(p)
     p = sub.add_parser("history", help="hypotheses checked in this workspace, newest first")
-    p.add_argument("--threshold", type=float)
+    p.add_argument("--threshold", type=float, help="confidence from which grades count (default: the Strictness of "
+                                                   "Settings, as in the app)")
     p.add_argument("--limit", type=int, default=50)
     p.add_argument("--csv", help="write every check (one row per graded passage) to this CSV instead")
     p = sub.add_parser("embed", help="build the semantic index: embed every passage with a local embedding model")
@@ -503,6 +508,12 @@ def _main(argv: list[str] | None = None) -> int:
     if a.cmd == "measure":
         from . import measure
 
+        # hunt phase 1 (INSTALL-6's sweep): a folder or project that is not there is named before the long reading test
+        # (a mistyped --folder printed the report without it and exited 0)
+        for opt, path in (("--folder", a.folder), ("--ws", a.measure_ws)):
+            if path and not Path(path).expanduser().exists():
+                print(f"Problem: {opt}: nothing at {path}.", file=sys.stderr)
+                return 1
         result = measure.run(readers=a.reader, folder=a.folder, project=a.measure_ws, timings=a.timings)
         text = json.dumps(result, indent=2, ensure_ascii=False, default=str) if a.json else measure.to_markdown(result)
         if a.report:
@@ -582,7 +593,15 @@ def _main(argv: list[str] | None = None) -> int:
     if a.cmd == "load-vca":
         _print(vca.load_into(ws, a.xlsx))
     elif a.cmd == "ingest":
-        _print(ingest.ingest(ws, a.inputs, a.exclude, ocr=ingest.OcrOptions(a.ocr, a.ocr_lang)))
+        # hunt phase 1 (INSTALL-6): a path that is not there is named and nothing is added (a typo printed
+        # {"files": 0} and exited 0, as for a folder without documents), as the connector refuses it (`_check_path`)
+        missing = [x for x in a.inputs if not Path(x).expanduser().exists()]
+        if missing:
+            print("Problem: nothing at " + ", ".join(missing) + ". Give the path of a folder, a zip or a file on this "
+                  "computer. Nothing was added.", file=sys.stderr)
+            return 1
+        _print(ingest.ingest(ws, [str(Path(x).expanduser()) for x in a.inputs], a.exclude,
+                             ocr=ingest.OcrOptions(a.ocr, a.ocr_lang)))
     elif a.cmd == "reset-corpus":
         if not a.yes:
             print("This deletes documents, passages, claims, verifications and their tasks. Run again with --yes.")
@@ -622,7 +641,7 @@ def _main(argv: list[str] | None = None) -> int:
         hid = claimcheck.check_hypothesis(ws, a.claim, be, _model(a, be, ws), framework=a.framework or None,
                                           code=a.code, k=a.k, per_doc=a.per_doc, expand=not a.no_expand,
                                           decompose=a.decompose, progress=_print_progress, embedder=_embedder(a))
-        _print(_summary(claimcheck.hypothesis_result(ws, hid, a.threshold)))
+        _print(_summary(claimcheck.hypothesis_result(ws, hid, _strictness(a))))
     elif a.cmd == "batch":
         from . import claimcheck
 
@@ -634,23 +653,26 @@ def _main(argv: list[str] | None = None) -> int:
         res = claimcheck.check_batch(ws, items, be, _model(a, be, ws), embedder=_embedder(a), k=a.k, per_doc=a.per_doc,
                                      expand=not a.no_expand, decompose=a.decompose,
                                      progress=lambda s, m, info=None: print(m, "...", file=sys.stderr) if s == "item" else None)
-        rows = [claimcheck.hypothesis_result(ws, h, a.threshold) for h in res["checked"]]
+        thr = _strictness(a)
+        rows = [claimcheck.hypothesis_result(ws, h, thr) for h in res["checked"]]
         if a.out:
             out_rows = [r for res_h in rows for r in claimcheck.hypothesis_rows(res_h)]
             _write_csv(a.out, out_rows)
-        _print({**res, "results": [{"hyp_id": r["hyp_id"], "status": r["status"], "hypothesis": r["text"]} for r in rows]})
+        _print({**res, "confidence_threshold": thr,
+                "results": [{"hyp_id": r["hyp_id"], "status": r["status"], "hypothesis": r["text"]} for r in rows]})
         if res["stopped"]:
             return 1
     elif a.cmd == "history":
         from . import claimcheck
 
+        thr = _strictness(a)
         if a.csv:
-            _write_csv(a.csv, claimcheck.export_rows(ws, a.threshold))
-            print(f"Written to {a.csv}")
-        else:
-            _print([{k: h[k] for k in ("hyp_id", "created_at", "status", "text", "code", "parts", "supports", "partly",
-                                       "refutes", "passages_read", "model")} for h in claimcheck.history(ws, a.threshold,
-                                                                                                         limit=a.limit)])
+            _write_csv(a.csv, claimcheck.export_rows(ws, thr))
+            print(f"Written to {a.csv} (judgements count from a confidence of {thr:g}).")
+        else:  # each row names the strictness its status and counts are at (the output stays a list, as before)
+            _print([{**{k: h[k] for k in ("hyp_id", "created_at", "status", "text", "code", "parts", "supports",
+                                          "partly", "refutes", "passages_read", "model")}, "confidence_threshold": thr}
+                    for h in claimcheck.history(ws, thr, limit=a.limit)])
     elif a.cmd == "embed":
         from . import embed
 
@@ -844,6 +866,9 @@ def _cmd_07(a, ws) -> int:
     if a.cmd == "resolve":
         from . import references
 
+        if not ws.scalar("SELECT 1 FROM documents WHERE doc_id=?", (a.doc,)):  # (INSTALL-6's sweep)
+            print(f"Problem: no document {a.doc!r} in this project.", file=sys.stderr)
+            return 1
         be = _backend(a, ("resolve",), ws)
         r = references.resolve_document(ws, a.doc, be, _model(a, be, ws), a.name,
                                         progress=lambda i, n: print(f"[{i}/{n}]", file=sys.stderr))
@@ -853,8 +878,15 @@ def _cmd_07(a, ws) -> int:
     if a.cmd == "annotate":
         from . import annotate
 
+        from . import home
+
+        if not ws.scalar("SELECT 1 FROM documents WHERE doc_id=?", (a.doc,)):  # (INSTALL-6's sweep: a traceback)
+            print(f"Problem: no document {a.doc!r} in this project.", file=sys.stderr)
+            return 1
+        # hunt phase 1 (INSTALL-1): "not counted at this strictness" at the person's Strictness, as the app's own copy
         r = annotate.annotate_document(ws, a.doc, a.hyp, tuple(a.layers), a.framework, a.concept,
-                                       use_pdfminer=not a.no_pdfminer)
+                                       use_pdfminer=not a.no_pdfminer,
+                                       threshold=float(home.load_settings()["threshold"]))
         Path(a.out).write_bytes(r["body"])
         _print({"written": a.out, "kind": r["content_type"], "quotes": r["marks"], "highlighted": r["placed"],
                 "method": r["method"], "not_placed": r["missing"]})
@@ -1151,6 +1183,10 @@ def _claude_setup(a) -> int:
                   "(restart Claude Code first if it was open).")
             return 0
         print("\nIt could not be added automatically. Type these two lines in a terminal instead:\n")
+        for line in claude_setup.commands():
+            print("  " + line)
+        print("\nThen restart Claude Code and type /enlens-run <project> in it.")
+        return 1  # hunt phase 1 (INSTALL-6's sweep): Claude Code refused, so the command failed (it exited 0)
     else:
         if not a.print_only:
             print("\nClaude Code was not found on this computer (install it from claude.com/claude-code).")
@@ -1161,12 +1197,22 @@ def _claude_setup(a) -> int:
     return 0
 
 
+def _strictness(a) -> float:
+    """Hunt phase 1 (INSTALL-1): the confidence from which a grade counts for `check`, `batch` and `history`: --threshold,
+    else the person's Strictness of Settings, as the app and the connector use for the very same checks (they used
+    the project file's `support_confidence`, the SDG pack's pipeline's value, which the app never shows, so the
+    command line could call supported what the app shows as uncertain). Each output names the value used."""
+    from . import home
+
+    return float(home.load_settings()["threshold"]) if a.threshold is None else float(a.threshold)
+
+
 def _summary(r: dict) -> dict:
     from .claimcheck import STATUS_TEXT
 
     out = {"hyp_id": r["hyp_id"], "hypothesis": r["text"], "status": r["status"],
            "explanation": STATUS_TEXT.get(r["status"]), "status_any_confidence": r["status_any"],
-           "balance": r["balance"], "parts": []}
+           "confidence_threshold": r["threshold"], "balance": r["balance"], "parts": []}
     if r.get("code"):
         out["code"] = f"{r['code']}: {r.get('code_description', '')}"
     for p in r["parts"]:

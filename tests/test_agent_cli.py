@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 
@@ -421,7 +422,8 @@ def test_start_codex_answers_the_queue_on_openais_models(clis, corpus):
     assert "--ignore-user-config" in argv and "--ephemeral" in argv and "--json" in argv
     assert 'mcp_servers.enlens.enabled_tools=["next_tasks", "submit_answers", "release"]' in argv
     assert "features.shell_tool=false" in argv and 'approval_policy="never"' in argv
-    assert argv[-1].startswith(clis.MARKER) and 'taken_by="enlens-labeller in Codex"' in argv[-1]
+    # (hunt phase 1: each helper process takes its batches under a name of its own, "… in Codex #1")
+    assert argv[-1].startswith(clis.MARKER) and re.search(r'taken_by="enlens-labeller in Codex #\d+"', argv[-1])
     assert Path(fake["execs"][0]["cwd"]).name.startswith("codex-Q")
     assert not list(clis.runs_folder().glob("codex-*.run.json"))   # the record goes with the run
 

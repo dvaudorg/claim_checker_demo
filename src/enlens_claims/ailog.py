@@ -2,7 +2,9 @@
 how many excerpts left the computer for it.
 
 It is read from the ledger every cloud sending writes (`ai_sent`, access.record_sent): one row per passage sent, now
-with the person who sent it (`person_id`, this installation's id) and the model (`model`, else the task's). One sending
+with the person who sent it (`person_id`, this installation's id) and the model the text was sent to (`model`: the
+router's choice or the stronger model, the provider's own id on Codex and Antigravity, Claude's alias on Claude Code;
+a row written before that named none, or the task's first model, and then shows the task's). One sending
 (the passages of one task handed out at one moment, or one chat's search) is one row of the log. A colleague's rows
 come with the sync like the rest of the ledger (sync/merge.py `_ai_work`), for the documents this copy holds; a row a
 file brings in this person's own name that this copy does not hold names nobody (the same merge).

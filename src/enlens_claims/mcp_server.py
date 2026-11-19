@@ -204,8 +204,17 @@ def _shareable(ws, check_id: str) -> tuple[bool, set[str]]:
     return every, ok
 
 
-def _summary(ws, check_id: str) -> dict:
-    r = claimcheck.result(ws, check_id)
+def _strictness() -> float:
+    """Hunt phase 1 (INSTALL-1): the person's Strictness of Settings (the data folder's `threshold`), read again on
+    every call as the app does, so a change of the slider applies without restarting the connector. Every tool that
+    reports a check's status uses it: the project file's `support_confidence` is the SDG pack's pipeline's value, has
+    no control in the app, and gave the connector another answer than the app for the very same check (80% set in
+    Settings, a grade 70% sure: "Only uncertain evidence" in the app, "supported" to Claude)."""
+    return float(core.load_settings()["threshold"])
+
+
+def _summary(ws, check_id: str, threshold: float | None = None) -> dict:
+    r = claimcheck.result(ws, check_id, _strictness() if threshold is None else threshold)
     lv = access.levels(ws, {p["doc_id"] for p in r["passages"]}, provider=reader())
     every, ok = _shareable(ws, check_id)
     evidence, restricted = [], {"supports": 0, "partially_supports": 0, "refutes": 0, "waiting_for_the_user": 0,
@@ -280,12 +289,13 @@ def _check_summary(ws, check_id: str) -> dict:
     hid = ws.scalar("SELECT hyp_id FROM user_claims WHERE claim_id=?", (check_id,))
     ids = [r[0] for r in ws.query("SELECT claim_id FROM user_claims WHERE hyp_id=? ORDER BY part, rowid", (hid,))] \
         if hid else []
+    thr = _strictness()  # INSTALL-1: once for the whole hypothesis and its parts
     if len(ids) < 2:
-        return _summary(ws, check_id)
-    h = claimcheck.hypothesis_result(ws, hid)
+        return _summary(ws, check_id, thr)
+    h = claimcheck.hypothesis_result(ws, hid, thr)
     parts, evidence, notes = [], [], {}
     for n, cid in enumerate(ids, 1):
-        p = _summary(ws, cid)
+        p = _summary(ws, cid, thr)
         evidence += [{**e, "part": n} for e in p.pop("evidence")]
         for key in ("restricted_note", "non_scientific_note"):
             if p.get(key):
@@ -530,8 +540,9 @@ def build_server():
     def list_checks(project: Optional[str] = None, limit: int = 20) -> dict:
         name, ws = _project(project)
         hidden = access.hidden_hypotheses(ws)  # 0.13.6: hypotheses an add-on keeps out of a chat
-        rows = [h for h in claimcheck.history(ws) if h["hyp_id"] not in hidden][: max(1, int(limit))]
-        return {"project": name, "checks": [{"check_id": h["claim_id"], "checked_at": h["created_at"], "claim": h["claim"],
+        thr = _strictness()  # INSTALL-1: the statuses at the person's Strictness, as the app lists them
+        rows = [h for h in claimcheck.history(ws, thr) if h["hyp_id"] not in hidden][: max(1, int(limit))]
+        return {"project": name, "confidence_threshold": thr, "checks": [{"check_id": h["claim_id"], "checked_at": h["created_at"], "claim": h["claim"],
                                               "status": h["status"],
                                               "status_text": h.get("status_text")
                                               or claimcheck.STATUS_TEXT.get(h["status"], h["status"]),
@@ -727,17 +738,59 @@ def config_block() -> dict:
     return {"command": sys.executable, "args": ["-m", "enlens_claims.mcp_server"], "env": {"ENLENS_HOME": str(core.home())}}
 
 
+class DesktopConfigError(ValueError):
+    """The Claude desktop app's config file cannot be changed safely (it is left as it is)."""
+
+
+def _write_beside(path: Path, text: str) -> None:
+    """Hunt phase 1 (INSTALL-4): a file of another program, written whole: under another name beside it, then put in
+    its place (as home._write_whole does for the data folder's files), keeping its permissions. Written in place, a
+    full disk or a stop part way left claude_desktop_config.json cut short, and the Claude app lost every connector and
+    setting in it until the person restored the .bak by hand. A link (a dotfiles folder) is followed, not replaced."""
+    import time
+
+    target = path.resolve() if path.is_symlink() else path
+    part = target.with_name(f".{target.name}.{os.getpid()}.part")
+    try:
+        with open(part, "w", encoding="utf-8", newline="") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        if target.exists():
+            shutil.copymode(target, part)
+        for attempt in range(8):
+            try:
+                os.replace(part, target)
+                return
+            except PermissionError:  # Windows: the Claude app reads the file this very moment
+                if attempt == 7:
+                    raise
+                time.sleep(0.02 * (attempt + 1))
+    finally:
+        part.unlink(missing_ok=True)
+
+
 def install_desktop(path: Path | None = None) -> Path:
-    """Add (or update) the 'enlens' server in the desktop app's config; the previous file is kept as .bak."""
+    """Add (or update) the 'enlens' server in the desktop app's config; the previous file is kept as .bak. Hunt phase 1
+    (INSTALL-4): every other key and connector is kept as it was; a file that does not hold a settings object (it does
+    not parse, or "mcpServers" is not an object) is left untouched and DesktopConfigError says so; the new file is
+    written beside and put in place whole."""
     path = path or desktop_config_path()
     data: dict = {}
     if path.exists():
-        text = path.read_text(encoding="utf-8")
-        data = json.loads(text) if text.strip() else {}
+        text = path.read_text(encoding="utf-8-sig")  # (a byte order mark, as Notepad writes one, is no reason to stop)
+        try:
+            data = json.loads(text) if text.strip() else {}
+        except ValueError as e:
+            raise DesktopConfigError(f"{path} is not valid JSON ({e}), so ENLENS left it as it is. Correct it (or move "
+                                     "it away) and run this again.") from None
+        if not isinstance(data, dict) or not isinstance(data.get("mcpServers", {}), dict):
+            raise DesktopConfigError(f"{path} does not hold the Claude app's settings as ENLENS knows them (an object "
+                                     "with an object \"mcpServers\"), so ENLENS left it as it is.")
         shutil.copy2(path, path.with_suffix(path.suffix + ".bak"))
     data.setdefault("mcpServers", {})["enlens"] = config_block()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    _write_beside(path, json.dumps(data, indent=2))
     return path
 
 
@@ -747,8 +800,10 @@ def repair_desktop(path: Path | None = None) -> bool:
     was changed. Any other entry, or a config that names another data folder, is left alone."""
     path = path or desktop_config_path()
     try:
-        data = json.loads(path.read_text(encoding="utf-8") or "{}")
+        data = json.loads(path.read_text(encoding="utf-8-sig") or "{}")
         entry = data["mcpServers"]["enlens"]
+        if not isinstance(entry, dict):
+            return False
     except (OSError, ValueError, KeyError, TypeError):
         return False
     cmd = str(entry.get("command") or "")
@@ -775,7 +830,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f'claude mcp add enlens -e ENLENS_HOME="{b["env"]["ENLENS_HOME"]}" -- "{b["command"]}" ' + " ".join(b["args"]))
         return 0
     if a.install_claude_desktop:
-        p = install_desktop()
+        try:
+            p = install_desktop()
+        except (DesktopConfigError, OSError) as e:
+            print(f"Problem: {e}", file=sys.stderr)
+            return 1
         print(f"Added the ENLENS connector to {p}. Quit and reopen the Claude desktop app to load it.")
         return 0
     try:

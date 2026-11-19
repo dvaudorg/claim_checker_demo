@@ -1561,13 +1561,15 @@ def sender() -> str | None:
 
 
 def record_sent(cx, task_id: str | None, payload: Any, route: str, feature: str | None = None,
-                context: bool = True, provider: str | None = None, model: str | None = None,
+                context: bool = True, provider: str | None = None, *, model: str | None,
                 person: Any = _UNSET) -> int:
     """Write one ledger row per passage (and, with `context`, the passage shown before it) of this payload, as it
     leaves for a cloud model. A Claude chat is shown the excerpts without their context (`context=False`).
     `provider`: who receives it (stage 1 of other cloud providers; by default Anthropic for Claude's routes).
-    I7 stage 3: each row names the person who sent it (`person`, else `sender()`) and the model (`model`, else the
-    task's), for the AI log."""
+    I7 stage 3: each row names the person who sent it (`person`, else `sender()`) and the model, for the AI log.
+    Hunt phase 1: `model` is required, the model the text is really sent to (None: not known here, as for a chat
+    through the connector). It used to fall back to the task's own model, the one the task was made with, so the log
+    named Opus where the router asked Haiku, and Claude's "haiku" for text Codex read with OpenAI's model."""
     if provider is None:
         provider = ANTHROPIC if route in _ANTHROPIC_ROUTES else providers.OTHER
     pids, _dids = ids_in(payload)
@@ -1582,9 +1584,6 @@ def record_sent(cx, task_id: str | None, payload: Any, route: str, feature: str 
         if is_tombstone(p):     # ("<doc_id>:r1-0005", see reread.py): it is still that document's text that leaves
             docs[p] = p.rsplit(":", 1)[0]
     at = now()
-    if model is None and task_id:
-        got = cx.execute("SELECT model FROM tasks WHERE task_id=?", (task_id,)).fetchone()
-        model = got[0] if got else None
     who = sender() if person is _UNSET else person
     rows = [(p, docs[p], route, task_id, at, feature, provider, who, model) for p in sorted(pids) if p in docs]
     cx.executemany("INSERT INTO ai_sent(passage_id, doc_id, route, task_id, sent_at, feature, provider, person_id, "
@@ -1595,7 +1594,9 @@ def record_sent(cx, task_id: str | None, payload: Any, route: str, feature: str 
 def record_passages(ws: Workspace, passage_ids: Iterable[str], route: str, feature: str, task_id: str | None = None,
                     provider: str | None = None) -> int:
     with ws.connect() as cx:
-        return record_sent(cx, task_id, [{"passage_id": p} for p in passage_ids], route, feature, provider=provider)
+        # (the connector's own chat reads them: ENLENS is not told its model)
+        return record_sent(cx, task_id, [{"passage_id": p} for p in passage_ids], route, feature, provider=provider,
+                           model=None)
 
 
 FEATURES = {"check": "Check", "reread": "Read again", "second": "Second opinion", "label": "Profile (AI pass)",

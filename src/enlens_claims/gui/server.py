@@ -1609,6 +1609,8 @@ def _repair_plugin() -> None:
         r = claude_setup.repair()
         if r.get("repaired"):
             print(f"The Claude Code plugin was brought up to date ({r.get('reason')}).")
+        elif r.get("refused"):  # hunt phase 1 (INSTALL-5): not "brought up to date" when Claude Code said no
+            print(claude_setup.refused_words(r), file=sys.stderr)
         # stage 2: and what ENLENS added to Codex and Antigravity, when it no longer fits this installation
         from .. import agentcli
 

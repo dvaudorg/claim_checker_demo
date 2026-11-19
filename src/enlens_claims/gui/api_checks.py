@@ -108,9 +108,14 @@ class ChecksApi:
         off = not s.get("routing", True) or s.get("backend") == "baseline"
         res["stronger_model"] = None if off else router.step_up("check")
         # 0.14.3: why there is none, for the page to say it right: "model_per_task_off" (the setting is off, or demo
-        # mode), "top_model" (Claude already runs it on the strongest model), "one_local_model", or "none"
+        # mode), "top_model" (Claude already runs it on the strongest model), "one_local_model", or "none"; hunt
+        # phase 1: "strongest_model" when checks run on the strongest model there is (Fable, chosen in Settings or
+        # as the auditor), where turning on Fable would change nothing
+        first = router.first("check") if router.route in routing.AUDITOR_ROUTES else None
         res["stronger_reason"] = None if res["stronger_model"] else (
-            "model_per_task_off" if off else "top_model" if router.route in routing.AUDITOR_ROUTES
+            "model_per_task_off" if off
+            else "strongest_model" if routing.rank(first) == max(routing.RANK.values())
+            else "top_model" if router.route in routing.AUDITOR_ROUTES
             else "one_local_model" if router.route == "local" else "none")
         res["queue_command"] = f"/enlens-run {taskqueue._quote_name(name)}"
         # 0.14: a sync-clash copy says whose version it is; the original lists the colleagues' versions of it

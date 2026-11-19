@@ -68,8 +68,8 @@ def machine() -> dict:
     la = sh("sysctl", "-n", "vm.loadavg").split()
     out["load1"] = float(la[1]) if len(la) > 2 else None
     try:
-        from urllib.request import urlopen
-        with urlopen("http://127.0.0.1:11434/api/ps", timeout=5) as r:
+        from urllib.request import ProxyHandler, build_opener
+        with build_opener(ProxyHandler({})).open("http://127.0.0.1:11434/api/ps", timeout=5) as r:   # never a proxy
             ps = json.loads(r.read().decode()).get("models", [])
         out["loaded"] = [{"name": x["name"], "gb": round(x.get("size_vram", x.get("size", 0)) / 1e9, 1)} for x in ps]
     except Exception:

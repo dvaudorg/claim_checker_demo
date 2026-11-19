@@ -496,14 +496,17 @@ MIGRATIONS = [("documents", "declared_ref", "TEXT"), ("vca_refs", "alias_of", "T
 
 def _add_columns(cx: sqlite3.Connection, migrations) -> None:
     """Add the columns (table, column, type) a table does not have yet; each only once. Each table's columns are read
-    once (2026-11-13: once per column was most of the time a new project took)."""
+    once (2026-11-13: once per column was most of the time a new project took). Hunt phase 1 (INSTALL-8): names are
+    compared without case, as SQLite compares them: an add-on's "AI_Note" beside a table's "ai_note" was added again on
+    every opening and failed with "duplicate column name"."""
     known: dict[str, set] = {}
     for table, col, typ in migrations:
-        if table not in known:
-            known[table] = {r[1] for r in cx.execute(f"PRAGMA table_info({table})")}
-        if col not in known[table]:
+        key = table.lower()
+        if key not in known:
+            known[key] = {r[1].lower() for r in cx.execute(f"PRAGMA table_info({table})")}
+        if col.lower() not in known[key]:
             cx.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
-            known[table].add(col)
+            known[key].add(col.lower())
 
 
 def _migrate(cx: sqlite3.Connection) -> None:

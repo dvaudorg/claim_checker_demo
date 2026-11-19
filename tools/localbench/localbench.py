@@ -249,7 +249,8 @@ def _machine() -> dict:
 
 
 def _ollama(path: str, body: dict | None = None) -> dict:
-    from urllib.request import Request, urlopen
+    from urllib.request import ProxyHandler, Request, build_opener
+    urlopen = build_opener(ProxyHandler({})).open   # this computer only: never through a proxy
     req = Request(f"http://127.0.0.1:11434{path}", data=json.dumps(body).encode() if body else None,
                   method="POST" if body else "GET", headers={"Content-Type": "application/json"})
     with urlopen(req, timeout=120) as r:

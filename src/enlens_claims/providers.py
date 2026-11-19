@@ -213,7 +213,11 @@ def company(pid: str | None) -> str:
 
 
 def on_this_computer(url: str) -> bool:
-    """Whether an address is this computer (localhost, 127.x, ::1)."""
+    """Whether an address is this computer (localhost, 127.x, ::1). Hunt phase 1: only `localhost` itself and loopback
+    addresses, as the privacy pages say; `localhost.localdomain` and names ending in `.localhost` no longer count,
+    since some computers ask the network's name server for them (Linux without systemd's resolver, a name server
+    that answers for its own domain), which may name another computer: a server there may read only what a provider
+    may read."""
     u = (url or "").strip()
     if not u:
         return False
@@ -223,7 +227,7 @@ def on_this_computer(url: str) -> bool:
         host = (urlparse(u).hostname or "").strip("[]").lower()
     except ValueError:
         return False
-    if host in ("localhost", "localhost.localdomain") or host.endswith(".localhost"):
+    if host == "localhost":
         return True
     try:
         return ipaddress.ip_address(host).is_loopback

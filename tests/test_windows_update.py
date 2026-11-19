@@ -43,10 +43,28 @@ if fail < 0 or s["calls"] <= fail:
           os.environ.get("WHY", "The process cannot access the file because it is being used by another process. (os error 32)"))
     sys.exit(2)
 '''
-# a stand-in app: names its process in the address file, as the real one does, and runs for a while
+# a stand-in app: names its process in the address file and, as every real copy does, writes its token file and
+# answers a request made with that token (hunt phase 1, INSTALL-3: that is how the hand-over knows it came back; a
+# terminal-started copy writes no address file), and runs for a while
 FAKE_APP = r'''
-import json, os, sys, time
-open(sys.argv[1], "w").write(json.dumps({"pid": os.getpid(), "url": "http://127.0.0.1:1/"}))
+import http.server, json, os, socketserver, sys, threading, time
+folder = os.path.dirname(sys.argv[1])
+class Quick(http.server.ThreadingHTTPServer):
+    server_bind = socketserver.TCPServer.server_bind  # (no look-up of this computer's name, as QuickServer)
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+    def do_GET(self):
+        self.send_response(200 if self.headers.get("X-Enlens-Token") == "t" * 32 else 401)
+        self.end_headers()
+        self.wfile.write(b"{}")
+srv = Quick(("127.0.0.1", 0), H)
+port = srv.server_address[1]
+url = f"http://127.0.0.1:{port}/"
+threading.Thread(target=srv.serve_forever, daemon=True).start()
+open(sys.argv[1], "w").write(json.dumps({"pid": os.getpid(), "url": url}))
+with open(os.path.join(folder, f"app-token-{port}.json"), "w") as f:
+    f.write(json.dumps({"url": url, "port": port, "pid": os.getpid(), "token": "t" * 32}))
 time.sleep(float(sys.argv[2]) if len(sys.argv) > 2 else 20)
 '''
 

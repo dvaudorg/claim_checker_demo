@@ -1429,13 +1429,15 @@ def open_check(ws: Workspace, text: str, terms: list[str] | None = None, target:
 def _chat_round(ws: Workspace, parts: dict[str, str], provider: str | None = access.ANTHROPIC,
                 route: str | None = None) -> dict:
     """The excerpts of a round a Claude chat may read (the main part), and how many others there are (0.11)."""
-    main = ws.scalar("SELECT payload_json FROM tasks WHERE task_id=?", (parts["main"],)) if "main" in parts else None
+    row = ws.query("SELECT payload_json, model FROM tasks WHERE task_id=?", (parts["main"],)) if "main" in parts else []
+    main = row[0]["payload_json"] if row else None
     shown = _shown(json.loads(main)) if main else []
     if main:
         with ws.connect() as cx:
-            # the chat sees the excerpts alone (`_shown`): no context passage enters the ledger (0.11.1)
+            # the chat sees the excerpts alone (`_shown`): no context passage enters the ledger (0.11.1); its model is
+            # the chat's, which ENLENS knows only by the name the task was made with (CHAT_MODEL)
             access.record_sent(cx, parts["main"], json.loads(main), route or access.ROUTE_NAMES["chat"], "check",
-                               context=False, provider=provider)
+                               context=False, provider=provider, model=row[0]["model"])
     n = _part_counts(ws, {k: v for k, v in parts.items() if k != "main"})
     out: dict = {"passages": shown}
     if n:

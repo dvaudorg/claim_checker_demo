@@ -201,7 +201,8 @@ and are not measured with ENLENS.
 
 A model served on the computer (Ollama, LM Studio, llama.cpp, Jan, vLLM) keeps every word on it
 ([A model on your own computer](manual/local-models.md)). It may read documents marked *Claude may read it* or *Only a
-local AI*. Requests go to its address on this computer; nothing about them is sent elsewhere.
+local AI*. Requests go to its address on this computer, never through a web proxy the computer names
+(`llm.local_urlopen`); nothing about them is sent elsewhere.
 
 Points for an assessment:
 

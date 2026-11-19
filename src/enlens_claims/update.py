@@ -596,6 +596,9 @@ def handover_job(rel: dict, have: str, folder: Path, install: list[str], restart
             "install": install, "env": {"UV_PYTHON_PREFERENCE": "only-managed"},
             "post": [str(post_py), "-m", "enlens_claims.cli", "post-install", "--by", "script", "--no-icon"],
             "start": list(restart), "info": str(launcher.info_path()), "result": str(result_path()),
+            # hunt phase 1 (INSTALL-3): where the copy it starts proves it came back (its token file), whether the
+            # icon or a terminal started it; handover.py imports nothing from ENLENS, so the job carries both
+            "token_dir": str(launcher.token_dir(home.home())), "home": str(home.home()),
             "log": str(home.home() / "logs" / "update.log"),
             "install_url": f"https://github.com/{REPO}/releases/download/{rel.get('tag') or 'v' + rel['version']}/install.ps1",
             "wait": 120, "free_wait": 60, "tries": 4, "retry_after": 5, "come_back": 90}
