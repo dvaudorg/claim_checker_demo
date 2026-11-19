@@ -1,7 +1,8 @@
-# 0.20.3: Antigravity in a home of its own, and what new documents changed
-*Antigravity now runs for ENLENS in a home folder of its own.*
-- A file name cannot add headers to the app's answers
-- Reading the new documents says what it changed
-- A re-read excerpt names its model
-- The second opinion's mark is shorter
-- Only the AI that works in a job shows
+# 0.21.0rc1: The bug hunt: about 400 fixes and Reader 7
+*This release candidate is the result of a bug hunt with no new features: about 400 faults are fixed.*
+- The codebook you choose on the Codes page is the one the AI uses
+- A second change of strictness is no longer lost
+- The validation report never counts a passage without an answer as a right code decision
+- An acceptance theme sheet written before the model answered is not scored
+- Judgements of checks removed by an earlier version stop counting in "how often you agreed"
+- A judgement lost by pressing Judge it myself twice comes back
