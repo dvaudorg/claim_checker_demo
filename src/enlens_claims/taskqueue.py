@@ -272,6 +272,28 @@ def refuse_held(ws: Workspace, kind: str) -> None:
         raise ValueError(held_note(kind))
 
 
+HELD_POLL = 2.0   # seconds between two looks at Hold while a job's local first read waits for *Go on*
+
+
+def wait_while_held(ws: Workspace, kind: str, should_stop=None, progress=None, poll: float | None = None) -> None:
+    """Wait, in a job of the app, until `kind` is no longer on Hold (hunt phase 1.5: the AI mix's local first read is
+    a hand-out too, so a task of a held kind waits, as Claude Code's share does). The progress line says it is on
+    Hold; Stop (`should_stop`) raises "Stopped."."""
+    from .llm import BackendError
+
+    last = 0.0
+    while kind in order(ws)[1]:
+        if should_stop and should_stop():
+            raise BackendError("Stopped.")
+        if progress and time.time() - last >= 3:
+            last = time.time()
+            try:
+                progress({"phase": "queue", "task": kind, **queue_info(ws, kind)})
+            except Exception:  # noqa: BLE001 - a display problem must never stop the wait
+                pass
+        time.sleep(HELD_POLL if poll is None else poll)
+
+
 def set_order(ws: Workspace, kind: str, action: str) -> dict:
     """`first`: hand this kind out before the others; `hold` / `go`: stop or resume handing it out; `reset`."""
     if action == "reset":
@@ -1315,8 +1337,9 @@ def queue_info(ws: Workspace, kind: str) -> dict:
     if not n and lent.get(kind):   # only the local model's share waits: the line says whose it is
         text = f"Waiting for your local model: {noun(kind, lent[kind])}"
     is_held = kind in order(ws)[1]
-    if is_held and n:   # hunt phase 1.5: no helper is handed a kind on Hold, so the wait says why it does not move
-        text = f"On Hold: {noun(kind, n)}. Press Go on in the queue panel to hand them to {title}"
+    if is_held and (n or lent.get(kind)):   # hunt phase 1.5: a kind on Hold is handed to no one (no helper, not the
+        # AI mix's local model either), so the wait says why it does not move
+        text = f"On Hold: {noun(kind, n or lent[kind])}. Press Go on in the queue panel to hand them out"
     elif est:
         text += f" · {_duration(est)}"
     waiting = sum(total.values()) - sum(held.values())
@@ -1345,6 +1368,9 @@ def run_here(ws: Workspace, backend, kinds: list[str] | None = None, limit: int 
     from .tasks import _answers_again_now, run_one, run_stepups
 
     o, held = order(ws)
+    for k in kinds or ():   # hunt phase 1.5: a kind named and on Hold is refused in words, as `enlens run` does
+        if k in held:
+            raise ValueError(held_note(k))
     # hunt phase 1.5: a second reading a local server gives after the run (`run_stepups`, each model loaded once) is
     # not asked in the run: counted "answered" there, it was counted twice and before any model read it
     later = not _answers_again_now(backend)

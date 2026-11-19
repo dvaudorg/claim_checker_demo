@@ -276,8 +276,8 @@ enlens --ws pilot requeue extract       # put exported tasks that got no answer 
 `check-results` applies every check the import applies (schema, quotes, passage numbers) without storing anything,
 and lists the problems per line, so a worker can fix its file before handing it back. The worker guide asks workers to
 judge every task themselves and use code only to write and check JSON. `import-results` does not store an answer for a
-task put back with `requeue` that a Claude Code helper is answering now (`held_by_a_helper` counts them): the
-helper's answer counts.
+task put back with `requeue` that a Claude Code helper is answering now: the helper's answer counts, and the
+command's `note` says how many it left and to import the file again if the helper gives them back.
 
 > [!WARNING]
 > Running several workers at once (the pilot ran up to 15 Claude agents in parallel): give each worker its own batch

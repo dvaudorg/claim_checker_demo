@@ -129,8 +129,9 @@ You follow the progress in ENLENS: on the page that waits, and at the foot of th
 place of the line that says where your text goes: what runs, for how long, how many tasks wait and the AI's name.
 *Settings → AI → Work waiting for Claude Code* lists what waits, per kind (waiting, being answered, done, the model
 and helper, the estimate), and lets you put a task first (*Do first*), keep it back (*Hold*) or take it out
-(*Remove*). A kind on *Hold* is handed to no one until you press *Go on*: not to a helper already at work, not to
-`enlens run` or `enlens export-tasks`; a page that waits for it says it is on Hold.
+(*Remove*). A kind on *Hold* is handed to no one until you press *Go on*: not to a helper already at work, not to your
+local model (its share of the AI mix, *Answer them here instead*), not to `enlens run`, `enlens queue run` or
+`enlens export-tasks`; a page that waits for it says it is on Hold.
 
 | The foot of the sidebar says | Meaning |
 | --- | --- |

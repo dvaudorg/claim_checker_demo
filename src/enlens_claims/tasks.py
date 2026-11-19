@@ -1322,6 +1322,11 @@ def run_one(ws: Workspace, task_id: str, backend, model: str | None = None) -> t
         if t:
             access.require(backend, t[0], ws)  # a task the queue would never hand out must not be waited for
             if lent_to_local(t[0]):  # 0.18.1 (I1): a kind the AI mix gives the local model first
+                from .taskqueue import wait_while_held
+
+                # hunt phase 1.5: the local first read is a hand-out too: a kind on Hold waits for *Go on*
+                wait_while_held(ws, t[0]["kind"], getattr(backend, "should_stop", None),
+                                getattr(backend, "progress", None))
                 local = mix_local()
                 if local is not None:
                     with _mix_gate(ws, t[0], backend, local):  # 0.19.13: only once the local model is started
@@ -1584,6 +1589,13 @@ def answer_locally_first(ws: Workspace, task_id: str, backend, model: str) -> st
     from .llm import BackendError
     from .routing import STEP_UP_BELOW, certainty, judging_changes, task_kind
 
+    from .taskqueue import wait_while_held
+
+    # hunt phase 1.5: Hold keeps a kind from the local model's share too (a check's round in a job reads its mix
+    # tasks here): the task waits for *Go on*, or the job's Stop
+    kind = ws.scalar("SELECT kind FROM tasks WHERE task_id=?", (task_id,))
+    if kind:
+        wait_while_held(ws, kind, getattr(backend, "should_stop", None), getattr(backend, "progress", None))
     raw, ok = None, False
     # held while it answers, as a batch of Claude Code is: Claude Code (and a second local run) leave it alone, and an
     # answer is stored only while this claim holds the task (a mix changed meanwhile hands it to Claude Code)
@@ -1668,8 +1680,12 @@ def answer_mix_waiting(ws: Workspace, backend=None, model: str | None = None, ta
     from .home import load_settings
     from .routing import mix_kinds
 
+    from .taskqueue import order
+
     s = load_settings()
-    kinds = sorted(mix_kinds(s))
+    # hunt phase 1.5: a kind on Hold is handed to no one, the local model's share included (*Go on* releases it)
+    held = set(order(ws)[1])
+    kinds = sorted(k for k in mix_kinds(s) if k not in held)
     out = {"answered": 0, "to_claude": 0}
     if not kinds:
         return out
@@ -2032,6 +2048,11 @@ def import_results(ws: Workspace, paths: Iterable[str | Path], model: str | None
                 stats["held_by_a_helper"] += 1
                 continue
             stats["ok" if ok else "invalid"] += 1
+    n = stats["held_by_a_helper"]
+    if n:   # hunt phase 1.5: said in words, as export-tasks says what it left out, so a paid-for answer is not lost
+        stats["note"] = (f"{n} answer{'s were' if n != 1 else ' was'} not stored: a helper of the queue (Claude Code) "
+                         f"is answering {'those tasks' if n != 1 else 'that task'} now, and its answer counts. If it "
+                         "gives them back unanswered, import this file again.")
     return stats
 
 

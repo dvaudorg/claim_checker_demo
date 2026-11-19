@@ -1,15 +1,17 @@
 ### Safer
 
 - **Hold keeps a kind of task back from everyone.** A Claude Code helper started before you pressed *Hold* went on
-  asking for its kind by name and was handed it all the same. A kind on Hold is now handed to no helper, shown as
-  about to be sent by none of *See what is sent*, written to no file by `enlens export-tasks` and asked of no model by
-  `enlens run` until you press *Go on*; a page that waits on such a task says it is on Hold.
+  asking for its kind by name and was handed it all the same. A kind on Hold is now handed to no helper, read by
+  your local model neither as its share of the AI mix nor by *Answer them here instead*, shown as about to be sent
+  by none of *See what is sent*, written to no file by `enlens export-tasks` and asked of no model by `enlens run` or
+  `enlens queue run` until you press *Go on*; a page that waits on such a task says it is on Hold.
 - **A task given a new text while a helper held it is taken from that helper.** The helper had been given the old
   text, and its answer was checked against the new one: its quotes were refused and its attempts used up. The task
   is handed out again with its new text.
 - **An answer from the file queue no longer lands beside a helper's.** `enlens import-results` stored a late file
   answer for a task put back with `enlens requeue` that a Claude Code helper was answering, whose answer was then
-  refused; it is now left to the helper and counted as `held_by_a_helper`. `enlens refresh` leaves tasks still out in
+  refused; it is now left to the helper, and the command says how many it did not store and to import the file
+  again if the helper gives them back. `enlens refresh` leaves tasks still out in
   the file queue as they are, so their answers are recorded under the instructions written beside their files.
 
 ### Privacy

@@ -6,6 +6,8 @@ code as it was)."""
 from __future__ import annotations
 
 import json
+import threading
+import time
 
 import pytest
 
@@ -496,20 +498,43 @@ def test_tasks_a_run_held_when_it_stopped_are_handed_out_once_its_time_is_up(loa
 
 def test_the_count_of_the_local_models_share_stays_quick_on_a_big_queue(mixed):  # noqa: F811
     """reviews/sync.md: with the AI mix on, `local_share` makes the sidebar's count and `queue_info` read each
-    waiting row ("a few ms on 20,000 tasks: acceptable"). Measured here on 20,000 waiting tasks."""
-    import time
-
+    waiting row ("a few ms on 20,000 tasks: acceptable"). The work is bounded here, not the clock (no timing on a
+    busy CI machine): the same statements whatever the queue's size, and work that grows with the rows, no faster."""
     ws, _s = mixed
-    rows = [(f"check:big{i:05d}", "check", "sonnet", "check-v5", "{}", "pending", 0, "2026-01-01", 1, "2026-01-01",
-             "cloud") for i in range(20000)]
-    with ws.connect() as cx:
-        cx.executemany("INSERT INTO tasks(task_id, kind, model, prompt_version, payload_json, status, attempts, "
-                       "created_at, queued, queued_at, access) VALUES (?,?,?,?,?,?,?,?,?,?,?)", rows)
-    t0 = time.perf_counter()
-    info = taskqueue.queue_info(ws, "check")
-    took = time.perf_counter() - t0
+
+    def fill(n):
+        rows = [(f"check:big{i:05d}", "check", "sonnet", "check-v5", "{}", "pending", 0, "2026-01-01", 1,
+                 "2026-01-01", "cloud") for i in range(n)]
+        with ws.connect() as cx:
+            cx.execute("DELETE FROM tasks WHERE task_id LIKE 'check:big%'")
+            cx.executemany("INSERT INTO tasks(task_id, kind, model, prompt_version, payload_json, status, attempts, "
+                           "created_at, queued, queued_at, access) VALUES (?,?,?,?,?,?,?,?,?,?,?)", rows)
+
+    def work():
+        statements, steps = [], [0]
+        cx = ws._conn()
+
+        def step():
+            steps[0] += 1
+            return 0
+
+        cx.set_trace_callback(statements.append)
+        cx.set_progress_handler(step, 1000)   # one call per 1,000 virtual-machine steps of SQLite
+        try:
+            info = taskqueue.queue_info(ws, "check")
+        finally:
+            cx.set_trace_callback(None)
+            cx.set_progress_handler(None, 0)
+        return info, len(statements), steps[0]
+
+    fill(2000)
+    info, few_sql, few_steps = work()
+    assert info["for_local"] == 2000 and info["waiting"] == 0
+    fill(20000)
+    info, many_sql, many_steps = work()
     assert info["for_local"] == 20000 and info["waiting"] == 0
-    assert took < 1.0, took
+    assert few_sql == many_sql, (few_sql, many_sql)                 # no statement per task
+    assert many_steps <= 12 * max(1, few_steps), (few_steps, many_steps)   # ten times the rows: about ten times
 
 
 from test_ai_mix import mixed  # noqa: E402,F401  (fixture)
@@ -550,3 +575,129 @@ def test_a_wording_found_in_no_document_any_more_keeps_its_task_from_every_ai(pr
         assert access.label_payload(cx, payload, provider=access.ANTHROPIC) == "cloud"
         cx.execute("DELETE FROM term_mentions WHERE term_id=?", (tid,))
         assert access.label_payload(cx, payload, provider=access.ANTHROPIC) == "none"
+
+
+# ---------------------------------------------------------------------------------------------
+# review wave 3 (reviews/wave3.md): Hold and the local model's share; the file queue's words; one rule for `queue run`
+# ---------------------------------------------------------------------------------------------
+from test_ai_mix import _Local, _check_task, _row  # noqa: E402
+
+
+def test_hold_keeps_a_kind_from_the_local_models_share_too(mixed):  # noqa: F811
+    """The reviewer's proof: with "check" on Hold, the queue panel's *Answer them here instead* (`{"local": "mix"}`,
+    `answer_mix_waiting`) read the held task with the local model and handed it on."""
+    ws, _s = mixed
+    tid = _check_task(ws)
+    taskqueue.set_order(ws, "check", "hold")
+    assert taskqueue.next_tasks(ws, "check")["claim"] is None
+    local = _Local()
+    out = tasks.answer_mix_waiting(ws, local, "small")
+    assert out == {"answered": 0, "to_claude": 0}, out
+    assert _row(ws, tid)["status"] == "pending" and local.calls == 0
+    info = taskqueue.queue_info(ws, "check")   # the job that waits says why
+    assert "On Hold" in info["text"] and "Go on" in info["text"], info["text"]
+    taskqueue.set_order(ws, "check", "go")
+    out = tasks.answer_mix_waiting(ws, local, "small")   # released: read (or handed on to Claude) as before
+    assert out["answered"] + out["to_claude"] == 1, out
+
+
+def test_a_job_does_not_read_a_held_kind_locally_first_until_go_on(mixed, monkeypatch):  # noqa: F811
+    """`run_one` with Claude Code and the AI mix reads each new task of a lent kind with the local model first: it
+    did so for a kind on Hold. The task now waits (Stop ends the wait) and is read once *Go on* is pressed."""
+    from enlens_claims.llm import BackendError, ClaudeCodeBackend
+
+    ws, _s = mixed
+    tid = _check_task(ws)
+    local = _Local()
+    monkeypatch.setattr(tasks, "mix_local", lambda settings=None: (local, "small"))
+    monkeypatch.setattr(taskqueue, "HELD_POLL", 0.02)
+    taskqueue.set_order(ws, "check", "hold")
+    be = ClaudeCodeBackend()
+    stop = threading.Event()
+    be.should_stop = stop.is_set
+    out: dict = {}
+
+    def job():
+        try:
+            out["r"] = tasks.run_one(ws, tid, be, None)
+        except BackendError as e:
+            out["e"] = str(e)
+        finally:
+            ws.close()
+
+    th = threading.Thread(target=job, daemon=True)
+    th.start()
+    time.sleep(0.3)
+    assert local.calls == 0 and _row(ws, tid)["status"] == "pending"
+    stop.set()   # Stop ends the wait
+    th.join(10)
+    assert out.get("e") == "Stopped." and local.calls == 0
+    # the same, released: the local model reads it
+    stop.clear()
+    th = threading.Thread(target=job, daemon=True)
+    th.start()
+    time.sleep(0.2)
+    assert local.calls == 0
+    taskqueue.set_order(ws, "check", "go")
+    t0 = time.time()
+    while not local.calls and time.time() - t0 < 10:
+        time.sleep(0.02)
+    stop.set()   # (the job then waits for Claude Code only if the local answer was unsure: end it either way)
+    th.join(10)
+    assert local.calls >= 1
+
+
+def test_a_round_read_locally_first_in_a_job_waits_for_go_on_too(mixed, monkeypatch):  # noqa: F811
+    """The check's own job reads its mix tasks with `answer_locally_first` (claimcheck): that read waits for *Go on*
+    as well, whoever calls it."""
+    from enlens_claims.llm import BackendError
+
+    ws, _s = mixed
+    tid = _check_task(ws)
+    monkeypatch.setattr(taskqueue, "HELD_POLL", 0.02)
+    taskqueue.set_order(ws, "check", "hold")
+    local = _Local()
+    local.should_stop = lambda: True   # the job is stopped while it waits
+    with pytest.raises(BackendError, match="Stopped"):
+        tasks.answer_locally_first(ws, tid, local, "small")
+    assert local.calls == 0 and _row(ws, tid)["status"] == "pending"
+    taskqueue.set_order(ws, "check", "go")
+    local.should_stop = lambda: False
+    tasks.answer_locally_first(ws, tid, local, "small")
+    assert local.calls >= 1
+
+
+def test_answering_a_held_kind_here_by_name_is_refused_in_the_same_words_as_enlens_run(loaded):
+    """`enlens queue run <held kind>` (run_here) answered nothing and said nothing, where `enlens run <held kind>`
+    refused with the Hold note: one rule and one wording."""
+    from helpers_mixed_corpus import Local
+
+    _label_tasks(loaded, 1)
+    taskqueue.set_order(loaded, "label", "hold")
+    with pytest.raises(ValueError) as e:
+        taskqueue.run_here(loaded, Local(), ["label"])
+    with pytest.raises(ValueError) as e2:
+        tasks.run(loaded, "label", Local(), model="m")
+    assert str(e.value) == str(e2.value) == taskqueue.held_note("label")
+    out = taskqueue.run_here(loaded, Local())   # no kind named: the held kind is passed over, as the queue does
+    assert out["answered"] == 0
+
+
+def test_the_file_queue_says_in_words_which_answers_it_did_not_store_and_what_to_do(loaded):
+    """`enlens import-results` left an answer for a task a helper holds unstored with only a count in its JSON: if
+    the helper gives the task back unanswered, the paid-for file answer is lost unless the person imports again."""
+    ids = _label_tasks(loaded, 2)
+    files = tasks.export(loaded, "label")
+    tasks.requeue(loaded, "label")
+    got = taskqueue.next_tasks(loaded, "label")
+    assert {t["task_id"] for t in got["tasks"]} == ids
+    res = loaded.root / "results" / "label" / files[0].name
+    res.write_text("".join(json.dumps({"task_id": t, "model": "m", "output": {"labels": [], "note": "late"}}) + "\n"
+                           for t in sorted(ids)), encoding="utf-8")
+    stats = tasks.import_results(loaded, [res])
+    assert stats["held_by_a_helper"] == 2
+    assert stats["note"] == ("2 answers were not stored: a helper of the queue (Claude Code) is answering those tasks "
+                             "now, and its answer counts. If it gives them back unanswered, import this file again.")
+    taskqueue.release(loaded, got["claim"])   # given back: imported again, they are stored
+    again = tasks.import_results(loaded, [res])
+    assert again["ok"] == 2 and "note" not in again
