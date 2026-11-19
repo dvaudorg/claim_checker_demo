@@ -92,15 +92,19 @@ def code_vectors(ws: Workspace, fw: frameworks.Framework, embedder) -> dict[str,
     _q, dprefix = prefixes(embedder.model)
     have = {r["code"]: (r["text_hash"], bytes(r["vec"])) for r in ws.query(
         "SELECT code, text_hash, vec FROM code_vectors WHERE model=? AND framework=?", (embedder.model, fw.name))}
-    todo = []
+    todo, every = [], []
     for c in fw.sorted_codes():
         th = _h(fw.code_text(c.code))
+        every.append((c.code, f"{fw.label} {c.code}: {fw.code_text(c.code)}"))
         if have.get(c.code, ("", b""))[0] != th:
-            todo.append((c.code, th, f"{fw.label} {c.code}: {fw.code_text(c.code)}"))
-    # hunt phase 1.5: text an embedding server on another computer may not have stays here (that code is matched by
-    # its words only)
-    held = withheld_codes(ws, fw, embedder, [(c, t) for c, _th, t in todo])
+            todo.append((c.code, th, every[-1][1]))
+            have.pop(c.code, None)   # hunt phase 1.5 (review): never matched by the meaning of its old text
+    # hunt phase 1.5: text an embedding server on another computer may not have stays here: that code is matched by
+    # its words only (its vector, from a server on this computer or from before, is not used either)
+    held = withheld_codes(ws, fw, embedder, every)
     todo = [x for x in todo if x[0] not in held]
+    for c in held:
+        have.pop(c, None)
     for i in range(0, len(todo), 32):
         chunk = todo[i:i + 32]
         vecs = embedder.embed([dprefix + t for _c, _h2, t in chunk])

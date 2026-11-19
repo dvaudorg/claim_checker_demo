@@ -58,7 +58,7 @@ from pathlib import Path
 from . import __version__, providers
 from . import home as core
 from .claude_setup import _cmd, _end_process, _open_window, _run_key, _said, frontmatter
-from .procs import no_window, program_args
+from .procs import console_python, no_window, program_args, same_python
 from .store import now
 from .update import semver as _semver
 
@@ -170,10 +170,10 @@ def find(route: str) -> str:
     if env:
         return env if Path(env).exists() else ""
     found = shutil.which(a.program)
-    if found:
+    if found and not _command_file(found):
         return found
     h = Path.home()
-    exe = ".exe" if os.name == "nt" else ""
+    exe = ".exe" if _windows() else ""
     if route == "codex":
         cands = [h / ".local" / "bin" / f"codex{exe}", Path("/opt/homebrew/bin/codex"), Path("/usr/local/bin/codex"),
                  h / ".npm-global" / "bin" / "codex", h / "AppData" / "Roaming" / "npm" / "codex.cmd",
@@ -182,6 +182,14 @@ def find(route: str) -> str:
         local = Path(os.environ.get("LOCALAPPDATA") or (h / "AppData" / "Local"))
         cands = [h / ".local" / "bin" / f"agy{exe}", local / "agy" / "bin" / "agy.exe", Path("/opt/homebrew/bin/agy"),
                  Path("/usr/local/bin/agy")]
+    # hunt phase 1.5: a real program before a command file (npm's codex.cmd first on the PATH would otherwise keep
+    # being found after the person installed the maker's own program, as `_cmd_refused` asks)
+    real = shutil.which(f"{a.program}.exe") if _windows() else None
+    for c in ([Path(real)] if real else []) + cands:
+        if c.exists() and not _command_file(str(c)):
+            return str(c)
+    if found:
+        return found
     for c in cands:
         if c.exists():
             return str(c)
@@ -222,6 +230,12 @@ def _shim_target(path: str) -> list[str] | None:
         return None
     node = here / "node.exe"
     node_path = str(node) if node.is_file() else shutil.which("node")
+    if node_path and _command_file(node_path):
+        # hunt phase 1.5 (review): a Node version manager may put node.cmd first on the PATH, which brings cmd.exe
+        # back; only a real program is taken (the first node.exe on the PATH), else none
+        node_path = shutil.which("node.exe")
+        if node_path and _command_file(node_path):
+            node_path = None
     return [node_path, str(target)] if node_path else None
 
 
@@ -238,14 +252,18 @@ def _program(path: str) -> list[str]:
     return _cmd(path)
 
 
+_CMD_WORDS = ("This {title} is started by a command file ({path}) that ENLENS cannot see through (or that starts node "
+              "through another command file), and a helper's instructions cannot pass through Windows' command line "
+              "whole. Install {title} with its own installer (Settings → AI), then press Start again. If this stays "
+              "after that, remove the other {title} (for one installed with npm: npm uninstall -g), or put its folder "
+              "after the installer's on your PATH.")
+
+
 def _cmd_refused(route: str, path: str) -> str:
     """Why a helper of this CLI cannot be started ("" when it can): a command file ENLENS cannot read through."""
     if not _command_file(path) or _shim_target(path):
         return ""
-    title = cli(route).title
-    return (f"This {title} is started by a command file ({Path(path).name}) that ENLENS cannot see through, and a "
-            f"helper's instructions cannot pass through Windows' command line whole. Install {title} with its own "
-            "installer (Settings → AI), then press Start again.")
+    return _CMD_WORDS.format(title=cli(route).title, path=path)
 
 
 def _run(args: list[str], timeout: float = 60, cwd: Path | None = None, env: dict | None = None) -> tuple[int, str]:
@@ -534,27 +552,30 @@ def open_sign_in(route: str) -> dict:
         line = (f"cd {shlex.quote(str(work))} && env -u XDG_CONFIG_HOME -u XDG_DATA_HOME -u XDG_STATE_HOME "
                 f"-u XDG_CACHE_HOME HOME={shlex.quote(home)} agy")
     else:
-        line = windows_sign_in_line(script)
+        line = windows_sign_in_line(path, work)
     return {"opened": bool(window), "window": window, "command": line, "folder": str(work)}
 
 
-def windows_sign_in_line(script: Path) -> str:
-    """The line the page shows to type on Windows when no window opened: the window's own script, run by a child
-    PowerShell (so the person's own session keeps its home folder). Hunt phase 1.5: the line was `powershell -Command
-    "…; $env:USERPROFILE='…'; $env:HOME='…'; agy"`, and PowerShell, Windows Terminal's shell, expands $env:… inside
-    double quotes before the child starts: agy ran in the person's own home. This line holds no $ and no %, so it
-    reads the same typed into PowerShell or into cmd.exe; a script whose path holds $, `, %, or a straight or
-    typographic double quote (a user name with a $) is named in -EncodedCommand instead, which neither shell reads
-    into."""
-    s = str(script)
-    head = "powershell -NoProfile -ExecutionPolicy Bypass"
-    if not re.search('[$`%"\u201c\u201d\u201e]', s):   # (PowerShell also ends a string at typographic double quotes)
-        return f'{head} -File "{s}"'
-    import base64
-
+def sign_in_commands(path: str, work: Path) -> str:
+    """The PowerShell commands of the sign-in on Windows: ENLENS's home for agy, its empty folder, agy started."""
     from .gui.launcher import _ps_quote
 
-    return f"{head} -EncodedCommand {base64.b64encode(('& ' + _ps_quote(s)).encode('utf-16-le')).decode('ascii')}"
+    home = _ps_quote(str(agy_home()))
+    return (f"$env:USERPROFILE = {home}; $env:HOME = {home}; Set-Location -LiteralPath {_ps_quote(str(work))}; "
+            f"& {' '.join(_ps_quote(str(x)) for x in _program(path))}")
+
+
+def windows_sign_in_line(path: str, work: Path) -> str:
+    """The line the page shows to type on Windows when no window opened: the sign-in's commands, run by a child
+    PowerShell (so the person's own session keeps its home folder). Hunt phase 1.5: the line was `powershell -Command
+    "…; $env:USERPROFILE='…'; $env:HOME='…'; agy"`, and PowerShell, Windows Terminal's shell, expands $env:… inside
+    double quotes before the child starts: agy ran in the person's own home. The commands now go as -EncodedCommand,
+    which neither PowerShell nor cmd.exe reads into, whatever the folders' names hold; and, unlike a script file, an
+    execution policy of the organisation (AllSigned) does not stop them (review)."""
+    import base64
+
+    enc = base64.b64encode(sign_in_commands(path, work).encode("utf-16-le")).decode("ascii")
+    return f"powershell -NoProfile -EncodedCommand {enc}"
 
 
 # ---------------------------------------------------------------------------------------------
@@ -591,7 +612,8 @@ def connector_env(route: str) -> dict[str, str]:
 
 def connector_command() -> list[str]:
     """This Python running the connector (as claude_setup.mcp_config)."""
-    return [sys.executable, "-m", "enlens_claims.mcp_server"]
+    # hunt phase 1.5: the console python.exe beside pythonw.exe (the icon's), as claude_setup names it (`procs`)
+    return [console_python(), "-m", "enlens_claims.mcp_server"]
 
 
 def toml_str(s: str) -> str:
@@ -890,7 +912,7 @@ def _record_setup(route: str) -> None:
         data = data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         data = {}
-    data[route] = {"version": __version__, "python": sys.executable, "home": str(core.home()), "at": now()}
+    data[route] = {"version": __version__, "python": console_python(), "home": str(core.home()), "at": now()}
     try:
         p.write_text(json.dumps(data, indent=2), encoding="utf-8")
     except OSError:
@@ -961,7 +983,9 @@ def stale(route: str) -> str:
     rec = _setup_record().get(route)
     if not isinstance(rec, dict):
         return ""
-    if rec.get("python") != sys.executable:
+    # hunt phase 1.5: pythonw.exe (the icon's app) and python.exe (a terminal's) of one environment are one Python:
+    # started alternately, the connector was set up again at each start
+    if not same_python(rec.get("python"), sys.executable):
         return f"it starts the connector with {rec.get('python')}, not with this ENLENS ({sys.executable})"
     if rec.get("home") != str(core.home()):
         return "it uses another data folder"
@@ -1171,6 +1195,8 @@ def run_args(route: str, path: str, prompt: str, model_id: str, effort: str | No
     refused = _cmd_refused(route, path)   # hunt phase 1.5: the prompt never goes through cmd.exe (`_program`)
     if refused:
         raise ValueError(refused)
+    if _command_file(_program(path)[0]):   # (review: whatever the shim named, free text never follows a command file)
+        raise ValueError(_CMD_WORDS.format(title=cli(route).title, path=path))
 
     def has(*names):
         return any(n in opts for n in names)

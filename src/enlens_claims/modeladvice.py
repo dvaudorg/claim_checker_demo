@@ -4,7 +4,7 @@ I6: a researcher never picks a model. ENLENS reads the computer (memory, a graph
 picks one of three tiers itself; the person only presses Set up (no model is downloaded or started before that click):
 
 | Computer | Model | What it does |
-| Small (about 8 GB, or no graphics card a larger tier fits on) | `SMALL_MODEL` (K2 Horizon 0.9B) | Explorer only: points at sentences |
+| Small (about 8 GB, or no graphics card) | `SMALL_MODEL` (K2 Horizon 0.9B) | Explorer only: points at sentences |
 | 16 GB | `MEDIUM_MODEL` (Qwen 3.5 4B) | Suggestions only |
 | about 24 GB or more | `LARGE_MODEL` (Qwen 3.5 9B) | Suggestions only (not measured yet) |
 
@@ -220,7 +220,7 @@ def _option(model: dict, use: str, role: str, facts: dict, fit: dict) -> dict:
 def no_graphics(facts: dict) -> bool:
     """A computer without a graphics card a model can use: not Apple silicon, and no NVIDIA card's memory read (an
     Intel Mac included). Such a computer gets the small tier (I6): a larger model on the processor alone takes minutes
-    a check. (A card too small for the larger tiers gets the largest tier it holds: `_ladder`.)"""
+    a check."""
     return not facts.get("unified") and not facts.get("gpu")
 
 
@@ -243,15 +243,6 @@ def _ladder(rungs: tuple, use: str, facts: dict) -> dict:
     if use == "chat" and (no_graphics(facts) or (facts.get("memory") is None and not facts.get("gpu"))):
         # I6: no graphics card, or memory that cannot be read: the small tier (the others stay offered under Technical)
         pi, pm, pf = ok[0]
-    elif use == "chat" and not facts.get("unified") and pf["where"] != "graphics card":
-        # hunt phase 1.5: a graphics card too small for the tier the memory allows (4 GB beside 32 GB) leaves that
-        # tier on the processor, minutes a check, which is I6's reason for the small tier without a card: the largest
-        # tier the card holds, else the small one
-        # (a tier that fits the card runs there, whichever memory `_fit` thought the roomier)
-        gpu = facts.get("gpu") or 0
-        on_card = [(i, m, {"where": "graphics card", "share": _need(m, use, facts) / gpu}) for i, m, _f in ok
-                   if gpu and _need(m, use, facts) <= GPU_SHARE * gpu]
-        pi, pm, pf = on_card[-1] if on_card else ok[0]
     pick = _option(pm, use, "recommended", facts, pf)
     smaller = next((_option(m, use, "smaller", facts, f) for i, m, f in reversed(ok) if i < pi), None)
     larger = next((_option(m, use, "larger", facts, f) for i, m, f in ok if i > pi), None)

@@ -91,8 +91,8 @@ def test_score_labels_leave_out_codes_only_mentioned():
     s = v.score_labels(_pass()["labels"], CODES)
     # passage 4: C is only mentioned, so its C is neither right nor wrong: 2 decisions there, 3 elsewhere
     assert s["code_decisions"] == 14
-    # wrong: passage 2 B missed, passage 3 C added, passage 5 (no answer): none of its three is a decision (hunt
-    # phase 1.5: "no answer" is never right, as for checks; it counted A and B as rightly absent)
+    # wrong: passage 2 B missed, passage 3 C added, and all three of passage 5 (no answer): they still count, each as
+    # "no answer", which is never right (hunt phase 1.5, as for checks; A and B counted as rightly absent)
     assert s["code_accuracy"] == round(9 / 14, 3)
     assert s["same_codes"] == 0.4                     # passages 1 and 4 (C mentioned, so B is the whole answer)
     assert s["answered"] == 4

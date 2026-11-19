@@ -90,20 +90,19 @@ Claude is not offered.
 ### Other cloud providers
 
 *Claude may read it* means Anthropic, unless you allow more. A document marked that way also says **which cloud
-providers may read it**, and by default that is only Anthropic: nothing reaches another company, nor Codex or
-Antigravity, until you allow it ([Settings](settings.md#an-api-key-claude-or-another-provider)).
+providers may read it**: by default only Anthropic, so nothing reaches another company, Codex or Antigravity until
+you allow it ([Settings](settings.md#an-api-key-claude-or-another-provider)).
 
 - **Where.** On the Documents page, the line *Cloud AI may read it: …* above the list opens the project's choice of
-  providers; a document's own AI-setting dialog has its own.
-- **The words change.** While no provider other than Anthropic is set up, the page says *Claude may read it*. Once
-  one is (a key stored, or chosen as the main route), it says *Cloud AI may read it* and shows the tick boxes. The
-  page also shows how much each provider has read.
+  providers; a document's own AI-setting dialog (*Add a note on why*, in its details) has its own.
+- **The words change.** Until a provider other than Anthropic is set up (a key stored, or the main route), the page
+  says *Claude may read it*; then *Cloud AI may read it*, with the tick boxes and how much each provider has read.
 - **A document that does not allow the provider of the main route** is treated as *Only a local AI* for that route:
-  its excerpts go to the local model for restricted documents, or wait for your judgement. The Claude connector and
+  its excerpts go to the local model, or wait for your judgement. The Claude connector and
   Claude Code count as Anthropic.
 - **The queue hands passages only to the company of the agent that takes it.** Codex counts as OpenAI, Antigravity as
-  Google. A document that allows OpenAI but not Anthropic reaches Codex and never Claude Code, and the reverse. *What
-  was sent* records the company and the agent.
+  Google: a document that allows OpenAI but not Anthropic reaches Codex, never Claude Code. *What was sent* records
+  the company and the agent.
 - **A model server on another computer** (not `localhost`, `127.0.0.1` or `::1`) counts as a cloud provider too: an
   OpenAI address as OpenAI, any other as *a server on another computer*, which no document allows until you do.
 - **In a shared project each person chooses their own provider.** The providers you tick stay in your copy: they
@@ -145,10 +144,11 @@ flowchart LR
   offers *Read them now on this computer* for the local ones. When the main model runs on this computer, it also
   reads the excerpts marked *Only a local AI*, so its summary and notes are left out of a Claude chat (the connector
   says so).
-- **When the local model's answers cannot be used** (three tries), the result shows those excerpts without a
-  judgement: *Read them again on this computer* tries once more, or you judge them yourself.
+- **When the local model's answers cannot be used** (three tries), those excerpts show no judgement: *Read them
+  again on this computer* tries once more, or you judge them.
 - **Search by meaning**: an embedding server on another computer receives no restricted passage (they are found by
-  their words), and no glossary term or code whose text may carry their words.
+  their words), and no glossary term or code whose text may carry their words (an older theory codebook is known by
+  its quotations; reworded without them, it goes as your words).
 
 The local model's own *Start*, and what happens when memory is short: [A model on your own computer](local-models.md#the-local-models-own-start-and-your-computers-memory).
 

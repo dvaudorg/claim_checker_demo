@@ -111,17 +111,23 @@ def test_a_helpers_prompt_is_never_handed_to_cmd_exe(monkeypatch, tmp_path):
 
 
 @pytest.mark.skipif(not WINDOWS or not shutil.which("node"), reason="cmd.exe and npm's command files: Windows CI")
-def test_codex_cmd_from_npm_gets_the_prompt_whole_on_windows(tmp_path):
+def test_codex_cmd_from_npm_gets_the_prompt_whole_on_windows(tmp_path, monkeypatch):
     """Owner, on Windows: a codex.cmd as npm writes it, whose script records the arguments it was given. The helper's
     command (run_args) is started as `_spawn` starts it: the prompt with its line breaks, quotes, & and %PATH%, and a
-    project named `a & echo pwned > x.txt & b`, arrives whole, and no stray file appears."""
+    project named `a & echo pwned > x.txt & b`, arrives whole, and no stray file appears. Review: a version manager's
+    node.cmd first on the PATH is passed over for the real node.exe."""
     from enlens_claims import agentcli
 
+    manager = tmp_path / "nvm"
+    manager.mkdir()
+    (manager / "node.cmd").write_text("@echo node.cmd must not run & exit /b 3\r\n", encoding="utf-8")
+    monkeypatch.setenv("PATH", f"{manager}{os.pathsep}{os.environ['PATH']}")
     out = tmp_path / "argv.json"
     rec = "require('fs').writeFileSync(process.env.REC_OUT, JSON.stringify(process.argv.slice(2)));\n"
     shim, _script = _npm_install(tmp_path / "npm", "codex", rec, node_beside=False)
     prompt = _prompt()
     args = agentcli.run_args("codex", str(shim), prompt, "gpt-6-luna", None, tmp_path, options={"-c", "-m"})
+    assert args[0].lower().endswith("node.exe"), args[0]
     r = subprocess.run(args, cwd=str(tmp_path), env={**os.environ, "REC_OUT": str(out)}, capture_output=True,
                        text=True, timeout=120)
     assert r.returncode == 0, r.stderr
@@ -156,22 +162,21 @@ def test_a_command_file_of_another_kind_gets_safe_arguments_whole_and_no_prompt_
 def test_the_antigravity_sign_in_line_holds_nothing_a_shell_reads_into(tmp_path):
     """Owner, the platform-free half: the Windows line was `powershell -Command "…; $env:USERPROFILE='…'; …; agy"`, and
     PowerShell expands $env:… inside double quotes before the child starts, so agy ran in the person's own home. The
-    line now runs the window's own script, which sets the home folder: it holds no $ and no %, so it reads the same in
-    PowerShell and in cmd.exe; a path with $ or % goes as -EncodedCommand."""
+    line now carries the commands as -EncodedCommand: nothing in it is read by PowerShell or cmd.exe, whatever the
+    folders' names hold, and no script file is run (review: an execution policy of AllSigned stops a script, not
+    this)."""
     from enlens_claims import agentcli
 
-    script = agentcli._sign_in_script("antigravity", str(tmp_path / "agy.exe"), tmp_path / "work", windows=True)
-    body = script.read_text(encoding="utf-8-sig")
     home = str(agentcli.agy_home())
-    assert f"$env:USERPROFILE = '{home}'" in body and f"$env:HOME = '{home}'" in body
-    assert "Set-Location -LiteralPath" in body
-    line = agentcli.windows_sign_in_line(Path(r"C:\Users\Ábel Gergő\enlens\claude-runs\antigravity-sign-in.ps1"))
-    assert "$" not in line and "%" not in line and "`" not in line
-    assert line.endswith(r'-File "C:\Users\Ábel Gergő\enlens\claude-runs\antigravity-sign-in.ps1"')
-    odd = Path(r"C:\Users\A$b%PATH%\enlens\claude-runs\antigravity-sign-in.ps1")
-    line = agentcli.windows_sign_in_line(odd)
-    assert "$" not in line.split("-EncodedCommand")[1] and "%" not in line
-    assert base64.b64decode(line.split()[-1]).decode("utf-16-le") == f"& '{odd}'"
+    for work in (tmp_path / "Ábel Gergő" / "work", tmp_path / "A$b%PATH%`x" / "work"):
+        line = agentcli.windows_sign_in_line(str(tmp_path / "agy.exe"), work)
+        head, enc = line.rsplit(" ", 1)
+        assert head == "powershell -NoProfile -EncodedCommand" and set(enc) <= set(
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="), line
+        body = base64.b64decode(enc).decode("utf-16-le")
+        assert body == agentcli.sign_in_commands(str(tmp_path / "agy.exe"), work)
+        assert f"$env:USERPROFILE = '{home}'" in body and f"$env:HOME = '{home}'" in body
+        assert f"Set-Location -LiteralPath '{work}'" in body and body.endswith(f"& '{tmp_path / 'agy.exe'}'")
 
 
 @pytest.mark.skipif(_pwsh() is None, reason="PowerShell: GitHub's Windows and Linux machines have it, this Mac does not")
@@ -187,8 +192,7 @@ def test_the_antigravity_sign_in_line_runs_agy_in_enlens_home_when_pasted(tmp_pa
                     "'HOME'), 'USERPROFILE': os.environ.get('USERPROFILE'), 'cwd': os.getcwd()}))\n", encoding="utf-8")
     work = tmp_path / "work"
     work.mkdir()
-    script = agentcli._sign_in_script("antigravity", str(fake), work, windows=True)
-    line = agentcli.windows_sign_in_line(script)
+    line = agentcli.windows_sign_in_line(str(fake), work)
     (tmp_path / "own-home").mkdir()   # the person's own home folder, which agy must not run in
     env = {**os.environ, "REC_OUT": str(out), "HOME": str(tmp_path / "own-home"),
            "USERPROFILE": str(tmp_path / "own-home")}
@@ -511,23 +515,18 @@ def test_design_in_a_helpers_message_is_not_a_sign_in_problem():
 
 
 # --------------------------------------------------------------------------------------------- 13: a small card
-def test_a_graphics_card_too_small_for_the_larger_tiers_does_not_put_them_on_the_processor():
-    """Hunter's note: a PC with a 4 GB NVIDIA card and 32 GB of memory was given the large tier to run on the
-    processor ("Slow: a few minutes"), where I6's reason for the small tier without a card applies. Such a computer
-    gets the largest tier its card holds."""
+def test_a_small_graphics_card_beside_much_memory_gets_the_tier_the_memory_allows_and_says_it_is_slow():
+    """Hunter's note (a design question): a PC with a 4 GB NVIDIA card and 32 GB of memory is offered the larger
+    model on the processor. That is the rule written in docs/manual/local-models.md's tier table (small only for
+    about 8 GB "or no graphics card"; "about 24 GB or more": the larger model), so it stays; the advice says honestly
+    that it runs on the processor and is slow, and offers the smaller ones."""
     from enlens_claims import modeladvice
 
     GB = 1 << 30
-    S, M = modeladvice.SMALL_MODEL, modeladvice.MEDIUM_MODEL
-
-    def pc(memory, gpu):
-        return {"memory": memory * GB, "disk_free": 200 * GB, "system": "windows", "unified": False, "gpu": gpu * GB}
-
-    pick = modeladvice.advise(pc(32, gpu=4))["chat"]["pick"]
-    assert pick["name"] == S and pick["speed"] != "slow" and "graphics card" in pick["speed_text"], pick
-    pick = modeladvice.advise(pc(32, gpu=8))["chat"]["pick"]
-    assert pick["name"] == M and "graphics card" in pick["speed_text"], pick
-    assert modeladvice.advise(pc(32, gpu=24))["chat"]["pick"]["name"] == modeladvice.LARGE_MODEL
+    facts = {"memory": 32 * GB, "disk_free": 200 * GB, "system": "windows", "unified": False, "gpu": 4 * GB}
+    chat = modeladvice.advise(facts)["chat"]
+    assert chat["pick"]["name"] == modeladvice.LARGE_MODEL and chat["pick"]["speed"] == "slow"
+    assert "processor" in chat["pick"]["speed_text"] and chat["smaller"]["name"] == modeladvice.MEDIUM_MODEL
 
 
 # --------------------------------------------------------------------------------------------- 14: codex login
@@ -591,3 +590,180 @@ def test_a_helper_reading_the_run_record_while_the_runner_rewrites_it_always_fin
         stop.set()
         t.join(10)
     assert misses == 0, misses
+
+
+# --------------------------------------------------------------------------------------------- review of wave 1
+def test_a_node_cmd_first_on_the_path_never_starts_a_helper(monkeypatch, tmp_path):
+    """Review (BACKENDS15-2), platform-free twin: npm's shim names `node`, and a Node version manager may put a
+    node.cmd first on the PATH, which brings cmd.exe back. Only a real node.exe is taken; with none, the helper is
+    refused in words, and no helper's command starts with a command file."""
+    from enlens_claims import agentcli
+
+    monkeypatch.setattr(agentcli, "_windows", lambda: True)
+    shim, script = _npm_install(tmp_path / "npm", "codex", node_beside=False)
+    manager = tmp_path / "nvm" / "node.cmd"
+    real = tmp_path / "nodejs" / "node.exe"
+    for f in (manager, real):
+        f.parent.mkdir(parents=True)
+        f.write_text("", encoding="utf-8")
+    on_path = {"node": str(manager), "node.exe": str(real)}
+    monkeypatch.setattr(agentcli.shutil, "which", lambda name, *a, **k: on_path.get(name))
+    args = agentcli.run_args("codex", str(shim), _prompt(), "m", None, tmp_path, options={"-c"})
+    assert args[:2] == [str(real), str(script)]
+    del on_path["node.exe"]   # only the version manager's command file
+    with pytest.raises(ValueError, match="command file"):
+        agentcli.run_args("codex", str(shim), _prompt(), "m", None, tmp_path, options={"-c"})
+
+
+def test_the_makers_program_is_found_before_npms_command_file(monkeypatch, tmp_path):
+    """Review note (BACKENDS15-2): the refusal says to install with the maker's installer, but `find` took npm's
+    codex.cmd first on the PATH, so the refusal stayed after the person did. A real program wins wherever both are;
+    the words say what to do if it stays."""
+    from enlens_claims import agentcli
+
+    monkeypatch.delenv("ENLENS_CODEX", raising=False)
+    monkeypatch.setattr(agentcli, "_windows", lambda: True)
+    npm = tmp_path / "npm" / "codex.cmd"
+    exe = tmp_path / "bin" / "codex.exe"
+    for f in (npm, exe):
+        f.parent.mkdir(parents=True)
+        f.write_text("", encoding="utf-8")
+    on_path = {"codex": str(npm), "codex.exe": str(exe)}
+    monkeypatch.setattr(agentcli.shutil, "which", lambda name, *a, **k: on_path.get(name))
+    assert agentcli.find("codex") == str(exe)
+    del on_path["codex.exe"]
+    assert agentcli.find("codex") == str(npm)   # (the only one: npm's, started through its shim or refused)
+    assert "npm uninstall -g" in agentcli._cmd_refused("codex", str(npm))
+
+
+def test_the_icons_python_and_a_terminals_are_one_python_for_codex_and_antigravity(monkeypatch):
+    """Review note: the twin of the install area's pythonw.exe item. `agentcli.stale` compared the recorded Python
+    with sys.executable, so starting the app from the icon (pythonw.exe) and from a terminal (python.exe) in turn set
+    Codex's and Antigravity's connector up again at each start; the connector names the console python.exe."""
+    import json as _json
+
+    from enlens_claims import agentcli, home
+
+    monkeypatch.setattr(sys, "executable", "/env/Scripts/pythonw.exe")
+    agentcli._record_setup("codex")
+    rec = _json.loads((home.home() / "agent-clis.json").read_text(encoding="utf-8"))["codex"]
+    assert rec["python"] == "/env/Scripts/pythonw.exe" or rec["python"].endswith("python.exe")
+    monkeypatch.setattr(sys, "executable", "/env/Scripts/python.exe")
+    assert agentcli.stale("codex") == ""
+    monkeypatch.setattr(sys, "executable", "/other/Scripts/python.exe")
+    assert "starts the connector with" in agentcli.stale("codex")
+
+
+def _theory_book(ws, doc_id, quote, where="home", name="lens"):
+    from enlens_claims import codebooks
+
+    codebooks.create(ws, name, "A theory lens", where, "theory",
+                     {"doc_ids": [doc_id], "codes": [{"code": "Repair", "description": f"Meaning. “{quote}” (Report, "
+                                                                                       "p. 2)", "source_docs": [doc_id]}]})
+
+
+def _sent(ws, name, embedder):
+    from enlens_claims import frameworks, profile
+
+    profile.code_vectors(ws, frameworks.get(name, ws), embedder)
+    return embedder.sent
+
+
+def test_an_old_theory_codebook_made_in_one_project_never_reaches_a_far_embedder_from_another(loaded, tmp_path):
+    """Review, MUST FIX (a): a theory codebook made before this version (no record of its documents) and kept with
+    all projects, from a document marked Only a local AI in project A, was sent from project B, where the six-word
+    check finds nothing. In A its research-log entry says it came from theory; in B its quotations with their
+    source do."""
+    import json as _json
+
+    from enlens_claims import codebooks, frameworks
+    from enlens_claims.store import Workspace
+
+    doc_id, quote = _local_doc_quote(loaded)
+    _theory_book(loaded, doc_id, quote)
+    side = codebooks._home_folder() / "lens.json"
+    meta = _json.loads(side.read_text(encoding="utf-8"))
+    meta.pop("theory", None)   # as a codebook made before this version
+    meta.pop("theory_level", None)
+    side.write_text(_json.dumps(meta), encoding="utf-8")
+    assert "theory" not in (frameworks.get("lens", loaded).meta or {})
+    other = Workspace.create(tmp_path / "B")
+    assert not any(quote in t for t in _sent(other, "lens", _FarEmbedder()))
+    assert not any(quote in t for t in _sent(loaded, "lens", _FarEmbedder()))
+
+
+def test_a_theory_codebook_whose_documents_do_not_allow_the_embedders_provider_stays_here(loaded, tmp_path):
+    """Review, MUST FIX (b): theory documents marked Claude may read it, but allowing Anthropic only: nothing was
+    recorded (the level was taken without a provider), so an embedding server of another company got the quotes. It
+    does not, in the project and outside it; a server of a company they allow does."""
+    from enlens_claims import access
+    from enlens_claims.store import Workspace
+
+    doc_id, text = loaded.query("SELECT doc_id, text FROM passages WHERE section='body' AND length(text) > 200 "
+                                "ORDER BY doc_id LIMIT 1")[0]
+    quote = " ".join(text.split()[2:14])
+    access.set_providers_default(loaded, ["anthropic"])
+    _theory_book(loaded, doc_id, quote)
+    assert not any(quote in t for t in _sent(loaded, "lens", _FarEmbedder()))
+    other = Workspace.create(tmp_path / "B")
+    assert not any(quote in t for t in _sent(other, "lens", _FarEmbedder()))
+    access.set_providers_default(loaded, ["anthropic", "openai"])
+    assert any(quote in t for t in _sent(loaded, "lens", _FarEmbedder("https://api.openai.com/v1")))
+
+
+def test_a_theory_codebook_is_judged_by_its_documents_settings_now(loaded):
+    """Review, MUST FIX (c): the level was fixed when the codebook was made, so a document made stricter afterwards
+    did not keep its quotes from a far embedder. In its own project the documents are judged as they are now."""
+    from enlens_claims import access, profile, frameworks
+
+    doc_id, text = loaded.query("SELECT doc_id, text FROM passages WHERE section='body' AND length(text) > 200 "
+                                "ORDER BY doc_id LIMIT 1")[0]
+    quote = " ".join(text.split()[2:14])
+    access.set_providers_default(loaded, ["anthropic", "other"])
+    _theory_book(loaded, doc_id, quote, where="project", name="lens2")
+    far = _FarEmbedder()
+    assert any(quote in t for t in _sent(loaded, "lens2", far))   # allowed now: sent
+    access.set_documents(loaded, [doc_id], "local")
+    got = profile.code_vectors(loaded, frameworks.get("lens2", loaded), _FarEmbedder())
+    assert "Repair" not in got   # withheld now, and its earlier vector is not used
+
+
+def test_the_embed_guard_reads_restricted_passages_once_and_stops_when_every_code_is_decided(loaded, monkeypatch):
+    """Review, SHOULD FIX: the guard kept every six-word run of every restricted passage, again on each pass while a
+    code was withheld. It now reads the passages one at a time against the codes' own runs, stops once every code is
+    decided, and reads nothing again while nothing changed (the work is bounded; the memory holds the codes' runs)."""
+    from enlens_claims import access, embed, frameworks
+
+    docs = [r[0] for r in loaded.query("SELECT DISTINCT doc_id FROM passages")]
+    access.set_documents(loaded, docs, "local")
+    docs = sorted(docs)
+    first = loaded._conn().execute(f"SELECT text FROM passages WHERE doc_id IN ({','.join('?' * len(docs))})",
+                                   docs).fetchone()[0]   # the passage the guard reads first
+    n = loaded.scalar("SELECT COUNT(*) FROM passages")
+    assert n > 2
+    read = []
+    real = embed._runs
+    monkeypatch.setattr(embed, "_runs", lambda t: (read.append(t), real(t))[1])
+    fw = frameworks.Framework("mine", "Mine", "code", {"Q": frameworks.Code("Q", first)}, source="home")
+    texts = [("Q", f"code Q: {first}")]
+    embed._HELD_MEMO.clear()
+    assert embed.withheld_codes(loaded, fw, _FarEmbedder(), texts) == {"Q"}
+    passages_read = len(read) - 1          # (one for the code's own text)
+    assert passages_read < n, (passages_read, n)
+    read.clear()
+    assert embed.withheld_codes(loaded, fw, _FarEmbedder(), texts) == {"Q"}
+    assert len(read) == 1                  # the code's text only: no passage read again
+
+
+def test_a_code_whose_text_changed_is_never_matched_by_its_old_vector(loaded):
+    """Review note: `code_vectors` returned every cached vector, so a code whose text changed and was now withheld was
+    matched by the meaning of its old text."""
+    from enlens_claims import frameworks, profile
+
+    _doc, quote = _local_doc_quote(loaded)
+    old = frameworks.Framework("mine", "Mine", "code", {"Q": frameworks.Code("Q", "Fixing things together.")},
+                               source="home")
+    assert "Q" in profile.code_vectors(loaded, old, _FarEmbedder())
+    new = frameworks.Framework("mine", "Mine", "code", {"Q": frameworks.Code("Q", f"As said: {quote}.")},
+                               source="home")
+    assert "Q" not in profile.code_vectors(loaded, new, _FarEmbedder())

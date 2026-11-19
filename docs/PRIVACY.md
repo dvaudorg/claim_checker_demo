@@ -153,8 +153,9 @@ installation ([Switching everything off](#switching-everything-off)).
 - **Shared projects (I7 stage 3).** Each person chooses their own provider. In a project that is shared (a shared
   folder, a storage space, an owner, or work exchanged with a colleague) the providers a person ticks are their own
   consent: kept in their copy, never sent to a colleague's, and not taken from a colleague's documents or project file
-  (`sync/merge.py`, `bundle._forget_folder`), nor from any project zip, one that says it is the person's own too
-  (nothing in a zip proves whose it is: `bundle._providers_asked_again`; the Documents page asks to tick them again).
+  (`sync/merge.py`, `bundle._forget_folder`), and a project zip, one that says it is the person's own too, can only
+  narrow them to what the new copy's default allows (nothing in a zip proves whose it is: `bundle._providers_asked_again`;
+  a document kept from a provider stays kept from it, and the Documents page asks to tick again what was narrowed).
   Lists that earlier versions copied from a colleague are cleared once, in
   a shared project, unless this person set them (their own research-log entry), and the person is told on the
   Documents page (`access.settle_own_providers`). Which documents may go to cloud AI at all stays the team's. The
@@ -216,10 +217,12 @@ Points for an assessment:
 - **Search by meaning** sends passages to the embedding server. An embedding server on another computer receives
   neither passages of documents marked *Only a local AI* or *No AI*, nor of documents that do not allow its provider
   (`other`, or a known one by its address), nor glossary terms found only in them (`embed.py`, `terms.py`), nor the
-  text of a code that may carry their words: a codebook made from theory documents marked *Only a local AI* or *No
-  AI*, a definition that still holds the AI's draft, or one quoting six words in a row of a document it may not read
-  (`embed.withheld_codes`; such a code is matched by its words). It does receive the text of searches and of the
-  other codes.
+  text of a code that may carry their words: a codebook made from theory documents it may not read (judged by their
+  settings now in their project, elsewhere by what they allowed when it was made), a definition that still holds the
+  AI's draft, or one quoting six words in a row of a document it may not read (`embed.withheld_codes`; such a code is
+  matched by its words). A codebook made from theory before this version is known by its research-log entry in its
+  own project and elsewhere by its quotations with their source; a definition reworded without its quotation is sent
+  as the researcher's own words. It does receive the text of searches and of the other codes.
 - **Getting a model** downloads Ollama's installer from ollama.com and a model from Ollama's library, only when the
   researcher presses the button. No document is sent.
 

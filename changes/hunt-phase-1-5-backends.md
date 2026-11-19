@@ -8,31 +8,32 @@
   written by an earlier version before the model had named its themes holds the reference project's own names; your
   "fitting" for those was scored as the model's. Only rows holding the model's own name count, and `acceptance score`
   says when a sheet holds other names (move it away and score again: it is written anew).
-- **A graphics card too small for the larger local models no longer puts them on the processor.** A PC with, say, a
-  4 GB card and 32 GB of memory was offered the larger model running on the processor, minutes a check. It now gets
-  the largest model its card holds (on a 4 GB card the small one), as a computer without a card does; the others stay
-  under *Settings › Technical*.
 
 ### Safer
 
 - **Codex or Antigravity installed with npm on Windows gets the helper's instructions whole.** npm installs them as
   `.cmd` files, which Windows runs through its command line: it cut the instructions at the first line break, and a
-  project named with `&` could run a command. ENLENS now starts the program the `.cmd` file starts; a command file of
-  another kind is refused at *Start*, with a line saying to use the maker's installer.
+  project named with `&` could run a command. ENLENS now starts the program the `.cmd` file starts (a real `node.exe`,
+  never a `node.cmd` a version manager put first); a command file of another kind is refused at *Start*, with a line
+  saying to use the maker's installer. Where both are on the computer, the maker's program is used.
 - **The Antigravity sign-in line works pasted into PowerShell.** It set the home folder inside double quotes, which
   PowerShell fills in before the line runs, so Antigravity signed in under your own home folder instead of ENLENS's.
-  The line now runs the sign-in window's own script, and reads the same in PowerShell and in the Command Prompt.
+  The line now carries its commands encoded, so it reads the same in PowerShell and in the Command Prompt, whatever
+  your folders are called.
 - **A copy made for an acceptance run or a model test leaves the team's settings behind.** It carried the project's
   shared folder and storage space, so a round run in it would have acted in the team's place.
 - **Quit ends a Codex sign-in still waiting for the browser.** It went on running after ENLENS had closed.
 
 ### Privacy
 
-- **A codebook's text that may carry words of documents marked *Only a local AI* stays off an embedding server on
-  another computer.** Search by meaning sent every code's text to the embedding server set up, wherever it was: a
-  codebook made from theory documents marked *Only a local AI* or *No AI* quotes them, and an AI's draft of a
-  definition is its reading of documents. Such codes, and any definition quoting six words in a row of a document
-  that server may not read, are now matched by their words only. A server on this computer still gets them all.
+- **A codebook's text that may carry words of documents an embedding server on another computer may not read stays
+  off it.** Search by meaning sent every code's text to the embedding server set up, wherever it was: a codebook made
+  from theory documents marked *Only a local AI* or *No AI* (or not allowed to that server) quotes them, and an AI's
+  draft of a definition is its reading of documents. Such codes, and any definition quoting six words in a row of a
+  document that server may not read, are now matched by their words only, judged by the documents' settings now. A
+  codebook made from theory before this version is recognised by its research-log entry in its own project, and
+  elsewhere by its definitions' quotations with their source; a definition you have reworded without its quotation
+  is sent as your own words. A server on this computer still gets them all.
 
 ### Fixed
 

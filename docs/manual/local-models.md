@@ -34,7 +34,7 @@ the computer's memory, graphics card and free disk space, and picks one of three
 
 | Computer | What the local model does |
 | --- | --- |
-| Small (about 8 GB of memory, or no graphics card the larger models fit on) | **Explorer**: points at the sentence of each excerpt that bears on your hypothesis and sorts the reading order. It judges nothing. |
+| Small (about 8 GB of memory, or no graphics card) | **Explorer**: points at the sentence of each excerpt that bears on your hypothesis and sorts the reading order. It judges nothing. |
 | 16 GB | **Suggestions**: marks the sentences that bear on your hypothesis and suggests a judgement for each excerpt. |
 | About 24 GB or more | **Suggestions**, from a larger model (not measured yet). |
 

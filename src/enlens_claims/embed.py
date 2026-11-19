@@ -165,39 +165,118 @@ def _restricted_docs(ws: Workspace, embedder=None) -> set[str]:
 
 
 QUOTE_WORDS = 6   # words in a row that make a code's text a quote of a document (`withheld_codes`)
+# a quotation with its source, as a codebook made from theory documents writes each definition ("“…” (Title, p. 3)",
+# theorycodes._draft_code, theoryframe._description): how a codebook made before its theory documents were recorded
+# is still recognised
+QUOTED_WITH_SOURCE = re.compile(r"[“\"][^”\"]{12,}[”\"]\s*\([^)]{1,300}\)")
 
 
-def _runs(text: str) -> set[int]:
+def _runs(text: str) -> list[int]:
     words = re.findall(r"\w+", (text or "").lower())
-    return {hash(tuple(words[i:i + QUOTE_WORDS])) for i in range(len(words) - QUOTE_WORDS + 1)}
+    return [hash(tuple(words[i:i + QUOTE_WORDS])) for i in range(len(words) - QUOTE_WORDS + 1)]
+
+
+def _theory_held(ws: Workspace, meta: dict, prov: str | None, restricted: set[str]) -> bool | None:
+    """Whether a codebook's theory documents keep its text from an embedder of provider `prov` (None: no record).
+    In the project they are in, by their settings now (`restricted`: those this embedder may not read); elsewhere by
+    what they allowed when the codebook was made. An earlier record of this version (`theory_level`) counts too."""
+    rec = meta.get("theory")
+    if isinstance(rec, dict):
+        docs = [d for d in rec.get("docs") or [] if isinstance(d, str)]
+        try:
+            here = rec.get("project") == ws.project_uid() and docs and all(
+                ws.scalar("SELECT 1 FROM documents WHERE doc_id=?", (d,)) for d in docs)
+        except Exception:  # noqa: BLE001 - not known: judged by the record
+            here = False
+        if here:
+            return any(d in restricted for d in docs)
+        allowed = rec.get("providers") if isinstance(rec.get("providers"), list) else []
+        return rec.get("level") != "cloud" or (prov or "") not in allowed
+    if meta.get("theory_level") in ("local", "none", "cloud"):
+        return meta["theory_level"] != "cloud"
+    return None
+
+
+def _made_from_theory(ws: Workspace, name: str) -> bool:
+    """Whether this project's research log says the codebook was made from theory documents (`codebooks.create`)."""
+    try:
+        for (data,) in ws.query("SELECT data_json FROM research_log WHERE kind='codebook-added' AND subject_id=?",
+                                (name,)):
+            try:
+                got = json.loads(data or "{}")
+            except ValueError:
+                continue
+            if isinstance(got, dict) and got.get("start") == "theory":
+                return True
+    except Exception:  # noqa: BLE001 - an older project: nothing said
+        return False
+    return False
+
+
+_HELD_MEMO: dict[tuple, set[str]] = {}
 
 
 def withheld_codes(ws: Workspace, fw, embedder, texts: list[tuple[str, str]]) -> set[str]:
     """Of `texts` ([(code, the text to embed)]), the codes whose text an embedding server on another computer is not
     sent (none for one on this computer). Hunt phase 1.5: search by meaning embedded every code's text with whatever
-    embedder was set up, and a code's text can hold words of documents that server may not read: a codebook made from
-    theory documents marked Only a local AI or No AI quotes them (`theory_level`, written when it is made), the AI's
-    draft of a definition (`drafted`) is the AI's reading of documents, and a definition may quote a document of this
-    project the server may not read (six words in a row found in one). Such a code is matched by its words only, as
-    a restricted passage is searched by its words (`build`)."""
+    embedder was set up, and a code's text can hold words of documents that server may not read. Withheld:
+    - every code of a codebook made from theory documents that server may not read (`codebooks._theory_record`:
+      judged by their settings now where they are, else by what they allowed when it was made); a codebook made from
+      theory before that record, when this project's research log says so; and, of one with no such sign, each code
+      quoting with its source as theory codebooks do (unknown counts as restricted);
+    - a code still holding the AI's draft of its definition (`drafted`), the AI's reading of documents;
+    - a code quoting six words in a row of a document of this project that server may not read.
+    Such a code is matched by its words only, as a restricted passage is searched by its words (`build`). The
+    passages are read one at a time against the codes' own runs of words, and the answer is kept until the codes,
+    the documents or their settings change (review: it held every run of every restricted passage, again each pass)."""
     if not texts or not remote(embedder):
         return set()
+    from . import providers
+
     meta = getattr(fw, "meta", None) or {}
-    if meta.get("theory_level") in ("local", "none"):
+    restricted = _restricted_docs(ws, embedder)
+    prov = providers.of_url(getattr(embedder, "base_url", "") or "")
+    theory = _theory_held(ws, meta, prov, restricted)
+    if theory is None and _made_from_theory(ws, getattr(fw, "name", "")):
+        theory = True
+    if theory:
         return {c for c, _t in texts}
     drafted = meta.get("drafted") if isinstance(meta.get("drafted"), dict) else {}
     ids = meta.get("ids") if isinstance(meta.get("ids"), dict) else {}
     out = {c for c, _t in texts if ids.get(c) in drafted}
-    rest = [(c, _runs(t)) for c, t in texts if c not in out]
-    restricted = sorted(_restricted_docs(ws, embedder))
-    if not rest or not restricted or not any(r for _c, r in rest):
+    if theory is None:   # no sign either way: a quotation with its source is taken for a theory's
+        out |= {c for c, t in texts if QUOTED_WITH_SOURCE.search(t or "")}
+    rest = {c: set(_runs(t)) for c, t in texts if c not in out}
+    rest = {c: r for c, r in rest.items() if r}
+    if not rest or not restricted:
         return out
-    seen: set[int] = set()
-    for i in range(0, len(restricted), 500):
-        part = restricted[i:i + 500]
-        for (text,) in ws.query(f"SELECT text FROM passages WHERE doc_id IN ({','.join('?' * len(part))})", part):
-            seen |= _runs(text)
-    return out | {c for c, r in rest if r & seen}
+    docs = sorted(restricted)
+    n = sum(int(ws.scalar(f"SELECT COUNT(*) FROM passages WHERE doc_id IN ({','.join('?' * len(part))})", part) or 0)
+            for part in (docs[i:i + 500] for i in range(0, len(docs), 500)))
+    key = (str(ws.db_path), prov, tuple(docs), n, tuple(sorted((c, tuple(sorted(r))) for c, r in rest.items())))
+    if key in _HELD_MEMO:
+        return out | _HELD_MEMO[key]
+    owner: dict[int, set[str]] = {}
+    for c, r in rest.items():
+        for h in r:
+            owner.setdefault(h, set()).add(c)
+    found: set[str] = set()
+    for i in range(0, len(docs), 500):
+        part = docs[i:i + 500]
+        cur = ws._conn().execute(f"SELECT text FROM passages WHERE doc_id IN ({','.join('?' * len(part))})", part)
+        for (text,) in cur:
+            for h in _runs(text):
+                if h in owner:
+                    found |= owner[h]
+            if len(found) == len(rest):
+                break
+        cur.close()
+        if len(found) == len(rest):
+            break
+    if len(_HELD_MEMO) > 64:
+        _HELD_MEMO.clear()
+    _HELD_MEMO[key] = found
+    return out | found
 
 
 def remote(embedder) -> bool:
