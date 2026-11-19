@@ -1081,8 +1081,10 @@ def _store_link(cx, t, payload, obj, model) -> tuple[bool, list[str]]:
         if r.a not in terms or r.b not in terms or r.a == r.b:
             errors.append(f"relations[{i}]: a and b must be two different term numbers shown (1 to {len(terms)})")
             continue
-        qa = next((find_quote(sn["text"], r.quote_a) for sn in terms[r.a]["snippets"] if find_quote(sn["text"], r.quote_a)), None)
-        qb = next((find_quote(sn["text"], r.quote_b) for sn in terms[r.b]["snippets"] if find_quote(sn["text"], r.quote_b)), None)
+        # hunt phase 1.5: each quote as its passage holds it (the match ignores case, quote marks and the like), not as
+        # the AI wrote it: the Concepts page shows the words the document holds, as every other stored quote does
+        qa = next((sn["text"][h[0]:h[1]] for sn in terms[r.a]["snippets"] if (h := find_quote(sn["text"], r.quote_a))), None)
+        qb = next((sn["text"][h[0]:h[1]] for sn in terms[r.b]["snippets"] if (h := find_quote(sn["text"], r.quote_b))), None)
 
         if not qa:
             errors.append(f"relations[{i}]: quote_a not found in the passages of term {r.a}: {r.quote_a[:80]!r}")
@@ -1091,7 +1093,7 @@ def _store_link(cx, t, payload, obj, model) -> tuple[bool, list[str]]:
         if not (qa and qb):
             continue
         a, b = terms[r.a]["term_id"], terms[r.b]["term_id"]
-        rel, qa_t, qb_t = r.relation, r.quote_a, r.quote_b
+        rel, qa_t, qb_t = r.relation, qa, qb
         if a > b:
             a, b, rel, qa_t, qb_t = b, a, inverse.get(rel, rel), qb_t, qa_t
         rows.append((a, b, rel, "model", r.confidence, qa_t, qb_t, model, now()))

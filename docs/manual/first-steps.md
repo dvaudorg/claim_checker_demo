@@ -70,9 +70,10 @@ Then ENLENS asks **who may read these documents with AI**: Claude, only a local 
 
 The list shows the title read from each file and warns about unreadable text and very short files (often a landing
 page saved instead of the report). A file that cannot be read (password-protected, damaged) is listed with the reason,
-and the others are added. *Stop* also stops the text recognition of a long scanned PDF. A large batch is read up to
-three files at a time, on the computer's spare processors, and added in the order of the files; the result is the same
-as reading them one by one. The list draws its first rows at once and the rest as you scroll; *Select every document*
+and the others are added. *Stop* also stops the text recognition of a long scanned PDF, or a file whose reading
+does not end: the list then names that file and how many were not added, so you can add them again and leave it
+out. A large batch is read up to three files at a time, on the computer's spare processors, and added in the order
+of the files; the result is the same as reading them one by one. The list draws its first rows at once and the rest as you scroll; *Select every document*
 selects all of them.
 
 *Open an existing ENLENS project folder (advanced)* links a project made with the command line, without copying it.

@@ -146,7 +146,7 @@ def test_reader_5_put_both_languages_into_one_passage_and_reader_6_does_not(pdf)
     assert any(len(s) == 2 for s in _passage_langs(d5))       # "…al siguiente (Participante 4)" + "of each season…"
     assert not any(len(s) == 2 for s in _passage_langs(d6))
     assert d5.reading["languages"]["mixed_passages"] >= 1 and d6.reading["languages"]["mixed_passages"] == 0
-    assert reader.READER == ingest.READER == 7   # (0.20.4: reader 7 is current and keeps reader 6's rule)
+    assert reader.READER == ingest.READER == 7   # (reader 7 is current and keeps reader 6's rule)
 
 
 def test_a_document_in_one_language_reads_as_reader_5_read_it(tmp_path):
@@ -280,7 +280,7 @@ def test_a_reader_5_document_in_one_language_is_offered_the_new_reader_only_as_a
         kinds = {r[1]: r[0] for r in ws.query("SELECT doc_id, kind FROM documents")}
         pdf_doc, txt_doc = kinds["pdf"], kinds["text"]
         langs = languages.summary_for(ws._conn(), pdf_doc)
-        with monkeypatch.context() as mp:   # (0.20.4: while reader 6 was the newest)
+        with monkeypatch.context() as mp:   # (while reader 6 was the newest)
             mp.setattr(ingest, "READER", 6)
             assert langs["two"] is None
             assert languages.new_reader_changes(5, langs, "pdf") and not languages.new_reader_changes(5, langs, "text")
@@ -295,7 +295,7 @@ def test_a_reader_5_document_in_one_language_is_offered_the_new_reader_only_as_a
             changes = {d["doc_id"]: d["new_reader_changes"] for d in sources.document_overview(ws)}
             assert changes == {pdf_doc: True, txt_doc: False}
             assert older == {(5, True): 1, (5, False): 1} and runs.made_with(ws)["older"]
-        # 0.20.4: reader 7 reads text files otherwise (and PDFs as reader 6 did), so now both are offered it
+        # reader 7 reads text files otherwise (and PDFs as reader 6 did), so now both are offered it
         assert languages.new_reader_changes(5, langs, "text") and languages.new_reader_changes(5, langs, "pdf")
         assert languages.new_reader_changes(6, None, "text") and not languages.new_reader_changes(6, None, "pdf")
         assert reread.check(ws, txt_doc)["ok"]
@@ -319,7 +319,7 @@ def test_a_reading_before_its_languages_were_kept_gets_them_without_waiting(tmp_
         with monkeypatch.context() as mp:
             mp.setattr(ingest, "READER", 5)
             ingest.ingest(ws, [pdf], ai_access="cloud")
-        # (0.20.4: the list makes a document's languages for the offer of reader 6, while it was the newest; reader
+        # (the list makes a document's languages for the offer of reader 6, while it was the newest; reader
         # 7's offer goes by the document's kind)
         monkeypatch.setattr(ingest, "READER", 6)
         doc = ws.scalar("SELECT doc_id FROM documents")

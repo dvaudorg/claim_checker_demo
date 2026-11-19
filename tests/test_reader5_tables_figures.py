@@ -125,7 +125,7 @@ def known5(tmp_path_factory):
 # frozen
 # ------------------------------------------------------------------------------------------------------------------
 def test_reader_5_is_the_current_reader():
-    assert reader.READER == ingest.READER == 7   # (0.20.4: reader 7 is current; reader 5 stays as it was)
+    assert reader.READER == ingest.READER == 7   # (reader 7 is current; reader 5 stays as it was)
 
 
 @needs_pdfminer

@@ -26,7 +26,7 @@ where it is.
 | 4 | 0.17.2 | Reader 3, plus: a text file with one paragraph per line, and a Word file's content controls and tables inside tables (see *What reader 4 changed* below). PDFs and web pages read as with reader 3. |
 | 5 | 0.18.1 | Reader 4, plus: tables found from their ruled lines and joined across pages, figures as blocks of their own with their captions, and a Word file's or web page's pictures by their alternative text (see *What reader 5 changed* below). Plain text files read as with reader 4. |
 | 6 | 0.19 | Reader 5, plus, in PDFs: text a figure hides is not read, publishing details at the foot of the first page are set aside, the title is not the journal's name, and running heads beside a page number are found; and, in a document printed in two languages (a side-by-side translation), no passage holds both (see *What reader 6 changed* below). Other documents read as with reader 5. |
-| 7 | 0.20.4 | Reader 6, plus, in text files, Word files and web pages: a line that comes back in an interview is not taken for a running head, short paragraphs one per line are paragraphs, a Word file's text box is read once, and a text saved as ISO-8859-2 keeps its letters (see *What reader 7 changed* below). PDFs read as with reader 6. |
+| 7 | the version after 0.20.3 | Reader 6, plus, in text files, Word files and web pages: a line that comes back in an interview is not taken for a running head, short paragraphs one per line are paragraphs, a Word file's text box is read once, and a text saved as ISO-8859-2, or as UTF-16 without its mark, keeps its letters (see *What reader 7 changed* below). PDFs read as with reader 6. |
 
 
 ## What the reader does
@@ -129,7 +129,7 @@ Only the documents this changes are offered the new reader: PDFs, and documents 
 held both.
 
 **What reader 7 changed.** Reader 7 reads text files, Word files and web pages otherwise than reader 6; PDFs read the
-same. The four changes came from a search for faults in how ENLENS reads (November 2026):
+same. The changes came from searches for faults in how ENLENS reads (November 2026):
 
 - **A line that comes back in an interview.** A line that comes back about once a page was taken for a running head
   when it stood next to a blank line most times. In an interview typed with a blank line between turns, or a Word file
@@ -139,7 +139,8 @@ same. The four changes came from a search for faults in how ENLENS reads (Novemb
   takes such a line for a running head only when it stands at a page break most times, or when a sentence runs on
   across it at least once, as it does across a running head between two pages. Text copied out of a PDF whose
   paragraphs run over several lines reads as before; in a copy whose every paragraph is one line, a running head that
-  never falls in the middle of a sentence can now stay in the text.
+  never falls in the middle of a sentence can now stay in the text, and so can a header line repeated in an interview
+  typed with a blank line between turns ("Interview 3 - confidential draft").
 - **Short paragraphs, one per line.** A text file without blank lines whose lines nearly all end a sentence, the next
   starting with a capital (survey answers, notes saved by Word as plain text), was read as one or two paragraphs when
   its lines were shorter than 160 characters, so every quote in it was cited as paragraph 1. Reader 7 takes each line
@@ -153,7 +154,11 @@ same. The four changes came from a search for faults in how ENLENS reads (Novemb
   language better, or when the other reading shows signs such as ¶ or ± inside words; a file saved as Windows-1250 or
   -1252 (French, German, Spanish, English with "µ" or "©") reads as before. A file names no encoding, so this is a
   guess: a very short Latin-2 text, or one whose only such letters ISO-8859-2 and Windows-1250 write alike, can
-  still come out wrong. Saving the file as UTF-8 settles it.
+  still come out wrong. Saving the file as UTF-8 settles it. The document's Reading says which encoding was taken
+  for a file that names none (*Read as: Windows-1250, a guess*), so a wrong guess can be seen.
+- **UTF-16 without a byte-order mark.** A text file saved as UTF-16 without the mark at its start that says so (rare:
+  Windows writes it) was read with an empty character between every two letters, so none of its words could be
+  found. Reader 7 reads it as UTF-16.
 
 Text files, Word files and web pages read by reader 6 are offered reader 7 (whether one reads otherwise is known only
 by reading it again: the preview of the move says what changes); PDFs read by reader 6 are not.

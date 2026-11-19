@@ -1,7 +1,7 @@
-"""Reader 7 (ENLENS 0.20.4): text files, Word files and web pages read otherwise than by reader 6.
+"""Reader 7 (the ENLENS after 0.20.3): text files, Word files and web pages read otherwise than by reader 6.
 
 `reader.read_blocks(raw, version=7)` calls the rules here; `version=6` and below still read exactly as before. PDFs
-read as by reader 6. No model is used. Four things change (found by the bug hunt of November 2026):
+read as by reader 6. No model is used. Five things change (found by the bug hunts of November 2026):
 
 1. **A line that comes back in text whose every line is a paragraph** (`lone_lines`, in `reader3.text_furniture`).
    Reader 3 takes a line that comes back about once a page for a running head when it stands next to a page break or
@@ -28,6 +28,8 @@ read as by reader 6. No model is used. Four things change (found by the bug hunt
    (ą, ś, ź, š, ž, ť, ľ) came out as other characters (±, ¶, Ľ), as Windows-1250 puts them elsewhere. Latin-2 is taken
    when no byte rules it out and it fits one language strictly better ("µ" not counted as a letter), or the Windows
    reading shows signs inside words (`ingest._latin2`); Windows-1250 and -1252 files read as before.
+5. **A text file or web page saved as UTF-16 without a byte-order mark** (hunt phase 1.5; `ingest._utf16_without_bom`):
+   read as UTF-8 by readers 1 to 6, with a NUL between letters, so its words could not be searched or quoted.
 """
 from __future__ import annotations
 

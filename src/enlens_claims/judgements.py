@@ -17,7 +17,7 @@ _KEEP = object()
 
 
 def set_judgement(ws: Workspace, claim_id: str, passage_id: str, verdict: str | None, note: str | None = None,
-                  quote=_KEEP, threshold: float | None = None) -> dict:
+                  quote=_KEEP, threshold: float | None = None, quote_start: int | None = None) -> dict:
     """`_set_judgement`, and what it did to the answer (0.18.1, N4): the hypothesis's status before and after, and
     when it changed, a sentence naming this judgement as the change that moved it, also written into the research log.
     Returns {"hyp_id", "before", "after", "moved"} ("moved" is the sentence, or None). `threshold`: the strictness
@@ -30,7 +30,7 @@ def set_judgement(ws: Workspace, claim_id: str, passage_id: str, verdict: str | 
         before = hypothesis_result(ws, hyp_id, threshold) if hyp_id else None
     except KeyError:
         before = None
-    _set_judgement(ws, claim_id, passage_id, verdict, note, quote)
+    _set_judgement(ws, claim_id, passage_id, verdict, note, quote, quote_start)
     if before is None:
         return {"hyp_id": None, "before": None, "after": None, "moved": None}
     after = hypothesis_result(ws, hyp_id, threshold)
@@ -66,13 +66,16 @@ def _row_for_unread(cx, claim_id: str, passage_id: str) -> bool:
 
 
 def _set_judgement(ws: Workspace, claim_id: str, passage_id: str, verdict: str | None, note: str | None = None,
-                   quote=_KEEP) -> None:
+                   quote=_KEEP, quote_start: int | None = None) -> None:
     """A person's own judgement of an excerpt the AI read. It replaces the AI's in the answer (and always counts);
     `verdict` None removes it. The AI's judgement is kept and shown beside it. With `verdict` None and a `note`,
     only the comment is kept: a comment alone is not a judgement (it does not count as agreeing with the AI).
 
     `quote` is the sentence the person points to (text of this excerpt, found as quotes are); it is shown and exported
-    instead of the AI's quote. Left out, an earlier one is kept; None or "" removes it.
+    instead of the AI's quote. Left out, an earlier one is kept; None or "" removes it. `quote_start` (hunt phase
+    1.5): where the person selected it, in the excerpt's text as the result shows it (code points, as the result's
+    `quote_start`): words that stand twice in the excerpt are kept where they were selected, as a label's are
+    (`profile.add_label`); without it (an older page, the connector) at their first place, as before.
     """
     if verdict is not None and verdict not in USER_VERDICTS:
         raise ValueError(f"The judgement must be one of {', '.join(USER_VERDICTS)} (or empty to remove yours).")
@@ -109,7 +112,13 @@ def _set_judgement(ws: Workspace, claim_id: str, passage_id: str, verdict: str |
                             kept = p
                 if kept is not None:  # the sentence is chosen in the excerpt as it was shown, the check's record
                     text, base = kept["text"], None
-                hit = find_selection(text or "", q)  # 0.14.3: a selection cutting a word is widened to whole words
+                hit = None
+                if isinstance(quote_start, int) and not isinstance(quote_start, bool) and \
+                        0 <= quote_start <= len(text or ""):
+                    from .notes import find as find_near_words
+
+                    hit = find_near_words(text or "", q, quote_start)
+                hit = hit or find_selection(text or "", q)  # 0.14.3: a selection cutting a word is widened to whole words
                 if not hit:
                     raise ValueError("The sentence must be text from this excerpt (select it in the excerpt).")
                 uq = (text or "")[hit[0]:hit[1]]

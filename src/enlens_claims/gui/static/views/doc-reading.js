@@ -30,6 +30,8 @@ export function readingPanel(ctx) {
     // live: Restore and Leave out change it (0.16: drawn again in place, by live())
     if (d.passages_read != null) figs.push(passFig);
     if (rep.engine === "pypdf") fig("Read from:", "the text layer only (with the pdfminer extra, columns and tables are found too)");
+    // hunt phase 1.5: a text file or web page that names no encoding: which one was guessed, so a wrong guess shows
+    if (rep.encoding_guess) fig("Read as:", `${rep.encoding_guess}, a guess: the file does not say how its letters are written. If letters look wrong, save it as UTF-8 and add it again.`);
   }
   const outKinds = () => Object.entries(d.left_out || {});
   const setLeftOut = (on) => {
@@ -167,7 +169,10 @@ function rereadBox(ctx) {
     const go = button({ kind: "main", sm: true, onClick: () => move(go) }, icon("check", { size: 13 }), "Move it to the new reader");
     const summary = h("p", { class: "small", tabindex: "-1" }, moved || lost.length ? [h("strong", {}, plural(moved, "result")), moved === 1 ? " finds its place" : " find their place", " in the new reading", lost.length ? [", ", h("strong", {}, `${fmt.num(lost.length)} ${lost.length === 1 ? "does" : "do"} not`)] : "", "."]
       : "Nothing in your results points into this document yet: it is simply read again.");
-    replace(box, h("div", { class: "dv-reread-preview" }, summary,
+    // hunt phase 1.5: a reader that changes some files of a kind is offered to every file of it: say which this is
+    const same = r.same_reading === true ? h("p", { class: "small dv-same-reading" }, "The new reader reads this document exactly as before: the same text and passages. Moving it changes only the number of the reader that read it.")
+      : r.same_reading === false ? h("p", { class: "small dv-same-reading" }, "The new reader reads this document otherwise than before: its text or passages change.") : null;
+    replace(box, h("div", { class: "dv-reread-preview" }, summary, same,
       (r.warnings || []).length ? h("ul", { class: "dv-warn dv-preview-warn" }, r.warnings.map((w) => h("li", {}, w))) : null,
       lost.length ? h("ul", { class: "dv-lost" }, lost.slice(0, 12).map((x) => h("li", { class: "small" }, h("span", { class: "muted" }, `${cap(x.kind_text || x.what || "a result")}${x.page ? `, page ${x.page}` : ""}: `),
         x.quote ? `“${x.quote}”` : (x.what || ""), x.why ? h("span", { class: "muted" }, ` ${x.why}`) : null))) : null,

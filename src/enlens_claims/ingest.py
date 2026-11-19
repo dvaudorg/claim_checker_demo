@@ -55,9 +55,10 @@ READER = 7  # 1: ENLENS 0.5 to 0.14 (pypdf's page text, cut by sentences); 2: EN
             #    publishing details in the first page's footer set aside, a journal's name not the title; and, any
             #    kind of file, languages.py: in a document in two languages, a side-by-side translation, no passage
             #    holds both)
-            # 7: ENLENS 0.20.4 (reader7.py, text files, Word files and web pages only: a line that comes back in text
+            # 7: the version after 0.20.3 (reader7.py, text files, Word files and web pages only: a line that comes back in text
             #    whose every line is a paragraph is not a running head, short sentences one per line are paragraphs,
-            #    a Word text box read once as paragraphs of its own, ISO-8859-2 files read as written)
+            #    a Word text box read once as paragraphs of its own, ISO-8859-2 files and UTF-16 ones without a
+            #    byte-order mark read as written)
 REF_HEADING = re.compile(
     r"(?:^|\s)(References|REFERENCES|Bibliography|BIBLIOGRAPHY|Literature [Cc]ited|Works [Cc]ited|Reference [Ll]ist)"
     r"\s*:?\s+(?=\[?\(?\d|[A-Z][A-Za-z'\-]+,?\s+[A-Z]|[A-Z]{2,})"
@@ -104,6 +105,9 @@ class RawDoc:
             raw = dataclasses.replace(raw, **raw.before_4, before_4=None)
         return raw
     page_sizes: list | None = None  # PDFs (0.15): per page, (width, height) in points
+    # hunt phase 1.5: a text file or web page that names no encoding and is not UTF-8: the one guessed for it
+    # ("Windows-1250", …; `_decode`), said in the reading report so a person can see a wrong guess (None: not a guess)
+    encoding: str | None = None
 
 
 @dataclass
@@ -215,14 +219,16 @@ def read_file(path: Path, ocr: "OcrOptions | None" = None, should_stop=None) -> 
     data = path.read_bytes()
     sha1 = hashlib.sha1(data).hexdigest()
     html = ext in (".html", ".htm")
-    decoded = decode_text(data, html=html)
+    decoded, guess = _decode(data, html=html)
     raw = _text_raw(path, ext, decoded, sha1)
+    raw.encoding = guess
     # reader 7 takes a file saved as ISO-8859-2 (Latin-2); readers 1 to 6 read it as Windows-1250 or -1252
-    before = decode_text(data, html=html, reader=6)
+    before, guess6 = _decode(data, html=html, reader=6)
     if before != decoded:
         old = _text_raw(path, ext, before, sha1)
         raw.before_7 = {"pages": old.pages, "meta_title": old.meta_title, "paginated": old.paginated,
-                        "headings": old.headings, "before_5": old.before_5, "figures": old.figures}
+                        "headings": old.headings, "before_5": old.before_5, "figures": old.figures,
+                        "encoding": guess6}
     return raw
 
 
@@ -333,6 +339,25 @@ def _latin2(data: bytes, best: str) -> str:
     return l2 if len(inside) >= 2 and len(signs) > 0.5 * len(lettered) else best
 
 
+def _utf16_without_bom(data: bytes) -> str | None:
+    """Hunt phase 1.5, reader 7: UTF-16 text saved without a byte-order mark (rare: Windows writes one). Text in a
+    Latin alphabet then has a zero byte beside nearly every letter, all on one side, which no UTF-8 or single-byte text
+    has; it was read as UTF-8 (plain-ASCII UTF-16 is valid UTF-8) with a NUL between letters, and could not be searched
+    or quoted. None when it is not that."""
+    n = len(data) // 2
+    if n < 8 or len(data) % 2:
+        return None
+    even, odd = data[0::2].count(0), data[1::2].count(0)
+    enc = "utf-16-le" if odd >= 0.4 * n and even <= 0.01 * n else "utf-16-be" if even >= 0.4 * n and odd <= 0.01 * n \
+        else None
+    if enc is None:
+        return None
+    try:
+        return data.decode(enc)
+    except UnicodeDecodeError:
+        return None
+
+
 def _mostly_utf8(data: bytes) -> str | None:
     """UTF-8 with a few damaged bytes (a cut-off letter, a stray byte in scraped text): read as UTF-8, the damaged
     bytes as "�", rather than the whole file as another encoding. None when it does not look like UTF-8: in text
@@ -347,16 +372,30 @@ def decode_text(data: bytes, html: bool = False, reader: int | None = None) -> s
     """The text of a .txt, .md or web page file: by its byte-order mark (UTF-8, UTF-16, UTF-32); UTF-8 (also with a few
     damaged bytes); for a web page, the encoding it declares (`<meta charset>`, `<?xml encoding>`); else Windows-1250
     or -1252, and from reader 7 (`reader`, default the current one) ISO-8859-2 (see _single_byte)."""
+    return _decode(data, html, reader)[0]
+
+
+# the single-byte encodings `_single_byte` chooses between, by the names a person knows them by
+_GUESSES = (("cp1252", "Windows-1252"), ("cp1250", "Windows-1250"), ("iso8859-2", "ISO-8859-2"))
+
+
+def _decode(data: bytes, html: bool = False, reader: int | None = None) -> tuple[str, str | None]:
+    """`decode_text`, and the encoding guessed when the file names none and is not UTF-8 (None when nothing was
+    guessed). Hunt phase 1.5: the guess is said in the reading report, so a person can see a wrong one."""
     for bom, enc in _BOMS:
         if data.startswith(bom):
-            return data[len(bom):].decode(enc, errors="replace")
+            return data[len(bom):].decode(enc, errors="replace"), None
+    if (reader or READER) >= 7:
+        text = _utf16_without_bom(data)
+        if text is not None:
+            return text, "UTF-16"
     try:
-        return data.decode("utf-8")
+        return data.decode("utf-8"), None
     except UnicodeDecodeError:
         pass
     text = _mostly_utf8(data)
     if text is not None:
-        return text
+        return text, None
     if html:
         head = data[:4096]
         for rx in _DECLARED:
@@ -372,11 +411,15 @@ def decode_text(data: bytes, html: bool = False, reader: int | None = None) -> s
             # as browsers do, a page declared Latin-1 or ASCII is read as Windows-1252
             for e in (("cp1252", "latin-1") if enc in ("latin-1", "iso8859-1", "ascii") else (enc,)):
                 try:
-                    return data.decode(e)
+                    return data.decode(e), None
                 except UnicodeDecodeError:
                     pass
             break
-    return _single_byte(data, reader)
+    text = _single_byte(data, reader)
+    for codec, name in _GUESSES:
+        if data.decode(codec, errors="replace") == text:
+            return text, name
+    return text, "Windows-1252"
 
 
 _W ="{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -1309,16 +1352,8 @@ def unpack_names(names: list[str]) -> list[str]:
     return out
 
 
-def _safe_extract(zf: zipfile.ZipFile, dest: Path, budget: list[int] | None = None, strip: str = "",
-                  problems: list[tuple[str, str]] | None = None, distinct: bool = False) -> list[Path]:
-    """Unpack `zf` into `dest`. With `strip` (a folder in the zip, ending in "/"), only what is in that folder is
-    unpacked, without the folder itself. 0.14.3: with `problems`, a file of the zip that cannot be unpacked (damaged,
-    password-protected) is left out and noted there as (name, what went wrong); without it, that stops the unpacking
-    (a project zip must come whole). With `distinct` (sources), two names that differ only by case or by the form
-    of their accents are kept apart (`unpack_names`)."""
-    out = []
-    root = dest.resolve()
-    budget = budget if budget is not None else [MAX_UNPACKED]
+def _members(zf, strip: str = "") -> list[tuple[zipfile.ZipInfo, str]]:
+    """The files `_safe_extract` unpacks, with their names in the zip (without `strip`)."""
     members = []
     for info in zf.infolist():
         name = zip_name(info)
@@ -1329,6 +1364,27 @@ def _safe_extract(zf: zipfile.ZipFile, dest: Path, budget: list[int] | None = No
                 continue
             name = name[len(strip):]
         members.append((info, name))
+    return members
+
+
+def unpacked_names(zf, strip: str = "") -> dict[str, str]:
+    """Hunt phase 1.5: {name in the zip (without `strip`): the name `_safe_extract(..., distinct=True)` unpacks it
+    under}, for the names it changes only (`unpack_names`)."""
+    names = [n for _i, n in _members(zf, strip)]
+    return {a: b for a, b in zip(names, unpack_names(names)) if a != b}
+
+
+def _safe_extract(zf: zipfile.ZipFile, dest: Path, budget: list[int] | None = None, strip: str = "",
+                  problems: list[tuple[str, str]] | None = None, distinct: bool = False) -> list[Path]:
+    """Unpack `zf` into `dest`. With `strip` (a folder in the zip, ending in "/"), only what is in that folder is
+    unpacked, without the folder itself. 0.14.3: with `problems`, a file of the zip that cannot be unpacked (damaged,
+    password-protected) is left out and noted there as (name, what went wrong); without it, that stops the unpacking
+    (a project zip must come whole). With `distinct` (sources), two names that differ only by case or by the form
+    of their accents are kept apart (`unpack_names`)."""
+    out = []
+    root = dest.resolve()
+    budget = budget if budget is not None else [MAX_UNPACKED]
+    members = _members(zf, strip)
     planned = unpack_names([n for _i, n in members]) if distinct else [n for _i, n in members]
     for (info, _name), name in zip(members, planned):
         if info.file_size > budget[0]:
@@ -1515,7 +1571,7 @@ def _read_whole(f: Path, ocr: OcrOptions, max_chars: int, min_chars: int, should
                 known: frozenset | set = frozenset()) -> tuple:
     """A file read and made into a Document, as `ingest` does it: ("ok", raw, doc); ("failed", the problem in words);
     ("stopped",) for Stop during OCR; ("unbuilt", raw, the exception) when the Document could not be made, which
-    `ingest` raises only for a file that is not a duplicate, as before. A file whose checksum is in `known` (a
+    `ingest` lists under `failed` for a file that is not a duplicate (hunt phase 1.5: it raised it). A file whose checksum is in `known` (a
     duplicate) is not read at all: ("ok", a RawDoc with its checksum and no text, None), as `ingest` only counts a
     duplicate. What storing never reads (each line of the layout, the pages' raw text) is let go (`_lighten`)."""
     if known:
@@ -1532,7 +1588,7 @@ def _read_whole(f: Path, ocr: OcrOptions, max_chars: int, min_chars: int, should
         return ("ok", _lighten_raw(raw), None)
     try:
         return ("ok", raw, _lighten(build_document(raw, max_chars, min_chars)))
-    except Exception as e:  # noqa: BLE001 - raised by `ingest` once it knows the file is new
+    except Exception as e:  # noqa: BLE001 - listed by `ingest` once it knows the file is new
         return ("unbuilt", raw, e)
 
 
@@ -1583,6 +1639,8 @@ def _lighten(doc: "Document") -> "Document":
     return doc
 
 
+# a file read whose passages could not be made (`_ingest_files`, "unbuilt"): said under `failed`
+UNBUILT = "it was read, but ENLENS could not make its passages (a fault in ENLENS: please report this file)"
 # a file whose reading ended its reading process (`_Readings._away`): said under `failed`
 CRASHED = ("reading it stopped the reading program (the file may be damaged, or too large to read with the memory "
            "this computer has free)")
@@ -1965,12 +2023,15 @@ def _ingest_files(ws: Workspace, files: list[Path], readings: _Readings, known: 
     for i, f in enumerate(files):
         if should_stop and should_stop():
             stats["stopped"] = True
+            stats["not_added"] = len(files) - i
             break
         if progress:
             progress(i, len(files), f.name)
         got = readings.get(i)
         if got[0] == "stopped":  # 0.14.3: Stop during the text recognition of a scanned PDF: that file is not added
-            stats["stopped"] = True
+            # hunt phase 1.5: which file was being read (one whose reading never ends is waited for until Stop), and
+            # how many were not added, so the page can say so and the person can add them again without that one
+            stats.update(stopped=True, stopped_at=f.name, not_added=len(files) - i)
             break
         if got[0] == "failed":  # one unreadable file should not stop the others (0.14.3: whatever it raises: a
             # damaged Word file gave a zip or XML error that stopped the whole add)
@@ -1981,7 +2042,10 @@ def _ingest_files(ws: Workspace, files: list[Path], readings: _Readings, known: 
             stats["duplicates"] += 1
             continue
         if got[0] == "unbuilt":
-            raise got[2]
+            # hunt phase 1.5: a file read but not made into passages (a fault of the reader) raised here, so one such
+            # file stopped the whole add; it is listed as one that could not be read, and the others go on
+            stats.setdefault("failed", []).append(f"{f.name}: {UNBUILT} ({_read_problem(got[2])[:200]})")
+            continue
         doc = got[2]
         if raw.ocr_pages:
             stats.setdefault("ocr", []).append(f.name)

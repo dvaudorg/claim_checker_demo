@@ -22,6 +22,7 @@ import csv
 import inspect
 import io
 import json
+import threading
 import uuid
 from typing import Any, Callable
 
@@ -176,24 +177,51 @@ def _answered_again(t) -> bool:
     return (model == CHAT_MODEL and not _left(t)) or _queued_open(t) or t["task_id"].endswith(":local")
 
 
+def _col(t, key: str):
+    """A column of a task row (a dict or a database row), None when the row has none."""
+    try:
+        return t[key]
+    except (IndexError, KeyError):
+        return None
+
+
+# hunt phase 1.5 (review wave 3): the proof that the app's own part of a round is answered by nobody: it was made
+# before this program started, and no job of it answers the part now (`_run_round` names the part while it asks it)
+_STARTED = now()
+_ANSWERING: set[str] = set()
+_ANSWERING_LOCK = threading.Lock()
+
+
 def _left(t) -> bool:
     """Hunt phase 1.5 (CHECKS-5): an open part (pending, retry) of a round that nobody answers any more, so the round
-    has ended and the app may read its excerpts itself (`continue_check` takes it back first). The app's own part
-    left at "retry" (the app retries at once, so it was closed between two tries); and an app's or a Claude chat's
-    part untouched (made, or last answered) for as long as a claim on the queue lasts (taskqueue.CLAIM_MINUTES): a
-    chat refused once and then abandoned, or a round the app made and was closed before it tried. Never a part in the
-    queue, a `:local` part (Read them now) or a person's."""
+    has ended and the app may read its excerpts itself (`continue_check` takes it back first).
+
+    - A Claude chat's part untouched (made, or last answered) for as long as a claim on the queue lasts
+      (taskqueue.CLAIM_MINUTES): a chat refused once and then abandoned, or one that never sent grades.
+    - The app's own part only on its own sign, never by time (a slow model may read for longer): left at "retry"
+      (the app retries at once, so it was closed between two tries), or still "pending" though it was made before
+      this program started; in both cases only when no job of this program asks it now (`_ANSWERING`).
+    Never a part in the queue, one a program has claimed (a live claim), a `:local` part (Read them now), a person's,
+    a part of a check by queue still under way (one held out of the queue until the person allows its provider: its
+    claim's stage is still "judge"), or a part whose documents no longer allow the cloud (it waits for a model that
+    may read it, or the person). Review wave 3: the time lapse made such waiting rounds "ended" after 30 minutes, and
+    `continue_check` then deleted them."""
     if t["status"] not in ("pending", "retry") or _is_person(t) or _queued_open(t) or t["task_id"].endswith(":local"):
         return False
-    if t["status"] == "retry" and (t["model"] or "") != CHAT_MODEL:
-        return True
-    try:
-        touched = t["touched"]
-    except (IndexError, KeyError):
-        touched = None
+    if _col(t, "claim_stage") in ("terms", "rank", "judge") or (_col(t, "access") or "cloud") != "cloud":
+        return False
     from .taskqueue import _cutoff
 
-    return bool(touched) and touched < _cutoff()
+    cutoff = _cutoff()
+    if _col(t, "claimed_by") and (_col(t, "claimed_at") or "") >= cutoff:
+        return False
+    touched = _col(t, "touched")
+    if (t["model"] or "") == CHAT_MODEL:
+        return bool(touched) and touched < cutoff
+    with _ANSWERING_LOCK:
+        if t["task_id"] in _ANSWERING:
+            return False
+    return t["status"] == "retry" or (bool(touched) and touched < _STARTED)
 
 
 def _round_status(parts: list) -> str:
@@ -263,7 +291,8 @@ def _light_checks(ws: Workspace, claim_ids: list[str] | None = None, titles: boo
     whole text in memory to count its excerpts."""
     cols = "json_extract(j.value, '$.passage_id'), json_extract(j.value, '$.doc_id')" + (
         ", json_extract(j.value, '$.title')" if titles else "")
-    sql = (f"SELECT t.task_id, t.status, t.queued, t.model, {_TOUCHED.format(t='t')} AS touched, CASE WHEN "
+    sql = (f"SELECT t.task_id, t.status, t.queued, t.model, t.access, t.claimed_by, t.claimed_at, t.created_at, "
+           f"{_TOUCHED.format(t='t')} AS touched, CASE WHEN "
            f"json_valid(t.payload_json) THEN (SELECT json_group_array(json_array({cols})) FROM "
            "json_each(t.payload_json, '$.passages') j) END AS ex FROM tasks t WHERE ")
     if claim_ids is None:
@@ -274,6 +303,7 @@ def _light_checks(ws: Workspace, claim_ids: list[str] | None = None, titles: boo
             cond, args = tasks.check_task_ids_sql(cid)
             rows += ws.query(sql + f"+t.kind='check' AND {cond.replace('task_id', 't.task_id')} "
                              "ORDER BY t.created_at, t.rowid", args)
+    stage = {r[0]: r[1] for r in ws.query("SELECT claim_id, stage FROM user_claims")} if rows else {}
     out: dict[str, list[dict]] = {}
     for n, r in enumerate(rows):
         if r["ex"] is None:  # a payload SQLite cannot read: read (and fail) as before
@@ -283,7 +313,8 @@ def _light_checks(ws: Workspace, claim_ids: list[str] | None = None, titles: boo
             ex = [tuple(x) for x in json.loads(r["ex"])]
         out.setdefault(r["task_id"].split(":")[1], []).append(
             {"task_id": r["task_id"], "status": r["status"], "queued": r["queued"], "model": r["model"], "excerpts": ex,
-             "n": n, "touched": r["touched"]})
+             "n": n, "touched": r["touched"], "access": r["access"], "claimed_by": r["claimed_by"],
+             "claimed_at": r["claimed_at"], "created_at": r["created_at"], "claim_stage": stage.get(r["task_id"].split(":")[1])})
     return out
 
 
@@ -466,7 +497,13 @@ def _run_round(ws: Workspace, parts: dict[str, str], backend, model: str, reader
     there is none). Backend errors of the main model propagate."""
     ok = True
     if "main" in parts:
-        ok, _errs = tasks.run_one(ws, parts["main"], backend, model)
+        with _ANSWERING_LOCK:   # hunt phase 1.5: being answered, so never taken for a round nobody answers (`_left`)
+            _ANSWERING.add(parts["main"])
+        try:
+            ok, _errs = tasks.run_one(ws, parts["main"], backend, model)
+        finally:
+            with _ANSWERING_LOCK:
+                _ANSWERING.discard(parts["main"])
     if "local" in parts:
         if readers is not None and readers.defers():
             # 0.19.13: in a job of the app the local part waits for the local model's own Start, and is read beside
@@ -1431,8 +1468,9 @@ def chat_rules() -> str:
 
 def _check_tasks(ws: Workspace, cid: str) -> list:
     cond, args = tasks.check_task_ids_sql(cid)  # on the key: called per part on every look at the queue
-    return ws.query(f"SELECT *, {_TOUCHED.format(t='tasks')} AS touched FROM tasks WHERE +kind='check' AND {cond} "
-                    "ORDER BY created_at, rowid", args)
+    return ws.query(f"SELECT *, {_TOUCHED.format(t='tasks')} AS touched, (SELECT stage FROM user_claims WHERE "
+                    f"claim_id=?) AS claim_stage FROM tasks WHERE +kind='check' AND {cond} ORDER BY created_at, rowid",
+                    [cid, *args])
 
 
 # hunt phase 1.5 (CHECKS-5): when a part was last touched (its latest answer, else when it was made), for `_left`
@@ -1551,6 +1589,13 @@ def submit_grades(ws: Workspace, cid: str, grades: list[dict], summary: str | No
     if t is None:
         raise ValueError("The excerpts of this round all come from documents kept on this computer, so there is "
                          "nothing for you to grade. Ask for more_passages to read further.")
+    if model == CHAT_MODEL and (t["model"] or "") != CHAT_MODEL:
+        # hunt phase 1.5 (review wave 3): the round now open is not the one this chat was shown: the chat's round
+        # ended unanswered and ENLENS read its excerpts itself (`_left`, `continue_check`), or the person asked for more
+        # in the app. Its grades would be stored for excerpts the chat never saw
+        raise ValueError("ENLENS read these excerpts itself after this chat left them unanswered (or the person read "
+                         "further in the app), so these grades were not stored. Read the result with get_check, or "
+                         "ask for more_passages to read further.")
     if t["status"] == "done":
         raise ValueError("These passages are already graded. Ask for more_passages to read further.")
     if t["status"] == "failed":
@@ -1871,7 +1916,7 @@ def history(ws: Workspace, threshold: float | None = None, limit: int | None = N
     second: dict[tuple[str, str], str | None] = {}  # the latest second-model grade of each excerpt
     for r in ws.query("SELECT subject_id, passage_id, verdict FROM second_opinions ORDER BY at, rowid"):
         second[(r["subject_id"], r["passage_id"])] = r["verdict"] if r["verdict"] in GRADES else None
-    from .check_results import added_since, evidence_added, read_by_every_part
+    from .check_results import added_since, evidence_added, part_read
 
     added = evidence_added(ws)  # the result page's own (new_documents): theory and working documents are no evidence
     q = (query or "").lower().strip()
@@ -1903,7 +1948,7 @@ def history(ws: Workspace, threshold: float | None = None, limit: int | None = N
         st_all: list[str] = []  # 0.18.6: counting the Non-scientific documents too
         all_vs = []
         uncounted = corrected = reviewed = to_review = disagree = 0
-        shown_docs: list[set[str]] = []  # per part (hunt phase 1.5: a document is read once every part read it)
+        part_reads: list = []  # per part (hunt phase 1.5: a document is read for the parts that read it, `added_since`)
         limited = False
         for_you: list[bool] = []  # 0.14.3: per part, whether all it waits for is your own judgement
         for c in parts:
@@ -1926,12 +1971,11 @@ def history(ws: Workspace, threshold: float | None = None, limit: int | None = N
                 st_first.append(_status_of_rounds(sts, vf, thr, c["stage"], wt))
             else:
                 st_first.append(st[-1])
-            shown_docs.append(set())
+            part_reads.append(part_read(rs))
             for r in rs:
                 shown = _excerpts(r)
                 read += len(shown)
                 for pid, did, *_title in shown:
-                    shown_docs[-1].add(did)
                     key = (c["claim_id"], pid)
                     if key in second and key in ai_of and second[key] != ai_of[key]:
                         disagree += 1
@@ -1957,7 +2001,7 @@ def history(ws: Workspace, threshold: float | None = None, limit: int | None = N
         model = h["model"] or first["model"] or json.loads(first["options_json"] or "{}").get("model", "")
         bal = balance(all_vs, thr)
         cutoff = max(h["created_at"] or "", h["docs_checked_at"] or "")
-        since = 0 if limited else len(added_since(added, cutoff, read_by_every_part(shown_docs)))
+        since = 0 if limited else len(added_since(added, cutoff, part_reads))
         st_text = None
         if s == "waiting" and _only_local([c for c in parts if c["hyp_id"] == h["hyp_id"]],
                                           lambda cid: rounds.get(cid, [])):  # only_local_waits, from what is read

@@ -139,7 +139,7 @@ export async function renderSources(view) {
     });
     watchers.push(w);
     w.promise.then(async (job) => {
-      head.textContent = job.state === "done" ? "Documents added" : job.state === "cancelled" ? "Stopped" : "Could not add the documents";
+      head.textContent = job.state === "done" && !(job.result || {}).stopped ? "Documents added" : job.state === "done" || job.state === "cancelled" ? "Stopped" : "Could not add the documents";
       if (job.state === "done") ingestSummary(holder, job.result || {});
       else if (job.state === "error") replace(holder.querySelector(".pb"), notice({ kind: "error" }, h("div", {}, h("p", {}, "The documents could not be added."), fold({}, "Technical details", h("div", { class: "mono small" }, job.error || "")), job.error_kind === "backend" ? h("a", { href: "#/settings" }, "Check the AI model in Settings") : null)));
       else replace(holder.querySelector(".pb"), h("p", { class: "muted" }, "Stopped. The files read so far were kept."));
@@ -161,6 +161,13 @@ export async function renderSources(view) {
     bits.push(notice({ kind: added ? "done" : "attention" },
       h("div", {}, h("p", {}, added ? `${added} ${added === 1 ? "document" : "documents"} added.` : "No new document was added.", st.duplicates ? ` ${st.duplicates} ${st.duplicates === 1 ? "was" : "were"} already in the project.` : ""),
         added ? link({ kind: "next", href: "#/hypotheses", class: "docs-check-link" }, "Check a hypothesis") : null)));
+    // hunt phase 1.5: Stop pressed while a file was being read (one whose reading never ends is waited for until
+    // Stop): which file, and how to add the others
+    if (st.stopped && st.not_added) bits.push(notice({ kind: "attention" }, h("p", {}, st.stopped_at
+      ? `Stopped while reading ${st.stopped_at}: ${st.not_added === 1 ? "it was not added" : `it and ${plural(st.not_added - 1, "more file")} were not added`}. `
+      : `Stopped: ${plural(st.not_added, "file")} ${st.not_added === 1 ? "was" : "were"} not added. `,
+      "To add them, add the same files again: the documents already in the project are skipped.",
+      st.stopped_at ? ` If ${st.stopped_at} stops the reading again, type its name under “Leave out files whose name matches”.` : "")));
     const noText = new Set(st.scanned_no_text || []);
     if (st.ocr && st.ocr.length) bits.push(notice({ kind: "info", icon: "eye" }, h("p", {}, `Scanned pages were read with text recognition (OCR) in ${st.ocr.length === 1 ? "1 document" : `${st.ocr.length} documents`}: ${st.ocr.join(", ")}. The recognised text can contain mistakes; the quotes are checked against it.`)));
     const notAdded = [...noText].filter((f) => (st.empty_files || []).includes(f));
@@ -857,11 +864,14 @@ export async function renderSources(view) {
     const rows = [...losing.map((d) => ({ doc_id: d.doc_id, title: d.title, count: d.no_place })),
       ...cannot.map((d) => ({ doc_id: d.doc_id, title: d.title, count: null, reason: d.reason }))];
     const movable = clean.length + losing.length;
+    const same = docs.filter((d) => d.ok && d.same_reading === true);
     return notice({ kind: losing.length || cannot.length ? "attention" : "info", role: "status", icon: "layers" }, h("div", { class: "grow" },
       h("p", {}, h("strong", {}, `${fmt.num(clean.length)} of ${fmt.num(docs.length)} ${docs.length === 1 ? "document moves" : "documents move"} cleanly`),
         `: every result in ${clean.length === 1 ? "it" : "them"} finds its place in the new reading.`,
         losing.length ? ` ${plural(sum.results_without_place || 0, "result")} in ${plural(losing.length, "other document")} would lose ${(sum.results_without_place || 0) === 1 ? "its" : "their"} place.` : "",
-        cannot.length ? ` ${plural(cannot.length, "document")} cannot be read again now.` : ""),
+        cannot.length ? ` ${plural(cannot.length, "document")} cannot be read again now.` : "",
+        // hunt phase 1.5: the documents the new reader reads exactly as before (offered all the same: same kind)
+        same.length ? ` ${same.length === docs.length ? (same.length === 1 ? "It reads" : "They all read") : `${fmt.num(same.length)} of them ${same.length === 1 ? "reads" : "read"}`} exactly as before: moving changes only the number of the reader that read ${same.length === 1 ? "it" : "them"}.` : ""),
       rows.length ? [h("p", { class: "small muted" }, "Review shows what each would lose, on its own page. Nothing has been changed yet."), ...nrTable(rows)] : null,
       h("div", { class: "btn-row docs-nr-actions" },
         clean.length ? button({ kind: "main", sm: true, onClick: () => moveNr(clean.map((d) => d.doc_id), false, `Move the ${plural(clean.length, "document")} that ${clean.length === 1 ? "moves" : "move"} cleanly?`) },

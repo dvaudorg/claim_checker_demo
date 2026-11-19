@@ -45,7 +45,7 @@ large type is not the title, and a running head with a page number on its row is
 file, in a document in two languages (`languages.py`) no block is carried on, and no passage put together, across the
 two. `read_blocks(raw, version=5)` still reads as reader 5 did.
 
-Reader 7 (ENLENS 0.20.4) adds the rules of `reader7.py`, for text files, Word files and web pages (PDFs read as by
+Reader 7 (the ENLENS after 0.20.3) adds the rules of `reader7.py`, for text files, Word files and web pages (PDFs read as by
 reader 6): a line that comes back in text whose every line is a paragraph (an interviewer's question) is not taken for
 a running head, a text file of short sentences one per line is a paragraph per line, a Word file's text box is read
 once as paragraphs of its own (`ingest._read_docx`), and a file saved as ISO-8859-2 keeps its letters
@@ -64,7 +64,7 @@ from .textutil import split_sentences
 
 READER = 7   # 2: ENLENS 0.15.0; 3: ENLENS 0.15.1 (reader3.py); 4: ENLENS 0.17.2 (reader4.py);
 #              5: ENLENS 0.18.1 (reader5.py); 6: ENLENS 0.19 (reader6.py; languages.py: no passage holds both
-#              languages of a document in two); 7: ENLENS 0.20.4 (reader7.py: text, Word and web pages only)
+#              languages of a document in two); 7: the version after 0.20.3 (reader7.py: text, Word and web pages only)
 INCLUDED = ("body", "heading", "title", "abstract", "caption")
 KINDS = ("title", "heading", "abstract", "body", "caption", "table", "footnote", "front", "back", "references",
          "figure", "furniture", "contents", "index")
@@ -1271,6 +1271,8 @@ def read_blocks(raw, version: int = READER) -> tuple[list[Block], dict]:
                                            "accents")},
         "tables": sum(1 for b in blocks if b.kind == "table"),
     }
+    if getattr(raw, "encoding", None):   # hunt phase 1.5: the encoding guessed for a file that names none
+        report["encoding_guess"] = raw.encoding
     if v5:
         report["figures"] = sum(1 for b in blocks if b.kind == "figure" and (b.box is not None or not pdf))
         report["tables_joined"] = tables_joined

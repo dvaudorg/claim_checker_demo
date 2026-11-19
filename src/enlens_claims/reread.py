@@ -1251,6 +1251,10 @@ def _plan(ws: Workspace, cx, doc_id: str, new_doc, m: _Map | None = None,
         "ai_share": {"before": before_share, "after": after_share},
         "addons": _addon_rows(cx, doc_id, old_set),
         "reading": dict(getattr(new_doc, "reading", None) or {}),
+        # hunt phase 1.5: whether the new reader reads it exactly as before (the same text, passages and pages): a
+        # reader that changes some files of a kind is offered to every file of that kind, and the preview says which
+        "same_reading": (old_text == new_doc.text and [(p.start, p.end, p.page) for p in old]
+                         == [(q.start, q.end, q.page) for q in new]),
         "warnings": [],
     }
     _warnings(report, drow)

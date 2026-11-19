@@ -137,7 +137,7 @@ themes and at 390 px wide.
 | `reader3.py` | What reader 3 (0.15.1) adds, on the text alone: running heads and page numbers by repetition in lines without positions, text printed twice, paragraphs in hard-wrapped text, headings where a file marks none, a book's contents, front and end matter and index, ligatures broken by a space, words run together, and the report's warnings |
 | `reader4.py` | What reader 4 (0.17.2) adds: a text file with one paragraph per line read paragraph by paragraph (its Word changes, content controls and nested tables, are in `ingest._read_docx`) |
 | `reader6.py` | What reader 6 (0.19) adds, for PDFs only: a pdfminer device that honours a form's /BBox (hidden text of a draft page shown through a window is not read), a form of many words kept as one figure, publishing details after the text has begun set aside as front matter, a journal's name that begins the running head not taken for the title (reader 5's rules are in `reader5.py`); reader 6's two languages kept apart, in any kind of file, are `languages.py`'s |
-| `reader7.py` | What reader 7 (0.20.4) adds, for text files, Word files and web pages only: in text whose every line is a paragraph a line that comes back is a running head only at a page break or where a sentence runs across it, a text file of short sentences one per line read paragraph by paragraph (its Word change, a text box read once as paragraphs of its own, is in `ingest._read_docx`; its ISO-8859-2 decoding in `ingest.decode_text`, with readers 1 to 6's text kept in `RawDoc.before_7`) |
+| `reader7.py` | What reader 7 adds, for text files, Word files and web pages only: in text whose every line is a paragraph a line that comes back is a running head only at a page break or where a sentence runs across it, a text file of short sentences one per line read paragraph by paragraph (its Word change, a text box read once as paragraphs of its own, is in `ingest._read_docx`; its ISO-8859-2 decoding in `ingest.decode_text`, with readers 1 to 6's text kept in `RawDoc.before_7`) |
 | `reread.py` | *Read with the new reader* (0.15): a document of a project read again by the new reader, its results moved by their quotes, all or nothing |
 | `measure.py`, `pdfmake.py` | `enlens measure` (0.15): how well each reader reads PDFs of known text (made by `pdfmake`, a small PDF writer), quotes that still find their place, timings, determinism; the validation report of each release |
 | `bundle.py` | A whole project as one zip (export and import); every project and the settings, to move to another computer (0.10) |
@@ -345,8 +345,9 @@ recorded and announced:
   `reader5.py` (0.18.1: ruled tables, tables over a page, figures), and 6 adds `reader6.py` (0.19, PDFs only: text a
   form crops away left out, publishing details in the first page's footer and a journal's name that begins the
   running head set aside, running heads beside a page number found; and, any kind of file, `languages.py`: no passage
-  holds both languages of a document in two), and 7 adds `reader7.py` (0.20.4, text files, Word files and web pages
-  only: an interview's repeated line, short sentences one per line, a Word text box once, ISO-8859-2; a file whose
+  holds both languages of a document in two), and 7 adds `reader7.py` (text files, Word files and web pages
+  only: an interview's repeated line, short sentences one per line, a Word text box once, ISO-8859-2, UTF-16 without
+  a byte-order mark; a file whose
   text reader 7 reads otherwise keeps reader 6's in `RawDoc.before_7`). Check a change
   with `tools/reader_fingerprints.py` (a folder of files, before and after) and `tools/reader_fingerprints_pytest.py`
   (every document the tests read). A change

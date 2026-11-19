@@ -368,7 +368,7 @@ def import_project(zip_path: str | Path, dest: str | Path, merge_only: bool = Fa
     """Unpack a project zip into the folder `dest` (which must not exist yet, or be empty) and open it. The zip is one
     made with export_project, or a project folder zipped by hand (0.13.5). `merge_only` (0.18): unpacked only to be
     merged into a copy (sync.bring_in), not a copy of its own: the sender's copy stays as it was."""
-    from .ingest import ZIP_ERRORS, _safe_extract, zip_name, zip_problem
+    from .ingest import ZIP_ERRORS, _safe_extract, unpacked_names, zip_name, zip_problem
 
     zip_path, dest = Path(zip_path), Path(dest)
     if not zipfile.is_zipfile(zip_path):
@@ -385,8 +385,13 @@ def import_project(zip_path: str | Path, dest: str | Path, merge_only: bool = Fa
             shutil.rmtree(staging)
         staging.mkdir(parents=True)
         try:
+            # hunt phase 1.5: two names that differ only by case or by the form of their accents ("Report.pdf" and
+            # "report.pdf", from a copy on Linux) were unpacked to one file on macOS and Windows, so one document
+            # opened the other's original; they are kept apart as an add keeps them (`ingest.unpack_names`), and the
+            # documents follow the names they were unpacked under
+            renamed = unpacked_names(_Without(zf, prefix), prefix)
             try:
-                _safe_extract(_Without(zf, prefix), staging, [MAX_IMPORT], strip=prefix)
+                _safe_extract(_Without(zf, prefix), staging, [MAX_IMPORT], strip=prefix, distinct=True)
             except ZIP_ERRORS as e:  # 0.14.3: a damaged or password-protected zip, in words
                 raise ValueError(f"This project zip could not be unpacked ({zip_problem(e)}). Ask for a new copy of "
                                  "the file.") from e
@@ -437,16 +442,23 @@ def import_project(zip_path: str | Path, dest: str | Path, merge_only: bool = Fa
     with ws.connect() as cx:
         for doc_id, path in cx.execute("SELECT doc_id, path FROM documents").fetchall():
             arc = files.get(doc_id)
-            if not arc:
+            if not arc or not isinstance(arc, str):
                 continue
-            target = (root / arc).resolve()
+            target = (root / renamed.get(arc, arc)).resolve()
             if target.is_relative_to(root) and target.is_file():
                 cx.execute("UPDATE documents SET path=? WHERE doc_id=?", (str(target), doc_id))
     if prefix and not files:
         # a project folder zipped by hand: its documents still point into the folder it was zipped from
         name = prefix.rstrip("/").rsplit("/", 1)[-1]
-        relocate_documents(dest / "enlens.sqlite", lambda parts: parts[len(parts) - parts[::-1].index(name):]
-                           if name in parts[:-1] else None, root)
+
+        def inside(parts):
+            rel = parts[len(parts) - parts[::-1].index(name):] if name in parts[:-1] else None
+            if rel:  # (a name unpacked under another, as above)
+                path = "/".join(rel)
+                rel = renamed.get(path, renamed.get(unicodedata.normalize("NFC", path), path)).split("/")
+            return rel
+
+        relocate_documents(dest / "enlens.sqlite", inside, root)
     for sub in ("tasks", "results", "exports", "report"):
         (dest / sub).mkdir(exist_ok=True)
     (dest / "bundle.json").unlink(missing_ok=True)

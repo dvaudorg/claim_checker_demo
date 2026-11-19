@@ -160,6 +160,7 @@ class LibraryMixin:
                     lost = rep.get("not_placed") or []
                     placed = sum(c.get("moved", 0) for k, c in (rep.get("counts") or {}).items() if k != "theme_member")
                     entry.update(results=placed + len(lost), no_place=len(lost), left_out=len(rep.get("left_out") or []),
+                                 same_reading=rep.get("same_reading"),   # hunt phase 1.5: read exactly as before
                                  not_placed=[{k: x.get(k) for k in ("kind_text", "what", "quote", "page", "where",
                                                                     "left_out_kind", "why")} for x in lost])
                 docs.append(entry)

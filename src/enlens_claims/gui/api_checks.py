@@ -453,6 +453,14 @@ class ChecksApi:
         body = self._body()
         verdict = body.get("verdict") or None
         extra = {"quote": body.get("quote")} if "quote" in body else {}
+        if "quote" in body and body.get("quote_start") is not None:
+            # hunt phase 1.5: where the sentence was selected, in the excerpt's text (code points, as the result's
+            # `quote_start`), so words that stand twice are kept where they were selected
+            qs = body["quote_start"]
+            if not isinstance(qs, int) or isinstance(qs, bool) or qs < 0:
+                raise ApiError(400, "quote_start must be a whole number from 0: where the sentence starts in the "
+                                    "excerpt.")
+            extra["quote_start"] = qs
         if body.get("threshold") is not None:  # 0.18.1: the strictness the page shows, for the sentence of what moved
             try:
                 extra["threshold"] = min(1.0, max(0.0, float(body["threshold"])))

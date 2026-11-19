@@ -12,16 +12,19 @@
   the judgement was refused. It is saved now, and counts. Can change results, once you judge them.
 - **A document added since a check is read for every part.** When *Read it* failed for one part of a hypothesis
   while you judged an excerpt of another part, that part's reading was kept, and the document then no longer counted
-  as added since: the part whose reading failed never got it. It now stays listed until every part has read it. The
-  same holds when *Read more excerpts* on one part read a new document: *Read it* still reads it for the others.
+  as added since: the part whose reading failed never got it. It now stays listed until every part that searched
+  before it was added has read it. The same holds when *Read more excerpts* on one part read a new document: *Read
+  it* still reads it for the others.
 
 ### Fixed
 
 - **A check left half-done can be finished from its result.** When the app was closed while it was checking, or a
   Claude chat stopped answering after its grades were refused (or never sent any), the check said *The check did
   not work* or *Not finished yet* for good, and *Read more excerpts* refused to start ("still has excerpts waiting to
-  be judged"). After 30 minutes without an answer such a reading has ended: the check says it did not work, and
-  *Read more excerpts* reads its excerpts again in the app. What you judged in it stays.
+  be judged"). Such a reading now ends: a chat's after 30 minutes without an answer, the app's own once the app has
+  been started again. The check then says it did not work, and *Read more excerpts* reads its excerpts again in the
+  app; a chat that sends its grades after that is told the app read them. What you judged in it stays. A check by
+  queue that waits for you to allow its AI provider keeps waiting, however long.
 - **"N of M hypotheses brought up to date" counts only those brought up to date.** After *Read the new documents*
   for several hypotheses, one whose reading did not work was counted among them as well as in "1 could not be read".
 - **A colleague's sentence is no longer called yours.** Where a colleague's judgement counts on an excerpt and they

@@ -14,7 +14,8 @@
   and quotes in a file of short lines are cited by their own paragraph. New documents are read by reader 7; text
   files, Word files and web pages already in a project keep their reading until you choose *Read with the new reader*
   (the preview says whether anything changes). In text copied out of a PDF whose every paragraph is one line, a
-  running head that never falls in the middle of a sentence can now stay in the text.
+  running head that never falls in the middle of a sentence can now stay in the text, and so can a header line
+  repeated in an interview typed with a blank line between turns.
 
 ### Safer
 

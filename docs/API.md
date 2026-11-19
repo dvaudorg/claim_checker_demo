@@ -862,7 +862,9 @@ while the new passages get vectors). `result`:
 zip: save a copy without the password and add that (report.pdf)"`, `"…: damaged zip: copy or download it again (…)"`),
 a damaged Word file and a password-protected PDF (`"x.pdf: password-protected: …"`, before reported as a file without
 text); the other files are added. `"stopped": true` when Stop was pressed, also during the text recognition (OCR) of a
-scanned PDF, which is then not added.
+scanned PDF, which is then not added. Hunt phase 1.5: with it `"not_added"` (how many files of the batch were not
+read), and `"stopped_at"` (the file being read when Stop came, absent when Stop came between two files); a file read
+whose passages could not be made is a line under `failed`, and the other files are added.
 (optional keys are absent when empty). `ocr`: PDFs whose scanned pages were read by OCR (on this computer, at low
 priority). `scanned_no_text`: PDFs with scanned pages that stayed without text (OCR off or not installed): say
 "Scanned: no text. Ask IT to install Tesseract to read it." A wholly scanned PDF without OCR is also in
@@ -899,7 +901,9 @@ reader), `"new_reader"` (the reader new documents get), `"reading"` (the reading
 "pdfminer"|"pypdf"|"text", "pages", "pages_with_text", "ocr_pages", "scanned_pages", "multi_column_pages",
 "repairs": {"hyphens_joined", "hyphens_kept", "words_split", "ligatures", "spaces", "accents"}, "tables", "blocks":
 {kind: n}, "left_out_chars": {kind: n}, "included_share", "passages", "body_passages", "unreadable_passages", "words",
-"warnings": [sentence], "quality": "good"|"fair"|"poor"}`; for a document read before 0.15 `{"reader": 1, "older":
+"warnings": [sentence], "quality": "good"|"fair"|"poor", "encoding_guess"?}` (hunt phase 1.5: `encoding_guess`, for a
+text file or web page that names no encoding and is not UTF-8, the one taken: "Windows-1252", "Windows-1250",
+"ISO-8859-2" or "UTF-16"); for a document read before 0.15 `{"reader": 1, "older":
 true, "pages", "ocr_pages", "scanned_pages", "passages", "body_passages", "unreadable_passages", "warnings": [],
 "quality": null}`), `"page_images"` (a picture of each page can be had), `"tables"` and `"paragraphs"` (counts).
 0.19: `"languages"`: `{"shares": {code: share of the characters whose language is known}, "blocks": {code: n},
@@ -968,7 +972,8 @@ no text in the new reading), otherwise the report: `{"ok": true, "moved": false,
 out; page in the new reading), `"remade"`, `"tasks": {"asked_again", "moved", "kept_as_records"}`, `"themes":
 {"runs_kept_up_to_date", "runs_out_of_date", "runs"}`, `"passages": {"before", "after", "one_to_one", "body_before",
 "body_after"}`, `"ai_share": {"before", "after"}`, `"addons": [{"table", "rows"}]`, `"reading"` (the new reading
-report), `"warnings": [sentence]}` (`reread.py`). `POST …/reread` → `{"job"}` (kind `reread`): the move in one
+report), `"same_reading"` (hunt phase 1.5: true when the new reader reads it exactly as before, the same text and
+passages), `"warnings": [sentence]}` (`reread.py`). `POST …/reread` → `{"job"}` (kind `reread`): the move in one
 transaction (all or nothing), then the document's search by meaning, the glossary and the keyword pass, as after adding
 a document; the job's result is `{"report": {… "moved": true}, "glossary", "codes", …}`. 409 with the reason when it
 cannot be done. 0.17.0: while another job of the project runs, the move waits its turn (`waiting_for`) instead of a 409;
@@ -990,13 +995,13 @@ cannot be read again now, and the result has `summary`: `{"moved", "left_as_they
 (`ingest.READER`) beside each document's `reader`, and (0.19) `new_reader_changes`. 0.19: a document reader 5
 read is one of "the documents an earlier reader read" only when reader 6 would read it otherwise (a PDF, or a
 document one of whose passages holds both languages of a document in two); `POST …/reread` of any other answers 409
-with the reason. 0.20.4: of the documents reader 6 read, every one but a PDF is one of them (reader 7 reads PDFs as
+with the reason. With reader 7: of the documents reader 6 read, every one but a PDF is one of them (reader 7 reads PDFs as
 reader 6 did).
 
 `POST /api/projects/<p>/new-reader/preview` `{"doc_ids"?: [doc_id]}` (0.18.0rc2) → `{"job"}` (kind
 `new_reader_preview`): the dry run before moving several documents; same `doc_ids` rules, errors and 409 as the move.
 Each document is read again by the current reader (`reread.preview`; nothing is stored or changed). The job's result is
-`{"documents": [{"doc_id", "title", "ok", "reason", "results", "no_place", "left_out", "not_placed": [{"kind_text",
+`{"documents": [{"doc_id", "title", "ok", "reason", "results", "no_place", "left_out", "same_reading", "not_placed": [{"kind_text",
 "what", "quote", "page", "where", "left_out_kind", "why"}]}], "stopped", "summary": {"documents", "clean",
 "would_lose", "cannot", "results_without_place"}}`: `clean` documents move with every result in place, `would_lose`
 documents have `no_place` results that would find none, `cannot` documents cannot be read again now (`reason`).
@@ -1262,8 +1267,9 @@ Each passage also has: `ai_verdict` (the AI's own grade or null), `user_verdict`
 (a person judged it) and `changed` (their judgement differs from the AI's), `location` (where the quote is: "page 2",
 "paragraph 6 of 8"; without a quote, the excerpt's span; documents stored before 0.5.1: "about 40% into the
 document"), `span` (what the whole excerpt covers: "paragraphs 1–6 of 8", "pages 2–3"), `doc_start` (the document
-offset where the excerpt starts), `position_pct`, `quote_by` ("the AI", "you" when the person chose the sentence,
-the colleague's name, as in `judged_by`, when the sentence is that of a colleague's judgement in force, or null) and `ai_quote` (the AI's own quote). Each part also has `who` and `balance`. Each part has
+offset where the excerpt starts), `position_pct`, `quote_by` ("the AI", "the local model", "you" when the person chose the sentence,
+"colleague" when it is the sentence of a colleague's judgement in force, or null: fixed words, never a name), with
+`quote_by_name` (the colleague's name when `quote_by` is "colleague", else null) and `ai_quote` (the AI's own quote). Each part also has `who` and `balance`. Each part has
 `rounds_info`: `[{"round", "status", "passages", "terms": [words searched for in that round], "ai_note": "the AI's own
 note on that round's excerpts"}]`, and (this endpoint only) `more_available`: false when "read more" would find
 nothing new. `who` lists the documents behind the answer by side, with the same rule as `balance` (a document with
@@ -1316,7 +1322,10 @@ says the opposite", "quote": "Loneliness did not rise among hybrid workers of an
 person's own judgement of one excerpt (`supports`, `partially_supports`, `refutes`, `not_relevant`; `null` removes it,
 with its sentence, and the AI's counts again). Agreeing with the AI = sending the AI's own verdict (`not_relevant`
 for an excerpt it found not about the hypothesis). `quote` (optional) is the sentence the judgement rests on: text of
-this excerpt (400 otherwise); left out, an earlier one is kept; `""` removes it. From 0.6, `{"verdict": null,
+this excerpt (400 otherwise); left out, an earlier one is kept; `""` removes it. `quote_start` (optional, with
+`quote`): where the person selected it, counted in code points in the excerpt's `text` as the result gives it (the
+same count as the result's `quote_start`): words that stand twice in the excerpt are kept at the place nearest it;
+without it, at their first place. From 0.6, `{"verdict": null,
 "note": "…"}` keeps only a comment: it is not a judgement (`reviewed` stays false, the AI's judgement counts, and it
 is not counted as agreeing with the AI). "Go back to the AI's judgement" with the comment kept is `{"verdict": null,
 "note": "<the comment>"}`; `{"verdict": null}` removes both.

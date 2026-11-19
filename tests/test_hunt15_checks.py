@@ -125,7 +125,8 @@ def test_a_check_the_app_left_between_two_tries_can_be_read_again_from_its_resul
 
 def test_a_round_the_app_made_and_never_started_ends_and_can_be_read_again(solar):
     """CHECKS-5, the plain left-open round: a round made and never tried (the app closed at once) read "Not finished
-    yet" for good and *Read more excerpts* refused it. Untouched for as long as a queue claim lasts, it has ended."""
+    yet" for good and *Read more excerpts* refused it. Made before this program started, and asked by no job of it
+    now, it has ended (review wave 3: by that sign, not by time)."""
     from enlens_claims import taskqueue
 
     hid = claimcheck.check_hypothesis(solar, PART_BILLS, Unusable({}), "claude-opus", expand=False, k=4, per_doc=2)
@@ -206,7 +207,7 @@ def _add_later(ws, tmp_path, name="both.txt"):
 
     time.sleep(1.1)   # added a second later than the checks (times are kept to the second)
     more = tmp_path / f"more-{name}"
-    _corpus(more, {name: "A second solar study\n\nRooftop solar panels lowered household electricity bills again in "
+    _corpus(more, {name: f"A second solar study ({name})\n\nRooftop solar panels lowered household electricity bills again in "
                          "a second survey of towns. Rooftop solar panels created no new local jobs in the survey towns "
                          "either.\n"})
     ingest.ingest(ws, [more], ai_access="cloud")
@@ -287,10 +288,52 @@ def test_a_colleagues_sentence_in_force_is_not_called_yours(tmp_path, monkeypatc
     with ben:
         got = next(x for x in _excerpts(ben.ws, anna.hid) if x["passage_id"] == ex["passage_id"])
         assert got["judged_by"] == "Anna" and got["quote"] == words
-        assert got["quote_by"] == "Anna", got["quote_by"]
+        # a fixed word the page tests, and the name apart (review wave 3)
+        assert (got["quote_by"], got["quote_by_name"]) == ("colleague", "Anna"), got["quote_by"]
     with anna:   # in Anna's own copy it is hers
         mine = next(x for x in _excerpts(anna.ws, anna.hid) if x["passage_id"] == ex["passage_id"])
-        assert mine["quote_by"] == "you"
+        assert (mine["quote_by"], mine["quote_by_name"]) == ("you", None)
+
+
+def test_a_colleague_who_calls_themselves_you_is_still_a_colleague(tmp_path, monkeypatch, loaded):
+    """Review wave 3 (CHECKS15-11): with the colleague's name in `quote_by`, a colleague named "you" (or "the AI")
+    made the page take their sentence for yours (Undo, *Remove my sentence*) or for the AI's."""
+    from test_shared_projects import CLAIM, Person, _claim, _excerpts
+
+    from enlens_claims import bundle
+    from enlens_claims.llm import BaselineBackend
+
+    them, me = Person(tmp_path, "you", monkeypatch), Person(tmp_path, "Ben", monkeypatch)
+    them.ws = loaded
+    with them:
+        hid = claimcheck.check_hypothesis(loaded, CLAIM, BaselineBackend(), "baseline", k=3)
+        ex = _excerpts(loaded, hid)[0]
+        words = " ".join(ex["text"].split()[:6])
+        claimcheck.set_judgement(loaded, _claim(loaded, hid), ex["passage_id"], "refutes", quote=words)
+        sent = them.send()
+    with me:
+        me.ws = bundle.import_project(sent, tmp_path / "ben-project")
+        got = next(x for x in _excerpts(me.ws, hid) if x["passage_id"] == ex["passage_id"])
+        assert (got["quote_by"], got["quote_by_name"], got["quote"]) == ("colleague", "you", words)
+
+
+def test_a_colleagues_sentence_on_a_kept_excerpt_is_highlighted_at_their_words():
+    """Review wave 3, must fix (CHECKS15-11): on an excerpt kept from an earlier reading of its document, `_place_kept`
+    chose the person's sentence only for `quote_by == "you"`; with a colleague's judgement in force it highlighted the
+    AI's words (or nothing) and took `doc_start` from the AI's offset."""
+    from enlens_claims.check_results import _place_kept
+
+    text = "Costs rose in the first year. Emissions fell by a third after the plant opened."
+    v = {"quote": "Costs rose in the first year", "start": 1000, "user_quote": "Emissions fell by a third",
+         "user_start": 1030, "user_verdict": "supports", "user_by": "p0000000000aa"}
+    for by in ("you", "colleague"):
+        item = {"quote_by": by, "in_corpus": True, "quote": v["user_quote"]}
+        _place_kept(item, {"text": text}, v)
+        assert text[item["quote_start"]:item["quote_end"]] == "Emissions fell by a third", by
+        assert item["doc_start"] == 1030 - text.index("Emissions")
+    item = {"quote_by": "the AI", "in_corpus": True, "quote": v["quote"]}
+    _place_kept(item, {"text": text}, v)
+    assert text[item["quote_start"]:item["quote_end"]] == "Costs rose in the first year"
 
 
 # ---------------------------------------------------------------------------------------------
@@ -331,10 +374,8 @@ def test_a_vca_claim_with_support_and_contradiction_is_supported_as_the_pack_doc
     assert claim_status([sup, ref], 0.6) == "contested"   # the app's own checks
 
 
-def test_a_persons_sentence_that_occurs_twice_is_saved_and_shown_at_one_place(solar, tmp_path):
-    """notes/checks.md, not proven: a sentence that occurs twice in an excerpt is saved at its first occurrence.
-    The page sends the words alone and places them in the excerpt as quotes are found (the AI's quotes too, and the
-    page's own `selectionPlace`), so what is saved, what is highlighted and what Excel places are one place."""
+def _twice(solar, tmp_path):
+    """A check of a document in which the person's sentence stands twice: (hid, claim, excerpt, words)."""
     from enlens_claims import ingest
 
     twice = "Rooftop solar panels lowered household electricity bills"
@@ -345,16 +386,50 @@ def test_a_persons_sentence_that_occurs_twice_is_saved_and_shown_at_one_place(so
     doc = solar.scalar("SELECT doc_id FROM documents WHERE path LIKE '%twice.txt'")
     hid = claimcheck.check_hypothesis(solar, PART_BILLS, Scripted(RULES), "claude-opus", expand=False, k=6,
                                       per_doc=2, doc_ids=[doc])
-    cid = _claim_of(solar, hid)
     x = next(x for x in claimcheck.hypothesis_result(solar, hid)["parts"][0]["passages"] if x["text"].count(twice) == 2)
+    return hid, _claim_of(solar, hid), x, twice
+
+
+def test_a_persons_sentence_that_occurs_twice_is_kept_where_it_was_selected(solar, tmp_path):
+    """notes/checks.md, not proven 1 (owner: fix): the sentence a person selected is saved, highlighted and placed in
+    the document where they selected it (`quote_start` of the judgement endpoint, in the excerpt's text), not at the
+    first place its words stand."""
+    from test_app import Api
+
+    from enlens_claims.gui.server import make_server
+
+    hid, cid, x, twice = _twice(solar, tmp_path)
+    second = x["text"].index(twice, x["text"].index(twice) + 1)
+    srv, app = make_server("127.0.0.1", 0)
+    import threading
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        api = Api(f"http://127.0.0.1:{srv.server_address[1]}", app.token)
+        st, got = api("PUT", f"/api/projects/Solar/claims/{cid}/judgements/{x['passage_id']}",
+                      {"verdict": "supports", "quote": twice, "quote_start": second})
+        assert st == 200, got
+        st, res = api("GET", f"/api/projects/Solar/hypotheses/{hid}")
+        item = next(y for y in res["parts"][0]["passages"] if y["passage_id"] == x["passage_id"])
+        assert (item["quote"], item["quote_start"], item["quote_end"]) == (twice, second, second + len(twice))
+        start = solar.scalar("SELECT start FROM passages WHERE passage_id=?", (x["passage_id"],))
+        assert solar.scalar("SELECT user_start FROM verifications WHERE subject_id=? AND passage_id=?",
+                            (cid, x["passage_id"])) == start + second
+        st, bad = api("PUT", f"/api/projects/Solar/claims/{cid}/judgements/{x['passage_id']}",
+                      {"verdict": "supports", "quote": twice, "quote_start": "late"})
+        assert st == 400 and "quote_start" in bad["error"]
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_without_where_it_was_selected_a_sentence_is_kept_at_its_first_place_as_before(solar, tmp_path):
+    """An older page and the connector send no `quote_start`: the words are kept at their first place, as before."""
+    hid, cid, x, twice = _twice(solar, tmp_path)
     claimcheck.set_judgement(solar, cid, x["passage_id"], "supports", quote=twice)
     got = next(y for y in claimcheck.hypothesis_result(solar, hid)["parts"][0]["passages"]
                if y["passage_id"] == x["passage_id"])
     first = x["text"].index(twice)
-    assert (got["quote"], got["quote_start"], got["quote_end"]) == (twice, first, first + len(twice))
-    start = solar.scalar("SELECT start FROM passages WHERE passage_id=?", (x["passage_id"],))
-    assert solar.scalar("SELECT user_start FROM verifications WHERE subject_id=? AND passage_id=?",
-                        (cid, x["passage_id"])) == start + first
+    assert (got["quote"], got["quote_start"]) == (twice, first)
 
 
 def test_the_connector_counts_only_grades_that_count_among_a_restricted_documents_evidence(loaded):
@@ -485,3 +560,121 @@ def test_an_excerpt_whose_local_reading_failed_can_be_judged_by_the_person(mixed
     claimcheck.set_judgement(ws, cid, pid, "supports")
     got = next(x for p in claimcheck.hypothesis_result(ws, hid)["parts"] for x in p["passages"] if x["passage_id"] == pid)
     assert got["user_verdict"] == "supports" and got["counted"]
+
+
+# ---------------------------------------------------------------------------------------------
+# review wave 3: a round that waits by design never ends by time; the chat's grades only for its own round
+# ---------------------------------------------------------------------------------------------
+def test_a_round_held_out_of_the_queue_for_its_provider_is_not_ended_after_30_minutes(solar):
+    """Review wave 3 (CHECKS15-5/-6): a check by queue whose round waits, out of the queue, until the person allows
+    its provider (`_add_round(hold=True)`: not queued, pending, stage `judge`) counted as ended 30 minutes after it was
+    made: *Read more excerpts* and *Read the new documents* went through and `continue_check` deleted the round. So
+    does a part whose documents no longer allow the cloud (it waits for a model that may read it)."""
+    for stage, access_ in (("judge", "cloud"), (None, "local")):
+        hid = claimcheck.check_hypothesis(solar, PART_BILLS, Unusable({}), "claude-opus", expand=False, k=4)
+        cid = _claim_of(solar, hid)
+        tid = _main_task(solar, cid)
+        with solar.connect() as cx:
+            cx.execute("DELETE FROM results WHERE task_id=?", (tid,))
+            cx.execute("UPDATE tasks SET status='pending', attempts=0, queued=0, access=? WHERE task_id=?",
+                       (access_, tid))
+            cx.execute("UPDATE user_claims SET stage=? WHERE claim_id=?", (stage, cid))
+        _age(solar, tid, hours=3)
+        t = next(t for t in claimcheck._check_tasks(solar, cid) if t["task_id"] == tid)
+        assert not claimcheck._left(t), (stage, access_)
+        assert claimcheck.further_round_waits(solar, hid) == claimcheck.ROUND_WAITS
+        try:
+            claimcheck.continue_check(solar, cid, Scripted(RULES), "claude-opus", k=4)
+            raise AssertionError("a further round started over a round that waits")
+        except ValueError as e:
+            assert str(e) == claimcheck.ROUND_WAITS
+        assert solar.scalar("SELECT status FROM tasks WHERE task_id=?", (tid,)) == "pending"
+
+
+class SlowReader(Scripted):
+    """Scripted, but each judging call is a long one: it looks at the check while it reads."""
+
+    def __init__(self, ws, rules):
+        super().__init__(rules)
+        self.ws, self.seen = ws, []
+
+    def complete(self, kind, system, user, model, payload=None):
+        if kind == "check":
+            cid = (payload or {}).get("subject_id")
+            hid = self.ws.scalar("SELECT COALESCE(hyp_id, claim_id) FROM user_claims WHERE claim_id=?", (cid,))
+            self.seen.append((claimcheck.hypothesis_result(self.ws, hid)["status"],
+                              claimcheck.further_round_waits(self.ws, hid)))
+        return super().complete(kind, system, user, model, payload)
+
+
+def test_a_part_a_slow_model_is_reading_now_has_not_ended(solar, monkeypatch):
+    """Review wave 3: an in-app part read by a slow model showed "The check did not work" 30 minutes after it was made,
+    while its job was visibly running, and a further round could start over it. (As if hours had passed: every part
+    counts as made before this program started.)"""
+    import datetime as dt
+
+    later = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=3)).replace(microsecond=0).isoformat()
+    monkeypatch.setattr(claimcheck, "_STARTED", later)
+    hid = claimcheck.check_hypothesis(solar, PART_BILLS, Scripted(RULES), "claude-opus", expand=False, k=1, per_doc=1)
+    cid = _claim_of(solar, hid)
+    slow = SlowReader(solar, RULES)
+    out = claimcheck.continue_check(solar, cid, slow, "claude-opus", k=4)
+    assert out["ok"] and slow.seen
+    for status, waits in slow.seen:
+        assert status != "failed" and waits == claimcheck.ROUND_WAITS, (status, waits)
+
+
+def test_a_chats_grades_for_a_round_the_app_has_read_again_are_refused_in_words(solar):
+    """Review wave 3 note (CHECKS15-5/-6): a chat that sent its grades after its round lapsed and the app read it again
+    had them stored in the app's new round while that was still pending (`submit_grades` took the latest round)."""
+    r = claimcheck.open_check(solar, PART_BILLS, terms=["bills"], k=3, per_doc=1)
+    cid = r["check_id"]
+    _age(solar, _main_task(solar, cid))
+    claimcheck.continue_check(solar, cid, Scripted(RULES), "claude-opus", k=3)
+    app_round = _main_task(solar, cid)
+    with solar.connect() as cx:   # as while the app is still reading it
+        cx.execute("DELETE FROM verifications WHERE subject_id=? AND model != 'person'", (cid,))
+        cx.execute("DELETE FROM results WHERE task_id=?", (app_round,))
+        cx.execute("UPDATE tasks SET status='pending', attempts=0 WHERE task_id=?", (app_round,))
+    n = next(i for i, p in enumerate(r["passages"], 1) if "lowered household electricity bills" in p["text"])
+    try:
+        claimcheck.submit_grades(solar, cid, [{"passage": n, "verdict": "supports", "confidence": 0.9,
+                                               "quote": "lowered household electricity bills"}], "x")
+        raise AssertionError("the chat's grades were taken for the app's round")
+    except ValueError as e:
+        assert "get_check" in str(e) and "more_passages" in str(e), str(e)
+    assert solar.scalar("SELECT status FROM tasks WHERE task_id=?", (app_round,)) == "pending"
+    assert not solar.scalar("SELECT COUNT(*) FROM results WHERE task_id=?", (app_round,))
+
+
+def test_a_split_hypothesis_from_before_shows_no_wave_of_new_documents(solar, tmp_path):
+    """Review wave 3 note (CHECKS15-8): with "read by every part", a part with no round at all (its search found
+    nothing) made every document a sibling read since count as new, and a part that searched only after documents were
+    added (a check by queue ranks later) made the documents it saw and passed over count as new for the others."""
+    import time
+
+    hid = claimcheck.check_hypothesis(solar, HYP, Scripted(RULES), "claude-opus", expand=False, k=2, per_doc=1,
+                                      parts=[PART_BILLS, "Quantum zebras juggle xylophones beneath glaciers."])
+    bills, nothing = [r[0] for r in solar.query("SELECT claim_id FROM user_claims WHERE hyp_id=? ORDER BY part",
+                                                (hid,))]
+    assert not claimcheck._check_tasks(solar, nothing)   # its search found nothing: no round
+    new = _add_later(solar, tmp_path)
+    out = claimcheck.continue_check(solar, bills, Scripted(RULES), "claude-opus", k=8)
+    assert any(p.get("document") for p in out["passages"]) or out["passages"]
+    assert new in {x["doc_id"] for p in claimcheck.hypothesis_result(solar, hid)["parts"] for x in p["passages"]}
+    assert claimcheck.new_documents(solar, hid) == []
+    assert claimcheck.hypothesis_result(solar, hid)["docs_added_since"] == []
+    assert next(h for h in claimcheck.history(solar) if h["hyp_id"] == hid)["docs_added_since"] == 0
+
+    # a check in two parts, the second of which searched after a document was added (as a check by queue ranks later)
+    hid2 = claimcheck.check_hypothesis(solar, HYP, Scripted(RULES), "claude-opus", expand=False, k=2, per_doc=1,
+                                       parts=[PART_BILLS, PART_JOBS])
+    first, second = [r[0] for r in solar.query("SELECT claim_id FROM user_claims WHERE hyp_id=? ORDER BY part",
+                                               (hid2,))]
+    newer = _add_later(solar, tmp_path, "newer.txt")
+    time.sleep(1.1)
+    with solar.connect() as cx:   # the second part searched only now: it saw the newer document and passed it over
+        cx.execute("UPDATE tasks SET created_at=? WHERE task_id LIKE ?", (claimcheck.now(), f"check:{second}%"))
+    claimcheck.continue_check(solar, first, Scripted(RULES), "claude-opus", k=8)
+    assert newer in {x["doc_id"] for p in claimcheck.hypothesis_result(solar, hid2)["parts"] for x in p["passages"]}
+    assert newer not in [d["doc_id"] for d in claimcheck.new_documents(solar, hid2)]
