@@ -77,12 +77,16 @@ export async function askWhy({ title, message, confirmText = "Remove", danger = 
   const body = h("div", {}, typeof message === "string" ? h("p", {}, message) : message,
     h("label", { class: "field" }, h("span", { class: "field-label" }, "Why? (optional, kept in the research log)"), ta), err);
   let result;
+  // (hunt phase 1.5, wave 6: while the save runs, Cancel, Escape and the x wait for it: a save that went through is
+  // then said and followed as one)
+  const lock = { on: false };
   const onClick = save ? async () => {
     err.textContent = "";
-    try { result = await save(ta.value.trim()); } catch (e) { err.textContent = e.message || String(e); ta.focus(); return false; }
+    lock.on = true;
+    try { result = await save(ta.value.trim()); } catch (e) { err.textContent = e.message || String(e); ta.focus(); return false; } finally { lock.on = false; }
     return true;
   } : undefined;
-  const r = await dialog({ title, body, danger, actions: [{ text: "Cancel", value: false }, { text: confirmText, value: true, primary: true, onClick }],
+  const r = await dialog({ title, body, danger, lock, actions: [{ text: "Cancel", value: false }, { text: confirmText, value: true, primary: true, onClick }],
     onOpen: () => ta.focus() });
   return r ? { why: ta.value.trim(), result } : null;
 }

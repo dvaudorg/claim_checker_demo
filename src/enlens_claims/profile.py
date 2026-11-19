@@ -1022,7 +1022,7 @@ def add_label(ws: Workspace, framework: str, passage_id: str, code: str, quote: 
             near = int(start) - p["start"] if start is not None else None
         except (TypeError, ValueError):
             near = None
-        hit = find_near(p["text"], quote, near) if near is not None and 0 <= near <= len(p["text"]) else None
+        hit = find_near(p["text"], quote, near, selected=True) if near is not None and 0 <= near <= len(p["text"]) else None
         hit = hit or find_selection(p["text"], quote)  # 0.14.3: a selection cutting a word is widened to whole words
         if not hit:
             raise ValueError("The quote must be text from this passage.")

@@ -440,7 +440,7 @@ function firstInviteSection(ctx) {
   const sp = st.space;
   if (sp) {
     const others = (sp.members || []).filter((m) => !m.removed && !m.me);
-    if (!sp.keeper || others.length) return null;
+    if (!sp.keeper || sp.member_keeper || others.length) return null;   // (hunt phase 1.5: a Member's copy invites nobody)
     const waiting = sp.invites || [];
     if (waiting.length) {
       const names = waiting.map((i) => i.label).filter(Boolean);
@@ -639,7 +639,7 @@ function peopleSection(ctx) {
   // (the server refuses it too), and a line says where the keys go
   const v = ctx.data && ctx.data.owner;
   const mayRemove = !!(sp && sp.keeper) && !!v && canWrite(v);
-  const keysLeft = sp && sp.keeper && v && !canWrite(v)
+  const keysLeft = sp && sp.keeper && v && !canWrite(v) && !sp.owner_outside   // (the owner outside: spaceInvites says it)
     ? h("p", { class: "muted small team-text", id: "team-keys-left" }, `You are a Member of this project now, but this computer still keeps the storage space’s keys. They go to ${v.owner && v.owner.name ? `${v.owner.name}’s copy` : "the owner’s copy"} by themselves at the next round in which they are in the storage space; only the owner (or a Co-owner) removes colleagues.`)
     : null;
   const removal = (m) => (mayRemove && m && !m.me ? { text: "Remove from the team…", icon: "x", onClick: () => removeMember(ctx, m) } : null);

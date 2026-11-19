@@ -66,22 +66,26 @@ def _hits(text: str, quote: str, lo: int, hi: int, most: int = 200) -> list[tupl
     return out
 
 
-def find(text: str, quote: str, near: int | None = None, anywhere: bool = True) -> tuple[int, int] | None:
+def find(text: str, quote: str, near: int | None = None, anywhere: bool = True,
+         selected: bool = False) -> tuple[int, int] | None:
     """Where the words of a note are in a text: as a quote is found (whole words, typography and spacing evened out),
     the place nearest `near` (near it first, then anywhere; with `anywhere` false, only near it: hunt phase 1.5, a
-    note followed to a new reading is never put on the same words in another part of the text)."""
+    note followed to a new reading is never put on the same words in another part of the text). `selected`: `near` is
+    where the person has just selected the words (a new note or label), not an old place being followed."""
     if near is not None:
-        # hunt phase 1.5: the words where they were selected first, widened to whole words there. A selection that
-        # cuts a word ("art of repair" out of "start of repair") was looked for as whole words only, so the same words
-        # standing whole elsewhere in the text took it
-        a, b = max(0, near), min(len(text), near + len(quote))
-        while a > 0 and not text[a - 1].isspace():
-            a -= 1
-        while b < len(text) and not text[b].isspace():
-            b += 1
-        hit = find_selection(text[a:b], quote) if a < b else None
-        if hit:
-            return a + hit[0], a + hit[1]
+        if selected:
+            # hunt phase 1.5: the words where they were selected first, widened to whole words there. A selection that
+            # cuts a word ("art of repair" out of "start of repair") was looked for as whole words only, so the same
+            # words standing whole elsewhere in the text took it. Only for a fresh selection: a note followed to a
+            # changed text keeps finding its own words whole, as before
+            a, b = max(0, near), min(len(text), near + len(quote))
+            while a > 0 and not text[a - 1].isspace():
+                a -= 1
+            while b < len(text) and not text[b].isspace():
+                b += 1
+            hit = find_selection(text[a:b], quote) if a < b else None
+            if hit:
+                return a + hit[0], a + hit[1]
         for lo, hi in ((max(0, near - 3000), near + len(quote) + 3000), (0, len(text)))[:2 if anywhere else 1]:
             hits = _hits(text, quote, lo, min(hi, len(text)))
             if hits:
@@ -119,9 +123,9 @@ def add(ws: Workspace, doc_id: str, start: int, end: int, quote: str | None = No
         if len(want) > MAX_QUOTE:
             raise ValueError(f"Select fewer words (at most {MAX_QUOTE:,} characters); a note can say more.")
         # the words selected, where they were selected (widened to whole words), else the nearest place of them
-        got = find(body[:b + 50], want, a) if a < b else None
+        got = find(body[:b + 50], want, a, selected=True) if a < b else None
         if got is None or abs(got[0] - a) > 50:
-            got = find(body, want, a)
+            got = find(body, want, a, selected=True)
         if got is None:
             raise ValueError("These words are not in the document's text: select them in the text.")
         a, b = got

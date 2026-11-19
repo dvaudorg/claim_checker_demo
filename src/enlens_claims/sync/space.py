@@ -880,6 +880,40 @@ def parse_link(text: str) -> dict:
     return payload
 
 
+# hunt phase 1.5: the keys alone are not the right to act as the owner. After a hand-over the old owner is a Member whose
+# copy keeps the keys until a round hands them on (`_hand_over_if_owner_changed`, once the new owner has a part in the
+# space); docs/manual/roles.md and storage-space.md: only the Owner (or a Co-owner) invites, withdraws invites, removes
+# a colleague and moves the team
+def _member_here(ws: Workspace) -> bool:
+    from .. import ownership
+
+    return not ownership.may_write(ws._conn())
+
+
+def _owner_only(ws: Workspace, what: str) -> None:
+    if _member_here(ws):
+        raise SpaceProblem(f"You are a Member of this project: only its owner (or a Co-owner) {what}. This computer "
+                           "still keeps the storage space's keys; they go to the owner's copy by themselves at the next "
+                           "round in which the owner is in the storage space.", "not_owner")
+
+
+def _owner_outside(ws: Workspace) -> str | None:
+    """The project's owner when they have no part in the storage space (by the list of members this copy last read),
+    else None: the keys cannot reach them until they join, with the one invite a Member's copy may make (for them)."""
+    from .. import ownership
+
+    try:
+        owner = ownership.owner(ws._conn())
+        state = json.loads((mirror_of(ws) / ".space-state.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return None
+    if not owner or owner == people.me():
+        return None
+    members = ((state.get("roster") or {}).get("members") or {}) if isinstance(state, dict) else {}
+    inside = any(isinstance(m, dict) and m.get("person") == owner and not m.get("removed") for m in members.values())
+    return None if inside else owner
+
+
 def _invite_unlocked(ws: Workspace, label: str | None = None, drive_user: str | None = None) -> dict:
     """*Invite a colleague*: a new part in the space with its own storage keys, and a link holding them, the project's
     keys and a one-time secret that binds the part to whoever uses it first. Returns {"link", "part", "message"}; on a
@@ -893,6 +927,14 @@ def _invite_unlocked(ws: Workspace, label: str | None = None, drive_user: str | 
     if desc.get("keeper_part") != desc.get("part"):
         raise SpaceProblem("Only the owner's copy keeps the keys that make invites. Ask the owner to invite your "
                            "colleague.", "not_keeper")
+    # hunt phase 1.5: a Member's copy that still keeps the keys invites nobody, except the project's new owner when they
+    # have no part in the space yet: an invite only they can use (`_bind_joins` checks "for"), so the keys can reach them
+    for_person = None
+    if _member_here(ws):
+        for_person = _owner_outside(ws)
+        if for_person is None:
+            _owner_only(ws, "invites a colleague")
+        label = people.names(ws).get(for_person) or label or "the project's owner"
     keeper = _get_secret(desc["id"], "keeper")
     part = _new_part()
     access, ids = _member_access(desc, keeper, part)
@@ -909,7 +951,8 @@ def _invite_unlocked(ws: Workspace, label: str | None = None, drive_user: str | 
     names, epochs = _keys(desc["id"])
     _put_secret(desc["id"], f"invite:{part}", {"join": seal.b64(join)})
     desc = {**desc, "invites": [*(desc.get("invites") or []),
-                                {"part": part, "made_at": now(), "label": (label or "").strip()[:80] or None}],
+                                {"part": part, "made_at": now(), "label": (label or "").strip()[:80] or None,
+                                 **({"for": for_person} if for_person else {})}],
             "access_ids": {**(desc.get("access_ids") or {}), part: ids}}
     _save(ws, desc)
     project_name = Path(ws.root).name
@@ -944,6 +987,9 @@ def _cancel_invite_unlocked(ws: Workspace, part: str) -> dict:
     desc = configured(ws)
     if desc is None or not any(i.get("part") == part for i in desc.get("invites") or []):
         raise SpaceProblem("There is no such invite waiting.", "no_invite")
+    # hunt phase 1.5: a Member withdraws only the invite made for the new owner (`_invite_unlocked`)
+    if not any(i.get("part") == part and i.get("for") for i in desc.get("invites") or []):
+        _owner_only(ws, "withdraws an invite")
     keeper = _get_secret(desc["id"], "keeper")
     ids = (desc.get("access_ids") or {}).get(part) or []
     label = next((i.get("label") for i in desc.get("invites") or [] if i.get("part") == part), None)
@@ -1193,6 +1239,10 @@ def _bind_joins(ctx: _Ctx) -> bool:
                       and seal.check_join_proof(join_key, part, person, public, str(body.get("proof") or "")))
             if ok:
                 seal.verify(blob, public["sign"])
+            if ok and inv.get("for") and person != inv.get("for"):   # (hunt phase 1.5: made for the new owner only)
+                ok = False
+                why = ("A key file came for the invite made for the project's owner, from someone else. It was set "
+                       "aside; the invite still waits for the owner.")
             if ok and person in held:   # someone in the team already: nobody joins under another's name
                 ok = False
                 why = ("A key file for an invite named a person who is in the team already. It was set aside; the "
@@ -1801,15 +1851,7 @@ def _remove_member_unlocked(ws: Workspace, part: str) -> dict:
     ctx = _Ctx(ws, desc)
     if not ctx.keeper:
         raise SpaceProblem("Only the owner's copy can remove a colleague from the storage space.", "not_keeper")
-    # hunt phase 1.5: the keys alone are not the right to remove. After a hand-over the old owner is a Member whose copy
-    # keeps the keys until its next round hands them on (`_hand_over_if_owner_changed`); docs/manual/roles.md: only
-    # the Owner (or a Co-owner) removes people
-    from .. import ownership
-
-    if not ownership.may_write(ws._conn()):
-        raise SpaceProblem("You are a Member of this project: only its owner (or a Co-owner) removes a colleague. This "
-                           "computer still keeps the storage space's keys; they go to the owner's copy by themselves "
-                           "at the next round in which the owner is in the storage space.", "not_owner")
+    _owner_only(ws, "removes a colleague")   # (hunt phase 1.5)
     try:
         _read_roster(ctx)
         roster = json.loads(json.dumps(ctx.roster))
@@ -1861,6 +1903,7 @@ def _move_unlocked(ws: Workspace, start: Callable[[Workspace, Identity], dict]) 
     octx = _Ctx(ws, old)
     if not octx.keeper:
         raise SpaceProblem("Only the owner's copy can move the team to another storage space.", "not_keeper")
+    _owner_only(ws, "moves the team to another storage space")   # (hunt phase 1.5)
     try:
         _read_roster(octx)
     except StorageProblem:
@@ -2386,7 +2429,12 @@ def status(ws: Workspace) -> dict | None:
     return {"id": desc["id"], "service": desc.get("service"), "where": describe(desc), "region": desc.get("region"),
             "in_eu": desc.get("in_eu"), "keeper": desc.get("keeper_part") == desc.get("part"),
             "joined": desc.get("part") in (roster.get("members") or {}), "members": members,
-            "invites": [{k: i.get(k) for k in ("part", "made_at", "label")} for i in desc.get("invites") or []],
+            "invites": [{**{k: i.get(k) for k in ("part", "made_at", "label")}, **({"for": i["for"]} if i.get("for") else {})}
+                        for i in desc.get("invites") or []],
+            # hunt phase 1.5: this copy keeps the keys but its person is a Member now (after a hand-over); and the
+            # owner, when they have no part in the space yet ({"id", "name"}: the keys wait for them to join)
+            **(_member_keeper(ws, desc) if desc.get("keeper_part") == desc.get("part") else
+               {"member_keeper": False, "owner_outside": None}),
             "set_aside": [{k: v.get(k) for k in ("part", "why", "message", "at")}
                           for v in (state.get("aside") or {}).values()],
             "keychain": keychain.backend(),
@@ -2398,6 +2446,14 @@ def status(ws: Workspace) -> dict | None:
                          if isinstance(state.get("restored"), dict) else None),
             "refused": ({"at": state["refused"].get("at"), "text": _refused_words(state["refused"])}
                         if isinstance(state.get("refused"), dict) else None)}
+
+
+def _member_keeper(ws: Workspace, desc: dict) -> dict:
+    if not _member_here(ws):
+        return {"member_keeper": False, "owner_outside": None}
+    owner = _owner_outside(ws)
+    return {"member_keeper": True, "owner_outside": {"id": owner, "name": people.names(ws).get(owner) or "the owner"}
+            if owner else None}
 
 
 def _drive_status(desc: dict, roster: dict | None = None) -> dict:

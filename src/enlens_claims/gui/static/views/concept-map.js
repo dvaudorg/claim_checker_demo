@@ -880,11 +880,13 @@ export async function renderConceptMap(view, params, query) {
     // dialog open with the name typed and says why there
     const err = h("p", { class: "field-error", role: "alert" });
     let saved = null;
+    const lock = { on: false };   // (wave 6: Cancel, Escape and the x wait for a save under way)
     actions.push({ text: "Save", value: "save", primary: true, async onClick() {
       err.textContent = "";
       const name = nameIn.value.trim();
       if (!name || name === g.name) return true;
-      try { saved = await names({ action: "rename", ...groupBody(g, { name }) }); } catch (e) { err.textContent = e.message || String(e); nameIn.focus(); return false; }
+      lock.on = true;
+      try { saved = await names({ action: "rename", ...groupBody(g, { name }) }); } catch (e) { err.textContent = e.message || String(e); nameIn.focus(); return false; } finally { lock.on = false; }
       return true;
     } });
     // the other names people gave this group: one press puts one in the field (Save makes it the group's name)
@@ -894,7 +896,7 @@ export async function renderConceptMap(view, params, query) {
     const r = await dialog({ title: "Rename the group",
       body: h("div", {}, h("label", { class: "field" }, h("span", { class: "field-label" }, "New name"), nameIn),
         labs.length ? h("p", { class: "muted small" }, `Its concepts: ${firstSix(labs)}`) : null, also, err),
-      actions, onOpen: () => { nameIn.select(); nameIn.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); nameIn.closest("dialog").querySelector(".btn-primary").click(); } }); } });
+      actions, lock, onOpen: () => { nameIn.select(); nameIn.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); nameIn.closest("dialog").querySelector(".btn-primary").click(); } }); } });
     const back = () => { const b = groupsBox.querySelector(`button[data-rename="${CSS.escape((g.concepts || [""])[0])}"]`); if (b) b.focus(); };
     if (r === null || r === undefined) { back(); return; }
     if (r === "") { await act({ action: "use_concepts", name_id: g.name_id, concepts: g.concepts || [] }, "The group is named by its concepts again.", { refocus: (g.concepts || [])[0] }); return; }

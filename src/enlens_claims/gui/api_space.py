@@ -202,6 +202,10 @@ class SpaceApi:
         "account_id"?} or {"service": "webdav", "address", "user", "password"}. A job; its result says how many
         colleagues were told where the team went."""
         body = self._body()
+        try:   # hunt phase 1.5: a Member's copy that still keeps the keys moves nothing (said at once, not as a failed job)
+            space._owner_only(self.app.ws(name), "moves the team to another storage space")
+        except space.SpaceProblem as e:
+            raise _problem(e) from e
         service = body.get("service")
         if service == "b2":
             key_id, app_key = str(body.get("key_id") or "").strip(), str(body.get("app_key") or "").strip()

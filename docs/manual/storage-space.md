@@ -180,8 +180,10 @@ managed.
 The card *The storage space* says where the space is and the invites not used yet; *People* lists everyone in it. The
 owner's copy keeps the space's keys (*keeps the space's keys*); when the project's owner changes, the keys go to the new
 owner's copy by themselves, at the old owner's next round once the new owner is in the space. Until then the old
-owner's copy still keeps them, says so under *People*, and offers no *Remove*: only the owner (or a Co-owner) removes
-a colleague. The storage account itself stays the person's who made it, who can always reach the space
+owner's copy still keeps them and says so under *People*, but acts as a Member: it does not invite, withdraw invites,
+remove a colleague or move the team (only the owner, or a Co-owner, does). When the new owner is not in the space yet,
+the old owner's *People* offers one thing: *Make an invite for …*, an invite only the new owner can use; once they
+have joined with it, the keys go to their copy, and the old owner's computer keeps none. The storage account itself stays the person's who made it, who can always reach the space
 through the service's website: for a hand-over in full, the new owner moves the team to a storage space of their own
 (below). The owner can also:
 - **Remove** a colleague (*More* on their row under *People*; the copy that keeps the space's keys offers *Remove from

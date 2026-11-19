@@ -94,12 +94,14 @@ function reasonDialog({ title, message, confirmText, danger = false, help, save 
     field("Reason (optional)", reason, { help, class: "owner-dlg-field" }), err);   // its help is the field's (owner-dlg-reason-help)
   reason.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); const b = document.getElementById("owner-dlg-ok"); if (b) b.click(); } });
   let result;
+  const lock = { on: false };   // (hunt phase 1.5, wave 6: Cancel, Escape and the x wait for a save under way)
   const onClick = save ? async () => {
     err.textContent = "";
-    try { result = await save(reason.value.trim()); } catch (e) { err.textContent = e.message || String(e); reason.focus(); return false; }
+    lock.on = true;
+    try { result = await save(reason.value.trim()); } catch (e) { err.textContent = e.message || String(e); reason.focus(); return false; } finally { lock.on = false; }
     return true;
   } : undefined;
-  return dialog({ title, body, danger, actions: [{ text: "Cancel", value: null }, { text: confirmText, value: true, primary: true, id: "owner-dlg-ok", onClick }],
+  return dialog({ title, body, danger, lock, actions: [{ text: "Cancel", value: null }, { text: confirmText, value: true, primary: true, id: "owner-dlg-ok", onClick }],
     onOpen: () => reason.focus() }).then((ok) => (ok ? { why: reason.value.trim(), result } : null));
 }
 

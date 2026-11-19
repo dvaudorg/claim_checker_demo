@@ -11,13 +11,18 @@
   space's keys until its next round hands them to the new owner; meanwhile *People and settings* offered *Remove
   from the team…* to you as a Member, and ENLENS carried it out. Only the owner (or a Co-owner) removes a colleague
   now, in the app and in ENLENS itself, and *People* says that your computer still keeps the keys and where they go.
+  The same holds for inviting a colleague, withdrawing an invite and moving the team: your copy offered and did all
+  three, so a former owner could let someone into the new owner's team. When the new owner is not in the storage space
+  yet, your copy offers one invite only they can use; once they have joined, the keys go to their copy and none stay
+  on your computer (before, the keys stayed with you for good).
 
 ### Fixed
 
 - **A reason or a name you type is not lost when it cannot be saved.** The *Why?* of removing a document or a
   codebook and of *Unshare*, the reason of *Hand over*, *Take over*, *Accept* and *Decline*, and a group's new name on
   the concept map closed their dialog first and saved after: when the save was refused, the words were gone. The
-  dialog now stays open with your words and says why.
+  dialog now stays open with your words and says why. While it saves, *Cancel*, Escape and the × wait for the save, so
+  a save that went through is never left half said.
 - **New codebook "From the themes" keeps your choices after a refusal.** When the name was refused, the themes were
   asked again with the first set ticked and the names as first offered; the themes you ticked and the longer or
   shorter names you chose now stay.

@@ -445,6 +445,133 @@ await scenario("documents: a place kept for a document is not used in a copy of 
   await docPage(t, "Study");
   return { other, same: t.scrolls.filter((x) => x.to && x.to[1] === 500).length };
 });
+
+// ---- wave 6: a second press gets the job already there (the server's `once`), or a 409 in words -------------------
+const OLD = (id, title) => ({ ...DOC1, doc_id: id, title, reader: 6, new_reader_changes: true });
+async function moveSeveral(t, post) {
+  let state = "running";
+  await documents(t, [OLD("d1", "Repair report"), OLD("d2", "Interviews")], { before: () => {
+    t.answer("POST /api/projects/Study/new-reader/preview", { job: { id: "jp" } });
+    t.answer("GET /api/jobs/jp", { id: "jp", state: "done", progress: {}, result: { summary: { results_without_place: 0 },
+      documents: [{ doc_id: "d1", title: "Repair report", ok: true, no_place: 0 }, { doc_id: "d2", title: "Interviews", ok: true, no_place: 0 }] } });
+    t.answer("POST /api/projects/Study/new-reader", post);
+    t.answer("GET /api/jobs/jn", () => ({ id: "jn", kind: "new_reader", state, progress: { phase: "reading", done: 1, total: 2 },
+      result: state === "done" ? { moved: [{ doc_id: "d1", title: "Repair report", results: 0 }, { doc_id: "d2", title: "Interviews", results: 0 }], kept: [] } : null }));
+  } });
+  await t.click(/^Read all 2 with the new reader/);
+  await t.settle(1200);
+  await t.click(/^Move all 2/);
+  await t.click(t.dialog().querySelector("#dlg-confirm"));
+  await t.settle(10);
+  const during = { cards: t.view.querySelectorAll(".nr-box .card, .nr-box [class*=card]").length, text: t.text(t.view.querySelector(".nr-box")) };
+  state = "done";
+  await t.settle(1500);
+  return { during, after: t.text(t.view.querySelector(".nr-box")), toasts: t.toasts() };
+}
+await scenario("documents: a move of several given back as the job already running is followed", (t) => moveSeveral(t, { job: { id: "jn" } }));
+await scenario("documents: a move of several that clashes is refused in words", (t) => moveSeveral(t,
+  t.fail(409, "“Reading 1 document with the new reader” is still running in this project. Stop it in the sidebar, or wait until it has finished, then start this one.")));
+
+async function moveOne(t, post) {
+  let state = "running";
+  t.state({ settings: {} });
+  t.answer("GET /api/projects/Study/documents/d1/reread", { ok: true, moved: { judgements: 2 }, not_placed: [], left_out: [] });
+  t.answer("POST /api/projects/Study/documents/d1/reread", post);
+  t.answer("GET /api/jobs/jr", () => ({ id: "jr", kind: "reread", state, progress: {}, result: state === "done" ? { report: { moved: { judgements: 2 }, not_placed: [] } } : null }));
+  const m = await t.module("views/doc-reading.js");
+  const d = { ...OLD("d1", "Repair report"), new_reader: 7, reading: { quality: "good" } };
+  const ctx = { d, docId: "d1", docBase: "/api/projects/Study/documents/d1", watchers: [], query: {}, list: document.createElement("div"),
+    openTab() {}, project: "Study", base: "/api/projects/Study", changeLanguage: async () => ({}) };
+  const panel = m.readingPanel(ctx);
+  document.getElementById("view").appendChild(panel.el);
+  await t.click("Read with the new reader");
+  await t.settle(10);
+  await t.click("Move it to the new reader");
+  await t.settle(10);
+  const during = t.text(panel.el.querySelector(".dv-reread"));
+  state = "done";
+  await t.settle(1500);
+  const go = t.find("Move it to the new reader");
+  return { during, toasts: t.toasts(), again: !!go && !go.disabled };
+}
+await scenario("reading: a move of one document given back as the job already running is followed", (t) => moveOne(t, { job: { id: "jr" } }));
+await scenario("reading: a move of one document that clashes is refused in words", (t) => moveOne(t,
+  t.fail(409, "“Reading 2 documents with the new reader” is still running in this project. Stop it in the sidebar, or wait until it has finished, then start this one.")));
+
+await scenario("concept map: names asked while other names are being made are refused in words", async (t) => {
+  t.answer(`POST ${CM}/name-groups?*`, t.fail(409, "The AI names the groups of the concept map already: wait until it has finished, or stop it in the sidebar, then start again."));
+  await conceptMap(t);
+  await t.click(t.view.querySelector(".cm-groups-ask button"));
+  await t.settle();
+  return { toasts: t.toasts(), busy: t.view.querySelector(".cm-groups-ask button").getAttribute("aria-busy") };
+});
+
+// ---- wave 6, must fix 1: the storage space's owner actions on a Member's copy ----------------------------------------
+const MK = (o) => ({ ...SPACE, space: { ...SPACE.space, member_keeper: true, owner_outside: null, ...o } });
+async function memberKeeper(t, status) {
+  team(t, status, OWNERVIEW({ owner: { id: "c", name: "Carol", me: false }, role: "member", can_write: false, people: PEOPLE("c"), how: "handover" }));
+  await t.render("views/team.js", "renderTeam", ["settings"], {});
+  return { buttons: t.buttons(t.view).map((b) => b.label), text: t.allText(t.view), folds: t.view.querySelectorAll("#space-move").length };
+}
+await scenario("team: a Member's copy that keeps the keys, the owner in the space", (t) =>
+  memberKeeper(t, MK({ invites: [{ part: "p9", made_at: "2026-11-18T10:00:00Z", label: "Eve" }] })));
+await scenario("team: a Member's copy that keeps the keys, the owner not in the space", async (t) => {
+  const st = MK({ owner_outside: { id: "c", name: "Carol" }, members: SPACE.space.members.filter((m) => m.person !== "c") });
+  t.answer("POST /api/projects/Study/space/invites", (body) => ({ link: "enlens://join#x", message: "Anna invites you…", part: "p8", status: st.space }));
+  const out = await memberKeeper(t, st);
+  await t.click("Make an invite for Carol…");
+  const d = t.dialog();
+  out.dialog = { title: t.text(d.querySelector("h2")), name: d.querySelector("#space-invite-name").value };
+  await t.click("Make the link", { within: d });
+  await t.settle();
+  out.posts = t.calls.filter((c) => c.method === "POST").map((c) => c.body);
+  return out;
+});
+
+// ---- wave 6, should fix 2: Cancel, Escape and the x wait for a save under way -----------------------------------
+async function cancelDuring(t, d) {
+  await t.press("Escape", d);
+  const cancel = t.buttons(d).find((b) => b.label === "Cancel");
+  if (cancel) await t.click("Cancel", { within: d });
+  return t.dialogs().length;
+}
+await scenario("documents: a removal under way is not cancelled from its dialog", async (t) => {
+  await documents(t);
+  const del = held();
+  t.answer("DELETE /api/projects/Study/documents/d1?*", () => del.promise.then(() => ({ ok: true })));
+  await t.click(t.view.querySelector(".doc-toggle"));
+  await t.click("Remove…");
+  await t.click("Remove", { within: t.dialog() });
+  const open = await cancelDuring(t, t.dialog());
+  del.release();
+  await t.settle();
+  return { open, after: t.dialogs().length, toasts: t.toasts() };
+});
+await scenario("team: a hand-over under way is not cancelled from its dialog", async (t) => {
+  team(t, SPACE, OWNERVIEW({ owner: { id: "a", name: "Anna", me: true }, is_owner: true, role: "owner", can_set_roles: true, people: PEOPLE("a") }));
+  const post = held();
+  t.answer("POST /api/projects/Study/owner/hand-over", () => post.promise.then(() => ({ ok: true })));
+  await t.render("views/team.js", "renderTeam", ["settings"], {});
+  await t.click(t.view.querySelector("#owner-more-b-btn"));
+  await t.click("Make owner…");
+  await t.click("Hand it over", { within: t.dialog() });
+  const open = await cancelDuring(t, t.dialog());
+  post.release();
+  await t.settle();
+  return { open, after: t.dialogs().length, toasts: t.toasts() };
+});
+await scenario("concept map: a rename under way is not cancelled from its dialog", async (t) => {
+  const post = held();
+  t.answer(`POST ${CM}/names`, () => post.promise.then(() => ({ record: {} })));
+  await conceptMap(t);
+  await t.click("Rename the group “Mending together”");
+  await t.type(t.dialog().querySelector("input"), "Repair cafés");
+  await t.click("Save", { within: t.dialog() });
+  const open = await cancelDuring(t, t.dialog());
+  post.release();
+  await t.settle();
+  return { open, after: t.dialogs().length, toasts: t.toasts() };
+});
 """
 
 
@@ -707,3 +834,150 @@ def test_a_note_on_a_selection_cutting_a_word_lands_where_it_was_selected(tmp_pa
     at = doc_text.index("start of repair") + 2
     n = notes.add(ws, p["doc_id"], at, at + len("art of repair"), quote="art of repair", text="the start, not the art")
     assert (n["start"], n["end"]) == (at - 2, at - 2 + len("start of repair")), n
+
+
+# ---- wave 6 (review of 50b798d4) -----------------------------------------------------------------------------------
+def test_a_member_whose_copy_keeps_the_keys_invites_withdraws_and_moves_nobody(team, tmp_path, monkeypatch):
+    """Must fix 1 (the reviewer's probe, turned round): after Anna hands the project to Carol, and before Anna's next
+    round, Anna's copy still keeps the storage keys. It invites nobody (Eve was let in, and Carol's copy bound her), it
+    withdraws no invite and it moves the team nowhere: only the Owner (or a Co-owner) does."""
+    from enlens_claims import ownership
+    from enlens_claims.sync import folder, space
+
+    anna, carol = team
+    for p in (anna, carol, anna, carol):
+        _round(p)
+    with anna:
+        waiting = space.invite(anna.ws, "Dave")                # made as the owner, before the hand-over
+        ownership.hand_over(anna.ws, carol.id)
+        assert folder.status(anna.ws)["space"]["keeper"]
+        assert folder.status(anna.ws)["space"]["member_keeper"] and folder.status(anna.ws)["space"]["owner_outside"] is None
+        for act in (lambda: space.invite(anna.ws, "Eve"), lambda: space.cancel_invite(anna.ws, waiting["part"]),
+                    lambda: space.move(anna.ws, lambda w, i: pytest.fail("the move began"))):
+            with pytest.raises(space.SpaceProblem) as e:
+                act()
+            assert e.value.kind == "not_owner", e.value
+        assert [i["part"] for i in folder.status(anna.ws)["space"]["invites"]] == [waiting["part"]]
+
+
+def test_a_hand_over_to_someone_outside_the_space_ends_with_the_keys_at_the_new_owner(anna_and_ben, store_dir):
+    """Must fix 1, the other half: Anna hands the project to Ben, who has her project from a file but no part in the
+    storage space. Anna's copy (a Member's now) may make one invite, for Ben only; Ben joins with it, Anna's next round
+    hands him the keys, and her computer keeps none."""
+    from enlens_claims import keychain, ownership
+    from enlens_claims.sync import folder, space
+
+    anna, ben = anna_and_ben
+    with anna:
+        space.setup_dir(anna.ws, store_dir)
+    _round(anna)
+    anna.bring_in(ben.send())                                  # Anna knows Ben (one of the project's people)
+    with anna:
+        ownership.hand_over(anna.ws, ben.id)
+        st = folder.status(anna.ws)["space"]
+        assert st["member_keeper"] and st["owner_outside"]["id"] == ben.id
+        inv = space.invite(anna.ws, "someone else")           # the one invite allowed: for Ben, whatever the label
+        assert folder.status(anna.ws)["space"]["invites"][0]["for"] == ben.id
+    with ben:
+        space.join(ben.ws, inv["link"])
+    for p in (ben, anna, ben, anna, ben):
+        _round(p, ok_kinds=("documents", "set_aside"))
+    with ben:
+        assert folder.status(ben.ws)["space"]["keeper"]
+    with anna:
+        st = folder.status(anna.ws)["space"]
+        assert not st["keeper"]
+        desc = space.configured(anna.ws)
+        assert keychain.get(space._secret_name(desc["id"], "keeper")) is None   # no keys of the keeper left here
+
+
+def test_the_invite_made_for_the_new_owner_lets_nobody_else_in(anna_and_ben, store_dir, tmp_path, monkeypatch):
+    from enlens_claims import ownership
+    from enlens_claims.sync import folder, space
+
+    anna, ben = anna_and_ben
+    with anna:
+        space.setup_dir(anna.ws, store_dir)
+    _round(anna)
+    anna.bring_in(ben.send())
+    with anna:
+        ownership.hand_over(anna.ws, ben.id)
+        inv = space.invite(anna.ws)
+    eve = Person(tmp_path, "Eve", monkeypatch)
+    _join_new(eve, inv["link"])
+    _round(eve, ok_kinds=("documents", "set_aside", "unreachable", "not_joined"))
+    _round(anna, ok_kinds=("documents", "set_aside"))
+    with anna:
+        st = folder.status(anna.ws)["space"]
+        assert "Eve" not in [m["name"] for m in st["members"]], st["members"]
+        assert any(a["part"] == inv["part"] for a in st["set_aside"]) and st["invites"][0]["for"] == ben.id
+
+
+@needs_node
+def test_a_members_copy_that_keeps_the_keys_offers_no_invite_withdraw_or_move(page):
+    r = page["team: a Member's copy that keeps the keys, the owner in the space"]
+    assert not {"Invite a colleague…", "Withdraw", "Backblaze…"} & set(r["buttons"]) and r["folds"] == 0, r
+    assert "Make an invite for" not in " ".join(r["buttons"])
+
+
+@needs_node
+def test_a_members_copy_that_keeps_the_keys_offers_the_invite_for_the_owner_outside_the_space(page):
+    r = page["team: a Member's copy that keeps the keys, the owner not in the space"]
+    assert "Make an invite for Carol…" in r["buttons"] and "Invite a colleague…" not in r["buttons"] and r["folds"] == 0, r
+    assert "Carol is the owner now but is not in the storage space yet" in r["text"]
+    assert r["dialog"] == {"title": "Invite Carol, the owner", "name": "Carol"}, r
+    assert r["posts"] and r["posts"][0]["label"] == "Carol", r
+
+
+@needs_node
+def test_a_move_of_several_given_back_as_the_running_job_is_followed_once(page):
+    r = page["documents: a move of several given back as the job already running is followed"]
+    assert "Reading with the new reader" in r["during"]["text"], r
+    assert "Read with the new reader: 2 documents" in r["after"], r
+
+
+@needs_node
+def test_a_move_of_several_that_clashes_is_refused_in_the_servers_words(page):
+    r = page["documents: a move of several that clashes is refused in words"]
+    assert any("is still running in this project" in x for x in r["toasts"]), r
+
+
+@needs_node
+def test_a_move_of_one_document_given_back_as_the_running_job_is_followed(page):
+    r = page["reading: a move of one document given back as the job already running is followed"]
+    assert "Moving it to the new reader" in r["during"] and any(x.startswith("Read with the new reader") for x in r["toasts"]), r
+
+
+@needs_node
+def test_a_move_of_one_document_that_clashes_is_refused_in_the_servers_words(page):
+    r = page["reading: a move of one document that clashes is refused in words"]
+    assert any("is still running in this project" in x for x in r["toasts"]) and r["again"], r
+
+
+@needs_node
+def test_group_names_that_clash_are_refused_in_the_servers_words(page):
+    r = page["concept map: names asked while other names are being made are refused in words"]
+    assert any("names the groups of the concept map already" in x for x in r["toasts"]) and r["busy"] != "true", r
+
+
+def test_a_note_followed_to_a_changed_text_keeps_finding_its_own_words_whole():
+    """Wave 6 note: the cut-word step is for a fresh selection only. A note on "art of repair" whose old place now
+    reads "start of repair" goes to "art of repair" standing whole a little further on, as before."""
+    from enlens_claims import notes
+
+    text = "At the start of repair work we met; later, the art of repair itself."
+    near = text.index("start of repair") + 2
+    assert notes.find(text, "art of repair", near) == (text.index("the art") + 4, text.index("the art") + 17)
+    assert notes.find(text, "art of repair", near, anywhere=False) == (text.index("the art") + 4, text.index("the art") + 17)
+    assert notes.find(text, "art of repair", near, selected=True) == (text.index("start"), text.index("start") + 15)
+
+
+@needs_node
+@pytest.mark.parametrize("name, said", [("documents: a removal under way is not cancelled from its dialog", "Document removed."),
+                                        ("team: a hand-over under way is not cancelled from its dialog", "Ben is the owner now"),
+                                        ("concept map: a rename under way is not cancelled from its dialog", "Group renamed.")])
+def test_a_save_under_way_is_not_cancelled_from_its_dialog(page, name, said):
+    """Wave 6, should fix 2: Cancel, Escape or the x pressed while the save runs closed the dialog as cancelled; the
+    save went through and what follows it (the toast, the page drawn again) was skipped."""
+    r = page[name]
+    assert r["open"] == 1 and r["after"] == 0 and any(x.startswith(said) for x in r["toasts"]), r
