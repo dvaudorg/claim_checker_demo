@@ -500,7 +500,7 @@ def test_every_command_that_fails_exits_non_zero(monkeypatch, tmp_path, ws, argv
         rc = cli.main(args)
     except SystemExit as e:  # argparse, or a command that stops with words
         rc = e.code if isinstance(e.code, int) else 1
-    except Exception as e:  # noqa: BLE001: a traceback ends `enlens` with 1 too, but says nothing a person can act on
+    except Exception as e:  # noqa: BLE001  (a traceback ends `enlens` with 1 too, but says nothing a person can act on)
         pytest.fail(f"{argv[2:]} ended in a traceback: {type(e).__name__}: {e}")
     assert rc not in (0, None), (argv[2:], capsys.readouterr())
 
