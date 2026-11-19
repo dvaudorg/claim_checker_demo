@@ -91,8 +91,9 @@ def test_score_labels_leave_out_codes_only_mentioned():
     s = v.score_labels(_pass()["labels"], CODES)
     # passage 4: C is only mentioned, so its C is neither right nor wrong: 2 decisions there, 3 elsewhere
     assert s["code_decisions"] == 14
-    # wrong: passage 2 B missed, passage 3 C added, passage 5 (no answer) C missed
-    assert s["code_accuracy"] == round(11 / 14, 3)
+    # wrong: passage 2 B missed, passage 3 C added, passage 5 (no answer): none of its three is a decision (hunt
+    # phase 1.5: "no answer" is never right, as for checks; it counted A and B as rightly absent)
+    assert s["code_accuracy"] == round(9 / 14, 3)
     assert s["same_codes"] == 0.4                     # passages 1 and 4 (C mentioned, so B is the whole answer)
     assert s["answered"] == 4
     assert s["per_code"]["A"] == {"gold": 2, "precision": 1.0, "recall": 1.0}
@@ -112,7 +113,7 @@ def test_quote_failures_and_repeatability():
     r = v.repeatability(p1, p2, CODES)
     assert r["checks"]["same_status"] == 0.6
     assert r["labels"]["same_codes"] == 0.6
-    assert r["labels"]["code_agreement"] == round(13 / 15, 3)
+    assert r["labels"]["code_agreement"] == round(11 / 15, 3)   # passage 5: no answer in the first pass agrees on none
 
 
 def test_quote_problem_wording():

@@ -181,7 +181,10 @@ INDEXES = "CREATE INDEX IF NOT EXISTS ix_drafts_created ON drafts(created_at);"
 
 Every project runs them as it is opened, after ENLENS's own and in the add-ons' order: `SCHEMA`, then the
 `MIGRATIONS`, then `INDEXES`. Write them so that running them again changes nothing (`IF NOT EXISTS`); a column is
-added only when it is missing. Table and column names are plain names (letters, digits and `_`).
+added only when it is missing. Table and column names are plain names (letters, digits and `_`). Each add-on's three
+run together inside one savepoint, so they must not `BEGIN` or `COMMIT` themselves. If one of them fails (or a name is
+not plain), what that add-on set up in this opening is taken back, the add-on is left out, the project opens without
+it, and the error is printed and kept in `addons.errors()`, naming the add-on.
 
 **Where a hypothesis comes from.** `claimcheck.create_hypothesis(ws, text, …, origin="draft", origin_id=draft_id)`
 records it in the hypothesis's `origin` and `origin_id` columns, so an add-on that makes hypotheses needs no column

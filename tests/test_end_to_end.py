@@ -10,7 +10,7 @@ def test_cli_pipeline_with_baseline(tmp_path, corpus, vca_xlsx, capsys):
     run = lambda *a: main(["--ws", ws, *a])  # noqa: E731
     assert run("init") == 0
     run("load-vca", str(vca_xlsx))
-    run("ingest", str(corpus))
+    run("ingest", "--ai-access", "cloud", str(corpus))
     run("match-sources")
     run("screen")
     run("make-tasks", "split")

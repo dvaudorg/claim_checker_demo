@@ -645,7 +645,10 @@ class OllamaBackend:
                 raise BackendError(f"Ollama stopped with an error: {chunk['error']}")
             if info["first_token_after"] is None:
                 info["first_token_after"] = time.time() - t0
-            msg = chunk.get("message") or {}
+            # hunt phase 1.5: a chunk of another shape (a "message" that is no object, a piece that is no text) is
+            # skipped as a line that does not parse is; it raised AttributeError out of `complete`, past every handler
+            msg = chunk.get("message")
+            msg = {k: v for k, v in msg.items() if isinstance(v, str)} if isinstance(msg, dict) else {}
             if msg.get("thinking"):
                 info["thinking_tokens"] += 1
                 thought += 1
@@ -1135,11 +1138,17 @@ class LocalBackend:
                 chunk = json.loads(data)
             except json.JSONDecodeError:
                 return False
+            # hunt phase 1.5: a chunk of another shape is skipped as a line that does not parse is (it was said as
+            # "Could not reach the local server", which sent the person looking for a server that was answering)
+            if not isinstance(chunk, dict):
+                return False
             if chunk.get("error"):
                 err = chunk["error"]
                 raise BackendError(f"The local server stopped with an error: {err.get('message') if isinstance(err, dict) else err}")
-            ch = (chunk.get("choices") or [{}])[0]
-            delta = ch.get("delta") or {}
+            chs = chunk.get("choices")
+            ch = chs[0] if isinstance(chs, list) and chs and isinstance(chs[0], dict) else {}
+            delta = ch.get("delta")
+            delta = {k: v for k, v in delta.items() if isinstance(v, str)} if isinstance(delta, dict) else {}
             if info["first_token_after"] is None and (delta.get("content") or delta.get("reasoning_content")
                                                       or delta.get("reasoning")):
                 info["first_token_after"] = time.time() - t0
@@ -1173,8 +1182,11 @@ class LocalBackend:
             if isinstance(data, dict) and data.get("error"):
                 err = data["error"]
                 raise BackendError(f"The local server returned an error: {err.get('message') if isinstance(err, dict) else err}")
-            ch = (data.get("choices") or [{}])[0]
-            content = [((ch.get("message") or {}).get("content") or "")]
+            chs = data.get("choices") if isinstance(data, dict) else None
+            ch = chs[0] if isinstance(chs, list) and chs and isinstance(chs[0], dict) else {}
+            msg = ch.get("message")
+            text = msg.get("content") if isinstance(msg, dict) else None
+            content = [text if isinstance(text, str) else ""]   # (another shape: no answer, as an empty one)
             finish = ch.get("finish_reason")
         info.update(phase="done", stats={"total_seconds": time.time() - t0, "output_tokens": info["answer_tokens"]})
         report(force=True)

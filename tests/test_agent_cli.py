@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -208,7 +209,9 @@ def test_antigravity_signs_in_in_a_window(clis, monkeypatch):
 
     monkeypatch.setattr(clis, "_open_window", window)
     r = clis.open_sign_in("antigravity")
-    assert r["opened"] and r["window"] == "Terminal (stand-in)" and r["command"].rstrip('"').endswith("agy")   # Windows: in a child PowerShell
+    # Windows: the window's own script, in a child PowerShell (hunt phase 1.5: no $env: for the outer shell to expand)
+    assert r["opened"] and r["window"] == "Terminal (stand-in)" and r["command"].rstrip('"').endswith(
+        "antigravity-sign-in.ps1" if os.name == "nt" else "agy")
     assert "antigravity-sign-in" in opened[0] and "Google account" in opened[0]
     assert clis.status("antigravity", refresh=True)["signed_in"] is True
 
@@ -383,7 +386,8 @@ def test_a_sign_in_kept_in_the_home_folder_is_asked_for_enlens_own(clis, monkeyp
 
     monkeypatch.setattr(clis, "_open_window", window)
     r = clis.open_sign_in("antigravity")
-    assert str(clis.agy_home()) in scripts[0] and str(clis.agy_home()) in r["command"]
+    # (on Windows the line runs that script, which names the home: hunt phase 1.5)
+    assert str(clis.agy_home()) in scripts[0] and (os.name == "nt" or str(clis.agy_home()) in r["command"])
     assert clis.status("antigravity", refresh=True)["signed_in"] is True
 
 

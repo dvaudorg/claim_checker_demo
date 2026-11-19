@@ -36,7 +36,7 @@ internet: no CDN, no fonts, no analytics. Stop it with <kbd>Ctrl</kbd>+<kbd>C</k
 
 ```bash
 enlens --ws myproject init
-enlens --ws myproject ingest ~/Reports/ more.zip                    # PDF, Word (.docx), HTML, text, Markdown, zips
+enlens --ws myproject ingest --ai-access local ~/Reports/ more.zip  # PDF, Word (.docx), HTML, text, Markdown, zips
 enlens --ws myproject ingest scans/ --ocr auto --ocr-lang eng+nld   # scanned pages by OCR (default: auto, eng)
 enlens --ws myproject embed --embed-model nomic-embed-text          # optional: search by meaning
 enlens --ws myproject check "Green hydrogen production increases water stress in arid regions." --code 6.4
@@ -52,6 +52,11 @@ the passages read without result. Options: `--decompose`, `--framework NAME --co
 SDG targets), `--k`, `--per-doc`, `--no-expand`, `--threshold`, `--embed-model` and `--embed-url`. `check`, `batch`
 and `history` count a judgement from the Strictness of Settings, as the app does (`--threshold` sets another for that
 command), and name the value used in their output (`confidence_threshold`).
+
+`ingest --ai-access` says who may read the new documents with AI: `cloud` (a cloud model such as Claude), `local` (only
+a local AI on this computer) or `none` (no AI; you judge them), as the app asks when you add documents. The first
+answer becomes the project's default. Until a default is chosen, `ingest` without it adds nothing and says so; later
+it takes the default.
 
 **Backends** (`--backend`, on every model command):
 

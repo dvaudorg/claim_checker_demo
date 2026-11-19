@@ -216,7 +216,7 @@ export function remoteServerLine(project, info = {}, onAllowed) {
   if (project && info == null) return infoSlot(project, (got) => remoteServerLine(project, got, onAllowed), "remote-server-slot");
   info = info || {};
   const allowed = (info.providers_default || ["anthropic"]).includes(route);
-  const words = `A server on another computer (${address}) reads only documents you allow it to.`;
+  const words = `A server on another computer (${address}) reads only documents you allow it to.${st.route_address_note ? ` ${st.route_address_note}` : ""}`;
   if (!project) return notice({ kind: "info", class: "remote-server-line" }, h("p", {}, words, " Allow it for a project on its Documents page."));
   if (allowed) return notice({ kind: "info", class: "remote-server-line" }, h("p", {}, words, " This project allows it."));
   const lim = teamLimit(info);

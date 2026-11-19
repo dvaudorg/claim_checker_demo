@@ -113,7 +113,7 @@ list and the notices publishers file.
   work*: the notice is hidden, and the lookup does not propose that DOI for this work again. *Undo* in the message
   brings it back.
 
-A lookup changes no result and no judgement. `enlens retractions <project>`
+A lookup changes no result and no judgement. `enlens retractions <project folder>`
 shows what the last check found; add `--check` to look up now.
 
 ENLENS talks to Zotero only through the Zotero app's own connection on this computer (`127.0.0.1`, port 23119), never

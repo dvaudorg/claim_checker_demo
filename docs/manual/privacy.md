@@ -79,6 +79,8 @@ interview transcript.
   changed together with the bar at the bottom of the window, and the message after a change has *Undo*. A note
   (*Why*, for example "publisher licence") is kept with the document and exported with the project; it changes
   nothing.
+- **From the command line or a Claude chat**, `enlens ingest --ai-access cloud|local|none` and the connector's
+  `ai_access` ask the same question: until the project has a default, nothing is added without an answer.
 - **For large corpora**, a `manifest.csv` may have `ai_access` (`cloud`, `local` or `none`) and `ai_note` columns.
 
 Projects made before 0.11 keep *Claude may read it* for every document until you change it; a project zip made before
@@ -88,17 +90,17 @@ Claude is not offered.
 ### Other cloud providers
 
 *Claude may read it* means Anthropic, unless you allow more. A document marked that way also says **which cloud
-providers may read it**, and by default that is only Anthropic: a project you already have means exactly what it did,
-and nothing reaches OpenAI, Google, Mistral, Azure or OpenRouter, nor Codex or Antigravity, until you allow it ([Settings](settings.md#an-api-key-claude-or-another-provider)).
+providers may read it**, and by default that is only Anthropic: nothing reaches another company, nor Codex or
+Antigravity, until you allow it ([Settings](settings.md#an-api-key-claude-or-another-provider)).
 
-- **Where.** On the Documents page, the line *Cloud AI may read it: …* above the list opens the project's choice, as
-  tick boxes of providers; a document's own AI-setting dialog (*Add a note on why*, in its details) has its own.
+- **Where.** On the Documents page, the line *Cloud AI may read it: …* above the list opens the project's choice of
+  providers; a document's own AI-setting dialog has its own.
 - **The words change.** While no provider other than Anthropic is set up, the page says *Claude may read it*. Once
   one is (a key stored, or chosen as the main route), it says *Cloud AI may read it* and shows the tick boxes. The
   page also shows how much each provider has read.
 - **A document that does not allow the provider of the main route** is treated as *Only a local AI* for that route:
-  its excerpts go to the local model for restricted documents, or wait for your judgement. The Claude connector counts
-  as Anthropic, and so does Claude Code.
+  its excerpts go to the local model for restricted documents, or wait for your judgement. The Claude connector and
+  Claude Code count as Anthropic.
 - **The queue hands passages only to the company of the agent that takes it.** Codex counts as OpenAI, Antigravity as
   Google. A document that allows OpenAI but not Anthropic reaches Codex and never Claude Code, and the reverse. *What
   was sent* records the company and the agent.
@@ -111,7 +113,7 @@ and nothing reaches OpenAI, Google, Mistral, Azure or OpenRouter, nor Codex or A
   which also says what is not signed yet). A colleague's older ENLENS allows Anthropic only. The
   [AI log](how-the-ai-is-used.md#the-ai-log) shows who ran which AI work, with which provider.
 - **Your key** is kept in the system's keychain, never in a project, a log or a moving file. Each provider's terms
-  decide what it keeps and whether it trains on it: check them first.
+  decide what it keeps and whether it trains on it.
 
 ### What happens in each feature
 
@@ -143,11 +145,10 @@ flowchart LR
   offers *Read them now on this computer* for the local ones. When the main model runs on this computer, it also
   reads the excerpts marked *Only a local AI*, so its summary and notes are left out of a Claude chat (the connector
   says so).
-- **When the local model's answers cannot be used** (three tries), the result says so and shows those excerpts without
-  a judgement. *Read them again on this computer* tries once more (after choosing another local model, say), or you
-  judge them yourself.
-- **Search by meaning**: an embedding server on another computer receives neither the restricted passages (they are
-  found by their words) nor glossary terms found only in them.
+- **When the local model's answers cannot be used** (three tries), the result shows those excerpts without a
+  judgement: *Read them again on this computer* tries once more, or you judge them yourself.
+- **Search by meaning**: an embedding server on another computer receives no restricted passage (they are found by
+  their words), and no glossary term or code whose text may carry their words.
 
 The local model's own *Start*, and what happens when memory is short: [A model on your own computer](local-models.md#the-local-models-own-start-and-your-computers-memory).
 

@@ -1001,8 +1001,12 @@ def make_restricted_backend(settings: dict):
     if not choice or choice.get("same_as_main"):
         return None
     if not on_this_computer(choice.get("url") or ""):
+        from .providers import LOOKS_LOCAL, looks_local
+
+        # hunt phase 1.5: an address such as ollama.localhost is another computer since phase 1: say the way out
         raise BackendError(f"The local model for restricted documents must run on this computer; "
-                           f"{choice.get('url')} is another computer.")
+                           f"{choice.get('url')} is another computer."
+                           + (f" {LOOKS_LOCAL}" if looks_local(choice.get("url") or "") else ""))
     key = "ollama_model" if choice["server"] == "ollama" else "openai_model"
     changed = {**settings, "backend": choice["server"], key: choice["model"], "routing": False}
     be, model = _make_backend(changed, "", ("check", "reread"))

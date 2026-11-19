@@ -651,15 +651,26 @@ def _vacuum_after_drop(cx: sqlite3.Connection, folder: Path) -> bool:
 
 def _setup_addons(cx: sqlite3.Connection) -> None:
     """0.13.6: each add-on's tables, columns and indexes, after ENLENS's own and in the add-ons' order, the same
-    idempotent way (docs/EXTENDING.md)."""
-    from .addons import database
+    idempotent way (docs/EXTENDING.md). Hunt phase 1.5 (the owner's rule): an add-on whose SQL fails stopped every
+    project from opening, in SQLite's words that named no add-on. Each add-on now runs inside a savepoint: if any of
+    its statements fails, all of its tables, columns and indexes of this opening are taken back, the add-on is named
+    in `addons.errors()` (and the terminal), and the project opens without it."""
+    from .addons import database, failed, statements
 
     for db in database():
-        if db["schema"]:
-            cx.executescript(db["schema"])
-        _add_columns(cx, db["migrations"])
-        if db["indexes"]:
-            cx.executescript(db["indexes"])
+        cx.execute("SAVEPOINT enlens_addon")
+        try:
+            for stmt in statements(db["schema"]):
+                cx.execute(stmt)
+            _add_columns(cx, db["migrations"])
+            for stmt in statements(db["indexes"]):
+                cx.execute(stmt)
+        except sqlite3.Error as e:
+            cx.execute("ROLLBACK TO enlens_addon")
+            cx.execute("RELEASE enlens_addon")
+            failed(db["addon"], f"its tables could not be set up: {type(e).__name__}: {e}")
+            continue
+        cx.execute("RELEASE enlens_addon")
 
 
 def fast_tests() -> bool:

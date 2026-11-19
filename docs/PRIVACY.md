@@ -43,9 +43,9 @@ Releases are downloaded from GitHub ([below](#other-online-services-not-ai)).
 Nothing is sent to Claude until the researcher runs a feature that uses the AI. With Claude Code, the default route,
 the work then waits until the researcher starts Claude Code
 ([Start Claude Code](manual/claude-code.md#start-claude-code)). In the app, the first documents added to a new
-project ask who may read them, with nothing preselected (`access.default_chosen`). Documents added from the command
-line or the connector without a setting take the project's default, which is *Claude may read it* until a default is
-chosen (*Only a local AI* on a local-only installation; `access.default`).
+project ask who may read them, with nothing preselected (`access.default_chosen`). The command line (`enlens ingest
+--ai-access`) and the connector (`create_project`, `add_sources`: `ai_access`) ask too: without a setting they add
+nothing to a project whose default was never chosen, and take the default once it is chosen.
 
 ## Each document's AI setting
 
@@ -213,8 +213,11 @@ Points for an assessment:
   version finds its documents waiting until they allow it.
 - **Search by meaning** sends passages to the embedding server. An embedding server on another computer receives
   neither passages of documents marked *Only a local AI* or *No AI*, nor of documents that do not allow its provider
-  (`other`, or a known one by its address), nor glossary terms found only in them (`embed.py`, `terms.py`); it does
-  receive the text of searches.
+  (`other`, or a known one by its address), nor glossary terms found only in them (`embed.py`, `terms.py`), nor the
+  text of a code that may carry their words: a codebook made from theory documents marked *Only a local AI* or *No
+  AI*, a definition that still holds the AI's draft, or one quoting six words in a row of a document it may not read
+  (`embed.withheld_codes`; such a code is matched by its words). It does receive the text of searches and of the
+  other codes.
 - **Getting a model** downloads Ollama's installer from ollama.com and a model from Ollama's library, only when the
   researcher presses the button. No document is sent.
 

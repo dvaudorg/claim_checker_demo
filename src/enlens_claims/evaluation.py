@@ -72,6 +72,14 @@ def _copy(ref: Workspace, name: str) -> Workspace:
         dst.close()
     if ref.config_path.exists():
         shutil.copy2(ref.config_path, dest / "config.json")
+        # hunt phase 1.5: the copy works alone. With the original's shared folder or storage space in its settings, a
+        # round run in it would act in the team's place (with the same keys, a space's are named by the space alone)
+        # and a join elsewhere was refused because of it; the copy keeps every other setting (AI access included)
+        from .store import change_config
+        from .sync.folder import FOLDER
+        from .sync.space import CONFIG as SPACE
+
+        change_config(dest / "config.json", {FOLDER: None, SPACE: None})
     for sub in ("frameworks",):
         if (ref.root / sub).is_dir():
             shutil.copytree(ref.root / sub, dest / sub)
@@ -302,14 +310,23 @@ def _score_theme(ws: Workspace, folder: Path, model: str, done: set[str] | None 
             _write(sheet, names)
             return {"note": f"{sheet.name} written: a person says for each name whether it fits, then score again"}
         return {"note": "no theme was named yet"}
-    rows = [r for r in have if str(r.get("theme_id")) in mine]
+    # hunt phase 1.5: a row counts only while it holds the name the model gave. A sheet an older version wrote before
+    # the model answered holds the reference's own names (it wrote every named theme of the copy), and a person's
+    # "fitting" for those scored the reference against itself as the model's
+    given = {str(r["theme_id"]): (r["name"] or "").strip() for r in named}
+    rows = [r for r in have if str(r.get("theme_id")) in mine
+            and (r.get("name") or "").strip() == given[str(r.get("theme_id"))]]
+    stale = sum(1 for r in have if str(r.get("theme_id")) in mine) - len(rows)
     if not rows:
+        if stale:
+            return {"note": f"{sheet.name} holds other names than {model} gave (written before it answered): move "
+                            "the sheet away and score again, which writes it with the model's names"}
         return {"note": f"no theme in {sheet.name} was named by {model} yet"}
     filled = [r for r in rows if _yes(r.get("fitting")) is not None]
     if not filled:
         return {"note": f"{sheet.name} is not filled in yet"}
     return {"measure": "names fitting", "score": round(sum(_yes(r["fitting"]) for r in filled) / len(filled), 3),
-            "themes": len(filled)}
+            "themes": len(filled), **({"names_not_the_models": stale} if stale else {})}
 
 
 def _norm(s: str | None) -> str:

@@ -235,6 +235,23 @@ def on_this_computer(url: str) -> bool:
         return False
 
 
+def looks_local(url: str) -> bool:
+    """Whether an address another computer may answer for was probably meant as this computer (`localhost.localdomain`,
+    a name ending in `.localhost`): the person is told to type `localhost` (hunt phase 1.5)."""
+    u = (url or "").strip()
+    if "://" not in u:
+        u = "http://" + u
+    try:
+        host = (urlparse(u).hostname or "").lower().rstrip(".")
+    except ValueError:
+        return False
+    return host == "localhost.localdomain" or host.endswith(".localhost")
+
+
+LOOKS_LOCAL = ("If the server runs on this computer, type localhost or 127.0.0.1 instead: ENLENS counts only those "
+               "as this computer, since the network's name server may answer for other names.")
+
+
 def of_url(url: str) -> str | None:
     """The provider a model server's address is: None on this computer, a provider of the table by its host (an
     OpenAI address typed into the local server field is OpenAI), else `other`."""

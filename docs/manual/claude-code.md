@@ -31,7 +31,8 @@ checklist then shows three ticks.
   it.
 - When ENLENS is moved or installed again (a new Python), it writes the plugin again on its next start and adds it
   again, quietly. If Claude Code refuses it, the installer's last lines (or the app's log) say so, Claude Code keeps
-  the plugin it had, and ENLENS tries again at its next start; *Set up Claude* or `enlens claude-setup` try at once.
+  the plugin it had, and ENLENS tries again at a start a day later, or sooner after ENLENS or Claude Code is updated;
+  *Set up Claude* or `enlens claude-setup` try at once.
   The Claude desktop app's connector entry is pointed at the new Python too when the old one is gone.
 
 ## Start Claude Code
@@ -195,7 +196,8 @@ Write in the chat as you would to a colleague:
 <details>
 <summary>The connector's tools</summary>
 
-`list_projects`, `create_project`, `add_sources`, `use_folder_as_project`, `list_documents`, `list_frameworks`,
+`list_projects`, `create_project` and `add_sources` (Claude asks you who may read the new documents with AI and passes
+it as `ai_access`; until the project has a default, nothing is added without it), `use_folder_as_project`, `list_documents`, `list_frameworks`,
 `suggest_targets`, `start_check`, `submit_grades`, `more_passages`, `get_check`, `list_checks`, `search_corpus`
 (concordance lines, so Claude can look around before proposing a hypothesis), `document_profile` (a document's codes
 with their passages) and `find_concept` (a concept's wordings and documents). A recorded demo of a session is in

@@ -34,7 +34,7 @@ from pathlib import Path
 
 from . import __version__
 from . import home as core
-from .procs import no_window
+from .procs import console_python, no_window, program_args, same_python
 from .store import now
 from .update import semver as _semver
 
@@ -63,7 +63,8 @@ def commands(where: Path | None = None) -> list[str]:
 
 
 def mcp_config() -> dict:
-    return {"mcpServers": {SERVER: {"command": sys.executable, "args": ["-m", "enlens_claims.mcp_server"],
+    # hunt phase 1.5: the console python.exe, also when the app (pythonw.exe) writes it (`procs.console_python`)
+    return {"mcpServers": {SERVER: {"command": console_python(), "args": ["-m", "enlens_claims.mcp_server"],
                                     "env": {"ENLENS_HOME": str(core.home())}}}}
 
 
@@ -179,7 +180,7 @@ def setup_info() -> dict:
     ready = False
     try:
         cfg = json.loads((plug / ".mcp.json").read_text(encoding="utf-8"))["mcpServers"][SERVER]
-        ready = cfg.get("command") == sys.executable and (plug / "SKILL.md").exists()
+        ready = same_python(cfg.get("command"), sys.executable) and (plug / "SKILL.md").exists()
     except (OSError, ValueError, KeyError):
         ready = False
     return {"folder": str(folder()), "ready": ready, "commands": commands(), "terminal": "enlens claude-setup",
@@ -223,10 +224,10 @@ def _run(args: list[str], timeout: float = 60) -> tuple[int, str]:
     status with an error (the second byte of "Á" is no letter in Windows-1252). 0.15.3: without a window on
     Windows: the app's status ran it three times every half minute, and each run flashed a console window."""
     args = _cmd(args[0]) + list(args[1:])
-    try:
-        r = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
+    try:  # hunt phase 1.5: npm's claude.cmd runs through cmd.exe, which reads the line again (`program_args`)
+        r = subprocess.run(program_args(args), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
                            cwd=str(core.home()), stdin=subprocess.DEVNULL, **no_window())
-    except (OSError, subprocess.SubprocessError) as e:
+    except (OSError, subprocess.SubprocessError, ValueError) as e:
         return 1, f"{type(e).__name__}: {e}"
     return r.returncode, ((r.stdout or "") + (r.stderr or "")).strip()
 
@@ -342,12 +343,18 @@ def install(check: bool = False) -> dict:
                       "text": "Claude Code was not found on this computer. Install it from claude.com/claude-code, "
                               "then press Set up again (or type the two lines below in a terminal)."})
     else:
+        again = False
         for line, args in zip(commands(root), ([path, "plugin", "marketplace", "add", str(root)],
                                                [path, "plugin", "install", f"{PLUGIN}@{MARKETPLACE}"])):
             code, text = _run(args, timeout=120)
-            steps.append({"step": line, "ok": code == 0, "text": re.sub(r"\x1b\[[0-9;]*m", "", text)[-600:]})
-            if code != 0:
+            ok = _took(code, text)
+            again |= ok and code != 0
+            steps.append({"step": line, "ok": ok, "text": re.sub(r"\x1b\[[0-9;]*m", "", text)[-600:]})
+            if not ok:
                 break
+        if again and all(x["ok"] for x in steps):  # already there: the files just written reach it by the refresh
+            for s in refresh_in_claude_code(path):
+                steps.append({"step": "claude " + " ".join(s["args"]), "ok": s["ok"], "text": s["text"]})
     if path and all(x["ok"] for x in steps):
         _forget_refused()  # (INSTALL-5: Claude Code took the plugin; nothing to try again at the next start)
     _STATUS["value"] = None
@@ -486,13 +493,15 @@ def _forget_record(project: str, pid: int | None = None) -> None:
 
 def _runs_this(cmd: str, project: str | None) -> bool:
     """Whether a command line is a Claude Code run of ENLENS, and with `project` the run of that project (run_args puts
-    its name in quotes after the slash command; Windows shows those quotes as \\")."""
+    its name in quotes after the slash command; Windows shows those quotes as \\", and a run started through cmd.exe
+    for npm's claude.cmd as "", `procs.batch_arg`)."""
     if SLASH not in cmd:
         return False
     if project is None:
         return True
     name = project.replace('"', "")
-    return f'{SLASH} "{name}"' in cmd or f'{SLASH} \\"{name}\\"' in cmd
+    return (f'{SLASH} "{name}"' in cmd or f'{SLASH} \\"{name}\\"' in cmd
+            or f'{SLASH} ""{name}""' in cmd)
 
 
 def _pid_runs_enlens(pid: int, project: str | None = None) -> bool:
@@ -502,33 +511,12 @@ def _pid_runs_enlens(pid: int, project: str | None = None) -> bool:
     number alone counted, so Stop could end any program: a number proves nothing, only the command line does."""
     if pid <= 0:
         return False
-    if os.name == "nt":  # 0.15.7: by its command line, as below (it was the number alone, from tasklist)
-        from .procs import windows_command_line
+    # 0.15.7: on Windows by its command line too (it was the number alone, from tasklist). Hunt phase 1.5: one reader
+    # for every system (`procs.command_line`: Windows' interface, ps, then /proc where there is no ps)
+    from .procs import command_line
 
-        try:
-            cmd = windows_command_line(pid)
-        except (OSError, AttributeError, ValueError):
-            return False
-        return cmd is not None and _runs_this(cmd, project)
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return False  # someone else's process: not ours
-    except OSError:
-        return False
-    try:
-        # 0.14.4: -ww, the whole command line: on Linux, ps cuts it at 80 characters when it writes to a pipe, which cut
-        # off the slash command after Claude Code's long path, so a run left going was not recognised
-        r = subprocess.run(["ps", "-ww", "-o", "command=", "-p", str(pid)], capture_output=True, text=True,
-                           timeout=15)  # console: not on Windows
-    except (OSError, subprocess.SubprocessError):
-        return False  # no ps: the number alone is no proof (hunt phase 1)
-    cmd = r.stdout or ""
-    if r.returncode != 0 or not cmd.strip():
-        return False  # gone (or a zombie that ps no longer lists)
-    return _runs_this(cmd, project)
+    cmd = command_line(pid)
+    return bool(cmd) and _runs_this(cmd, project)
 
 
 def _end_process(pid: int, proc=None, wait: float = 10.0, alive=None) -> None:
@@ -642,7 +630,7 @@ def start_run(project: str, parallel=None, helpers=None) -> dict:
         log = _log_path(project)
         fh = open(log, "w", encoding="utf-8")
         try:
-            proc = subprocess.Popen(run_args(project, path, plan), cwd=str(work_folder(project)), stdout=fh,
+            proc = subprocess.Popen(program_args(run_args(project, path, plan)), cwd=str(work_folder(project)), stdout=fh,
                                     stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env={**os.environ, **BOX_ENV},
                                     start_new_session=os.name != "nt", **no_window())
         finally:
@@ -708,11 +696,28 @@ def _refused_path() -> Path:
     return core.home() / "claude-plugin-refused.json"
 
 
-def _note_refused(why: str, steps: list[dict]) -> None:
+# Hunt phase 1.5: `plugin marketplace add` and `plugin install` are run again at every repair and set-up. Should
+# Claude Code answer the second time that the marketplace or the plugin is already there, that is no refusal: the
+# refresh (`refresh_in_claude_code`) then brings the new files.
+_ALREADY = re.compile(r"\balready\b.{0,40}\b(installed|exists|added|present|registered)\b|"
+                      r"\balready (been )?(installed|exists|added|present|registered)\b", re.I)
+
+
+def _took(code: int, text: str) -> bool:
+    """Whether Claude Code took an add or install step: it succeeded, or said the thing is already there."""
+    return code == 0 or bool(_ALREADY.search(text or ""))
+
+
+def _claude_version(path: str) -> str:
+    code, text = _run([path, "--version"], timeout=20)
+    return text.splitlines()[0].strip() if code == 0 and text else ""
+
+
+def _note_refused(why: str, steps: list[dict], claude: str = "") -> None:
     failed = next((x for x in steps if not x["ok"]), None)
     try:
         core._write_whole(_refused_path(), json.dumps({
-            "version": __version__, "python": sys.executable, "reason": why,
+            "version": __version__, "python": sys.executable, "reason": why, "t": time.time(), "claude": claude,
             "step": " ".join(failed["args"]) if failed else "", "text": failed["text"] if failed else "",
             "at": time.strftime("%Y-%m-%d %H:%M:%S")}, indent=2))
     except OSError:
@@ -733,7 +738,30 @@ def refused_words(r: dict) -> str:
     said = " ".join(str(r.get("refused_text") or "").split())[-200:]
     return ("Claude Code did not take the ENLENS plugin written for this installation"
             + (f" (it answered: {said})" if said else "") + ", so it still uses the earlier one. ENLENS tries again "
-            "when it next starts; or press Set up Claude in Settings → AI, or run `enlens claude-setup`.")
+            "at a start a day later, or after ENLENS or Claude Code is updated; or press Set up Claude in Settings → "
+            "AI, or run `enlens claude-setup`.")
+
+
+_REFUSED_WHY = "Claude Code refused it last time"
+
+
+def _still_waiting(path: str) -> dict | None:
+    """Hunt phase 1.5 (INSTALL-5's review note): the note of a refusal when the app's start should not ask Claude Code
+    again yet: made less than a day ago, by this ENLENS, for this Claude Code, with the plugin's files otherwise
+    fitting. While Claude Code kept refusing, every start rewrote the plugin and ran up to four `claude plugin`
+    commands (120 s each). None: ask again."""
+    try:
+        note = json.loads(_refused_path().read_text(encoding="utf-8"))
+        t = float(note.get("t") or 0)
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
+    if not isinstance(note, dict) or note.get("version") != __version__ or not 0 <= time.time() - t < 86400:
+        return None
+    if _stale_files():  # something else changed too (another Python, another data folder): ask now
+        return None
+    if not note.get("claude") or _claude_version(path) != note.get("claude"):
+        return None
+    return note
 
 
 def stale() -> str:
@@ -749,12 +777,20 @@ def stale() -> str:
     except (OSError, ValueError):
         refused = None
     if isinstance(refused, dict):
-        return "Claude Code refused it last time" + (f" ({refused.get('reason')})" if refused.get("reason") else "")
+        return _REFUSED_WHY + (f" ({refused.get('reason')})" if refused.get("reason") else "")
+    return _stale_files()
+
+
+def _stale_files() -> str:
+    """stale() without the note of a refusal: what in the written files no longer fits ("" when they fit)."""
+    plug = plugin_folder()
+    if not (plug / ".mcp.json").exists():
+        return ""
     try:
         cfg = json.loads((plug / ".mcp.json").read_text(encoding="utf-8"))["mcpServers"][SERVER]
     except (OSError, ValueError, KeyError, TypeError):
         return "the plugin's connector settings cannot be read"
-    if cfg.get("command") != sys.executable:
+    if not same_python(cfg.get("command"), sys.executable):  # (python.exe and pythonw.exe of one environment: one)
         return f"it starts the connector with {cfg.get('command')}, not with this ENLENS ({sys.executable})"
     if (cfg.get("env") or {}).get("ENLENS_HOME") != str(core.home()):
         return "it uses another data folder"
@@ -785,15 +821,23 @@ def refresh_in_claude_code(path: str) -> list[dict]:
     return steps
 
 
-def repair(run_claude: bool = True) -> dict:
+def repair(run_claude: bool = True, patient: bool = False) -> dict:
     """Write the plugin again when it no longer fits this installation (see stale()), and add it to Claude Code again
     with the same two commands as set-up (both idempotent), quietly. Nothing happens when no plugin was set up, or
-    on a local-only installation. Run when the app starts and after an installer or an update."""
+    on a local-only installation. Run when the app starts and after an installer or an update. `patient` (the app's
+    start): after a refusal, Claude Code is asked again only a day later or once ENLENS or Claude Code changed
+    (`_still_waiting`); the installer and the update ask every time."""
     if core.local_only():
         return {"repaired": False}
     why = stale()
     if not why:
         return {"repaired": False}
+    if patient and run_claude and why.startswith(_REFUSED_WHY):
+        path = find_claude()
+        note = _still_waiting(path) if path else None
+        if note:
+            return {"repaired": False, "refused": True, "waiting": True, "reason": why,
+                    "refused_step": note.get("step", ""), "refused_text": note.get("text", "")}
     out: dict = {"repaired": True, "reason": why, "steps": []}
     try:
         root = write_plugin()
@@ -803,8 +847,9 @@ def repair(run_claude: bool = True) -> dict:
     if path:
         for args in ([path, "plugin", "marketplace", "add", str(root)], [path, "plugin", "install", f"{PLUGIN}@{MARKETPLACE}"]):
             code, text = _run(args, timeout=120)
-            out["steps"].append({"args": args[1:], "ok": code == 0, "text": re.sub(r"\x1b\[[0-9;]*m", "", text)[-300:]})
-            if code != 0:
+            ok = _took(code, text)
+            out["steps"].append({"args": args[1:], "ok": ok, "text": re.sub(r"\x1b\[[0-9;]*m", "", text)[-300:]})
+            if not ok:
                 break
         else:
             out["refreshed"] = refresh_in_claude_code(path)
@@ -818,7 +863,7 @@ def repair(run_claude: bool = True) -> dict:
         else:
             bad = next(x for x in done if not x["ok"])
             out.update(repaired=False, refused=True, refused_step=" ".join(bad["args"]), refused_text=bad["text"])
-            _note_refused(why, done)
+            _note_refused(why, done, _claude_version(path))
     elif run_claude:
         _forget_refused()  # no Claude Code on this computer any more: nothing to try again
     _STATUS["value"] = None

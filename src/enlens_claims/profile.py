@@ -87,7 +87,7 @@ def _coverage(fw: frameworks.Framework, code: str, have: set[str], idf: dict[str
 
 def code_vectors(ws: Workspace, fw: frameworks.Framework, embedder) -> dict[str, list[float]] | None:
     """The vector of every code's text for this embedding model (made once, kept in `code_vectors`)."""
-    from .embed import _unit, prefixes
+    from .embed import _unit, prefixes, withheld_codes
 
     _q, dprefix = prefixes(embedder.model)
     have = {r["code"]: (r["text_hash"], bytes(r["vec"])) for r in ws.query(
@@ -97,6 +97,10 @@ def code_vectors(ws: Workspace, fw: frameworks.Framework, embedder) -> dict[str,
         th = _h(fw.code_text(c.code))
         if have.get(c.code, ("", b""))[0] != th:
             todo.append((c.code, th, f"{fw.label} {c.code}: {fw.code_text(c.code)}"))
+    # hunt phase 1.5: text an embedding server on another computer may not have stays here (that code is matched by
+    # its words only)
+    held = withheld_codes(ws, fw, embedder, [(c, t) for c, _th, t in todo])
+    todo = [x for x in todo if x[0] not in held]
     for i in range(0, len(todo), 32):
         chunk = todo[i:i + 32]
         vecs = embedder.embed([dprefix + t for _c, _h2, t in chunk])

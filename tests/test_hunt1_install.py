@@ -273,9 +273,10 @@ def test_an_add_on_column_name_ending_in_a_newline_is_refused_in_words(monkeypat
     mod.SCHEMA = "CREATE TABLE IF NOT EXISTS drafts(draft_id TEXT PRIMARY KEY, title TEXT);"
     mod.MIGRATIONS = [("drafts", "ai_note\n", "TEXT")]
     monkeypatch.setattr(addons, "_loaded", [("fieldnotes", mod)])
+    monkeypatch.setattr(addons, "_errors", [])
 
-    with pytest.raises(ValueError, match="cannot add"):
-        Workspace.create(tmp_path / "project")
+    Workspace.create(tmp_path / "project")  # hunt phase 1.5 (the owner's rule): left out and named, never a stop
+    assert any("cannot add" in e["error"] for e in addons.errors())
 
 
 # ---------------------------------------------------------------------------------------------
@@ -445,8 +446,9 @@ def test_an_add_on_table_or_type_with_a_stray_character_is_refused_in_words(monk
     mod.SCHEMA = "CREATE TABLE IF NOT EXISTS drafts(draft_id TEXT PRIMARY KEY);"
     mod.MIGRATIONS = [mg]
     monkeypatch.setattr(addons, "_loaded", [("fieldnotes", mod)])
-    with pytest.raises(ValueError, match="fieldnotes names a column ENLENS cannot add"):
-        Workspace.create(tmp_path / "project")
+    monkeypatch.setattr(addons, "_errors", [])
+    Workspace.create(tmp_path / "project")  # hunt phase 1.5 (the owner's rule): left out and named, never a stop
+    assert any("fieldnotes names a column ENLENS cannot add" in e["error"] for e in addons.errors())
 
 
 # INSTALL-6's sweep: every command of `enlens`, given something that fails (an unknown project, a missing file, an

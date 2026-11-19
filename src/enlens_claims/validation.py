@@ -418,8 +418,12 @@ def _share(xs: list[bool]) -> float | None:
 
 
 def _code_pairs(a: list[str] | None, b: list[str] | None, codes: list[str], skip: list[str]) -> list[tuple]:
-    a, b = set(a or []), set(b or [])
-    return [(c in a, c in b) for c in codes if c not in skip]
+    """One (a's decision, b's decision) per code. Hunt phase 1.5: a passage with no answer (None) is "no answer" for
+    every code, never a decision, as an unfinished check is never right (`score_checks`): read as "no code", it was
+    right for every code the gold set does not give it, so a model that failed passages scored higher."""
+    sa, sb = set(a or []), set(b or [])
+    return [(c in sa if a is not None else "no answer", c in sb if b is not None else "no answer")
+            for c in codes if c not in skip]
 
 
 def score_checks(items: list[dict]) -> dict:
@@ -452,7 +456,8 @@ def score_labels(items: list[dict], codes: list[str]) -> dict:
         fn = sum(1 for it in items if c in it["gold"] and c not in (it["got"] or []))
         per_code[c] = {"gold": tp + fn, "precision": round(tp / (tp + fp), 3) if tp + fp else None,
                        "recall": round(tp / (tp + fn), 3) if tp + fn else None}
-    same = [set(it["gold"]) == set(it["got"] or []) - set(it.get("mentioned") or []) for it in items]
+    same = [it["got"] is not None and set(it["gold"]) == set(it["got"]) - set(it.get("mentioned") or [])
+            for it in items]
     return {"n": len(items), "answered": sum(1 for it in items if it["got"] is not None),
             "code_decisions": len(pairs), "code_accuracy": _share([a == b for a, b in pairs]),
             "kappa": kappa(pairs), "same_codes": _share(same), "per_code": per_code}
@@ -478,7 +483,8 @@ def repeatability(p1: dict, p2: dict, codes: list[str]) -> dict:
     pairs = [p for x, y in lp for p in _code_pairs(x["got"], y["got"], codes, [])]
     return {"checks": {"n": len(cp), "same_status": _share([x == y for x, y in cp]), "kappa": kappa(cp),
                        "unanswered_twice": sum(1 for i in a if i in b and not (a[i] or b[i]))},
-            "labels": {"n": len(lp), "same_codes": _share([set(x["got"] or []) == set(y["got"] or []) for x, y in lp]),
+            "labels": {"n": len(lp), "same_codes": _share([x["got"] is not None and y["got"] is not None
+                                                           and set(x["got"]) == set(y["got"]) for x, y in lp]),
                        "code_agreement": _share([x == y for x, y in pairs]), "kappa": kappa(pairs),
                        "unanswered_twice": len(both) - len(lp)}}
 

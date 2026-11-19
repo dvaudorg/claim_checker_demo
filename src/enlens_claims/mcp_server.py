@@ -87,7 +87,7 @@ says which codes (by default the 169 SDG targets) a document addresses, how much
 Adding sources: the user gives a path to a zip, a folder or files on this computer (attachments in the chat do not
 reach this connector). Call create_project or add_sources with that path. Ask the user who may read the new documents
 with AI and pass it as ai_access: cloud (Claude may read them), local (only a local AI on this computer) or none (no
-AI; the user judges them).
+AI; the user judges them). Without it, only a project whose default the user chose takes the documents.
 
 Documents the user keeps on this computer (0.11): you are never shown text of documents marked local or none. Tools
 report them as counts (restricted_hits, restricted_passages, restricted evidence) and documents marked none as
@@ -332,8 +332,25 @@ def _check_path(path: str) -> Path:
     return p
 
 
+# hunt phase 1.5 (the owner's rule): documents never become readable by an AI through silence. Without `ai_access`,
+# a project whose default was never chosen is refused in words (the app asks first, with nothing preselected); a
+# chosen default applies. The rule sits here, at the connector's entry, not in `ingest.ingest`.
+_ASK_ACCESS = ("Ask the user who may read the new documents with AI, then call again with ai_access: cloud (Claude may "
+               "read them), local (only a local AI on this computer) or none (no AI; the user judges them). This "
+               "project has no default yet, so nothing was added.")
+
+
+def _access_chosen(ws, ai_access: str | None) -> None:
+    if ai_access is None and (ws is None or not access.default_chosen(ws)):
+        raise ValueError(_ASK_ACCESS)
+    if ai_access == "cloud" and access._local_only():  # said before a new project is made, not after (it stayed empty)
+        raise ValueError("Cloud models are switched off on this computer: documents can be read by a local AI or by "
+                         "the user only. Call again with ai_access local or none.")
+
+
 def _ingest(ws, path: str, exclude: list[str] | None, ai_access: str | None = None) -> dict:
     p = _check_path(path)
+    _access_chosen(ws, ai_access)
     before = {d["doc_id"] for d in document_overview(ws)}
     stats = ingest.ingest(ws, [p], exclude=exclude or None, ai_access=ai_access)
     added = [d for d in document_overview(ws) if d["doc_id"] not in before]
@@ -433,16 +450,19 @@ def build_server():
     @s.tool(description="Create a project and read its sources from a path on this computer: a zip, a folder, or a "
                         "PDF/HTML/text file. A manifest.csv inside (columns file, reference, doi, optional ai_access) "
                         "names each work. ai_access: who may read the documents with AI: cloud (Claude may read them), "
-                        "local (only a local AI on this computer), none (no AI); without it the project's default.")
+                        "local (only a local AI on this computer), none (no AI). Ask the user; a new project has no "
+                        "default, so without ai_access nothing is made.")
     @_friendly
     def create_project(name: str, sources_path: str, exclude: Optional[list[str]] = None,
                        ai_access: Optional[Literal["cloud", "local", "none"]] = None) -> dict:
         _check_path(sources_path)  # before creating: a mistyped path must not leave an empty project behind
+        _access_chosen(None, ai_access)  # nor a missing choice of who may read it (a new project has no default)
         ws = core.create_project(name)
         return {"project": ws.root.name, **_ingest(ws, sources_path, exclude, ai_access)}
 
     @s.tool(description="Add sources to an existing project from a path on this computer (zip, folder or file). "
-                        "ai_access as for create_project; without it the project's default applies.")
+                        "ai_access as for create_project; without it the project's default applies, and a project "
+                        "whose default was never chosen adds nothing until you pass it.")
     @_friendly
     def add_sources(project: str, sources_path: str, exclude: Optional[list[str]] = None,
                     ai_access: Optional[Literal["cloud", "local", "none"]] = None) -> dict:
@@ -735,8 +755,11 @@ def desktop_config_path() -> Path:
 
 
 def config_block() -> dict:
-    """Start the connector with this very Python, so the app uses the environment it was installed in."""
-    return {"command": sys.executable, "args": ["-m", "enlens_claims.mcp_server"], "env": {"ENLENS_HOME": str(core.home())}}
+    """Start the connector with this very Python, so the app uses the environment it was installed in (its console
+    python.exe, also when pythonw.exe writes it: hunt phase 1.5, `procs.console_python`)."""
+    from .procs import console_python
+
+    return {"command": console_python(), "args": ["-m", "enlens_claims.mcp_server"], "env": {"ENLENS_HOME": str(core.home())}}
 
 
 class DesktopConfigError(ValueError):
@@ -808,7 +831,9 @@ def repair_desktop(path: Path | None = None) -> bool:
     except (OSError, ValueError, KeyError, TypeError):
         return False
     cmd = str(entry.get("command") or "")
-    if cmd == sys.executable or (entry.get("env") or {}).get("ENLENS_HOME") != str(core.home()) or Path(cmd).exists():
+    from .procs import same_python
+
+    if same_python(cmd, sys.executable) or (entry.get("env") or {}).get("ENLENS_HOME") != str(core.home()) or Path(cmd).exists():
         return False
     install_desktop(path)
     return True

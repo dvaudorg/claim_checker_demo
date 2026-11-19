@@ -75,25 +75,15 @@ def _pid_is_enlens_app(pid) -> bool:
     now). Used only for a copy older than 0.17.2, which writes no token file."""
     if not isinstance(pid, int) or pid <= 0:
         return False
-    if os.name == "nt":
-        from ..procs import windows_command_line
+    from ..procs import command_line  # (hunt phase 1.5: Windows' interface, ps, then /proc where there is no ps)
 
-        try:
-            cmd = windows_command_line(pid)
-        except (OSError, AttributeError, ValueError):
-            return False
-    else:
-        try:
-            os.kill(pid, 0)
-        except OSError:  # gone, or another account's (PermissionError): not this data folder's
-            return False
-        try:
-            r = subprocess.run(["ps", "-ww", "-o", "command=", "-p", str(pid)], capture_output=True, text=True,
-                               timeout=15)  # console: not on Windows
-        except (OSError, subprocess.SubprocessError):
-            return False  # no ps: the number alone is no proof
-        cmd = r.stdout if r.returncode == 0 else None
+    cmd = command_line(pid)
     return bool(cmd) and ("enlens_claims.gui.launch" in cmd or "enlens-gui" in cmd)
+
+
+def _timed_out(e: BaseException) -> bool:
+    """Whether a request failed because the address did not answer in time (a busy app), not because it refused."""
+    return isinstance(e, TimeoutError) or isinstance(getattr(e, "reason", None), TimeoutError)
 
 
 def proven(url: str, port: int, pid=None, timeout: float = 1.5) -> bool:
@@ -104,27 +94,38 @@ def proven(url: str, port: int, pid=None, timeout: float = 1.5) -> bool:
     file but shows its token on its page: it counts only when the record's process is an ENLENS app of this account
     (by its command line) as well. A page that merely looks like ENLENS's, or a process number that runs, proves
     nothing."""
+    return _prove(url, port, pid, timeout) == "yes"
+
+
+def _prove(url: str, port: int, pid=None, timeout: float = 1.5) -> str:
+    """`proven`, with a third answer: "busy" when the address keeps silent past a second, longer try and the record's
+    process is still an ENLENS app of this account (hunt phase 1.5: a timeout proves nothing; the record of a busy
+    app was removed and the icon started a second copy of the same data folder on the next port)."""
     if not url.startswith("http://127.0.0.1:"):
-        return False
+        return "no"
     base = url.split("#", 1)[0].rstrip("/")
     token = read_token(port)
     if token:
-        try:
-            _ask(base + "/api/jobs", token, timeout)
-            return True
-        except OSError:
-            pass  # 401: not the copy that wrote the file (a file left by a crash); or nothing answers
+        for wait in (timeout, max(3.0, 4 * timeout)):  # a busy app: asked once more, with longer to answer
+            try:
+                _ask(base + "/api/jobs", token, wait)
+                return "yes"
+            except OSError as e:  # 401: not the copy that wrote the file (a file left by a crash); or nothing answers
+                if not _timed_out(e):
+                    break
+        else:
+            return "busy" if _pid_is_enlens_app(pid) else "no"
     if not _pid_is_enlens_app(pid):
-        return False
+        return "no"
     try:
         page = _ask(base + "/", None, timeout).decode("utf-8", errors="replace")
         m = re.search(r'name="enlens-token" content="([^"]+)"', page)
         if not (m and 'name="enlens-version"' in page):
-            return False
+            return "no"
         _ask(base + "/api/jobs", m.group(1), timeout)
-        return True
-    except OSError:
-        return False
+        return "yes"
+    except OSError as e:
+        return "busy" if _timed_out(e) else "no"  # (its process is an ENLENS app, checked above)
 
 
 def running(timeout: float = 1.5) -> dict | None:
@@ -132,15 +133,20 @@ def running(timeout: float = 1.5) -> dict | None:
     (INSTALL-2): only one that proves it is this data folder's (`proven`). It trusted any page that looked like
     ENLENS's at the recorded address, so after a crash or a logout (app.json stays: no Quit) the icon opened another
     data folder's or another account's ENLENS that had taken the port, and never started this one. A record that
-    proves nothing is stale: it is removed."""
+    proves nothing is stale: it is removed. Hunt phase 1.5: a busy app (silent past a second try, its process still an
+    ENLENS app) is no stale record: it is kept and given back with "busy": True, so the icon opens it rather than
+    start a second copy of the same data folder."""
     p = info_path()
     try:
         info = json.loads(p.read_text(encoding="utf-8"))
         url = str(info["url"])
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return None
-    if proven(url, info.get("port") or _port_of(url), info.get("pid"), timeout):
+    got = _prove(url, info.get("port") or _port_of(url), info.get("pid"), timeout)
+    if got == "yes":
         return info
+    if got == "busy":
+        return {**info, "busy": True}
     _forget_info(info)
     return None
 
@@ -624,7 +630,8 @@ def _windows_shortcut(folder: Path, python: str, args: list[str]) -> Path:
 
 
 def _desktop_entry(path: Path, python: str, args: list[str]) -> Path:
-    def q(a: str) -> str:  # quoting of the freedesktop Exec key
+    def q(a: str) -> str:  # quoting of the freedesktop Exec key; % is a field code there (%f, %u): a literal one is %%
+        a = a.replace("%", "%%")  # (hunt phase 1.5: a data folder "100% sure")
         if not any(c in a for c in ' \t\n"\'\\><~|&;$*?#()`'):
             return a
         return '"' + a.replace("\\", "\\\\").replace('"', '\\"').replace("`", "\\`").replace("$", "\\$") + '"'

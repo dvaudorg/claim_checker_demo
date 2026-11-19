@@ -58,7 +58,7 @@ network, so it is the fastest way to see the whole pipeline work. Its results ar
 ```bash
 enlens --ws demo init
 enlens --ws demo load-vca path/to/43621_2024_374_MOESM1_ESM.xlsx
-enlens --ws demo ingest path/to/sources.zip          # folders and zips are searched
+enlens --ws demo ingest --ai-access cloud path/to/sources.zip   # folders and zips are searched
 enlens --ws demo match-sources
 enlens --ws demo screen
 enlens --ws demo make-tasks split
@@ -98,7 +98,7 @@ short term and 14 medium to long term**, as in the paper. If they do not, the co
 ### Step 2. Add sources
 
 ```bash
-enlens --ws pilot ingest uploads/sources.zip more_reports/
+enlens --ws pilot ingest --ai-access cloud uploads/sources.zip more_reports/
 enlens --ws pilot match-sources
 enlens --ws pilot coverage
 ```

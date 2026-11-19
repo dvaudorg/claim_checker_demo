@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import threading
 from array import array
 from typing import Callable, Protocol, Sequence
@@ -161,6 +162,42 @@ def _restricted_docs(ws: Workspace, embedder=None) -> set[str]:
     # (an embedder without an address, a stand-in of a test, keeps the rule of 0.11: only `cloud` documents)
     prov = providers.of_url(url) if url else None
     return {d for d, lv in access.levels(ws, provider=prov).items() if lv != "cloud"}
+
+
+QUOTE_WORDS = 6   # words in a row that make a code's text a quote of a document (`withheld_codes`)
+
+
+def _runs(text: str) -> set[int]:
+    words = re.findall(r"\w+", (text or "").lower())
+    return {hash(tuple(words[i:i + QUOTE_WORDS])) for i in range(len(words) - QUOTE_WORDS + 1)}
+
+
+def withheld_codes(ws: Workspace, fw, embedder, texts: list[tuple[str, str]]) -> set[str]:
+    """Of `texts` ([(code, the text to embed)]), the codes whose text an embedding server on another computer is not
+    sent (none for one on this computer). Hunt phase 1.5: search by meaning embedded every code's text with whatever
+    embedder was set up, and a code's text can hold words of documents that server may not read: a codebook made from
+    theory documents marked Only a local AI or No AI quotes them (`theory_level`, written when it is made), the AI's
+    draft of a definition (`drafted`) is the AI's reading of documents, and a definition may quote a document of this
+    project the server may not read (six words in a row found in one). Such a code is matched by its words only, as
+    a restricted passage is searched by its words (`build`)."""
+    if not texts or not remote(embedder):
+        return set()
+    meta = getattr(fw, "meta", None) or {}
+    if meta.get("theory_level") in ("local", "none"):
+        return {c for c, _t in texts}
+    drafted = meta.get("drafted") if isinstance(meta.get("drafted"), dict) else {}
+    ids = meta.get("ids") if isinstance(meta.get("ids"), dict) else {}
+    out = {c for c, _t in texts if ids.get(c) in drafted}
+    rest = [(c, _runs(t)) for c, t in texts if c not in out]
+    restricted = sorted(_restricted_docs(ws, embedder))
+    if not rest or not restricted or not any(r for _c, r in rest):
+        return out
+    seen: set[int] = set()
+    for i in range(0, len(restricted), 500):
+        part = restricted[i:i + 500]
+        for (text,) in ws.query(f"SELECT text FROM passages WHERE doc_id IN ({','.join('?' * len(part))})", part):
+            seen |= _runs(text)
+    return out | {c for c, r in rest if r & seen}
 
 
 def remote(embedder) -> bool:

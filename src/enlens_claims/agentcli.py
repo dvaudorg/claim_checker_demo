@@ -58,7 +58,7 @@ from pathlib import Path
 from . import __version__, providers
 from . import home as core
 from .claude_setup import _cmd, _end_process, _open_window, _run_key, _said, frontmatter
-from .procs import no_window
+from .procs import no_window, program_args
 from .store import now
 from .update import semver as _semver
 
@@ -87,8 +87,9 @@ SIGN_IN_DOCS = {"codex": "https://learn.chatgpt.com/docs/auth", "antigravity": "
 
 LIMIT_WORDS = re.compile(r"usage limit|rate limit|quota|limit reached|hit your (?:usage )?limit|too many requests|"
                          r"resource.?exhausted", re.I)
-SIGNED_OUT_WORDS = re.compile(r"not logged in|not signed in|log ?in first|sign ?in|authenticat|unauthori[sz]ed|"
-                              r"\b401\b", re.I)
+# hunt phase 1.5: whole words (`sign ?in` found "design in", and a helper that said so ended the run as signed out)
+SIGNED_OUT_WORDS = re.compile(r"\b(?:not logged in|not signed in|log ?in first|sign ?in|authenticat\w*|"
+                              r"unauthori[sz]ed|401)\b", re.I)
 RESETS_WORDS = re.compile(r"(?:try again|resets?|available again)\s+(?:at|in|on)?\s*([^\n.;|\"]{1,40})", re.I)
 
 
@@ -187,15 +188,75 @@ def find(route: str) -> str:
     return ""
 
 
+def _windows() -> bool:
+    return os.name == "nt"
+
+
+# Hunt phase 1.5: Codex installed with npm is `codex.cmd`, a command file, and Windows starts a command file through
+# cmd.exe, which reads the whole line again: a helper's prompt (several lines, the project's name, quotes, & | < > %)
+# was cut at its first line break, and `a & echo pwned > x.txt & b` in a project's name ran as a command. A helper's
+# prompt never goes through cmd.exe: npm's command file is read for the program it starts (node and its script) and
+# that is started instead; a command file of another kind is refused for a helper (`run_args`). Calls without free
+# text (the version, the help, `login`) go through `procs.program_args`, which quotes each argument for cmd.exe.
+_SHIM_TARGET = re.compile(r'"%~?dp0%?\\?([^"%\r\n]+)"\s*%\*')
+
+
+def _shim_target(path: str) -> list[str] | None:
+    """The program npm's command file (cmd-shim: `"%_prog%" "%dp0%\\node_modules\\…\\codex.js" %*`) starts, as an
+    argument list without cmd.exe: [node, the script], node beside the file (`node.exe`, as the shim prefers it) or on
+    the PATH; [the program] when it starts an .exe. None when the file is not such a shim or its target is missing."""
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    m = _SHIM_TARGET.search(text)
+    if not m:
+        return None
+    here = Path(path).parent
+    target = here / m.group(1).replace("\\", os.sep)
+    if not target.is_file():
+        return None
+    if target.suffix.lower() == ".exe":
+        return [str(target)]
+    if target.suffix.lower() not in (".js", ".cjs", ".mjs"):
+        return None
+    node = here / "node.exe"
+    node_path = str(node) if node.is_file() else shutil.which("node")
+    return [node_path, str(target)] if node_path else None
+
+
+def _command_file(path: str) -> bool:
+    return _windows() and str(path).lower().endswith((".cmd", ".bat"))
+
+
+def _program(path: str) -> list[str]:
+    """How to start the CLI found at `path` (claude_setup._cmd), npm's command file read for its program on Windows."""
+    if _command_file(path):
+        target = _shim_target(path)
+        if target:
+            return target
+    return _cmd(path)
+
+
+def _cmd_refused(route: str, path: str) -> str:
+    """Why a helper of this CLI cannot be started ("" when it can): a command file ENLENS cannot read through."""
+    if not _command_file(path) or _shim_target(path):
+        return ""
+    title = cli(route).title
+    return (f"This {title} is started by a command file ({Path(path).name}) that ENLENS cannot see through, and a "
+            f"helper's instructions cannot pass through Windows' command line whole. Install {title} with its own "
+            "installer (Settings → AI), then press Start again.")
+
+
 def _run(args: list[str], timeout: float = 60, cwd: Path | None = None, env: dict | None = None) -> tuple[int, str]:
     """Run the CLI and return its exit code and what it wrote (UTF-8, without a window on Windows). `env`: what
     changes in the environment (a None value leaves that variable out)."""
-    args = _cmd(args[0]) + list(args[1:])
-    try:
-        r = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
-                           cwd=str(cwd or core.home()), stdin=subprocess.DEVNULL,
+    args = _program(args[0]) + list(args[1:])
+    try:  # (a command file that is not npm's goes through cmd.exe, each argument quoted for it: procs.program_args)
+        r = subprocess.run(program_args(args), capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           timeout=timeout, cwd=str(cwd or core.home()), stdin=subprocess.DEVNULL,
                            env=_environ(env), **no_window())
-    except (OSError, subprocess.SubprocessError) as e:
+    except (OSError, subprocess.SubprocessError, ValueError) as e:
         return 1, f"{type(e).__name__}: {e}"
     return r.returncode, _plain(((r.stdout or "") + (r.stderr or "")).strip())
 
@@ -407,9 +468,10 @@ def sign_in_folder(route: str) -> Path:
     return d
 
 
-def _sign_in_script(route: str, path: str, work: Path) -> Path:
+def _sign_in_script(route: str, path: str, work: Path, windows: bool | None = None) -> Path:
+    """The sign-in window's script: PowerShell on Windows (`windows`; this computer's by default), else sh."""
     title = cli(route).title
-    if os.name == "nt":
+    if _windows() if windows is None else windows:
         from .gui.launcher import _ps_quote
 
         q = lambda s: _ps_quote(str(s))  # noqa: E731 - a PowerShell string
@@ -420,7 +482,7 @@ def _sign_in_script(route: str, path: str, work: Path) -> Path:
                      "Write-Host 'It runs in an empty folder of ENLENS, with ENLENS own Antigravity settings.'\r\n"
                      f"$env:USERPROFILE = {q(home)}\r\n$env:HOME = {q(home)}\r\n"
                      f"Set-Location -LiteralPath {q(work)}\r\n"
-                     f"& {' '.join(q(x) for x in _cmd(path))}\r\n", encoding="utf-8-sig", newline="")
+                     f"& {' '.join(q(x) for x in _program(path))}\r\n", encoding="utf-8-sig", newline="")
         return p
     import shlex
 
@@ -453,8 +515,8 @@ def open_sign_in(route: str) -> dict:
         if running is None or running.poll() is not None:
             log = open(runs_folder() / "codex-login.log", "w", encoding="utf-8")
             try:
-                _LOGIN[route] = subprocess.Popen(_cmd(path) + ["login"], cwd=str(core.home()), stdout=log,
-                                                 stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                _LOGIN[route] = subprocess.Popen(program_args(_program(path) + ["login"]), cwd=str(core.home()),
+                                                 stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                                  start_new_session=os.name != "nt", **no_window())
             except OSError as e:
                 raise ValueError(f"Codex's sign-in could not start: {e}") from e
@@ -463,18 +525,36 @@ def open_sign_in(route: str) -> dict:
         return {"opened": True, "window": "", "command": "codex login"}
     work = sign_in_folder(route)
     prepare_agy_home()
-    window = _open_window(_sign_in_script(route, path, work))
+    script = _sign_in_script(route, path, work)
+    window = _open_window(script)
     import shlex
 
     home = str(agy_home())
-    if os.name != "nt":
+    if not _windows():
         line = (f"cd {shlex.quote(str(work))} && env -u XDG_CONFIG_HOME -u XDG_DATA_HOME -u XDG_STATE_HOME "
                 f"-u XDG_CACHE_HOME HOME={shlex.quote(home)} agy")
-    else:   # in a child PowerShell, so the person's own session keeps its home
-        ps = lambda s: "'" + str(s).replace("'", "''") + "'"  # noqa: E731
-        line = (f"powershell -NoProfile -Command \"Set-Location -LiteralPath {ps(work)}; $env:USERPROFILE={ps(home)}; "
-                f"$env:HOME={ps(home)}; agy\"")
+    else:
+        line = windows_sign_in_line(script)
     return {"opened": bool(window), "window": window, "command": line, "folder": str(work)}
+
+
+def windows_sign_in_line(script: Path) -> str:
+    """The line the page shows to type on Windows when no window opened: the window's own script, run by a child
+    PowerShell (so the person's own session keeps its home folder). Hunt phase 1.5: the line was `powershell -Command
+    "…; $env:USERPROFILE='…'; $env:HOME='…'; agy"`, and PowerShell, Windows Terminal's shell, expands $env:… inside
+    double quotes before the child starts: agy ran in the person's own home. This line holds no $ and no %, so it
+    reads the same typed into PowerShell or into cmd.exe; a script whose path holds $, `, %, or a straight or
+    typographic double quote (a user name with a $) is named in -EncodedCommand instead, which neither shell reads
+    into."""
+    s = str(script)
+    head = "powershell -NoProfile -ExecutionPolicy Bypass"
+    if not re.search('[$`%"\u201c\u201d\u201e]', s):   # (PowerShell also ends a string at typographic double quotes)
+        return f'{head} -File "{s}"'
+    import base64
+
+    from .gui.launcher import _ps_quote
+
+    return f"{head} -EncodedCommand {base64.b64encode(('& ' + _ps_quote(s)).encode('utf-16-le')).decode('ascii')}"
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1085,6 +1165,9 @@ def run_args(route: str, path: str, prompt: str, model_id: str, effort: str | No
              options: set[str] | None = None, available: list[str] | None = None) -> list[str]:
     """The command of one helper process (only the options this CLI's help lists; never through a shell)."""
     opts = known_options(route, path) if options is None else options
+    refused = _cmd_refused(route, path)   # hunt phase 1.5: the prompt never goes through cmd.exe (`_program`)
+    if refused:
+        raise ValueError(refused)
 
     def has(*names):
         return any(n in opts for n in names)
@@ -1095,7 +1178,7 @@ def run_args(route: str, path: str, prompt: str, model_id: str, effort: str | No
                              "it the ENLENS connector: update Codex, then press Start Codex again.")
         c = "-c" if "-c" in opts else "--config"
         cmd = connector_command()
-        args = _cmd(path) + ["exec"]
+        args = _program(path) + ["exec"]
         for flag in ("--skip-git-repo-check", "--ephemeral", "--ignore-user-config"):
             if flag in opts:
                 args.append(flag)
@@ -1122,7 +1205,7 @@ def run_args(route: str, path: str, prompt: str, model_id: str, effort: str | No
             args.append("--json")
         return args + [prompt]
     slug, eff = _resolve_agy_model(model_id, effort, available or [])
-    args = _cmd(path) + ["-p", prompt]
+    args = _program(path) + ["-p", prompt]
     if "--output-format" in opts:
         args += ["--output-format", "json"]
     if slug and "--model" in opts:
@@ -1209,10 +1292,13 @@ def _group_waits(run: dict, ws, group: tuple) -> bool:
     it to that helper. Hunt phase 1: `_reap` asked whether any task of the kind waited, so a helper of one group (the
     stepped-up labels on the middle model) that found its batches taken by its colleague counted as a failed helper
     while the first-step labels waited for another helper."""
-    from .taskqueue import PAGE, _lent, _waiting_count, _waiting_rows, effective_helper, effective_model, mix_kinds
+    from .taskqueue import (PAGE, _lent, _waiting_count, _waiting_rows, effective_helper, effective_model, mix_kinds,
+                            order)
 
     kind, model, helper = group
-    if _waiting_count(ws, kind) <= 0:
+    # hunt phase 1.5: a kind the person put on Hold waits for no helper: one that found nothing to take after the Hold
+    # did its part, and three such helpers ended the run with "did not answer the queue"
+    if kind in order(ws)[1] or _waiting_count(ws, kind) <= 0:
         return False
     r, lent = run.get("router"), mix_kinds()
     if r is None:
@@ -1230,18 +1316,19 @@ def _spawn(run: dict, g: dict, path: str, opts: set[str], work: Path, ws) -> Non
     r = run["router"]
     model_id = r.api_id(g["model"]) or g["model"]
     effort = r.effort(g["kind"])
-    run["n"] += 1
-    # hunt phase 1: each helper process takes its batches under a name of its own, so the run counts each helper's
-    # batches once: under the group's shared name, two helpers at work at once each counted the other's too (the
-    # report said more batches than were taken, and a helper that took nothing did not count as failed)
-    taken_by = f"{g['helper']} in {cli(route).title} #{run['n']}"
-    prompt = helper_prompt(route, project, g["kind"], g["model"], g["helper"], taken_by)
-    args = run_args(route, path, prompt, model_id, effort, work, opts, run["available"])
     if route == "antigravity":   # enforced for every helper, not once a run: a run starts them for hours
         prepare_agy_home()
         _write_agy_connector(work)
         if always_proceeds():
             raise ValueError(ALWAYS_PROCEED.format(path=enlens_agy_settings_path()))
+    # hunt phase 1: each helper process takes its batches under a name of its own, so the run counts each helper's
+    # batches once: under the group's shared name, two helpers at work at once each counted the other's too (the
+    # report said more batches than were taken, and a helper that took nothing did not count as failed). Hunt phase
+    # 1.5: the number is taken only by a helper that starts (a refused one skipped a number in the report)
+    taken_by = f"{g['helper']} in {cli(route).title} #{run['n'] + 1}"
+    prompt = helper_prompt(route, project, g["kind"], g["model"], g["helper"], taken_by)
+    args = run_args(route, path, prompt, model_id, effort, work, opts, run["available"])
+    run["n"] += 1
     # hunt phase 1: the model on this helper's command line (Antigravity's slug as resolved against `agy models`;
     # none when the CLI takes no --model), written to the run record before it starts, so the queue names it in the
     # AI log and in each answer's record (taskqueue.next_tasks, submit)
@@ -1355,6 +1442,9 @@ def _orchestrate(run: dict) -> None:
             else:
                 idle = 0
             run["stop"].wait(POLL)
+    except ValueError as e:   # a refusal in words (`_spawn`, `run_args`): said as it is, without Python's name for it
+        code = 1
+        _say(run, f"The run stopped: {e}")
     except Exception as e:  # noqa: BLE001 - the run ends with what happened, the app goes on
         code = 1
         _say(run, f"The run stopped: {type(e).__name__}: {e}")
@@ -1440,6 +1530,8 @@ def start_run(route: str, project: str, parallel=None, helpers=None) -> dict:
         path = find(route)
         if not path:
             raise ValueError(f"{a.title} was not found on this computer. Set it up in Settings → AI.")
+        if _cmd_refused(route, path):   # said at Start, not by the first helper
+            raise ValueError(_cmd_refused(route, path))
         info = status(route)
         if info.get("signed_in") is False:
             info = status(route, refresh=True)
@@ -1521,6 +1613,12 @@ def stop_all_runs() -> list[dict]:
         if before.get("running"):
             stop_run(route, name)
             stopped.append({"project": name, "started_at": before.get("started_at", ""), "route": route})
+    # hunt phase 1.5: a `codex login` still waiting for the browser is this app's too: it does not outlive Quit (the
+    # person presses Sign in again after the next start)
+    for route, p in list(_LOGIN.items()):
+        if p.poll() is None:
+            _end_process(p.pid, p, wait=5.0)
+        _LOGIN.pop(route, None)
     return stopped
 
 

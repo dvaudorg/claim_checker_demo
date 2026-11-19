@@ -94,15 +94,22 @@ function Install-Enlens {
     if ($version.StartsWith('@') -and -not $env:ENLENS_WHEEL) {
         throw "this copy of install.ps1 does not name a version. Use the one from a GitHub Release: https://github.com/$repo/releases"
     }
+    # Hunt phase 1.5: every path is taken literally (-LiteralPath, or .NET): with -Path, Resolve-Path and Get-FileHash
+    # a [ or ] is a wildcard pattern, so a user folder such as "Anna [Lab]" (and so %TEMP%) stopped the install at
+    # "Cannot find path". Invoke-WebRequest's -OutFile is a pattern in Windows PowerShell 5.1 too: Save-Download.
+    function Save-Download([string]$Uri, [string]$Path) {
+        $r = Invoke-WebRequest -UseBasicParsing -Uri $Uri
+        [IO.File]::WriteAllBytes($Path, $r.RawContentStream.ToArray())
+    }
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ('enlens-' + [Guid]::NewGuid().ToString('N'))
-    New-Item -ItemType Directory -Path $tmp | Out-Null
+    [IO.Directory]::CreateDirectory($tmp) | Out-Null
     try {
         # 1. uv -------------------------------------------------------------------------------
         function Find-Uv {
             $c = Get-Command uv -ErrorAction SilentlyContinue
             if ($c) { return $c.Source }
             foreach ($p in @("$env:USERPROFILE\.local\bin\uv.exe", "$env:USERPROFILE\.cargo\bin\uv.exe")) {
-                if (Test-Path $p) { return $p }
+                if (Test-Path -LiteralPath $p) { return $p }
             }
             return $null
         }
@@ -159,10 +166,10 @@ function Install-Enlens {
 
         # 2. the package ----------------------------------------------------------------------
         if ($env:ENLENS_WHEEL) {
-            if (-not (Test-Path $env:ENLENS_WHEEL)) { throw "no such file: $env:ENLENS_WHEEL" }
-            $wheelName = Split-Path $env:ENLENS_WHEEL -Leaf
+            if (-not (Test-Path -LiteralPath $env:ENLENS_WHEEL)) { throw "no such file: $env:ENLENS_WHEEL" }
+            $wheelName = [IO.Path]::GetFileName($env:ENLENS_WHEEL)
             $wheel = Join-Path $tmp $wheelName
-            Copy-Item $env:ENLENS_WHEEL $wheel
+            Copy-Item -LiteralPath $env:ENLENS_WHEEL -Destination $wheel
             Write-Host "2/4  Using the package $wheelName."
         } else {
             $wheelName = "enlens_claims-$version-py3-none-any.whl"
@@ -170,15 +177,15 @@ function Install-Enlens {
             $wheel = Join-Path $tmp $wheelName
             Write-Host "2/4  Downloading ENLENS $version..."
             try {
-                Invoke-WebRequest -UseBasicParsing -Uri "$base/$wheelName" -OutFile $wheel
-                Invoke-WebRequest -UseBasicParsing -Uri "$base/SHA256SUMS" -OutFile (Join-Path $tmp 'SHA256SUMS')
+                Save-Download "$base/$wheelName" $wheel
+                Save-Download "$base/SHA256SUMS" (Join-Path $tmp 'SHA256SUMS')
             } catch { throw "the download from $base did not work. Are you online? ($($_.Exception.Message))" }
             $want = ''
-            foreach ($line in Get-Content (Join-Path $tmp 'SHA256SUMS')) {
+            foreach ($line in Get-Content -LiteralPath (Join-Path $tmp 'SHA256SUMS')) {
                 $parts = $line -split '\s+'
                 if ($parts.Count -ge 2 -and $parts[1].TrimStart('*') -eq $wheelName) { $want = $parts[0].ToLower() }
             }
-            $got = (Get-FileHash -Algorithm SHA256 $wheel).Hash.ToLower()
+            $got = (Get-FileHash -Algorithm SHA256 -LiteralPath $wheel).Hash.ToLower()
             if (-not $want -or $want -ne $got) {
                 throw "the downloaded package does not match the release's checksum (nothing was installed). Try again later."
             }
@@ -190,7 +197,7 @@ function Install-Enlens {
         if ($env:ENLENS_FREE_WAIT) { $wait = [int]$env:ENLENS_FREE_WAIT }
         Wait-FolderFree (Get-EnlensEnvFolders $uv) $wait
         Write-Host '3/4  Installing ENLENS (the first time this also fetches Python 3.12; a minute or two)...'
-        $uri = ([System.Uri](Resolve-Path $wheel).Path).AbsoluteUri
+        $uri = ([System.Uri](Resolve-Path -LiteralPath $wheel).ProviderPath).AbsoluteUri
         $env:UV_PYTHON_PREFERENCE = 'only-managed'
         & $uv tool install --force --quiet --python 3.12 "enlens-claims[$extras] @ $uri"
         if ($LASTEXITCODE -ne 0) {
@@ -211,7 +218,7 @@ function Install-Enlens {
         Write-Host ''
         Write-Host 'Done. Next time, open ENLENS from its icon (Start menu or Desktop). It tells you when there is a new version.'
     } finally {
-        Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 

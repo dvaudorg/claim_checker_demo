@@ -85,6 +85,16 @@ def errors() -> list[dict]:
     return list(_errors)
 
 
+def failed(name: str, error: str) -> None:
+    """Hunt phase 1.5: an add-on that loaded but failed later (its tables, below) is left out, printed and kept with
+    the load errors, once per add-on and message, so ENLENS goes on without it."""
+    load()
+    row = {"addon": name, "error": error}
+    if row not in _errors:
+        _errors.append(row)
+        print(f"ENLENS: the add-on {name} was left out: {error}", file=sys.stderr)
+
+
 def names() -> list[str]:
     """The add-ons in use, apart from an empty local layer."""
     return [n for n, m in load() if n != "local" or defines(m)]
@@ -213,20 +223,43 @@ _TYPE = re.compile(r"[A-Za-z0-9_ ()'.,-]+")
 
 
 def database() -> list[dict]:
-    """Each add-on's SCHEMA, MIGRATIONS and INDEXES, in load order (only add-ons that define one of them)."""
+    """Each add-on's SCHEMA, MIGRATIONS and INDEXES, in load order (only add-ons that define one of them). Hunt phase
+    1.5 (the owner's rule): an add-on with a column ENLENS cannot add is left out and named in `errors()`; it raised,
+    and the ValueError stopped every project from opening."""
     out = []
     for n, m in load():
         schema, migrations, indexes = (getattr(m, k, None) for k in ("SCHEMA", "MIGRATIONS", "INDEXES"))
         if not (schema or migrations or indexes):
             continue
-        cols = []
+        cols, bad = [], None
         for mg in migrations or []:
-            table, col, typ = mg
+            table, col, typ = mg if isinstance(mg, (tuple, list)) and len(mg) == 3 else (None, None, None)
             if not (isinstance(table, str) and isinstance(col, str) and isinstance(typ, str)
                     and _NAME.fullmatch(table) and _NAME.fullmatch(col) and _TYPE.fullmatch(typ)):
-                raise ValueError(f"The add-on {n} names a column ENLENS cannot add: {mg!r}")
+                bad = f"The add-on {n} names a column ENLENS cannot add: {mg!r}"
+                break
             cols.append((table, col, typ))
+        if bad:
+            failed(n, bad)
+            continue
         out.append({"addon": n, "schema": schema or "", "migrations": cols, "indexes": indexes or ""})
+    return out
+
+
+def statements(script: str) -> list[str]:
+    """The SQL statements of a script, one by one (a trigger's body stays whole), so they can run inside a savepoint
+    one `execute` at a time (`executescript` commits what came before it first)."""
+    import sqlite3
+
+    out, buf = [], ""
+    for piece in script.split(";"):
+        buf += piece + ";"
+        if sqlite3.complete_statement(buf):
+            if buf.strip().strip(";").strip():
+                out.append(buf.strip())
+            buf = ""
+    if buf.strip().strip(";").strip():
+        out.append(buf.strip().rstrip(";"))  # an unfinished statement: SQLite says what is wrong with it
     return out
 
 

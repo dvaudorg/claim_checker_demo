@@ -72,7 +72,8 @@ def main(argv: list[str] | None = None) -> int:
         if live:  # already running: just show it
             if not a.headless:
                 launcher.browse(launcher.open_link(live))  # 0.17.2: with its token (the page has none)
-            print(f"ENLENS is already running at {live['url']}.")
+            print(f"ENLENS is already running at {live['url']}." + (" It is busy and slow to answer: the page opens "
+                  "when it is done." if live.get("busy") else ""))
             return 0
         launcher.detach()
         launcher.log_to_file()

@@ -331,7 +331,10 @@ class App(LibraryMixin, QueueMixin):
                 "other_set_up": bool(others) and not home.local_only(),
                 # a model server on another computer as the main route: its address, for the line that says it reads
                 # only the documents allowed to it
-                "route_address": access.route_address(s) if s.get("backend") in ("auto", "ollama", "openai") else None}
+                "route_address": access.route_address(s) if s.get("backend") in ("auto", "ollama", "openai") else None,
+                # hunt phase 1.5: the way out for an address such as ollama.localhost, which was this computer before
+                "route_address_note": (providers.LOOKS_LOCAL if s.get("backend") in ("auto", "ollama", "openai")
+                                       and providers.looks_local(access.route_address(s) or "") else "")}
 
     def _team_framework(self, name: str | None) -> dict | None:
         """The project's default codebook, set by its owner, when this copy holds it ({"name", "title"}): it takes the
@@ -1610,7 +1613,7 @@ def _repair_plugin() -> None:
     try:
         from .. import claude_setup
 
-        r = claude_setup.repair()
+        r = claude_setup.repair(patient=True)  # (hunt phase 1.5: after a refusal, once a day or after an update)
         if r.get("repaired"):
             print(f"The Claude Code plugin was brought up to date ({r.get('reason')}).")
         elif r.get("refused"):  # hunt phase 1 (INSTALL-5): not "brought up to date" when Claude Code said no

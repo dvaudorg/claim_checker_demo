@@ -189,8 +189,13 @@ def _main(argv: list[str] | None = None) -> int:
     p.add_argument("--ocr", choices=["auto", "off"], default="auto",
                    help="scanned PDF pages: recognise their text when OCR is installed (auto, the default) or not")
     p.add_argument("--ocr-lang", default="eng", help="Tesseract languages for OCR, e.g. eng+nld (default eng)")
+    p.add_argument("--ai-access", choices=["cloud", "local", "none"], default=None,
+                   help="who may read the new documents with AI: cloud (a cloud model such as Claude), local (only a "
+                        "local AI on this computer) or none (no AI; you judge them). Needed while the project has no "
+                        "default; the first choice becomes the default")
     sub.add_parser("match-sources", help="link documents to the references cited in the VCA")
-    p = sub.add_parser("reset-corpus", help="remove all documents and what was derived from them (keeps the VCA and splits)")
+    p = sub.add_parser("reset-corpus", help="remove all documents and what was made from them: hypotheses and checks "
+                                            "with their judgements, labels, themes, concepts (keeps the VCA and splits)")
     p.add_argument("--yes", action="store_true", help="confirm")
     sub.add_parser("coverage", help="which justified targets have their cited sources available")
     p = sub.add_parser("screen", help="mark passages worth sending to extraction")
@@ -490,6 +495,11 @@ def _main(argv: list[str] | None = None) -> int:
     # end of 0.18.1 part B
 
     a = ap.parse_args(argv)
+    if a.cmd == "measure" and not a.measure_ws:  # hunt phase 1.5: `enlens --ws P measure` measures P too (it was ignored)
+        raw = list(sys.argv[1:] if argv is None else argv)
+        before = raw[:raw.index("measure")] if "measure" in raw else raw
+        if any(x == "--ws" or x.startswith("--ws=") for x in before):
+            a.measure_ws = a.ws
     if a.cmd == "update":
         from . import update
 
@@ -573,6 +583,19 @@ def _main(argv: list[str] | None = None) -> int:
         _print({"workspace": str(ws.root.resolve()), "documents": ws.scalar("SELECT COUNT(*) FROM documents"),
                 "hypotheses": ws.scalar("SELECT COUNT(*) FROM hypotheses")})
         return 0
+    if not Workspace(a.ws).db_path.exists():
+        # hunt phase 1.5: a name of the app's projects given as the folder ("--ws Pilot") was told to run `init`, which
+        # makes an empty workspace in the current folder beside the app's project: name the project's folder instead
+        from . import home
+
+        try:
+            known = a.ws in home.list_projects()
+        except (OSError, ValueError):
+            known = False
+        if known:
+            print(f"Problem: there is no project folder at {a.ws}. The app's project {a.ws!r} is the folder "
+                  f'{home.project_path(a.ws)}: give that folder (--ws "{home.project_path(a.ws)}").', file=sys.stderr)
+            return 1
     ws = Workspace.open(a.ws)
     from .home import _follow_codebooks
 
@@ -604,11 +627,22 @@ def _main(argv: list[str] | None = None) -> int:
             print("Problem: nothing at " + ", ".join(missing) + ". Give the path of a folder, a zip or a file on this "
                   "computer. Nothing was added.", file=sys.stderr)
             return 1
+        # hunt phase 1.5 (the owner's rule): documents never become readable by an AI through silence. A project
+        # whose default was never chosen needs --ai-access (the app asks first, with nothing preselected)
+        from . import access
+
+        if a.ai_access is None and not access.default_chosen(ws):
+            print("Problem: say who may read these documents with AI: add --ai-access cloud (a cloud model such as "
+                  "Claude), --ai-access local (only a local AI on this computer) or --ai-access none (no AI; you judge "
+                  "them). This project has no default yet. Nothing was added.", file=sys.stderr)
+            return 1
         _print(ingest.ingest(ws, [str(Path(x).expanduser()) for x in a.inputs], a.exclude,
-                             ocr=ingest.OcrOptions(a.ocr, a.ocr_lang)))
+                             ocr=ingest.OcrOptions(a.ocr, a.ocr_lang), ai_access=a.ai_access))
     elif a.cmd == "reset-corpus":
         if not a.yes:
-            print("This deletes documents, passages, claims, verifications and their tasks. Run again with --yes.")
+            print("This deletes the documents and everything made from them: passages, claims, verifications, the "
+                  "hypotheses and their checks with their judgements and second opinions, labels, themes, key terms "
+                  "and concepts, and their tasks (the VCA and its split justifications stay). Run again with --yes.")
             return 1
         _print(ws.reset_corpus())
     elif a.cmd == "match-sources":
@@ -1041,6 +1075,9 @@ def _project_name(ws) -> str:
     except home.NeedsCleaning as e:  # roles (DESIGN-roles §4.11): another person's folder is cleaned only when asked
         raise SystemExit(f"Problem: {e} Open it in the app first (Projects → Open an existing ENLENS project folder), "
                          "where you can clean and link it.") from None
+    except ValueError as e:  # hunt phase 1.5: the data folder has a project of this folder's name (a copied project)
+        raise ValueError(f"{e} Claude Code reaches a project by its name, so this folder ({root}) cannot be one too. "
+                         "Nothing was queued. Rename the folder, or use the project of the data folder.") from None
     print(f"Linked this folder as the project {name!r}, so Claude Code can reach it.", file=sys.stderr)
     return name
 
@@ -1057,6 +1094,9 @@ def _cmd_08(a, ws) -> int:
             return 1
         from .taskqueue import queue_route
 
+        # hunt phase 1.5: the name Claude Code reaches the project by is settled before anything is queued: a folder
+        # that cannot be linked (the data folder has a project of its name) had its tasks queued, then a traceback
+        name = _project_name(ws)
         r = routing.from_settings(home.load_settings(), route=queue_route())
         made: dict = {}
         with tk.queueing():
@@ -1121,7 +1161,6 @@ def _cmd_08(a, ws) -> int:
                                                          code=it.get("code"), k=a.k or 8, per_doc=a.per_doc,
                                                          expand=not a.no_expand, decompose=a.decompose, batch_id=batch)
                                   for it in items]
-        name = _project_name(ws)
         q = taskqueue.status(ws, name)
         _print({"prepared": made, "waiting": q["waiting"], "next": f"In Claude Code: {q['command']}",
                 "privacy": q["privacy"]})

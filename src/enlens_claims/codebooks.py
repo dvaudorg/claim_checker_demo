@@ -1015,6 +1015,10 @@ def create(ws: Workspace, name: str, title: str = "", where: str = "project", st
                    "groups": [], "codes": []}
     how = "an empty codebook"
     imported = None
+    # hunt phase 1.5: the strictest AI setting of the theory documents a codebook quotes (`embed.withheld_codes`: its
+    # text goes to no embedding server on another computer when they are marked Only a local AI or No AI); a copy
+    # keeps it
+    theory_level = None
     if start == "copy":
         of = frameworks.get(str(source.get("of") or ""), ws)
         if of is None:   # (`get` answers None for no name at all)
@@ -1023,6 +1027,7 @@ def create(ws: Workspace, name: str, title: str = "", where: str = "project", st
         state.update(groups=st["groups"], codes=[{**c, "uid": ""} for c in st["codes"]], label=of.label,
                      directional=of.directional, title=title or f"{of.title} (copy)")
         how = f"a copy of {researchlog.quoted(of.title, 80)}"
+        theory_level = (of.meta or {}).get("theory_level")
     elif start == "csv":
         codes = frameworks.parse_csv(frameworks.decode(str(source.get("csv") or "").encode("utf-8")), extra=True)
         st = _state(n, codes, {}, state["title"], state["label"], False)
@@ -1064,6 +1069,9 @@ def create(ws: Workspace, name: str, title: str = "", where: str = "project", st
             return c.get("source_docs") if isinstance(c.get("source_docs"), list) else [c.get("source_doc")]
 
         used = [d for d in ids if d in titles and any(d in docs_of(c) for c in picked)]
+        from . import access
+
+        theory_level = access.most(access.levels(ws, used or ids, budget=False, provider=None).values())
         framework = source.get("groups") if isinstance(source.get("groups"), list) else None
         if framework is not None:
             # the framework draft (theoryframe.py): its own groups (what the concepts share, across documents)
@@ -1103,6 +1111,8 @@ def create(ws: Workspace, name: str, title: str = "", where: str = "project", st
     drafted = {c["uid"]: c["ai_draft"] for c in clean["codes"] if c.get("ai_draft")}
     if drafted:  # K1: the AI's words keep their mark in a copy, as in a save
         meta["drafted"] = drafted
+    if theory_level in ("local", "none"):
+        meta["theory_level"] = theory_level
     if clean["directional"]:
         meta["directional"] = True
     _write(f, n, _csv_text(clean["codes"], clean["groups"]), meta)

@@ -201,7 +201,7 @@ def provenance_table(ws: Workspace, task_ids: list[str] | None = None, kinds: tu
                     "Reasoning budget": s.get("think_budget") or "",
                     # hunt phase 1: none where none was recorded (the Claude API, Codex, Antigravity, a cloud model
                     # that refused it: 0.18.1 stopped recording one, as none is sent); an older answer keeps its own
-                    "Temperature": "" if cc or s.get("temperature") is None else s["temperature"],
+                    "Temperature": _temperature(s, cc),
                     "Answers": r["n"], "Of them from the stronger model (stepped up)": int(r["stepped"] or 0),
                     "First claimed": r["claimed"] or "", "First": r["first"] or "", "Last": r["last"] or ""})
     if not out:
@@ -213,6 +213,21 @@ def provenance_table(ws: Workspace, task_ids: list[str] | None = None, kinds: tu
                             "repeatable by seed the way a seeded local model's are; the model is the one set for its "
                             "helper. How much two readings differ is measured by the acceptance runs (see the manual)."})
     return out + _reading_rows(ws)
+
+
+def _temperature(s: dict, cc: bool):
+    """The temperature an answer was asked at, as recorded. Hunt phase 1.5: what is true for each record: none sent
+    ("") to Claude Code, the Claude API, Codex, Antigravity or a provider that refused one (`llm.provenance` leaves it
+    out); 0 to a model server on this computer (Ollama, an OpenAI-compatible server), which was always sent 0, should
+    a record of one lack it; "not recorded" for an answer from before ENLENS recorded how answers were made (0.8.2),
+    whose route is not known either (the Claude API of then sent none, a local server 0)."""
+    if cc:
+        return ""
+    if s.get("temperature") is not None:
+        return s["temperature"]
+    if not s:
+        return "not recorded"
+    return 0 if s.get("backend") in ("ollama", "local") else ""
 
 
 def _reading_rows(ws: Workspace) -> list[dict]:
