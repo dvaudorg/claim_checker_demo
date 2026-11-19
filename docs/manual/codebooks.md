@@ -209,7 +209,7 @@ An edit changes no result by itself: labels are moved, never made or deleted.
 
 | You do | The labels |
 | --- | --- |
-| Rename a code, or merge two | Follow it. This holds in every other project that uses a codebook kept with all projects, when it is opened. A merge can be undone by restoring the codebook from before. Where a passage had both codes and you had accepted the one merged away but not the other (rejected, or a keyword label), your acceptance goes with the merge, so the passage keeps the code; the research log says so, and restoring from before takes it back. |
+| Rename a code, or merge two | Follow it. This holds in every other project that uses a codebook kept with all projects, when it is opened. A merge can be undone by restoring the codebook from before. Where a passage had both codes and you had accepted the one merged away but not the other (rejected, or a keyword label), your acceptance goes with the merge, so the passage keeps the code; the research log says so, and restoring from before takes it back. When you and a colleague merge the same two codes into each other, the earlier merge stands and the later one is undone in both copies. |
 | Remove a code | Wait under *Removed codes*, are not counted, and come back with *Bring it back*. |
 | Remove the codebook | Stay: they are results. Label tasks still waiting for the AI are taken back (the research log says how many); after bringing the codebook back, a labelling run asks them again. |
 | Reword a code after the AI labelled with it | Stay as they are. The code shows *earlier wording* and *Label them again*, which has the AI label only those passages again. |

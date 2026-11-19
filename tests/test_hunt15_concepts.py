@@ -4,6 +4,8 @@ glossary and the concept map, each settled by a test (FIX15.md). A test asserts 
 from __future__ import annotations
 
 import json
+import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -205,6 +207,7 @@ def test_a_name_held_by_a_codebook_removed_in_a_project_since_removed_points_now
     a, b = home.create_project("A"), home.create_project("B")
     _fresh(a, "w", "home")
     codebooks.remove(a, "w")
+    a.close_all()   # (the test's own handle: on Windows an open database keeps its folder from being moved)
     home.remove_project("A")
     for where in ("project", "home"):
         with pytest.raises(ValueError) as e:
@@ -675,3 +678,286 @@ def test_a_merge_made_in_another_project_keeps_the_persons_decision_here_and_the
     assert [(r["code"], r["decision"]) for r in profile.effective(b, "shared", passage_ids=[pid])] == \
         [("Wellbeing", "accept")]
     assert b.scalar("SELECT 1 FROM research_log WHERE kind='codebook-changed' AND text LIKE '%accepted as%'")
+
+
+# ---- wave 4 review ---------------------------------------------------------------------------------------------------
+def _heating(tmp_path):
+    from enlens_claims import terms
+    from test_text_relations import TEXT
+
+    ws = Workspace.create(tmp_path / "p")
+    d = tmp_path / "docs"
+    d.mkdir()
+    (d / "heating.txt").write_text(TEXT, encoding="utf-8")
+    ingest.ingest(ws, [d])
+    terms.build(ws)
+    return ws
+
+
+@pytest.mark.parametrize("sent", [None, "model"])
+def test_accepting_the_ais_relation_beside_a_meaning_row_stays_accepted(tmp_path, sent):
+    """Wave 4, must fix (CONCEPTS15-11): the pair has the meaning pass's "same" and the AI's "broader"; the person
+    accepts the AI's on the concept card. `set_link` stored the meaning row's relation as the one accepted, so the
+    AI's row showed as a proposal again, and after the next meaning pass the acceptance had no effect. The card may
+    name the source it shows (`source`), or not (an older page): either way the acceptance holds."""
+    from enlens_claims import terms
+
+    ws = _heating(tmp_path)
+    linked = {(r[0], r[1]) for r in ws.query("SELECT a, b FROM concept_links")}
+    ids = sorted(r[0] for r in ws.query("SELECT term_id FROM terms"))
+    a, b = next((x, y) for i, x in enumerate(ids) for y in ids[i + 1:] if (x, y) not in linked)
+    with ws.connect() as cx:
+        cx.execute("INSERT INTO concept_links VALUES (?,?,?,?,?,?,?,?,?)", (a, b, "same", "meaning", 0.9, None, None,
+                                                                            "e", "t"))
+        cx.execute("INSERT INTO concept_links VALUES (?,?,?,?,?,?,?,?,?)", (a, b, "broader", "model", 0.5, "q", "q",
+                                                                            "m", "t"))
+    terms.set_link(ws, a, b, "accept", **({"source": sent} if sent else {}))
+
+    def rows():
+        return {x["source"]: (x["relation"], x["decision"], x["confirmed"]) for x in terms.links(ws)
+                if (x["a"], x["b"]) == (a, b)}
+
+    assert rows()["model"] == ("broader", "accept", True)
+    with ws.connect() as cx:   # the next meaning pass
+        cx.execute("DELETE FROM concept_links WHERE source='meaning'")
+    assert rows()["model"] == ("broader", "accept", True)
+    ws.close_all()
+
+
+def test_earlier_wording_stays_marked_when_the_passage_is_asked_again_and_that_task_fails(demo):
+    """Wave 4, must fix (CONCEPTS15-6): after *Label them again* a run makes the passage's task again, and its question
+    lists the new wording; the OLD label (the earlier answer) was judged by that new question, so the mark went at once
+    and stayed gone when the new task failed, and *Label them again* could no longer reach the passage."""
+    pid, quote = _waiting(demo)
+    ok, errs = _answer(demo, pid, quote, "Commuting")
+    assert ok, errs
+    with demo.connect() as cx:   # labelled a while ago
+        cx.execute("UPDATE tasks SET created_at='2026-01-01T00:00:00+00:00' WHERE task_id=?", (f"label:remote:{pid}",))
+        cx.execute("UPDATE labels SET created_at='2026-01-01T00:00:01+00:00' WHERE passage_id=? AND source='model'",
+                   (pid,))
+    _reword(demo)
+    assert codebooks.stale(demo, "remote").get("Commuting", {}).get("passages") == 1
+    assert codebooks.relabel_passages(demo, "remote", "Commuting") == [pid]
+    assert profile.make_label_tasks(demo, "remote", [pid], "m", all_passages=True) == 1
+    assert codebooks.stale(demo, "remote").get("Commuting", {}).get("passages") == 1
+    with demo.connect() as cx:
+        cx.execute("UPDATE tasks SET status='failed' WHERE task_id=?", (f"label:remote:{pid}",))
+    assert codebooks.stale(demo, "remote").get("Commuting", {}).get("passages") == 1
+    assert codebooks.relabel_passages(demo, "remote", "Commuting") == [pid]
+
+
+def _team_label(ws, fw, pid, code):
+    lid = profile.label_id(fw, pid, code, "model")
+    with ws.connect() as cx:
+        cx.execute("INSERT OR IGNORE INTO labels(label_id, passage_id, doc_id, framework, code, source, relevance, "
+                   "confidence, created_at) VALUES (?,?,?,?,?,'model','main',0.9,?)",
+                   (lid, pid, pid.split(":")[0], fw, code, "2026-01-01T00:00:00+00:00"))
+    return lid
+
+
+def _team_codebook(anna, ben):
+    """Anna's shared codebook "cb" (A, B), in both copies, with the AI's labels A and B on one passage in each."""
+    with anna:
+        codebooks.create(anna.ws, "cb", "CB", "project", "csv",
+                         {"csv": "code,description\nA,Alpha things\nB,Beta things\n"})
+        sharing.share(anna.ws, [{"kind": "codebook", "key": "cb"}])
+        pid = anna.ws.scalar("SELECT passage_id FROM passages ORDER BY passage_id LIMIT 1")
+        a, b = _team_label(anna.ws, "cb", pid, "A"), _team_label(anna.ws, "cb", pid, "B")
+    ben.bring_in(anna.send())
+    with ben:
+        _team_label(ben.ws, "cb", pid, "A")
+        _team_label(ben.ws, "cb", pid, "B")
+    return pid, a, b
+
+
+def test_a_merge_followed_in_a_sync_round_says_in_the_log_that_it_kept_the_persons_decision(anna_and_ben):
+    """Wave 4, should fix (CONCEPTS15-1): Ben receives Anna's merge of A into B and follows it at once; his acceptance
+    of A went to B (as the owner's rule says) but no research log entry said so, as `save` and `follow` do."""
+    anna, ben = anna_and_ben
+    pid, a, b = _team_codebook(anna, ben)
+    with ben:
+        profile.set_label(ben.ws, a, "accept")
+        profile.set_label(ben.ws, b, "reject")
+    with anna:
+        _merge(anna.ws, "cb", "A", "B")
+    ben.bring_in(anna.send())
+    with ben:
+        assert [(r["code"], r["decision"]) for r in profile.effective(ben.ws, "cb", passage_ids=[pid])] == \
+            [("B", "accept")]
+        assert ben.ws.scalar("SELECT 1 FROM research_log WHERE kind='codebook-changed' AND text LIKE '%accepted as%'")
+
+
+def test_removing_a_codebook_kept_with_all_projects_opens_no_other_project_and_logs_where_tasks_went(tmp_path,
+                                                                                                    monkeypatch):
+    """Wave 4, should fix (CONCEPTS15-5): the removal opened every project in the request (`home.open_project`: its
+    schema checks and one-time steps) and waited for each one's write lock; only this project's log said how many
+    tasks went. Now a project is only looked at (read-only), written only when it has waiting tasks of the codebook,
+    and that project's research log says so."""
+    from enlens_claims import home
+
+    a, b, c = home.create_project("A"), home.create_project("B"), home.create_project("C")
+    for p in (b, c):
+        ingest.ingest(p, [DEMO])
+    _fresh(a, "w", "home")
+    pid = b.query("SELECT passage_id FROM passages WHERE section='body' LIMIT 1")[0][0]
+    profile.make_label_tasks(b, "w", [pid], "m", all_passages=True)
+    opened = []
+    real = home.open_project
+    monkeypatch.setattr(home, "open_project", lambda n: opened.append(n) or real(n))
+    codebooks.remove(a, "w")
+    assert opened == []
+    assert b.scalar("SELECT COUNT(*) FROM tasks WHERE kind='label'") == 0
+    assert "1 label task" in (b.scalar("SELECT text FROM research_log WHERE subject_id='w'") or "")
+    assert c.scalar("SELECT COUNT(*) FROM research_log WHERE subject_id='w'") == 0
+    for p in (a, b, c):
+        p.close_all()
+
+
+def test_opening_a_project_never_waits_behind_another_writer_to_follow_a_codebooks_changes(tmp_path):
+    """Wave 4, still open (CONCEPTS15-18, the other half): with a codebook change new to the project, opening it
+    (`home.open_project` → `codebooks.follow`) waited up to SQLite's 60 s for the write lock a sync round held, and every
+    request for the project with it. Opening now never waits: the labels follow at the next opening."""
+    import sqlite3
+    import time
+
+    from enlens_claims import home
+
+    a, b = home.create_project("A"), home.create_project("B")
+    ingest.ingest(b, [DEMO])
+    _codebook(a, "shared", CODES, where="home")
+    pid = _pid(b)
+    _model_label(b, "shared", pid, "Commuting")
+    st = codebooks.state_of(a, "shared")
+    next(c for c in st["codes"] if c["code"] == "Commuting")["code"] = "Travel"
+    codebooks.save(a, "shared", st)   # a rename B has not followed
+    other = sqlite3.connect(b.db_path, timeout=1)
+    other.execute("BEGIN IMMEDIATE")   # a sync round writing into B
+    try:
+        t0 = time.monotonic()
+        home._follow_codebooks(b)
+        assert time.monotonic() - t0 < 3
+    finally:
+        other.rollback()
+        other.close()
+    assert b.scalar("SELECT code FROM labels WHERE passage_id=? AND source='model'", (pid,)) == "Commuting"
+    home._follow_codebooks(b)   # the next opening
+    assert b.scalar("SELECT code FROM labels WHERE passage_id=? AND source='model'", (pid,)) == "Travel"
+    for p in (a, b):
+        p.close_all()
+
+
+def test_a_project_made_and_used_as_the_app_does_can_be_removed_with_its_codebook_work(tmp_path):
+    """Wave 4 note (Windows CI): `remove_project` refused "a file in it is still open" in a test that kept the
+    Workspace `create_project` returned. The app does not keep it (the page's *New project* drops it; every request
+    opens the project through `home.open_project`, whose connections `close_project` closes): made, used for a
+    codebook and removed that way, the folder moves, on Windows too."""
+    from enlens_claims import home
+
+    home.create_project("A")
+    a = home.open_project("A")
+    _fresh(a, "w", "home")
+    codebooks.remove(a, "w")
+    del a
+    home.remove_project("A")
+    assert "A" not in home.list_projects()
+
+
+@pytest.mark.parametrize("anna_first", [True, False])
+def test_two_colleagues_merging_two_codes_into_each_other_keep_one_code_with_every_label(anna_and_ben, anna_first):
+    """Wave 4 note (pre-existing): Anna merges A into B, Ben merges B into A; after one exchange each way BOTH copies
+    held a codebook with no codes, every label waiting under Removed codes. Now the earlier merge stands and the later
+    one is undone, the same in both copies whichever file comes first: one code, every label of the passage under it,
+    nothing waiting, and the research log says so."""
+    anna, ben = anna_and_ben
+    pid, a, b = _team_codebook(anna, ben)
+    with anna:
+        _merge(anna.ws, "cb", "A", "B")
+    with ben:
+        _merge(ben.ws, "cb", "B", "A")
+    first, second = (anna, ben) if anna_first else (ben, anna)
+    first.bring_in(second.send())
+    second.bring_in(first.send())
+    first.bring_in(second.send())
+    kept = []
+    for p in (anna, ben):
+        with p:
+            codes = list(frameworks.get("cb", p.ws).codes)
+            assert len(codes) == 1, codes
+            kept.append(codes[0])
+            assert {r["code"] for r in profile.effective(p.ws, "cb", passage_ids=[pid])} == set(codes)
+            # only what one merge leaves: the merged code's label beside the kept one's on the same passage, marked
+            assert all(r[0] == r[1] and p.ws.scalar("SELECT 1 FROM labels WHERE passage_id=? AND code=? AND "
+                                                     "framework='cb'", (r[2], codes[0]))
+                       for r in p.ws.query("SELECT code, merged_from, passage_id FROM labels WHERE framework='cb' AND "
+                                           "code != ?", (codes[0],)))
+    assert kept[0] == kept[1]
+    with first:
+        assert first.ws.scalar("SELECT 1 FROM research_log WHERE text LIKE '%into each other%'")
+
+
+def test_a_codebook_kept_with_all_projects_removed_in_another_project_is_named_with_that_project(tmp_path):
+    """Wave 4 note (CONCEPTS15-16): a codebook kept with all projects removed in project A, which still exists; in B the
+    refusal of its name said only "choose another name", though A's research log has the way back. It names A."""
+    from enlens_claims import home
+
+    a, b = home.create_project("A"), home.create_project("B")
+    _fresh(a, "w", "home")
+    codebooks.remove(a, "w")
+    with pytest.raises(ValueError) as e:
+        codebooks.create(b, "w", "W", "project", "fresh")
+    said = str(e.value)
+    assert "the project 'A'" in said and "Research log" in said and "Restore" in said
+    for p in (a, b):
+        p.close_all()
+
+
+def test_two_requests_at_once_both_open_a_codebook_file_named_with_capitals(ws, monkeypatch):
+    """Wave 4 note (CONCEPTS15-15): the rename of `Mine.csv` to `mine.csv` ran on a read path with no lock: of two
+    requests at once, the second found neither name and answered 404 once."""
+    import threading
+    import time
+
+    _case_sensitive(monkeypatch)
+    folder = ws.root / "frameworks"
+    folder.mkdir(exist_ok=True)
+    (folder / "Mine.csv").write_text("code,description\nA,Alpha things\n", encoding="utf-8")
+    real = Path.rename
+
+    calls = []
+
+    def slow(self, target):
+        calls.append(self.name)
+        time.sleep(0.2 * len(calls))   # (one after the other: the second finds the first's work done)
+        if self.name not in os.listdir(self.parent):   # (as on Linux: the file of that exact name is gone)
+            raise FileNotFoundError(self)
+        return real(self, target)
+
+    monkeypatch.setattr(Path, "rename", slow)
+    got, gate = [], threading.Barrier(2)
+
+    def one():
+        gate.wait()
+        try:
+            got.append(codebooks.locate(ws, "mine")[0])
+        except KeyError:
+            got.append("404")
+
+    ts = [threading.Thread(target=one) for _ in range(2)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert got == ["project", "project"]
+
+
+@pytest.mark.skipif(os.name == "nt" or sys.platform == "darwin", reason="needs a file system where case matters")
+def test_a_side_file_already_named_as_listed_is_not_overwritten_by_the_rename(ws):
+    """Wave 4 note (CONCEPTS15-15): with `mine.json` beside `Mine.csv` and `Mine.json`, the rename put `Mine.json` over
+    `mine.json`. A file already there is never overwritten."""
+    folder = ws.root / "frameworks"
+    folder.mkdir(exist_ok=True)
+    (folder / "Mine.csv").write_text("code,description\nA,Alpha things\n", encoding="utf-8")
+    (folder / "Mine.json").write_text('{"title": "From Mine"}', encoding="utf-8")
+    (folder / "mine.json").write_text('{"title": "Kept"}', encoding="utf-8")
+    assert codebooks.locate(ws, "mine")[0] == "project"
+    assert json.loads((folder / "mine.json").read_text(encoding="utf-8"))["title"] == "Kept"

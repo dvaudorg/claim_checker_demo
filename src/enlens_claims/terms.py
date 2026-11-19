@@ -1129,9 +1129,12 @@ def links(ws: Workspace) -> list[dict]:
     for r in ws.query("SELECT * FROM concept_links ORDER BY a, b, source"):
         d = dict(r)
         p = dec.get((d["a"], d["b"]))
-        if p and p["decision"] == "accept" and p["seen"] and p["seen"] != d["relation"]:
-            # hunt phase 1.5: accepted as another relation (the glossary made again proposed the pair anew, by what
-            # its sentences state most often now): the person never saw this one, so it is a proposal again
+        if p and p["decision"] == "accept" and p["seen"] and d["source"] == "pattern" and \
+                p["seen"].removeprefix("pattern:") != d["relation"]:
+            # hunt phase 1.5: a link found from the sentences, accepted as another relation (the glossary made again
+            # proposed the pair anew, by what its sentences state most often now): the person never saw this one, so
+            # it is a proposal again. Only such a row is proposed anew by a rebuild; an acceptance of another source's
+            # row (the AI's beside the meaning pass's) is the pair's, as before (wave 4 review)
             p = None
         d["decision"] = p["decision"] if p else None
         if p and p["decision"] == "reject":
@@ -1443,7 +1446,7 @@ def suggested_wordings(ws: Workspace, term: str) -> list[dict]:
 
 
 def set_link(ws: Workspace, a: str, b: str, decision: str, relation: str | None = None, reviewer: str = "",
-             note: str | None = None) -> None:
+             note: str | None = None, source: str | None = None) -> None:
     """A person's decision on a link between two terms: accept or reject a proposed link, change its relation, or
     add a link of their own (decision "add", with a relation). "undo" (0.8) takes the person's latest decision on
     the pair back (the link and its concept return as they were). Concepts are regrouped at once."""
@@ -1473,16 +1476,21 @@ def set_link(ws: Workspace, a: str, b: str, decision: str, relation: str | None 
             cx.execute("INSERT OR REPLACE INTO concept_links VALUES (?,?,?,?,?,?,?,?,?)",
                        (a, b, relation or "same", "person", 1.0, None, None, None, now()))
         else:
-            row = cx.execute("SELECT relation FROM concept_links WHERE a=? AND b=? ORDER BY source = 'pattern'",
-                             (a, b)).fetchone()
-            if row is None:
+            rows = {r[0]: r[1] for r in cx.execute("SELECT source, relation FROM concept_links WHERE a=? AND b=?",
+                                                     (a, b))}
+            if not rows:
                 raise KeyError(f"{a}|{b}")
-            # (hunt phase 1.5: the relation the person accepted, as `proposed`: kept by the pair, an acceptance
-            # otherwise confirmed whatever relation a later glossary proposed for it)
+            # (hunt phase 1.5: the relation of a link found from the sentences that the person accepted, as `proposed`
+            # "pattern:<relation>": a rebuild of the glossary may propose the pair anew with another relation, and the
+            # acceptance, kept by the pair, then confirmed one the person never saw. `source`: the row the card shows;
+            # without it (an older page) the pattern row only when it is the pair's only row, since the card then shows
+            # it. No other row is proposed anew, so nothing is stored for one: wave 4 review)
+            seen = None
+            if decision == "accept" and "pattern" in rows and (source == "pattern" or (source is None and len(rows) == 1)):
+                seen = f"pattern:{rows['pattern']}"
             cx.execute("INSERT INTO reviews(item_kind, item_id, field, proposed, decision, corrected, reviewer, note, "
                        "decided_at, person_id) VALUES ('concept_link', ?, 'relation', ?, ?, ?, ?, ?, ?, ?)",
-                       (f"{a}|{b}", row[0] if decision == "accept" else None, decision, relation, reviewer, note,
-                        now(), me()))
+                       (f"{a}|{b}", seen, decision, relation, reviewer, note, now(), me()))
     rebuild_concepts(ws)
 
 

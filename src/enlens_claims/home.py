@@ -1144,7 +1144,7 @@ def _follow_codebooks(ws: Workspace) -> None:
     from . import codebooks
 
     try:
-        codebooks.follow(ws)
+        codebooks.follow(ws, wait=False)   # (hunt phase 1.5: nor waits for it behind another writer)
     except Exception:  # noqa: BLE001 - opening a project never fails for it
         pass
 

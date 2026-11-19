@@ -25,6 +25,7 @@ as a sync-clash copy, as before 0.18.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import uuid
@@ -43,6 +44,36 @@ def _event_order(e: dict) -> tuple:
     except (TypeError, ValueError):
         seq = 0
     return str(e.get("at") or ""), seq, str(e.get("id") or "")
+
+
+def opposite_merges(events: list[dict]) -> list[tuple[dict, dict]]:
+    """Hunt phase 1.5 (wave 4 review): two merges of the same two codes into each other (one copy merged A into B, a
+    colleague B into A): [(the merge that stands, the one undone)], the earlier standing (`_event_order`, the same in
+    every copy), each pair once and only while no undo of it is in the list. Kept, both took every label of the two
+    codes out of the codebook: after one exchange each way it held neither code."""
+    merges = sorted((e for e in events if isinstance(e, dict) and e.get("op") == "merge" and e.get("uid")
+                     and e.get("into_uid") and e.get("id")), key=_event_order)
+    undone = {e.get("undoes") for e in events if isinstance(e, dict) and e.get("op") == "unmerge"}
+    out = []
+    for i, first in enumerate(merges):
+        for later in merges[i + 1:]:
+            if (later["uid"], later["into_uid"]) == (first["into_uid"], first["uid"]) and later["id"] not in undone:
+                out.append((first, later))
+                undone.add(later["id"])
+                break
+    return out
+
+
+def undo_event(later: dict) -> dict:
+    """The event that undoes merge `later` (see `opposite_merges`): its code comes back with the labels it gave; the
+    same id in every copy."""
+    try:
+        seq = int(later.get("seq") or 0) + 1
+    except (TypeError, ValueError):
+        seq = 1
+    return {"op": "unmerge", "from": later["to"], "to": later["from"], "was": later["from"], "uid": later["uid"],
+            "undoes": later["id"], "id": "u" + hashlib.sha1(str(later["id"]).encode()).hexdigest()[:11],
+            "at": later.get("at"), "seq": seq}
 
 
 def clash_name(name: str, fp: str) -> str:
@@ -163,11 +194,21 @@ class CodebookRules:
             d = t_drafted.get(uid)
             return {"ai_draft": d} if isinstance(d, dict) else {}
 
+        # two merges of the same two codes into each other, one here and one there: the earlier stands, the later is
+        # undone, so its code comes back (hunt phase 1.5, wave 4 review)
+        seen_ids: set = set()
+        both = [e for e in [*(m_meta.get("events") or []), *(t_meta.get("events") or [])] if isinstance(e, dict)
+                and not (e.get("id") in seen_ids or seen_ids.add(e.get("id")))]
+        opposite = opposite_merges(both)
+        back = {later["uid"] for _first, later in opposite}
         out: list[dict] = []
         theirs_in: set[str] = set()  # the codes taken from their version (new there, or newer there)
         for uid, mc in m_codes.items():
             mfp = code_fp(mc, m_groups)
             tc = t_codes.get(uid)
+            if tc is None and uid in back:   # merged away there by the later of two opposite merges: it stays
+                out.append(mc)
+                continue
             if tc is None:
                 if uid in t_removed and known(mfp, seen_there, uid):  # they removed or merged it, you did not change it
                     m_removed[uid] = t_removed[uid]
@@ -194,6 +235,13 @@ class CodebookRules:
                 rep["clash"].append(mc["code"])
         for uid, tc in t_codes.items():
             if uid in m_codes:
+                continue
+            if uid in m_removed and uid in back:   # merged away here by the later of two opposite merges: it comes back
+                m_removed.pop(uid, None)
+                out.append(tc)
+                theirs_in.add(uid)
+                places[uid] = (t_meta.get("places") or {}).get(uid) or []
+                rep.setdefault("undone", []).append(tc["code"])
                 continue
             if uid in m_removed:  # removed (or merged away) here
                 if not known(code_fp(tc, t_groups), seen_here, uid):  # but changed there since: kept as a clash
@@ -237,8 +285,20 @@ class CodebookRules:
         events = [e for e in (m_meta.get("events") or []) if isinstance(e, dict)]
         have = {e.get("id") for e in events}
         events += [e for e in (t_meta.get("events") or []) if isinstance(e, dict) and e.get("id") not in have]
+        events += [undo_event(later) for _first, later in opposite]
         events.sort(key=_event_order)
         events += renamed
+        if opposite:
+            from .. import researchlog
+
+            for first, later in opposite:
+                researchlog.record(cx, "codebook-changed",
+                                   f"You and {who['name']} merged the codes {researchlog.quoted(first['from'], 60)} and "
+                                   f"{researchlog.quoted(first['to'], 60)} into each other in the codebook "
+                                   f"{researchlog.quoted(name, 60)}: the earlier merge stands "
+                                   f"({researchlog.quoted(first['from'], 60)} into "
+                                   f"{researchlog.quoted(first['to'], 60)}), the later is undone, so every label of the "
+                                   f"two is under {researchlog.quoted(first['to'], 60)}.", "codebook", name, name)
         if renamed:  # your labels never had their name for it: the rename is followed here only by theirs
             row = cx.execute("SELECT value FROM meta WHERE key=?", (f"codebook_followed:{name}",)).fetchone()
             done = set(json.loads(row[0]) if row else [])

@@ -89,20 +89,28 @@ def _named_as_listed(f: Path, name: str) -> bool:
     """Hunt phase 1.5: a file put in a codebooks folder as `Mine.csv` is listed as "mine" (frameworks._load_file names
     a codebook by its file's name in lower case), and every change here writes `<name>.csv`: on a file system where
     case matters (Linux) the editor answered 404 for a codebook the list showed, and a save would have made a second
-    file. Such a file (and its side file) is given the name it is listed under, once; True when it was."""
+    file. Such a file (and its side file) is given the name it is listed under, once; True when it was. Wave 4 review:
+    under `_FILES_LOCK`, as the codebook's files are written (two requests at once: the second finds it renamed), and
+    never over a file already there (a `mine.json` beside `Mine.json` is kept)."""
     if not f.is_dir():
         return False
-    for p in f.glob("*.csv"):
-        if p.stem != name and p.stem.lower() == name and p.is_file():
-            try:
-                for ext in ("csv", "json"):
-                    src = p.with_suffix(f".{ext}")
-                    if src.is_file():
-                        src.rename(f / f"{name}.{ext}")
-            except OSError:   # open in a spreadsheet (Windows): it stays as it is, this time
-                return False
-            return True
+    with _FILES_LOCK:
+        if (f / f"{name}.csv").is_file():
+            return True   # (renamed meanwhile by another request)
+        for p in f.glob("*.csv"):
+            if p.stem != name and p.stem.lower() == name and p.is_file():
+                try:
+                    for ext in ("csv", "json"):
+                        src, dst = p.with_suffix(f".{ext}"), f / f"{name}.{ext}"
+                        if src.is_file() and not dst.is_file():
+                            src.rename(dst)
+                except OSError:   # open in a spreadsheet (Windows): it stays as it is, this time
+                    return False
+                return (f / f"{name}.csv").is_file()
     return False
+
+
+_FILES_LOCK = threading.RLock()   # a codebook's files being written or renamed (`_write`, `_named_as_listed`)
 
 
 def _meta(f: Path, name: str) -> dict:
@@ -348,7 +356,10 @@ def _stale_passages(ws: Workspace, name: str, code: str, rewords: list[tuple[str
             shown = json.loads(shown) if shown else None
         except ValueError:
             shown = None
-        if isinstance(shown, list) and ids:
+        # (wave 4 review: only for a label the task's CURRENT question gave; a label older than its task is the
+        # answer to an earlier question of that id, made again by *Label them again*: its question is gone, so the
+        # times say)
+        if isinstance(shown, list) and ids and not (l_at and t_at and l_at < t_at):
             if ids - {str(x) for x in shown}:
                 out[pid] = None
         elif min(t_at or l_at or "", l_at or t_at or "") < since:
@@ -508,6 +519,11 @@ _BUSY = ("The codebook's file is open in another program (a spreadsheet?), or ca
 def _write(f: Path, name: str, csv_text: str, meta: dict) -> None:
     """Both files of a codebook, or neither: when the second cannot be put in place (Windows refuses while a file is
     open in a spreadsheet), the first is put back as it was."""
+    with _FILES_LOCK:
+        _write_files(f, name, csv_text, meta)
+
+
+def _write_files(f: Path, name: str, csv_text: str, meta: dict) -> None:
     _name_ok(name)
     f.mkdir(parents=True, exist_ok=True)
     csv_p, side_p = f / f"{name}.csv", f / f"{name}.json"
@@ -806,12 +822,14 @@ def save(ws: Workspace, name: str, state: dict, merges: list[dict] | None = None
 # ---------------------------------------------------------------------------------------------
 # labels follow renames and merges
 # ---------------------------------------------------------------------------------------------
-def follow(ws: Workspace, name: str | None = None, carried: list | None = None) -> int:
+def follow(ws: Workspace, name: str | None = None, carried: list | None = None, wait: bool = True) -> int:
     """Move this project's labels (and checks tagged with a code) as the codebooks' renames and merges say, once per
     change, in the order the codebook lists them (its saves' order). A colleague's labels that come in follow the
     changes their copy had not followed (`follow_merged`, from sync.py). Returns how many labels moved.
     `carried` (from `save`): where to note the person's decisions a merge carried (`_carry_decision`), which `save`
-    puts in its own research log entry; without it, such decisions get an entry of their own here."""
+    puts in its own research log entry; without it, such decisions get an entry of their own here. `wait` False (a
+    project being opened): never wait for the write lock another writer holds (a sync round); the changes are then
+    followed at the next opening (wave 4 review: an opening waited up to 60 s, and every request with it)."""
     from . import researchlog
     from .profile import label_id
 
@@ -826,19 +844,42 @@ def follow(ws: Workspace, name: str | None = None, carried: list | None = None) 
             continue
         ok, _skipped = checked_events(events)  # roles (H8): an event that does not fit the list moves nothing
         here: list[dict] = []
-        with ws.connect() as cx:  # read again inside the write lock: two requests at once apply a change once
-            done = set(ws.meta(key) or [])
-            for e in ok:
-                if e["id"] not in done:
-                    moved += _follow_one(cx, fw.name, e, label_id, carried=here)
-            ws.set_meta(key, sorted({e["id"] for e in events}), cx)
-            if here and carried is None:   # (a change made in another project, followed here on opening)
-                title = researchlog.quoted(fw.title, 80)
-                researchlog.record(cx, "codebook-changed", f"Followed the merges of the codebook {title}: "
-                                   + "; ".join(_carried_words(here)) + ".", "codebook", fw.name, fw.title)
+        raw = ws._conn()
+        before = raw.execute("PRAGMA busy_timeout").fetchone()[0]
+        if not wait:
+            raw.execute("PRAGMA busy_timeout=0")
+        try:
+            with ws.connect() as cx:  # read again inside the write lock: two requests at once apply a change once
+                if not wait:
+                    cx.execute(f"PRAGMA busy_timeout={int(before)}")   # (taken: the rest as usual)
+                done = set(ws.meta(key) or [])
+                for e in _without_undone(ok, done):
+                    if e["id"] not in done:
+                        moved += _follow_one(cx, fw.name, e, label_id, carried=here)
+                ws.set_meta(key, sorted({e["id"] for e in events}), cx)
+                if here and carried is None:   # (a change made in another project, followed here on opening)
+                    title = researchlog.quoted(fw.title, 80)
+                    researchlog.record(cx, "codebook-changed", f"Followed the merges of the codebook {title}: "
+                                       + "; ".join(_carried_words(here)) + ".", "codebook", fw.name, fw.title)
+        except sqlite3.OperationalError as e:
+            if wait or "locked" not in str(e) and "busy" not in str(e):
+                raise
+            here = []   # another writer holds the project: followed at the next opening
+        finally:
+            if not wait:
+                raw.execute(f"PRAGMA busy_timeout={int(before)}")
         if carried is not None:
             carried.extend(here)
     return moved
+
+
+def _without_undone(events: list[dict], done: set) -> list[dict]:
+    """Hunt phase 1.5 (wave 4 review): of a merge undone because a colleague merged the two codes the other way first
+    (sync/codebook_merge.opposite_merges), labels that never followed it follow neither it nor its undo: following
+    both would move the other code's labels away and back without them."""
+    undone = {e["undoes"]: e["id"] for e in events if e.get("op") == "unmerge" and e.get("undoes")}
+    skip = {x for later, undo in undone.items() if later not in done for x in (later, undo)}
+    return [e for e in events if e["id"] not in skip] if skip else events
 
 
 def _events(meta: dict) -> list[dict]:
@@ -1031,14 +1072,22 @@ def follow_merged(cx, ws: Workspace, name: str, meta: dict, theirs_done: set, in
     incoming = set(incoming)
     mine = {r[0] for r in cx.execute("SELECT label_id FROM labels WHERE framework=?", (name,))} - incoming
     waiting = []
+    carried: list[dict] = []
+    mine_ok, theirs_ok = ({e["id"] for e in _without_undone(ok, d)} for d in (mine_done, theirs_done))
     for e in ok:
-        if e["id"] not in mine_done:
+        if e["id"] not in mine_done and e["id"] in mine_ok:
             if at_once:
-                _follow_one(cx, name, e, label_id, only=mine, hyps=hyps_before)
+                _follow_one(cx, name, e, label_id, only=mine, hyps=hyps_before, carried=carried)
             else:
                 waiting.append(e)
-        if e["id"] not in theirs_done and incoming:
-            _follow_one(cx, name, e, label_id, only=incoming, hyps=set())
+        if e["id"] not in theirs_done and incoming and e["id"] in theirs_ok:
+            _follow_one(cx, name, e, label_id, only=incoming, hyps=set(), carried=carried)
+    if carried:   # (hunt phase 1.5, wave 4 review: the decisions a merge carried are said here too, as `follow` does)
+        from . import researchlog
+
+        title = str(meta.get("title") or name)
+        researchlog.record(cx, "codebook-changed", f"Followed the merges of the codebook {researchlog.quoted(title, 80)}"
+                           ": " + "; ".join(_carried_words(carried)) + ".", "codebook", name, title)
     if waiting and _moves_any(cx, name, waiting, mine):
         okey = f"codebook_offers:{name}"
         got = cx.execute("SELECT value FROM meta WHERE key=?", (okey,)).fetchone()
@@ -1144,6 +1193,23 @@ def held_message(name: str, where: str | None = None, ws: Workspace | None = Non
             else:
                 versions = {p.stem for p in _version_files(ws, name)}
                 db = Path(ws.db_path)
+            if not where and not _removal_restorable(db, name, versions):
+                # (wave 4 review: a codebook kept with all projects, removed in another project that is still
+                # there: its research log has the way back, so that project is named)
+                home_versions = {p.stem for p in _version_dir(_home_folder(), name).glob("c*.json")}
+                if home_versions:
+                    from . import home
+
+                    here = Path(ws.root).resolve()
+                    for pname in home.list_projects():
+                        try:
+                            other = home.project_path(pname)
+                            if other.resolve() != here and _removal_restorable(other / "enlens.sqlite", name,
+                                                                              home_versions):
+                                where, db, versions = pname, other / "enlens.sqlite", home_versions
+                                break
+                        except OSError:
+                            continue
             if _removal_restorable(db, name, versions):
                 back = (f"To bring it back, open {'the project ' + repr(where) + ' and its' if where else 'the'} "
                         "Research log: the entry of its removal has “Compare with before”, then “Restore”. Otherwise ")
@@ -1355,10 +1421,39 @@ def remove(ws: Workspace, name: str, why: str | None = None) -> None:
                 other = home.project_path(pname)
                 if other.resolve() == here or (other / "frameworks" / f"{name}.csv").is_file():
                     continue   # this project (done above), or one with its own codebook of the name
-                with home.open_project(pname).connect() as cx:
-                    _take_back_label_tasks(cx, name)
+                _take_back_elsewhere(other / "enlens.sqlite", name, title, Path(ws.root).name)
             except (OSError, ValueError, sqlite3.Error):
-                continue   # a project that cannot be opened now: its tasks fail on the codebook, as before
+                continue   # a project that cannot be read or written now: its tasks fail on the codebook, as before
+
+
+def _take_back_elsewhere(db: Path, name: str, title: str, removed_in: str) -> int:
+    """`remove` of a codebook kept with all projects, in another project: its waiting label tasks taken back, with an
+    entry in that project's research log. Wave 4 review: the project is not opened (`home.open_project` runs schema
+    checks and one-time steps) and is written only when a read-only look finds such tasks; a project busy for more
+    than a few seconds (a sync round writing) is passed over: its tasks fail on the codebook, as before."""
+    from . import researchlog
+
+    head = f"label:{name}:"
+    look = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True)
+    try:
+        waiting = look.execute("SELECT 1 FROM tasks WHERE task_id >= ? AND task_id < ? AND +kind='label' AND +status IN "
+                               "('pending', 'retry', 'exported') LIMIT 1", (head, head[:-1] + ";")).fetchone()
+    finally:
+        look.close()
+    if not waiting:
+        return 0
+    cx = sqlite3.connect(db, timeout=5)
+    try:
+        with cx:
+            n = _take_back_label_tasks(cx, name)
+            if n:
+                researchlog.record(cx, "codebook-removed", f"The codebook {researchlog.quoted(title, 80)} was removed "
+                                   f"from all projects (in the project {removed_in!r}): {n} label "
+                                   f"task{'s' if n != 1 else ''} waiting for the AI {'were' if n != 1 else 'was'} "
+                                   "taken back here.", "codebook", name, title, data={"where": "home", "tasks": n})
+    finally:
+        cx.close()
+    return n
 
 
 def _take_back_label_tasks(cx, name: str) -> int:
@@ -1890,7 +1985,8 @@ def answer_offer(ws: Workspace, name: str, follow: bool) -> dict:
     with ws.connect() as cx:
         if follow:
             ok, _ = checked_events(events)
-            for e in ok:
+            done = set(ws.meta(f"codebook_followed:{name}") or []) - {e["id"] for e in events}
+            for e in _without_undone(ok, done):
                 moved += _follow_one(cx, name, e, label_id, carried=carried)
         cx.execute("DELETE FROM meta WHERE key=?", (f"codebook_offers:{name}",))
         who = (cx.execute("SELECT name FROM people WHERE person_id=?", (raw.get("from"),)).fetchone() or [None])[0]

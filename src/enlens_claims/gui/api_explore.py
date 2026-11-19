@@ -251,7 +251,9 @@ class ExploreApi:
 
         body = self._body()
         terms.set_link(self.app.ws(name), str(body.get("a") or ""), str(body.get("b") or ""),
-                       str(body.get("decision") or ""), body.get("relation") or None, note=body.get("note"))
+                       str(body.get("decision") or ""), body.get("relation") or None, note=body.get("note"),
+                       # (hunt phase 1.5: the source of the link the card shows, when the page sends it)
+                       source=str(body.get("source")) if body.get("source") else None)
         return {"saved": True}
 
     def post_concepts_judge(self, name, q):
