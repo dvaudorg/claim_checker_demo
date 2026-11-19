@@ -12,7 +12,8 @@
   can stop, it says which work and to stop it in the sidebar, as before.
 - **A request whose body stops coming no longer holds the app.** A connection waits two minutes at most for a
   client, and a body sent in chunks, without its length, is refused in words instead of being stored as an empty
-  file.
+  file. A request refused while its body is still being sent (a file too large, a wrong address) now gets its answer
+  in words on Windows too, instead of a dropped connection.
 
 ### Privacy
 

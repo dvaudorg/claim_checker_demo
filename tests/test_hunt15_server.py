@@ -1136,3 +1136,80 @@ def test_a_label_run_that_met_a_document_read_again_says_so_in_its_notification(
     assert st == 200, r
     text = _notification(app, app.jobs.get(r["job"]["id"]), monkeypatch)
     assert "2 passages" in text and "read again" in text, text
+
+
+# ---- CI (Windows): an early refusal while the body is on its way is read by the client, not lost in a reset ---------
+def _refused_while_sending(api, head: bytes, total: int, forever=False, seconds=20.0):
+    """Send `head`, then a body of `total` bytes (or without end) from a thread, while reading the answer. Returns
+    (the answer's bytes, whether the server closed the connection, seconds until it did)."""
+    from urllib.parse import urlparse
+
+    u = urlparse(api.base)
+    s = socket.create_connection((u.hostname, u.port), timeout=seconds)
+    s.sendall(head)
+    stop = threading.Event()
+
+    def send():
+        chunk = b"x" * 65536
+        sent = 0
+        try:
+            while not stop.is_set() and (forever or sent < total):
+                s.sendall(chunk)
+                sent += len(chunk)
+        except OSError:
+            pass
+
+    t = threading.Thread(target=send, daemon=True)
+    t0 = time.time()
+    t.start()
+    got, closed = b"", False
+    try:
+        while time.time() - t0 < seconds:
+            try:
+                b = s.recv(65536)
+            except OSError:
+                break
+            if not b:
+                closed = True
+                break
+            got += b
+    finally:
+        took = time.time() - t0
+        stop.set()
+        s.close()
+        t.join(5)
+    return got, closed, took
+
+
+def test_a_413_for_an_upload_too_large_is_read_while_its_body_is_on_its_way(served):
+    api, _app = served
+    _project(api)
+    head = _head(api, "POST", "/api/projects/P/uploads?batch=big&name=a.txt", {"Content-Length": str(3 * 1024 ** 3)})
+    got, _closed, _t = _refused_while_sending(api, head, 4 * 1024 ** 2)
+    assert got.startswith(b"HTTP/1.1 413") and b"2 GB" in got, got[:300]
+
+
+def test_an_unknown_route_with_a_large_body_is_answered_in_words(served):
+    api, _app = served
+    _project(api)
+    n = 30 * 1024 ** 2   # more than a JSON body may hold, so the server does not read it
+    head = _head(api, "POST", "/api/projects/P/no-such-thing", {"Content-Length": str(n)})
+    got, _closed, _t = _refused_while_sending(api, head, 4 * 1024 ** 2)
+    assert got.startswith(b"HTTP/1.1 404") and b"error" in got, got[:300]
+
+
+def test_the_drain_after_a_refusal_is_bounded(served, monkeypatch):
+    """A sender that never stops is cut once the drain's time is up: it never holds the thread."""
+    api, _app = served
+    _project(api)
+    from enlens_claims.gui import server
+
+    monkeypatch.setattr(server.Handler, "LINGER_SECONDS", 1.0)
+    head = _head(api, "POST", "/api/projects/P/uploads?batch=big&name=a.txt", {"Content-Length": str(3 * 1024 ** 3)})
+    got, closed, took = _refused_while_sending(api, head, 0, forever=True, seconds=20)
+    assert got.startswith(b"HTTP/1.1 413"), got[:200]
+    assert took < 10, took   # cut after about a second, not when the sender stops
+    monkeypatch.setattr(server.Handler, "LINGER_SECONDS", 30.0)
+    monkeypatch.setattr(server.Handler, "LINGER_BYTES", 1024 ** 2)
+    got, closed, took = _refused_while_sending(api, head, 0, forever=True, seconds=25)
+    assert got.startswith(b"HTTP/1.1 413") and took < 15, (got[:200], took)   # and after a bounded number of bytes

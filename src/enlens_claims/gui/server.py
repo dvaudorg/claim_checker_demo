@@ -25,6 +25,7 @@ import mimetypes
 import os
 import re
 import secrets
+import socket
 import sys
 import threading
 import time
@@ -2195,6 +2196,7 @@ class Handler(BaseHTTPRequestHandler, DocumentsApi, ExploreApi, ChecksApi, Setup
         self._consumed = True
         n = self._length()
         if n > MAX_JSON:
+            self.close_connection = self._linger = True   # (not read; drained, bounded, at the close)
             raise ApiError(413, "The request is too large.")
         raw = self._read(n) if n else b""
         if not raw:
@@ -2217,7 +2219,41 @@ class Handler(BaseHTTPRequestHandler, DocumentsApi, ExploreApi, ChecksApi, Setup
             return self.rfile.read(n)
         except TimeoutError:
             self.close_connection = True
+            self._linger = True
             raise ApiError(408, "The request's body did not arrive in time.") from None
+
+    # hunt phase 1.5: a refusal that comes while the client still sends its body (a 411 for chunks, a 413, a 401 or a
+    # 404 before a large upload, a 408) closed the connection with the body unread; Windows then resets the
+    # connection, and the client lost the answer it had not read yet. After the answer, the sending side is shut and
+    # what the client still sends is read and dropped, bounded in bytes and time (a sender that never stops does not
+    # hold the thread), then the connection closes
+    LINGER_BYTES = 8 * 1024 ** 2
+    LINGER_SECONDS = 2.0
+
+    def finish(self):
+        super().finish()
+        if getattr(self, "_linger", False):
+            self._linger_close()
+
+    def _linger_close(self) -> None:
+        conn = self.connection
+        try:
+            conn.shutdown(socket.SHUT_WR)
+        except OSError:
+            return
+        end, left = time.monotonic() + self.LINGER_SECONDS, self.LINGER_BYTES
+        try:
+            while left > 0:
+                wait = end - time.monotonic()
+                if wait <= 0:
+                    break
+                conn.settimeout(wait)
+                data = conn.recv(min(65536, left))
+                if not data:
+                    break
+                left -= len(data)
+        except OSError:   # (a timeout or the client gone: close now)
+            pass
 
     def do_GET(self):
         self._dispatch("GET")
@@ -2242,6 +2278,7 @@ class Handler(BaseHTTPRequestHandler, DocumentsApi, ExploreApi, ChecksApi, Setup
         n = self._length()
         if n > MAX_JSON:
             self.close_connection = True
+            self._linger = True   # (the body still on its way is drained, bounded, at the close: `finish`)
         elif n:
             self.rfile.read(n)
 
@@ -2255,6 +2292,7 @@ class Handler(BaseHTTPRequestHandler, DocumentsApi, ExploreApi, ChecksApi, Setup
             # hunt phase 1.5: a body sent in chunks (no Content-Length) was not read: an upload was stored empty with
             # 200, and the chunks were read as the next request. The page always sends a length; scripts are told to
             self._consumed = True
+            self._linger = True
             self._json(411, {"error": "Send the request body with a Content-Length: a body sent in chunks is not "
                                       "read.", "kind": "request"})
             return
