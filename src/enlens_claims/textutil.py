@@ -265,6 +265,15 @@ def spacing_matches(text: str, packed: tuple, nq: str, drop: str = " ", whole_wo
         pos = sh.find(sq, pos + 1)
 
 
+def one_line(text: str) -> str:
+    """A quote on one line, to store or show: a line break (with the spaces and tabs around it) becomes one space, and
+    a run of spaces one space; every other character stays the passage's own (a non-breaking space, a ligature, a
+    superscript digit). Hunt phase 1.5: `" ".join(text.split())` also made a non-breaking space a plain one, so a stored
+    quote held characters its passage does not."""
+    text = re.sub(r"[ \t]*[\r\n\x0b\x0c\u2028\u2029]+[ \t]*", " ", text)
+    return re.sub(r"[ \t]{2,}", " ", text).strip(" \t")
+
+
 def find_selection(haystack: str, quote: str) -> tuple[int, int, str] | None:
     """A person's own selection in a text (0.14.3), found as a quote is; one that starts or ends inside a word (a
     selection dragged a little short) is widened to the whole words, so it is kept as whole words like every quote

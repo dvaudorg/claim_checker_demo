@@ -69,6 +69,7 @@ import uuid
 from typing import Callable
 
 from .store import Workspace, now
+from .textutil import one_line
 
 KIND = "group_name"
 MAX_NAME = 60            # characters
@@ -1009,7 +1010,7 @@ def apply(ws: Workspace, task_id: str) -> dict | None:
                 cx.execute("INSERT INTO concept_group_quotes(name_id, doc_id, passage_id, page, start, end, quote) "
                            "VALUES (?,?,?,?,?,?,?)", (nid, doc, p["passage_id"], p.get("page"),
                                                       (start or 0) + hit[0], (start or 0) + hit[1],
-                                                      " ".join(p["text"][hit[0]:hit[1]].split())))
+                                                      one_line(p["text"][hit[0]:hit[1]])))
     return {"name_id": nid, "name": name}
 
 

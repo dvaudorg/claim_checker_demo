@@ -51,6 +51,7 @@ from typing import Any, Callable
 
 from .store import Workspace, now
 from . import providers
+from .textutil import one_line
 
 KIND = "theory_frame"
 DRAFT_FILE = ("drafts", "codebook-from-theory.json")
@@ -1166,7 +1167,7 @@ def evidence(ws: Workspace, concept: dict, k: int = 4, skip=(), embedder=None) -
                      "WHERE p.passage_id=?", (p["passage_id"],))
         if not r or r[0]["text"] != p["text"]:
             return None
-        quote = " ".join(p["text"][a:z].split())
+        quote = one_line(p["text"][a:z])
         # where the words stand in the quote (the page marks them: it must not match them a second way)
         marks = sorted({(m.start(), m.end()) for w, rx in rxs if w in hit for m in rx.finditer(quote)})
         marks = [list(x) for i, x in enumerate(marks) if not i or x[0] >= marks[i - 1][1]]

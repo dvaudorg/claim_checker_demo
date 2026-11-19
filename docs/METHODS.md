@@ -27,7 +27,7 @@ text and can be overruled by a person.
 ## Reading documents
 
 ENLENS reads PDF, Word, web pages, Markdown and plain text (`ingest.SUPPORTED`). The reader is numbered, and each
-document records the one that read it (`ingest.READER`; reader 7 since the version after ENLENS 0.20.3). A new reader reads only
+document records the one that read it (`ingest.READER`; reader 7 now). A new reader reads only
 documents added after an update; earlier documents keep their text, and every quote in them keeps its place, until a
 person moves them to the new reader ([Read with the new reader](manual/reading.md#read-with-the-new-reader)).
 

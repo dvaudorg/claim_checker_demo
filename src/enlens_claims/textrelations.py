@@ -31,7 +31,7 @@ import sqlite3
 from collections import defaultdict
 
 from .store import now
-from .textutil import split_sentences
+from .textutil import one_line, split_sentences
 
 SOURCE = "pattern"
 MAX_SENTENCES = 5   # kept per proposal
@@ -187,7 +187,7 @@ def find(cx: sqlite3.Connection) -> int:
                 if a > b:   # stored from the smaller id, the relation turned round with it (terms.set_link)
                     a, b, rel = b, a, _INV.get(rel, rel)
                 found[(a, b, rel)].append({"passage_id": pid, "doc_id": doc, "page": page, "start": p0 + sa,
-                                           "end": p0 + sz, "quote": " ".join(sent.split())})
+                                           "end": p0 + sz, "quote": one_line(sent)})
     # a pair stated with two relations: the one stated most often (ties: the first by name)
     best: dict[tuple[str, str], tuple[str, list[dict]]] = {}
     for (a, b, rel), ss in sorted(found.items()):

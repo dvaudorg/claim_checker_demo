@@ -1,4 +1,4 @@
-"""Reader 7 (the ENLENS after 0.20.3): text files, Word files and web pages read otherwise than by reader 6.
+"""Reader 7: text files, Word files and web pages read otherwise than by reader 6.
 
 `reader.read_blocks(raw, version=7)` calls the rules here; `version=6` and below still read exactly as before. PDFs
 read as by reader 6. No model is used. Five things change (found by the bug hunts of November 2026):

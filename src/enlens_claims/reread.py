@@ -1289,10 +1289,14 @@ def _plan(ws: Workspace, cx, doc_id: str, new_doc, m: _Map | None = None,
         "ai_share": {"before": before_share, "after": after_share},
         "addons": _addon_rows(cx, doc_id, old_set),
         "reading": dict(getattr(new_doc, "reading", None) or {}),
-        # hunt phase 1.5: whether the new reader reads it exactly as before (the same text, passages and pages): a
-        # reader that changes some files of a kind is offered to every file of that kind, and the preview says which
-        "same_reading": (old_text == new_doc.text and [(p.start, p.end, p.page) for p in old]
-                         == [(q.start, q.end, q.page) for q in new]),
+        # hunt phase 1.5: whether the new reader reads it exactly as before: a reader that changes some files of a
+        # kind is offered to every file of that kind, and the preview says which (`same_reading`)
+        "same_reading": same_reading(
+            old_text, [(p.start, p.end, p.page, p.section) for p in old],
+            [tuple(r) for r in cx.execute("SELECT start, end, included FROM blocks WHERE doc_id=? ORDER BY n",
+                                          (doc_id,))],
+            new_doc.text, [(q.start, q.end, q.page, q.section) for q in new],
+            [(b.start, b.end, int(bool(c))) for b, c in zip(new_blocks, counts)], bool(choices)),
         "warnings": [],
     }
     _warnings(report, drow)
@@ -1380,6 +1384,21 @@ def _carry_choices(cx, doc_id: str, m: _Map, new_text: str, new_blocks: list, ch
         plan.first.append(("INSERT OR REPLACE INTO block_choices(doc_id, fp, included, kind, person_id, at) "
                            "VALUES (?,?,0,'bound',?,?)", (doc_id, new_key, *who)))
         plan.counts["block"]["moved"] += 1
+
+
+def same_reading(old_text: str, old: list[tuple], old_blocks: list[tuple], new_text: str, new: list[tuple],
+                 new_blocks: list[tuple], choices: bool = False) -> bool:
+    """Hunt phase 1.5: whether a new reading is the stored one exactly, in all that decides what searches, codes,
+    themes and checks read: the text; each passage's (start, end, page, section); each block's (start, end, included),
+    the blocks a person left out or put back counted on both sides. With a person's `choices` the stored sections
+    already hold them and the new ones do not yet: the blocks then stand for them (a section follows its blocks and
+    the text). Review wave 4: the sections were not compared, so a passage turned from furniture into body (or back)
+    at the same offsets was called "exactly as before"."""
+    if old_text != new_text or [x[:3] for x in old] != [x[:3] for x in new]:
+        return False
+    if [tuple(b) for b in old_blocks] != [tuple(b) for b in new_blocks]:
+        return False
+    return choices or [x[3] for x in old] == [x[3] for x in new]
 
 
 def _pid_has_tomb(task_id: str, doc_id: str) -> bool:

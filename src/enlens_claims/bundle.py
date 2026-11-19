@@ -33,7 +33,7 @@ import time
 import unicodedata
 import uuid
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Iterable
 
 from . import __version__
@@ -240,7 +240,10 @@ def relocate_documents(db: Path, relative, new_root: Path) -> int:
     try:
         with cx:
             for doc_id, path in cx.execute("SELECT doc_id, path FROM documents").fetchall():
-                if not path or not Path(path).is_absolute():
+                # hunt phase 1.5: a path recorded on another kind of computer is absolute there ("/Users/…" from a Mac
+                # read on Windows, "C:\Users\…" from Windows read on a Mac): `Path` here judged it by this computer's
+                # rules, left it as it was, and no document of a folder zipped by hand found its file
+                if not path or not (PurePosixPath(path).is_absolute() or PureWindowsPath(path).is_absolute()):
                     continue
                 rel = relative(Path(path.replace("\\", "/")).parts)
                 if not rel:

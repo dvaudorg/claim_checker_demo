@@ -20,7 +20,7 @@ import sqlite3
 import uuid
 
 from .store import Workspace, now
-from .textutil import find_selection, normalise
+from .textutil import find_selection, normalise, one_line
 
 COLOURS = ("yellow", "green", "blue", "pink")
 MAX_QUOTE = 4000
@@ -296,7 +296,7 @@ def markdown(ws: Workspace, project: str) -> str:
             title = t
             lines += [f"## {t}" + ("" if n["present"] else " (removed from the project)"), ""]
         page = f"p. {n['page']}: " if n["page"] is not None else ""
-        quote = " ".join((n["quote"] or "").split())
+        quote = one_line(n["quote"] or "")
         who = "" if n["mine"] else f" ({n['who']})"
         lines.append(f"- {page}> {quote}{who}")
         if n["text"]:

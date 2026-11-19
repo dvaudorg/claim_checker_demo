@@ -82,8 +82,8 @@ behaviour and breaks on a refactor.
 
 Tests never touch a real Claude Code, uv or the network: `tests/conftest.py` points `ENLENS_CLAUDE` nowhere, gives
 every test its own `ENLENS_HOME` (and keeps secrets in files there, `ENLENS_KEYCHAIN=file`, never the computer's
-keychain), shows no notification on the screen (`ENLENS_NO_NOTIFY=1`, the dev server too) and reads added documents one at a time (`ENLENS_READ_WORKERS=1`, so a stand-in a test puts in this process
-is what reading sees; `tests/test_speed.py` reads at once on purpose); `tests/fake_claude_cli.py`,
+keychain), shows no notification on the screen (`ENLENS_NO_NOTIFY=1`, the dev server too) and reads added documents one at a time (`ENLENS_READ_WORKERS=1`) in this process (`ENLENS_READ_HERE=1`: the app reads every file of a job with *Stop*
+in a reading process), so a stand-in a test puts in this process is what reading sees; `tests/test_speed.py` reads at once on purpose); `tests/fake_claude_cli.py`,
 `tests/fake_claude_installer.py`, `tests/fake_servers.py` and `tests/fake_zotero.py` stand in for the real programs. A
 release's tests go in a new file `tests/test_<X>_<Y>_<Z>_<topic>.py`; older files keep their names.
 [docs/USER_TESTS.md](USER_TESTS.md) has the first-time user tests behind the app (0.5.1 to 0.7.0).

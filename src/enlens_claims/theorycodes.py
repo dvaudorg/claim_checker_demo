@@ -68,7 +68,7 @@ from typing import Callable, Iterable
 
 from .store import Workspace
 from . import providers
-from .textutil import split_sentences
+from .textutil import one_line, split_sentences
 
 MAX_TERM_WORDS = 4
 MAX_CANDIDATES = 40
@@ -660,7 +660,7 @@ def suggest_examples(ws: Workspace, term: str, k: int = MAX_EXAMPLES, exclude_do
         if not m:
             continue
         a, z = next(((a, z) for a, z in split_sentences(t) if a <= m.start() < z), (0, len(t)))
-        out.append({"quote": " ".join(t[a:z].split())[:400], "doc_id": p["doc_id"], "title": r[0]["title"],
+        out.append({"quote": one_line(t[a:z])[:400], "doc_id": p["doc_id"], "title": r[0]["title"],
                     "page": r[0]["page"], "start": r[0]["start"] + a, "end": r[0]["start"] + z,
                     "project": ws.project_uid()})
         if len(out) >= k:
@@ -921,7 +921,7 @@ def _part_concepts(ws: Workspace, task_id: str) -> list[dict]:
             continue
         base = starts.get(p["passage_id"])
         a, z = (base + hit[0], base + hit[1]) if base is not None else (None, None)
-        d = {"quote": " ".join(p["text"][hit[0]:hit[1]].split()), "start": a, "end": z,
+        d = {"quote": one_line(p["text"][hit[0]:hit[1]]), "start": a, "end": z,
              "page": (_page(ws, doc_id, a) if a is not None else None) or p.get("page")}
         out.append({"name": c.name, "reason": c.reason, "definition": d, "model": r[0]["model"],
                     "part": payload.get("part") or 1})

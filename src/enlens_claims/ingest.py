@@ -55,7 +55,7 @@ READER = 7  # 1: ENLENS 0.5 to 0.14 (pypdf's page text, cut by sentences); 2: EN
             #    publishing details in the first page's footer set aside, a journal's name not the title; and, any
             #    kind of file, languages.py: in a document in two languages, a side-by-side translation, no passage
             #    holds both)
-            # 7: the version after 0.20.3 (reader7.py, text files, Word files and web pages only: a line that comes back in text
+            # 7: reader7.py (text files, Word files and web pages only: a line that comes back in text
             #    whose every line is a paragraph is not a running head, short sentences one per line are paragraphs,
             #    a Word text box read once as paragraphs of its own, ISO-8859-2 files and UTF-16 ones without a
             #    byte-order mark read as written)
@@ -1672,8 +1672,11 @@ class _Readings:
     """The readings of a batch of files, in their order. With `workers` above 1, files are read ahead in that many
     reading processes (`readworker.py`, each kept busy by a thread of its own); with 1, or for a file whose reading in
     a process went wrong (the process could not start, or its answer could not come back), here, the way `ingest`
-    read every file before 0.16. A file that ends its reading process (a crash, the memory used up) is listed as one
-    that could not be read, and is not read here again. The threads are daemon threads and the processes end when ENLENS
+    read every file before 0.16. Hunt phase 1.5: with Stop to obey (`should_stop`), in a reading process also with 1,
+    so that Stop ends a file whose reading never ends; only when no reading process can start, or a file's reading
+    failed in two processes one after the other, or its answer could not come back, is it read here. A file that ends
+    its reading process (a crash, the memory used up) is listed as one that could not be read, and is not read here
+    again. The threads are daemon threads and the processes end when ENLENS
     does (`end_reading_processes`), so neither Quit nor an update waits for a file being read; a reading process also
     ends by itself when the program that started it is gone."""
 
@@ -1692,6 +1695,10 @@ class _Readings:
         self.stop_dir: str | None = None
         self.stop_file = ""
         self.parallel = False  # whether reading processes were used
+        # hunt phase 1.5: with Stop to obey (`should_stop`: the app's jobs), every file is read in a reading process,
+        # also a small batch read one at a time: a reading that hangs in this process could not be ended, and Stop
+        # waited for it for ever. `ENLENS_READ_HERE=1` reads here (the tests, so that their stand-ins are what reads)
+        self.away = should_stop is not None and os.environ.get("ENLENS_READ_HERE") != "1"
 
     def here(self, i: int) -> tuple:
         return _read_whole(self.files[i], self.ocr, self.max_chars, self.min_chars, self.should_stop, self.known)
@@ -1806,40 +1813,53 @@ class _Readings:
             return None
 
     def get(self, i: int) -> tuple:
-        if self.workers > 1 and self.tasks is None:
+        if (self.workers > 1 or self.away) and self.tasks is None:
             try:
                 self._start()
             except Exception:  # noqa: BLE001 - no threads or no temporary folder: one at a time, here
-                self.workers = 1
+                self.workers, self.away = 1, False
         if self.tasks is None:
             return self.here(i)
-        from concurrent.futures import TimeoutError as FutureTimeout
-
         try:
             for j in range(i, min(len(self.files), i + self.workers + 1)):  # this file and the next ones
                 if j not in self.futures:
                     fut: Future = Future()
                     self.futures[j] = fut
                     self.tasks.put((j, fut))
-            fut = self.futures.pop(i)
-            while True:
-                try:
-                    got = fut.result(timeout=0.25)
-                    break
-                except FutureTimeout:
-                    if self.should_stop and self.should_stop():
-                        # Stop: this file is not added, as when Stop comes during the text recognition of a file read
-                        # here; the batch ends and `close` ends the process still reading it
-                        self._stop()
-                        self.futures[i] = fut  # still being read: `close` ends its process at once
-                        return ("stopped",)
-        except Exception:  # noqa: BLE001 - this file's reading did not come back: read it here, the old way
-            return self.here(i)
+            got = self._wait(i, self.futures.pop(i))
+        except Exception:  # noqa: BLE001 - this file's reading did not come back
+            if not self.away:
+                return self.here(i)  # read it here, the old way
+            # hunt phase 1.5: once more in a new reading process, where Stop still reaches it; only a second failure
+            # reads it here (as before: a process that ends on its own while it reads leaves the file to be read)
+            try:
+                fut = Future()
+                self.tasks.put((i, fut))
+                got = self._wait(i, fut)
+            except Exception:  # noqa: BLE001
+                return self.here(i)
+        if got is None:
+            return ("stopped",)
         if got[0] == "redo":
-            return self.here(i)
+            return self.here(i)  # read already, in a process: only its answer could not come back
         if got[0] == "ok" and got[2] is None and got[1].sha1 not in self.known:
             return self.here(i)  # not built as a duplicate, but no longer one (cannot happen: the checksums only grow)
         return got
+
+    def _wait(self, i: int, fut: Future):
+        """The reading of file i, waited for while Stop is looked at every quarter second: None for Stop (this file is
+        not added, as when Stop comes during the text recognition of a file read here; the batch ends and `close`
+        ends the process still reading it)."""
+        from concurrent.futures import TimeoutError as FutureTimeout
+
+        while True:
+            try:
+                return fut.result(timeout=0.25)
+            except FutureTimeout:
+                if self.should_stop and self.should_stop():
+                    self._stop()
+                    self.futures[i] = fut  # still being read: `close` ends its process at once
+                    return None
 
     def _stop(self) -> None:
         if self.stop_file and not os.path.exists(self.stop_file):
@@ -1993,7 +2013,7 @@ def ingest(ws: Workspace, inputs: list[str | Path], exclude: list[str] | None = 
         readings.close()
         if added:
             _log_added(ws, added)
-    if readings.parallel:
+    if readings.parallel and readings.workers > 1:
         stats["read_at_once"] = readings.workers
     if progress:
         progress(len(files), len(files), "")

@@ -55,6 +55,15 @@ def test_nothing_names_the_unreleased_version():
     assert found == []
     table = (ROOT / "docs/manual/how-documents-are-read.md").read_text("utf-8")
     assert "| 7 | the version after 0.20.3 |" in table
+    # review wave 4: the owner allowed "the version after 0.20.3" in the manual's table of readers only
+    elsewhere = []
+    for top in ("src", "docs", "changes", "tools"):
+        for p in (ROOT / top).rglob("*"):
+            if p.is_file() and p.suffix in (".py", ".md", ".js", ".html"):
+                for line in p.read_text("utf-8", errors="replace").splitlines():
+                    if re.search(r"after (ENLENS )?0\.20\.3", line) and not line.startswith("| 7 | the version after"):
+                        elsewhere.append(str(p.relative_to(ROOT)))
+    assert elsewhere == []
 
 
 # ---- 2. a file that reads but cannot be built --------------------------------------------------------------------
@@ -150,18 +159,21 @@ def test_two_documents_whose_names_differ_only_by_case_or_accent_form_keep_their
         assert sources.original_file(new, d)["available"]
 
 
-def test_a_project_folder_zipped_by_hand_keeps_both_files_apart(tmp_path):
-    """The same, for a project folder zipped by hand (no map of files: the recorded paths are followed)."""
+@pytest.mark.parametrize("old, sep", [("/home/someone/Study", "/"), ("C:\\Users\\Dávid\\Study", "\\")])
+def test_a_project_folder_zipped_by_hand_keeps_both_files_apart(tmp_path, old, sep):
+    """The same, for a project folder zipped by hand (no map of files: the recorded paths are followed). Review wave 4
+    (Windows CI): the paths a folder zipped on a Mac or Linux records are POSIX ones, which Windows does not take for
+    absolute, so they were left as they were and no document found its file; the same the other way round (a Windows
+    PC's "C:\\Users\\…" read on a Mac). Both kinds are followed on every computer."""
     ws, docs = _project_with_two(tmp_path)
     exported = tmp_path / "export.zip"
     bundle.export_project(ws, exported)
     sha = dict(ws.query("SELECT doc_id, sha1 FROM documents"))
-    old = "/home/someone/Study"
     z = _renamed_zip(exported, tmp_path / "byhand.zip", {"uploads/b1/A.txt": "uploads/b1/Report.txt",
                                                           "uploads/b1/B.txt": "uploads/b1/report.txt"},
                      prefix="Study/", meta=False,
-                     db_paths={docs["A.txt"]: f"{old}/uploads/b1/Report.txt",
-                               docs["B.txt"]: f"{old}/uploads/b1/report.txt"})
+                     db_paths={docs["A.txt"]: sep.join([old, "uploads", "b1", "Report.txt"]),
+                               docs["B.txt"]: sep.join([old, "uploads", "b1", "report.txt"])})
     new = bundle.import_project(z, tmp_path / "imported")
     got = dict(new.query("SELECT doc_id, path FROM documents"))
     assert got[docs["A.txt"]] != got[docs["B.txt"]]
@@ -359,7 +371,11 @@ def test_a_utf_16_text_without_a_byte_order_mark_keeps_its_letters(tmp_path):
     for enc in ("utf-16-le", "utf-16-be"):
         data = text.encode(enc)
         assert ingest.decode_text(data) == text, enc
-        assert ingest.decode_text(data, reader=6) == ingest.decode_text(data, reader=6)  # (unchanged, below)
+        # readers 1 to 6 read it as before: with a NUL beside every letter (review wave 4: this line compared reader 6
+        # with itself)
+        assert ingest.decode_text(data, reader=6).count("\x00") >= len(text) // 2, enc
+        plain = "The reservoir held water through the dry season. " * 4   # (ASCII: exactly the UTF-8 reading)
+        assert ingest.decode_text(plain.encode(enc), reader=6) == plain.encode(enc).decode("utf-8"), enc
         p = tmp_path / f"{enc}.txt"
         p.write_bytes(data)
         raw = ingest.read_file(p, OFF)
@@ -526,3 +542,258 @@ def test_the_preview_of_the_move_says_when_nothing_would_change(views):
     assert "reads this document exactly as before" in views["document page: the preview of the move, read the same: true"]
     other = views["document page: the preview of the move, read the same: false"]
     assert "otherwise than before" in other and "exactly as before" not in other
+
+
+# ---- review wave 4 (READERS15-5): every kind of store that writes a quote keeps the passage's own characters -------
+SPECIAL = ("Patients took the ﬁnal dose of 10³ mg each morning, as the protocol of the trial in the valley "
+           "required, and the nurses wrote down every dose they gave in the ward book.")
+TYPED = "THE FINAL dose of 10³ mg each"                      # case, the ligature and the space typed otherwise
+OWN = SPECIAL[SPECIAL.index("the ﬁnal"):SPECIAL.index(" each") + 5]   # what the passage holds there
+
+
+@pytest.fixture
+def special(tmp_path):
+    """A project of one document of one passage whose text holds a ligature, a superscript digit and a non-breaking
+    space (written in after reading: the reader puts ligatures and odd spaces right, while text from an earlier
+    reading, a kept excerpt or a colleague's copy may still hold them). -> (ws, doc_id, passage_id)."""
+    plain = SPECIAL.replace("ﬁ", "fi").replace(" ", " ")
+    f = tmp_path / "trial.txt"
+    f.write_text(plain + "\n", encoding="utf-8")
+    ws = Workspace.create(tmp_path / "ws")
+    ingest.ingest(ws, [f], ocr=OFF, ai_access="cloud")
+    d = ws.scalar("SELECT doc_id FROM documents")
+    (pid,) = [r[0] for r in ws.query("SELECT passage_id FROM passages")]
+    with ws.connect() as cx:
+        cx.execute("UPDATE documents SET text=?, n_chars=? WHERE doc_id=?", (SPECIAL, len(SPECIAL), d))
+        cx.execute("UPDATE passages SET text=?, start=0, end=? WHERE passage_id=?", (SPECIAL, len(SPECIAL), pid))
+        cx.execute("UPDATE blocks SET end=? WHERE doc_id=? AND end>=?", (len(SPECIAL), d, len(plain)))
+    yield ws, d, pid
+    ws.close_all()
+
+
+def _task(ws, task_id: str, kind: str, payload: dict, answer: dict) -> None:
+    """A task answered and accepted, as the queue leaves it (for the stores that read the answer back)."""
+    with ws.connect() as cx:
+        cx.execute("INSERT INTO tasks(task_id, kind, model, prompt_version, payload_json, status, created_at) "
+                   "VALUES (?,?,?,?,?,?,?)", (task_id, kind, "m", "v1", json.dumps(payload), "done", "2026-11-19"))
+        cx.execute("INSERT INTO results(task_id, attempt, kind, model, prompt_version, raw_json, valid, errors_json, "
+                   "received_at) VALUES (?,?,?,?,?,?,?,?,?)", (task_id, 1, kind, "m", "v1", json.dumps(answer), 1,
+                                                               "[]", "2026-11-19"))
+
+
+T1 = {"task_id": "t1", "prompt_version": "v1", "status": "pending", "created_at": "2026-11-19 10:00:00"}
+
+
+def test_a_verification_keeps_the_passages_own_characters(special):
+    from enlens_claims import tasks
+
+    ws, d, pid = special
+    payload = {"text": SPECIAL, "passage_id": pid, "doc_id": d, "subject_kind": "vca_claim", "subject_id": "v1"}
+    with ws.connect() as cx:
+        ok, errors = tasks._store_verify(cx, T1, payload, {"verdict": "supports", "confidence": 0.9, "quote": TYPED}, "m")
+    assert ok, errors
+    assert ws.scalar("SELECT quote FROM verifications") == OWN
+
+
+def test_a_checks_grade_keeps_the_passages_own_characters(special):
+    from enlens_claims import tasks
+
+    ws, d, pid = special
+    payload = {"subject_kind": "user_claim", "subject_id": "c1",
+               "passages": [{"passage_id": pid, "doc_id": d, "text": SPECIAL, "page": None}]}
+    with ws.connect() as cx:
+        ok, errors = tasks._store_verify_set(cx, T1, payload, {"evidence": [
+            {"passage": 1, "verdict": "supports", "confidence": 0.9, "quote": TYPED}]}, "m")
+    assert ok, errors
+    assert ws.scalar("SELECT quote FROM verifications") == OWN
+
+
+def test_a_label_by_the_ai_keeps_the_passages_own_characters(special):
+    from enlens_claims import profile
+
+    ws, d, pid = special
+    payload = {"framework": "sdg", "text": SPECIAL, "passage_id": pid, "doc_id": d}
+    with ws.connect() as cx:
+        ok, errors = profile.store_labels(cx, T1, payload, {"labels": [
+            {"code": "3.5", "relevance": "main", "confidence": 0.9, "quote": TYPED, "reason": "a dose"}]}, "m")
+    assert ok, errors
+    assert ws.scalar("SELECT quote FROM labels") == OWN
+
+
+def test_a_themes_quotes_keep_the_passages_own_characters(special):
+    from enlens_claims import themes
+
+    ws, d, pid = special
+    with ws.connect() as cx:
+        cx.execute("INSERT INTO themes(run_id, theme_id, name, size) VALUES ('r', 1, 'Theme 1', 1)")
+        ok, errors = themes.store_theme(cx, T1, {"run_id": "r", "theme_id": 1, "passages": [
+            {"passage_id": pid, "text": SPECIAL}]}, {"name": "Doses", "name_quote": {"passage": 1, "quote": TYPED},
+                                                    "description": "How patients took their doses each day.",
+                                                    "description_quote": {"passage": 1, "quote": TYPED}}, "m")
+    assert ok, errors
+    q = json.loads(ws.scalar("SELECT quotes_json FROM themes"))
+    assert {v["quote"] for v in q.values()} == {OWN}
+
+
+def test_a_theory_codes_definition_quote_keeps_the_passages_own_characters(special):
+    from enlens_claims import theorycodes
+
+    ws, d, pid = special
+    _task(ws, "tc1", "theory_codes", {"doc_id": d, "part": 1, "passages": [{"passage_id": pid, "text": SPECIAL}]},
+          {"concepts": [{"name": "Dosing", "reason": "said", "definition": {"passage": 1, "quote": TYPED}}]})
+    (c,) = theorycodes._part_concepts(ws, "tc1")
+    assert c["definition"]["quote"] == OWN
+
+
+def test_a_code_definitions_examples_keep_the_passages_own_characters(special):
+    from enlens_claims import codedefine
+
+    ws, d, pid = special
+    _task(ws, "cd1", "code_definition", {"code": "Dosing", "passages": [{"passage_id": pid, "text": SPECIAL}]},
+          {"definition": "Patients taking the doses they were given.", "definition_quote": {"passage": 1, "quote": TYPED},
+           "when_to_use": "When a dose is taken.", "when_to_use_quote": {"passage": 1, "quote": TYPED},
+           "when_not_to_use": "", "note": None})
+    got = codedefine.draft_of(ws, "cd1")
+    assert {v["quote"] for v in got["quotes"].values()} == {OWN}
+
+
+def test_a_group_names_quote_keeps_the_passages_own_characters(special):
+    from enlens_claims import groupnames
+
+    ws, d, pid = special
+    _task(ws, "gn1", "group_name", {"passages": [{"passage_id": pid, "text": SPECIAL}], "concept_ids": ["a", "b"],
+                                    "labels": {}}, {"name": "Daily doses", "name_quote": {"passage": 1, "quote": TYPED}})
+    groupnames.apply(ws, "gn1")
+    assert ws.scalar("SELECT quote FROM concept_group_quotes") == OWN
+
+
+def test_a_references_mention_keeps_the_passages_own_characters(special):
+    from enlens_claims import references
+
+    ws, d, pid = special
+    payload = {"doc_id": d, "passages": [{"n": 1, "passage_id": pid, "text": SPECIAL}]}
+    with ws.connect() as cx:
+        ok, errors = references.store_resolve(cx, T1, payload, {"chains": [{"name": "the dose", "mentions": [
+            {"passage": 1, "span": TYPED, "mention": "FINAL dose of 10³ mg", "named": True},
+            {"passage": 1, "span": "every dose they gave", "mention": "every dose"}]}]}, "m")   # (a chain needs two)
+    assert ok, errors
+    assert ws.scalar("SELECT text FROM mentions ORDER BY start LIMIT 1") == OWN[4:-5]   # "ﬁnal dose of 10³ mg"
+
+
+@pytest.mark.parametrize("words", ["A note on the dose.", ""])   # a note, and a highlight (no words)
+def test_a_note_or_highlight_keeps_the_documents_own_characters(special, words):
+    from enlens_claims import notes
+
+    ws, d, pid = special
+    a = SPECIAL.index(OWN)
+    notes.add(ws, d, a, a + len(OWN), quote=TYPED, text=words)
+    assert ws.scalar("SELECT quote FROM notes") == OWN
+
+
+def test_a_judgements_sentence_keeps_the_passages_own_characters(special):
+    from enlens_claims import judgements
+
+    ws, d, pid = special
+    with ws.connect() as cx:
+        cx.execute("INSERT INTO verifications(ver_id, subject_kind, subject_id, passage_id, doc_id, verdict, confidence, "
+                   "quote) VALUES ('v9', 'user_claim', 'c1', ?, ?, 'supports', 0.9, ?)", (pid, d, OWN))
+    judgements.set_judgement(ws, "c1", pid, "supports", quote=TYPED)
+    assert ws.scalar("SELECT quote FROM judgements") == OWN
+
+
+def test_a_quote_on_one_line_keeps_every_character_but_its_line_breaks():
+    """The helper the stores above share (also the theory framework's quotes, the text patterns' quotes, a theory
+    document's examples and the notes' Markdown export): line breaks become one space, nothing else changes."""
+    from enlens_claims import textutil
+
+    assert textutil.one_line("the ﬁnal dose\n  of 10³ mg  each \r\n") == "the ﬁnal dose of 10³ mg each"
+
+
+def test_same_reading_counts_each_passages_section_and_what_its_blocks_let_searches_read():
+    """Review wave 4 (READERS15-9): `same_reading` compared text and passage places only, so a passage turned from a
+    running head (left out) into body at the same offsets was "exactly as before". A made-up pair of readings."""
+    from enlens_claims.reread import same_reading
+
+    text = "Interview 3\\n\\nQ: Why?\\n\\nA: Because."
+    passages = [(0, 11, None, "left_out"), (13, 20, None, "body"), (22, 32, None, "body")]
+    blocks = [(0, 11, 0), (13, 20, 1), (22, 32, 1)]
+    assert same_reading(text, passages, blocks, text, list(passages), list(blocks))
+    flipped = [(0, 11, None, "body")] + passages[1:]
+    assert not same_reading(text, passages, blocks, text, flipped, blocks)
+    assert not same_reading(text, passages, blocks, text, passages, [(0, 11, 1)] + blocks[1:])
+    assert not same_reading(text, passages, blocks, text + " ", passages, blocks)
+    # with a person's choices the stored sections hold them and the new ones not yet: the blocks decide
+    assert same_reading(text, passages, blocks, text, flipped, blocks, choices=True)
+    assert not same_reading(text, passages, blocks, text, flipped, [(0, 11, 1)] + blocks[1:], choices=True)
+
+
+# ---- review wave 4 (READERS15-4): Stop reaches a hung reading on every route of the app ---------------------------
+def _hangs_here(monkeypatch, seconds: float = 30) -> None:
+    """The same stand-in reader in this process: a reading here would hang `seconds` (the old route of a small batch)."""
+    real = ingest._read_whole
+
+    def read(f, *a, **k):
+        if f.name == "b_hangs.txt":
+            time.sleep(seconds)
+        return real(f, *a, **k)
+
+    monkeypatch.setattr(ingest, "_read_whole", read)
+
+
+def _stopped_after(named: list, seconds: float = 1.0):
+    return lambda: any(n == "b_hangs.txt" and time.monotonic() - at > seconds for n, at in named)
+
+
+def test_stop_ends_a_hung_reading_in_a_small_batch_read_one_at_a_time(tmp_path, monkeypatch):
+    """A batch under 512 KB is read one file at a time (the common case). It was read in the app's own process, where
+    Stop is seen only between files and between OCR pages, so a reading that hung was waited for for ever. With Stop to
+    obey, it is read in a reading process too, and Stop ends it."""
+    monkeypatch.delenv("ENLENS_READ_HERE", raising=False)   # as the app reads (the tests read here otherwise)
+    folder = _folder(tmp_path, ["a.txt", "b_hangs.txt", "c.txt"])
+    started = _worker_code(monkeypatch, _HANGS)
+    _hangs_here(monkeypatch)
+    named: list = []
+    ws = Workspace.create(tmp_path / "ws")
+    assert ingest.read_workers(sorted(folder.iterdir())) == 1
+    t0 = time.monotonic()
+    stats = ingest.ingest(ws, [folder], ocr=OFF, ai_access="cloud",
+                          progress=lambda i, n, name: named.append((name, time.monotonic())),
+                          should_stop=_stopped_after(named))
+    assert time.monotonic() - t0 < 15
+    assert stats["stopped"] is True and stats["added"] == 1 and stats.get("stopped_at") == "b_hangs.txt"
+    assert "read_at_once" not in stats
+    assert started and all(p.poll() is not None for p in started)
+
+
+_QUITS_THEN_HANGS = ("import os, time; from enlens_claims import ingest as _i; _r = _i._read_whole; "
+                     "_i._read_whole = lambda f, *a, **k: ((os._exit(0) if not os.path.exists(str(f) + '.tried') and "
+                     "not open(str(f) + '.tried', 'w').close() else time.sleep(600)) if f.name == 'b_hangs.txt' "
+                     "else _r(f, *a, **k))")
+
+
+def test_stop_ends_a_hung_reading_after_its_first_reading_process_ended_on_its_own(tmp_path, monkeypatch):
+    """A file whose reading process ended on its own was read here, where Stop could not end it. It is read once more
+    in a new reading process, where Stop reaches it."""
+    monkeypatch.delenv("ENLENS_READ_HERE", raising=False)
+    folder = _folder(tmp_path, ["a.txt", "b_hangs.txt", "c.txt"])
+    started = _worker_code(monkeypatch, _QUITS_THEN_HANGS)
+    _hangs_here(monkeypatch)
+    named: list = []
+    ws = Workspace.create(tmp_path / "ws")
+    t0 = time.monotonic()
+    stats = ingest.ingest(ws, [folder], ocr=OFF, ai_access="cloud", workers=2,
+                          progress=lambda i, n, name: named.append((name, time.monotonic())),
+                          should_stop=_stopped_after(named))
+    assert time.monotonic() - t0 < 15
+    assert (folder / "b_hangs.txt.tried").exists()        # its first reading process ended on its own
+    assert stats["stopped"] is True and stats.get("stopped_at") == "b_hangs.txt"
+    assert all(p.poll() is not None for p in started)
+
+
+def test_without_stop_a_small_batch_is_still_read_here(tmp_path, monkeypatch):
+    """The command line and the connector have no Stop: a small batch is read here, as before (no process started)."""
+    monkeypatch.delenv("ENLENS_READ_HERE", raising=False)
+    folder = _folder(tmp_path, ["a.txt", "c.txt"])
+    started = _worker_code(monkeypatch, "pass")
+    ws = Workspace.create(tmp_path / "ws")
+    assert ingest.ingest(ws, [folder], ocr=OFF, ai_access="cloud")["added"] == 2 and started == []
