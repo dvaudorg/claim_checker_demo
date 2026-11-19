@@ -781,7 +781,9 @@ def effective(ws: Workspace, framework: str, doc_ids: list[str] | None = None, p
     best: dict[tuple, dict] = {}
     for r in out:
         k = (r["passage_id"], r["code"])
-        if k not in best or rank[r["source"]] < rank[best[k]["source"]]:
+        # (hunt phase 1.5: a source this version does not know, a label from a colleague's newer ENLENS, ranks last;
+        # it raised KeyError and every page of labels failed)
+        if k not in best or rank.get(r["source"], len(rank)) < rank.get(best[k]["source"], len(rank)):
             best[k] = r
     # 0.16 (K1): the labels of a code taken out of the codebook wait (codebooks.removed_codes): they do not count
     try:

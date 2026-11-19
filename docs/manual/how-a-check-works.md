@@ -59,8 +59,8 @@ certainty and, after 20 of your judgements, may suggest a strictness.
 | ⚪ | **Only uncertain evidence** | Excerpts were judged, but the AI was not sure enough about any of them for your strictness. Judge them yourself, or lower the strictness. |
 | ⚪ | **No evidence found** | None of the excerpts read was about the hypothesis. This is not proof that no document says it: read more, search with other words, or add documents. |
 | ⚪ | **Nothing in your documents matched** | No excerpt shares words (or meaning) with the hypothesis. |
-| ⚪ | **Not finished yet** | No excerpt has been judged yet. *Waiting for your judgement* when every excerpt read comes from documents no AI may read: judge them yourself. A Claude chat whose grades were refused, with tries left, is not finished yet either. |
-| ⚪ | **The check did not work** | The AI's answers did not pass the checks three times (or the app was closed before it could try again). |
+| ⚪ | **Not finished yet** | No excerpt has been judged yet. *Waiting for your judgement* when every excerpt read comes from documents no AI may read: judge them yourself. A Claude chat whose grades were refused, with tries left, is not finished yet either, for 30 minutes after it last answered. |
+| ⚪ | **The check did not work** | The AI's answers did not pass the checks three times. Also a reading nobody will finish: the app was closed before it could try again, or a Claude chat left its excerpts unanswered for 30 minutes. *Read more excerpts* then reads those excerpts again in the app (what you judged in them stays). |
 
 Excerpts waiting for your own judgement (from documents marked *No AI*) count towards no answer until you judge them.
 Nobody has read them, so they are not "not about the hypothesis" either.

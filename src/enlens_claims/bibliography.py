@@ -39,8 +39,10 @@ FRONT_CHARS = 1500         # its title page
 READABLE = {".pdf", ".docx", ".html", ".htm", ".txt", ".md"}   # files ENLENS can add (ingest.SUPPORTED)
 MAX_HASH = 300 * 1024 ** 2  # files larger than this are not compared by checksum
 SKIP_TYPES = {"note", "annotation"}
-LIBRARY_RE = re.compile(r"^(user|group-\d{1,12})$")
-KEY_RE = re.compile(r"^[A-Za-z0-9]{1,32}$")
+# hunt phase 1.5 (phase 0's note, as CQ-3): `\Z`, not `$`, which also matches before a final newline: "ABCD1234\n"
+# passed as a key and went into the address asked of Zotero
+LIBRARY_RE = re.compile(r"^(user|group-\d{1,12})\Z")
+KEY_RE = re.compile(r"^[A-Za-z0-9]{1,32}\Z")
 MAX_CHOSEN = 500           # 0.13.9: works chosen one by one (more than this: a collection is the better way)
 FORMATS = {"bibtex": "BibTeX", "ris": "RIS", "csl": "CSL JSON", "csv": "Zotero CSV"}
 
@@ -755,10 +757,30 @@ def save(ws: Workspace, works: list[dict], source: dict, progress=None) -> dict:
             continue
         seen.add(w["key"])
         uniq.append(w)
-    old = {r["item_key"]: (r["doi"], _fold(r["title"] or ""), r["year"]) for r in
-           ws.query("SELECT item_key, doi, title, year FROM bib_items")}
+    # hunt phase 1.5 (notes/files.md, not proven 5): by title and year AND the first author's name, and only where that
+    # names one work on each side: two works of one title and year (an annual report of two bodies) both took the
+    # decisions of either, so a document was confirmed as the other body's report. A decision that names no single
+    # work is not carried: the work is matched again, never linked to the wrong document
+    def ty(title, year, creators) -> tuple:
+        first = creators[0] if isinstance(creators, list) and creators and isinstance(creators[0], dict) else {}
+        return _fold(title or ""), year, _fold(str(first.get("last") or first.get("name") or ""))
+
+    old_rows = ws.query("SELECT item_key, doi, title, year, creators_json FROM bib_items")
+    old = {}
+    for r in old_rows:
+        try:
+            creators = json.loads(r["creators_json"] or "[]")
+        except ValueError:
+            creators = []
+        old[r["item_key"]] = (r["doi"], ty(r["title"], r["year"], creators))
+    old_ty = Counter(v[1] for v in old.values())
     by_doi = {w["doi"]: w["key"] for w in uniq if w["doi"]}
-    by_ty = {(_fold(w["title"]), w["year"]): w["key"] for w in uniq}
+    new_ty = Counter(ty(w["title"], w["year"], w["creators"]) for w in uniq)
+    by_ty = {}
+    for w in uniq:
+        k = ty(w["title"], w["year"], w["creators"])
+        if new_ty[k] == 1:
+            by_ty[k] = w["key"]
     with ws.connect() as cx:
         cx.execute("DELETE FROM bib_items")
         cx.executemany("INSERT INTO bib_items(item_key, item_type, title, creators_json, year, doi, url, container, "
@@ -771,8 +793,8 @@ def save(ws: Workspace, works: list[dict], source: dict, progress=None) -> dict:
                             "WHERE status IN ('confirmed', 'rejected')").fetchall():
             if r[0] in seen:
                 continue
-            doi, title, year = old.get(r[0], (None, None, None))
-            new = (by_doi.get(doi) if doi else None) or by_ty.get((title, year))
+            doi, key_ty = old.get(r[0], (None, None))
+            new = (by_doi.get(doi) if doi else None) or (by_ty.get(key_ty) if key_ty and old_ty[key_ty] == 1 else None)
             if new:
                 cx.execute("INSERT OR IGNORE INTO bib_links VALUES (?,?,?,?,?,?,?)", (new, *r[1:]))
         cx.execute("DELETE FROM bib_links WHERE item_key NOT IN (SELECT item_key FROM bib_items) "

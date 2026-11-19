@@ -1123,6 +1123,12 @@ def open_project(name: str) -> Workspace:
     if hit and hit[0] == stamp:
         ws = hit[1]
     else:
+        if hit:
+            # hunt phase 1.5 (NEEDS WINDOWS in notes/files.md): the database is another file now (the folder was
+            # replaced): the project kept for the old one is dropped with its connections closed, in every thread,
+            # not left to the garbage collector (on Windows an open database keeps its folder from being moved)
+            _OPEN.pop(key, None)
+            hit[1].close_all()
         ws = Workspace.open(path)
         _OPEN[key] = (stamp, ws)
     _follow_codebooks(ws)
@@ -1173,6 +1179,9 @@ def link_existing(path: str, name: str | None = None, clean: bool = False) -> st
     n = safe_name(name or src.name) or "workspace"
     if n in list_projects() or (home() / "projects" / n).exists():
         raise ValueError(f"A project called {n!r} already exists.")
+    from .store import refuse_newer
+
+    refuse_newer(src / "enlens.sqlite")  # hunt phase 1.5: before the cleaning below writes to a newer ENLENS's folder
     report = bundle.check_linked(src)
     if report["other"] and not clean:
         who = report["other"].get("name") or "a colleague"

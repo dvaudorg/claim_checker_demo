@@ -345,7 +345,9 @@ export async function renderProjects(view) {
           h("div", { class: "grow" },
             h("div", { class: "it" }, icon(p.linked ? "link" : "folder", { size: 16 }), h("h2", {}, p.name), current ? tag({ kind: "code" }, "current") : null, !p.ok ? tag({ kind: "attention" }, "cannot be opened") : null),
             h("div", { class: "muted small pj-counts" }, `${p.documents} ${p.documents === 1 ? "document" : "documents"} · ${p.hypotheses} ${p.hypotheses === 1 ? "result" : "results"}${p.linked ? " · folder used in place" : ""}${p.temporary ? ` · a quick look, moved to the trash on ${fmt.dateShort(new Date(p.temporary.expires_at * 1000).toISOString())} unless kept` : ""}`),
-            h("div", { class: "muted small mono pj-path" }, p.path)),
+            h("div", { class: "muted small mono pj-path" }, p.path),
+            // hunt phase 1.5: why it cannot be opened (a damaged settings file, a newer ENLENS) and what to do
+            !p.ok && p.problem ? notice({ kind: "attention" }, h("p", {}, p.problem)) : null),
           h("div", { class: "btn-row" },
             !current ? button({ sm: true, onClick: async () => { try { await api("PUT", "/api/settings", { project: p.name }); await App.refresh(); toast(`Project: ${p.name}`, "ok", { ttl: 2000 }); draw(); } catch (e) { showError(e); } } }, "Switch to") : null,
             p.ok ? zipButton(p.name, "shared", { text: "Send what you shared" }) : null,

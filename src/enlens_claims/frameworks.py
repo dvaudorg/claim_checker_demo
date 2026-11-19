@@ -454,11 +454,15 @@ def save(ws, name: str, csv_text: str, title: str | None = None, label: str | No
 
         if name_held(ws, n):   # a removed codebook's labels and versions are kept under its name (codebooks.py)
             raise ValueError(held_message(n))
-    (folder / f"{n}.csv").write_text(csv_text.lstrip("﻿"), encoding="utf-8")
+    from .home import _write_whole
+
+    # hunt phase 1.5: whole (beside it, then put in its place), as the codebooks' other files are: written in place, a
+    # write cut off (the app quit, the disk full) left a codebook uploaded again empty, and unreadable
+    _write_whole(folder / f"{n}.csv", csv_text.lstrip("﻿"))
     meta = {k: v for k, v in (("title", title), ("label", label), ("directional", bool(directional) or None)) if v}
     side = folder / f"{n}.json"
     if meta:
-        side.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+        _write_whole(side, json.dumps(meta, indent=2))
     elif side.exists():
         side.unlink()
     fw = _load_file(folder / f"{n}.csv", "project")

@@ -27,6 +27,7 @@ from typing import Any, Callable
 
 from . import __version__, access, frameworks, routing, schema, tasks
 from .reread import is_tombstone  # noqa: F401  (still importable from here)
+from .review import csv_uncell
 from .search import neighbours, passage_index, rank_passages  # noqa: F401  (re-exported for callers)
 from .store import Workspace, now
 from .textutil import find_quote, find_selection  # noqa: F401  (still importable from here)
@@ -166,12 +167,33 @@ def _round_waiting(parts: list) -> bool:
 
 def _answered_again(t) -> bool:
     """Whether a part refused with tries left will be answered again by someone other than a job of the app: a
-    Claude chat's round (it sends its grades again), a part in the queue, or a `:local` part (Read them now)."""
+    Claude chat's round (it sends its grades again; hunt phase 1.5: not once it has ended, `_left`), a part in the
+    queue, or a `:local` part (Read them now)."""
     try:
         model = t["model"]
     except (IndexError, KeyError):
         model = None
-    return model == CHAT_MODEL or _queued_open(t) or t["task_id"].endswith(":local")
+    return (model == CHAT_MODEL and not _left(t)) or _queued_open(t) or t["task_id"].endswith(":local")
+
+
+def _left(t) -> bool:
+    """Hunt phase 1.5 (CHECKS-5): an open part (pending, retry) of a round that nobody answers any more, so the round
+    has ended and the app may read its excerpts itself (`continue_check` takes it back first). The app's own part
+    left at "retry" (the app retries at once, so it was closed between two tries); and an app's or a Claude chat's
+    part untouched (made, or last answered) for as long as a claim on the queue lasts (taskqueue.CLAIM_MINUTES): a
+    chat refused once and then abandoned, or a round the app made and was closed before it tried. Never a part in the
+    queue, a `:local` part (Read them now) or a person's."""
+    if t["status"] not in ("pending", "retry") or _is_person(t) or _queued_open(t) or t["task_id"].endswith(":local"):
+        return False
+    if t["status"] == "retry" and (t["model"] or "") != CHAT_MODEL:
+        return True
+    try:
+        touched = t["touched"]
+    except (IndexError, KeyError):
+        touched = None
+    from .taskqueue import _cutoff
+
+    return bool(touched) and touched < _cutoff()
 
 
 def _round_status(parts: list) -> str:
@@ -187,10 +209,13 @@ def _round_status(parts: list) -> str:
     that did not work. Only a part the app itself was answering stays "retry" (failed, `_status_of_rounds`): the app
     retries at once, and a backend error or Stop takes the round back, so such a part is left only when the app was
     closed between two tries, and nobody will try again; "did not work, try again" is then the answer a person can
-    act on."""
+    act on. Hunt phase 1.5: a round whose main part nobody answers any more (`_left`) has ended in the same way."""
     sts = [t["status"] for t in parts if not _is_person(t)]
     if not sts:
         return "done" if parts else "pending"
+    main = _main_part(parts)
+    if main is not None and _left(main):
+        return "retry"  # hunt phase 1.5 (CHECKS-5): ended, nobody answers it any more (did not work; read it again)
     for s in ("retry", "pending"):
         if s in sts:
             if s == "retry" and all(_answered_again(t) for t in parts if not _is_person(t) and t["status"] == "retry"):
@@ -238,9 +263,9 @@ def _light_checks(ws: Workspace, claim_ids: list[str] | None = None, titles: boo
     whole text in memory to count its excerpts."""
     cols = "json_extract(j.value, '$.passage_id'), json_extract(j.value, '$.doc_id')" + (
         ", json_extract(j.value, '$.title')" if titles else "")
-    sql = (f"SELECT t.task_id, t.status, t.queued, t.model, CASE WHEN json_valid(t.payload_json) THEN (SELECT "
-           f"json_group_array(json_array({cols})) FROM json_each(t.payload_json, '$.passages') j) END AS ex "
-           "FROM tasks t WHERE ")
+    sql = (f"SELECT t.task_id, t.status, t.queued, t.model, {_TOUCHED.format(t='t')} AS touched, CASE WHEN "
+           f"json_valid(t.payload_json) THEN (SELECT json_group_array(json_array({cols})) FROM "
+           "json_each(t.payload_json, '$.passages') j) END AS ex FROM tasks t WHERE ")
     if claim_ids is None:
         rows = ws.query(sql + "t.kind='check' ORDER BY t.created_at, t.rowid")
     else:
@@ -258,7 +283,7 @@ def _light_checks(ws: Workspace, claim_ids: list[str] | None = None, titles: boo
             ex = [tuple(x) for x in json.loads(r["ex"])]
         out.setdefault(r["task_id"].split(":")[1], []).append(
             {"task_id": r["task_id"], "status": r["status"], "queued": r["queued"], "model": r["model"], "excerpts": ex,
-             "n": n})
+             "n": n, "touched": r["touched"]})
     return out
 
 
@@ -1358,7 +1383,13 @@ def continue_check(ws: Workspace, cid: str, backend, model: str, k: int = 8, ter
     groups = _rounds(ws, cid)
     last = _main_part(groups[-1]) if groups else None
     if last is not None and last["status"] not in ("done", "failed"):
-        raise ValueError(ROUND_WAITS)
+        if not _left(last):
+            raise ValueError(ROUND_WAITS)
+        # hunt phase 1.5 (CHECKS-5): a round nobody answers any more (the app closed between two tries, a chat that
+        # stopped) is taken back, so this round reads its excerpts again; a person's judgements in it stay (they are
+        # in its `:person` part and in `judgements`), and so does what the local model read
+        with ws.connect() as cx:
+            _drop_parts(cx, [last["task_id"]])
     used = _used(backend, model)
     say("rank", "Looking for further excerpts not read yet", {})
     own = readers is None
@@ -1400,7 +1431,12 @@ def chat_rules() -> str:
 
 def _check_tasks(ws: Workspace, cid: str) -> list:
     cond, args = tasks.check_task_ids_sql(cid)  # on the key: called per part on every look at the queue
-    return ws.query(f"SELECT * FROM tasks WHERE +kind='check' AND {cond} ORDER BY created_at, rowid", args)
+    return ws.query(f"SELECT *, {_TOUCHED.format(t='tasks')} AS touched FROM tasks WHERE +kind='check' AND {cond} "
+                    "ORDER BY created_at, rowid", args)
+
+
+# hunt phase 1.5 (CHECKS-5): when a part was last touched (its latest answer, else when it was made), for `_left`
+_TOUCHED = "COALESCE((SELECT MAX(r.received_at) FROM results r WHERE r.task_id={t}.task_id), {t}.created_at)"
 
 
 def _shown(payload: dict) -> list[dict]:
@@ -1627,8 +1663,8 @@ def further_round_waits(ws: Workspace, hyp_id: str) -> str | None:
             return "This check is still choosing its excerpts: read further once it has finished."
         groups = _rounds(ws, c["claim_id"])
         last = _main_part(groups[-1]) if groups else None
-        if last is not None and last["status"] not in ("done", "failed"):
-            return ROUND_WAITS
+        if last is not None and last["status"] not in ("done", "failed") and not _left(last):
+            return ROUND_WAITS  # (hunt phase 1.5: a round that has ended is read again by the further round)
     return None
 
 
@@ -1835,7 +1871,7 @@ def history(ws: Workspace, threshold: float | None = None, limit: int | None = N
     second: dict[tuple[str, str], str | None] = {}  # the latest second-model grade of each excerpt
     for r in ws.query("SELECT subject_id, passage_id, verdict FROM second_opinions ORDER BY at, rowid"):
         second[(r["subject_id"], r["passage_id"])] = r["verdict"] if r["verdict"] in GRADES else None
-    from .check_results import added_since, evidence_added
+    from .check_results import added_since, evidence_added, read_by_every_part
 
     added = evidence_added(ws)  # the result page's own (new_documents): theory and working documents are no evidence
     q = (query or "").lower().strip()
@@ -1867,7 +1903,7 @@ def history(ws: Workspace, threshold: float | None = None, limit: int | None = N
         st_all: list[str] = []  # 0.18.6: counting the Non-scientific documents too
         all_vs = []
         uncounted = corrected = reviewed = to_review = disagree = 0
-        shown_docs: set[str] = set()
+        shown_docs: list[set[str]] = []  # per part (hunt phase 1.5: a document is read once every part read it)
         limited = False
         for_you: list[bool] = []  # 0.14.3: per part, whether all it waits for is your own judgement
         for c in parts:
@@ -1890,11 +1926,12 @@ def history(ws: Workspace, threshold: float | None = None, limit: int | None = N
                 st_first.append(_status_of_rounds(sts, vf, thr, c["stage"], wt))
             else:
                 st_first.append(st[-1])
+            shown_docs.append(set())
             for r in rs:
                 shown = _excerpts(r)
                 read += len(shown)
                 for pid, did, *_title in shown:
-                    shown_docs.add(did)
+                    shown_docs[-1].add(did)
                     key = (c["claim_id"], pid)
                     if key in second and key in ai_of and second[key] != ai_of[key]:
                         disagree += 1
@@ -1920,7 +1957,7 @@ def history(ws: Workspace, threshold: float | None = None, limit: int | None = N
         model = h["model"] or first["model"] or json.loads(first["options_json"] or "{}").get("model", "")
         bal = balance(all_vs, thr)
         cutoff = max(h["created_at"] or "", h["docs_checked_at"] or "")
-        since = 0 if limited else len(added_since(added, cutoff, shown_docs))
+        since = 0 if limited else len(added_since(added, cutoff, read_by_every_part(shown_docs)))
         st_text = None
         if s == "waiting" and _only_local([c for c in parts if c["hyp_id"] == h["hyp_id"]],
                                           lambda cid: rounds.get(cid, [])):  # only_local_waits, from what is read
@@ -1989,7 +2026,9 @@ def parse_batch(text: str) -> list[dict]:
         cols = {c.strip().lower(): c for c in (reader.fieldnames or []) if c}
         col = next(cols[c] for c in BATCH_COLUMNS if c in cols)
         for r in reader:
-            t = " ".join((r.get(col) or "").split())
+            # hunt phase 1.5: ENLENS's own CSV protects a cell a spreadsheet could take for a formula with an
+            # apostrophe (review.csv_cell); read back, the hypothesis is the text without it
+            t = " ".join(csv_uncell(r.get(col) or "").split())
             if not t:
                 continue
             code = (r.get(cols.get("code", ""), "") or r.get(cols.get("target", ""), "") or "").strip()

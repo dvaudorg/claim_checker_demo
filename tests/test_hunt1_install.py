@@ -364,7 +364,9 @@ def test_the_connector_and_the_app_report_one_check_alike(monkeypatch, tmp_path,
     kept = {}
     for x in items:
         if x["access"] != "cloud" and not x["nonscientific"]:
-            kept[x["verdict"]] = kept.get(x["verdict"], 0) + 1
+            # hunt phase 1.5: a grade below the strictness is counted apart (it does not count in the status)
+            k = x["verdict"] if x["counted"] else "not_counted"
+            kept[k] = kept.get(k, 0) + 1
     assert got.get("restricted_evidence", {}) == kept
     if any(x["nonscientific"] for x in items):
         assert got["status_counting_non_scientific"] == app["status_all_sources"]

@@ -68,6 +68,14 @@ def collect(ws: Workspace, doc_id: str, hyp_ids: list[str] | None = None, layers
                "c.claim_id=v.subject_id LEFT JOIN hypotheses h ON h.hyp_id=c.hyp_id WHERE v.subject_kind='user_claim' "
                "AND v.doc_id=?")
         args: list = [doc_id]
+        # hunt phase 1.5 (notes/files.md, not proven 6): a document marked Non-scientific is read and judged, but its
+        # judgements count in no answer (verdicts.set_aside), unless the hypothesis counts such documents (K3): its
+        # note says so, as the evidence map does
+        from .docrole import nonscientific_docs
+        from .nonscientific import counting_hyps
+
+        set_aside = doc_id in nonscientific_docs(ws)
+        counts_ns = counting_hyps(ws) if set_aside else set()
         if hyp_ids:
             sql += f" AND c.hyp_id IN ({','.join('?' * len(hyp_ids))})"
             args += hyp_ids
@@ -80,14 +88,16 @@ def collect(ws: Workspace, doc_id: str, hyp_ids: list[str] | None = None, layers
                                  else (v["start"], v["end"], v["quote"]))
             if start is None or not quote:
                 continue
-            counted = mine or (e["confidence"] or 0) >= thr
+            aside = set_aside and v["hyp_id"] not in counts_ns
+            counted = (mine or (e["confidence"] or 0) >= thr) and not aside
             who = "you" if mine else "the AI"
             cert = "" if mine else f", {certainty_word(v['confidence'])} certainty ({round((v['confidence'] or 0) * 100)}%)"
             lines = [f"Hypothesis: {v['hyp'] or v['claim']}"]
             if v["hyp"] and v["claim"] != v["hyp"]:
                 lines.append(f"Part checked: {v['claim']}")
-            lines.append(f"Judgement: {WORDS[e['verdict']]} (by {who}{cert})" + ("" if counted else
-                                                                                  " — not counted at this strictness"))
+            lines.append(f"Judgement: {WORDS[e['verdict']]} (by {who}{cert})" + (
+                "" if counted else " — not counted: the document is marked Non-scientific" if aside
+                else " — not counted at this strictness"))
             if mine and v["verdict"] in GRADES and v["verdict"] != v["user_verdict"]:
                 lines.append(f"The AI's own judgement: {WORDS[v['verdict']]}")
             if v["scope_note"]:

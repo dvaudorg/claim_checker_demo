@@ -207,6 +207,13 @@ _NOTICE = re.compile(r"^\s*(retraction( note| notice)?|notice of retraction|corr
                      re.I)
 
 
+# hunt phase 1.5 (notes/files.md, not proven 4): a reply or comment titled after the work, by the same authors ("Reply to:
+# <title>"): for a title of 90 characters or more it passed as the same title, so the work and its reply were two
+# matches and the work was looked up by neither. Such a record is no candidate, unless the work's own title starts so
+_ABOUT = re.compile(r"^\s*(reply( to)?|response to|comments?( on)?|commentary( on)?|rejoinder( to)?|discussion of|"
+                    r"authors?['’]? reply( to)?)\b", re.I)
+
+
 def _years(it: dict) -> list[int]:
     out = []
     for k in ("issued", "published-print", "published-online"):
@@ -231,6 +238,8 @@ def accepts(work: dict, it: dict) -> bool:
     want = _plain(work["title"])
     raw = [str(t) for t in (it.get("title") or []) if isinstance(t, str)]
     if any(_NOTICE.match(t) for t in raw):
+        return False
+    if not _ABOUT.match(str(work["title"] or "")) and any(_ABOUT.match(t) for t in raw):
         return False
     titles = [_LABEL.sub("", t, count=1) for t in raw]
     if not any(_same_title(want, _plain(t)) for t in titles):

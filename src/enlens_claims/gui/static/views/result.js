@@ -227,6 +227,8 @@ const ownToJudge = (p) => p.read_by === "you" || (!!p.suggestion && !p.suggestio
 // never from the judgement in force, or a colleague's verdict or comment would be saved as yours. An answer without
 // them (a test's, an older app's) is read as before: the judgement in force is yours unless it names someone else.
 const colleagueOf = (p) => (p.judged_by && p.judged_by !== "you" ? p.judged_by : null);
+// hunt phase 1.5: a sentence a person chose (`quote_by` "you", or the colleague whose judgement is in force), not the AI's
+const personQuote = (p) => !!p.quote_by && p.quote_by !== "the AI" && p.quote_by !== "the local model";
 const myVerdict = (p) => (p.my_verdict !== undefined ? p.my_verdict : colleagueOf(p) ? null : p.user_verdict) || "";
 const myNote = (p) => (p.my_note !== undefined ? p.my_note : colleagueOf(p) ? null : p.user_note) || "";
 // whose judgement counts on this excerpt when it is not yours: the colleague's name, or null
@@ -1691,7 +1693,7 @@ export async function renderResult(view, [hypId], query) {
     const flip = (v) => () => { if (v === on) return; if (v) secondShown.add(key); else secondShown.delete(key); draw(current); };
     return h("span", { class: "so-flip" },
       "Highlight the quote of: ", choice({ sm: true, label: "Which quote the excerpt highlights", value: on ? "second" : "first", onPick: (v) => flip(v === "second")(),
-        options: [["first", p.quote_by === "you" ? "yours" : "the AI"], ["second", "the second opinion"]] }));
+        options: [["first", p.quote_by === "you" ? "yours" : personQuote(p) ? `${p.quote_by}’s` : "the AI"], ["second", "the second opinion"]] }));
   }
 
   // 0.18.6: the badge of a judgement of a Non-scientific document's excerpt: drawn as one that does not count, with
@@ -1856,8 +1858,8 @@ export async function renderResult(view, [hypId], query) {
           button({ kind: "quiet", sm: true, onClick: () => { pendingQuote.delete(pendingKey(p, part)); draw(current); } }, p.read_by === "you" ? "Remove the highlight" : "Forget this sentence"))));
     }
     const hasQuoteNow = Number.isInteger(p.quote_start) && Number.isInteger(p.quote_end) && p.quote_end > p.quote_start;
-    if ((hasQuoteNow && p.quote_by === "you" || showSecond) && !pending) {
-      const aiDiffers = p.quote_by === "you" && p.ai_quote && p.ai_quote !== p.quote;
+    if ((hasQuoteNow && personQuote(p) || showSecond) && !pending) {
+      const aiDiffers = personQuote(p) && p.ai_quote && p.ai_quote !== p.quote;
       card.appendChild(h("div", { class: "quote-by muted small" }, icon("highlighter", { size: 12 }),
         h("span", {}, showSecond ? `Sentence highlighted by the second opinion${p.second.model ? ` (${p.second.model})` : ""}` : othersInForce(p) ? `${p.read_by === "you" ? "Highlighted" : "Sentence highlighted"} by ${othersInForce(p)}` : p.read_by === "you" ? "Highlighted by you" : "Sentence highlighted by you",
           aiDiffers ? [" · The AI pointed to: ", h("q", {}, p.ai_quote)] : null)));

@@ -294,7 +294,12 @@ class CodebookRules:
         try:
             meta = json.loads(side.read_text(encoding="utf-8")) if side.is_file() else {}
         except ValueError:
-            meta = {}
+            # hunt phase 1.5: a side file that does not parse is left as it came, never counted as empty: written back
+            # with the title alone, the codes' ids, groups and history it may still hold were gone for good. The copy
+            # keeps its own name (`<name>_<colleague>`), so it still stands apart from yours
+            return
+        if not isinstance(meta, dict):
+            return
         meta["title"] = f"{meta.get('title') or of} ({self.sender['name'] or 'a colleague'}'s version)"
         from ..home import _write_whole
 

@@ -560,6 +560,70 @@ def _clamp_share_dates(cx: sqlite3.Connection) -> None:
     cx.execute("UPDATE shares SET at=? WHERE typeof(at)='text' AND at > ?", (at, at))
 
 
+# hunt phase 1.5: the oldest ENLENS that opens a project without harm, as the files copies exchange say theirs
+# (`sync_needs`, sync/formats.py). The database itself records no version, and an older ENLENS half-opened a project a
+# newer one had changed and wrote to it. From now on a project records in `meta` the level it needs: PROJECT_LEVEL of
+# the version that last raised it. A later version raises PROJECT_LEVEL only for a change an older one would read or
+# write wrongly (not for a table or a column it can leave aside, which `_setup` adds); an ENLENS that meets a level
+# above its own refuses the project in words and writes nothing. Versions released before this one check nothing.
+# Level 1: every project up to now.
+PROJECT_LEVEL = 1
+PROJECT_NEEDS_KEY = "project_needs"
+
+
+class ProjectTooNew(ValueError):
+    """The project was saved by a newer ENLENS, which changed it in a way this version would read or write wrongly."""
+
+
+def _needs(cx: sqlite3.Connection) -> int | None:
+    """The level a project records that it needs (None: it records none, as every project before this version);
+    raises ProjectTooNew for a value that is no whole number (no ENLENS writes one: it is not this version's)."""
+    try:
+        row = cx.execute("SELECT value FROM meta WHERE key=?", (PROJECT_NEEDS_KEY,)).fetchone()
+    except sqlite3.OperationalError:  # no table meta yet (a new database)
+        return None
+    if row is None:
+        return None
+    try:
+        level = json.loads(row[0])
+    except (TypeError, ValueError):
+        level = None
+    if not isinstance(level, int) or isinstance(level, bool):
+        raise ProjectTooNew(_too_new_words(None))
+    return level
+
+
+def _too_new_words(level: int | None) -> str:
+    return ("This project was saved by a newer ENLENS, which changed it in a way this version does not know"
+            + (f" (it needs level {level}; this version knows up to {PROJECT_LEVEL})" if level else "")
+            + ": opening it here could change it wrongly. Update ENLENS (Settings, Update), then open it again. "
+              "Nothing was changed.")
+
+
+def _refuse_newer(cx: sqlite3.Connection) -> None:
+    """Raise ProjectTooNew, in words, when the project needs a newer ENLENS than this one; reads only."""
+    level = _needs(cx)
+    if level is not None and level > PROJECT_LEVEL:
+        raise ProjectTooNew(_too_new_words(level))
+
+
+def refuse_newer(db_path: str | Path) -> None:
+    """`_refuse_newer` for a database not opened yet (a folder about to be linked and cleaned)."""
+    cx = sqlite3.connect(Path(db_path), timeout=60)
+    try:
+        _refuse_newer(cx)
+    except sqlite3.DatabaseError:
+        pass  # a file that is no database: what opens it next says so
+    finally:
+        cx.close()
+
+
+def _record_needs(cx: sqlite3.Connection) -> None:
+    """The level this version's projects need, written when it is not there or lower; never lowered."""
+    cx.execute("INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE "
+               "CAST(meta.value AS INTEGER) < CAST(excluded.value AS INTEGER)", (PROJECT_NEEDS_KEY, str(PROJECT_LEVEL)))
+
+
 def _due(cx: sqlite3.Connection, key: str) -> bool:
     """Whether the one-time step noted as `key` is still to do."""
     return cx.execute("SELECT 1 FROM meta WHERE key=?", (key,)).fetchone() is not None
@@ -844,9 +908,10 @@ def _damaged_config(path: Path) -> DamagedConfig:
                          "and work are not in that file).")
 
 
-# one change of a config.json at a time in this program (a round of the shared folder in the background and a setting
-# saved on a page): each reads the file, changes it and writes it back, and the second must read what the first wrote
-_CONFIG_LOCK = threading.RLock()
+# one change of a config.json at a time (a round of the shared folder in the background and a setting saved on a page):
+# each reads the file, changes it and writes it back, and the second must read what the first wrote. Hunt phase 1.5
+# (notes/files.md, not proven 2): across programs too (the app, the connector Claude Code runs, the command line), as
+# the data folder's own files are: `home.LOCK`, held by one thread here and through the data folder's `.lock` file
 
 
 def write_config(path: str | Path, cfg: dict) -> None:
@@ -864,8 +929,10 @@ def change_config(path: str | Path, changes: dict) -> dict:
     """Change some settings of a project's config.json and write it back whole (`write_config`); a value None takes
     the setting out. Returns the settings written. A file that does not parse (or holds no object) raises
     DamagedConfig and is left as it is: counted as empty, it was written back holding the one change alone."""
+    from .home import LOCK
+
     path = Path(path)
-    with _CONFIG_LOCK:
+    with LOCK:
         try:
             raw = path.read_text(encoding="utf-8")
         except FileNotFoundError:
@@ -945,6 +1012,7 @@ class Workspace:
     def _setup(self) -> None:
         cx = sqlite3.connect(self.db_path, timeout=60)
         try:
+            _refuse_newer(cx)  # hunt phase 1.5: before anything is written, the journal mode included
             cx.execute("PRAGMA journal_mode=WAL")  # readers do not block on a long write; persistent per file
             # each statement of the schema below is a transaction of its own: with the default FULL each one is
             # flushed to disk (about a second per new project on Windows, and a round of the shared folder makes
@@ -983,8 +1051,14 @@ class Workspace:
 
                 upgrade(cx, self.root)
                 cx.execute("DELETE FROM meta WHERE key=?", (SHARES_UPGRADE_DUE,))  # (saved with the rows it made)
+            _record_needs(cx)
             if not self.scratch:  # (a scratch copy is a colleague's file or a bundle: a merge clamps what it reads)
                 _clamp_share_dates(cx)
+                # hunt phase 1.5 (CHECKS-7, CHECKS-2): judgements an earlier version left without their check, or
+                # wiped from their excerpt; the step is its own test, as above (no mark in `meta`)
+                from .judgements import repair_old_judgements
+
+                repair_old_judgements(cx)
             cx.commit()
             ai_access_due = _due(cx, AI_ACCESS_UPGRADE_DUE)
             if dropped:

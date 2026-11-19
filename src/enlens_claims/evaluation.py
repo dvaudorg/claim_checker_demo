@@ -59,9 +59,12 @@ def _copy(ref: Workspace, name: str) -> Workspace:
     """A copy of the reference workspace as a project of the data folder (the SQLite backup API: consistent while
     the reference is open). Earlier tasks and answers are dropped from the copy; its documents stay."""
     dest = home.home() / "projects" / name
-    if dest.exists():
+    # hunt phase 1.5: a linked project of that name counts too (it is the one the name opens), and the name is claimed
+    # as every new project's is (`home.claim_name`): a vanished quick look of the same name sent the copy to the trash
+    if dest.exists() or name in home.list_projects():
         raise ValueError(f"The evaluation project {name!r} exists already. Score it, or remove it under Manage "
                          "projects to run it again.")
+    home.claim_name(name)
     dest.mkdir(parents=True)
     src = sqlite3.connect(ref.db_path)
     dst = sqlite3.connect(dest / "enlens.sqlite")

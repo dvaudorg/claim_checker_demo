@@ -255,16 +255,23 @@ class App(LibraryMixin, QueueMixin):
             return True
 
     def project_summary(self, name: str) -> dict:
+        from ..store import DamagedConfig, ProjectTooNew
+
+        problem = None
         try:
             ws = home.open_project(name)
+            ws.config  # (hunt phase 1.5: a damaged settings file is said here, on the Projects page, not at each page)
             docs = int(ws.scalar("SELECT COUNT(*) FROM documents") or 0)
             hyps = int(ws.scalar("SELECT COUNT(*) FROM hypotheses") or 0)
             ok = True
+        except (DamagedConfig, ProjectTooNew) as e:  # hunt phase 1.5: why it cannot be opened, and what to do
+            docs = hyps = 0
+            ok, problem = False, str(e)
         except Exception:
             docs = hyps = 0
             ok = False
         return {"name": name, "linked": home.is_linked(name), "documents": docs, "hypotheses": hyps, "ok": ok,
-                "path": str(home.project_path(name)), "temporary": home.is_temporary(name)}
+                "problem": problem, "path": str(home.project_path(name)), "temporary": home.is_temporary(name)}
 
     # -- read-only views -------------------------------------------------------------------------
     def state(self) -> dict:
@@ -1483,7 +1490,10 @@ class App(LibraryMixin, QueueMixin):
                                                           progress=lambda st, m, info=None, _i=i: tracker.step(
                                                               st, m, {**(info or {}), "index": _i}),
                                                           should_stop=job.cancel.is_set))
+            # hunt phase 1.5: "N of M brought up to date" counts those whose reading worked (`checked`, as the
+            # progress panel reads it for Check several), not the one that could not be read
             return {"hypotheses": done, "passages": sum(d["passages"] for d in done),
+                    "checked": [d["hyp_id"] for d in done if not d.get("failed")], "total": len(hyp_ids),
                     # 0.20.3: how many answers the new documents changed, and how many only got other counts
                     "answers_changed": sum(d["changed"] == "answer" for d in done),
                     "evidence_changed": sum(d["changed"] == "evidence" for d in done)}

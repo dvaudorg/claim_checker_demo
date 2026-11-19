@@ -71,8 +71,9 @@ STATUS_HELP = {
     "not_checked": "No excerpt has been judged yet: they wait for the AI, or for your own judgement where their "
                    "documents may not be read by any AI.",
     "no_passages": "No part of your documents uses words close to this hypothesis. Try other wording, or add documents.",
-    "failed": "The AI's answers could not be used, even after three tries (or the app was closed before it could try "
-              "again). Try again, or choose another AI model in Settings.",
+    "failed": "The AI's answers could not be used, even after three tries, or nobody will finish the reading (the app "
+              "was closed before it could try again, or a Claude chat left it unanswered for 30 minutes: Read more "
+              "excerpts reads those excerpts again). Try again, or choose another AI model in Settings.",
     "waiting": "The check is prepared and waits in the queue for Claude Code, which reads the excerpts on your own "
                "Claude plan. The answer appears here as soon as Claude Code has read them.",
 }
@@ -343,5 +344,6 @@ def _status_of_rounds(round_statuses: list[str], vs, thr: float, stage: str | No
     if "done" in round_statuses:
         return claim_status(vs, thr)
     # "retry" reaches here only for a part the app itself was answering and that nobody will try again (the app was
-    # closed between two tries); a chat's or the queue's refused answer reads as pending (claimcheck._round_status)
+    # closed between two tries); a chat's or the queue's refused answer reads as pending (claimcheck._round_status),
+    # and a round nobody answers any more (hunt phase 1.5, claimcheck._left) comes here as "retry" too
     return "failed" if round_statuses[-1] in ("failed", "retry") else "not_checked"

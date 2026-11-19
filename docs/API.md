@@ -362,7 +362,10 @@ is not one, 409 when no Ollama answers on this computer (or at the address in Se
 
 ### Projects
 
-`GET /api/projects` → `{"projects": [summary]}`.
+`GET /api/projects` → `{"projects": [summary]}`. A summary's `ok` is false for a project that cannot be opened; then
+`problem` says why and what to do, in words for a researcher, when ENLENS knows (a damaged `config.json`, which is
+never written over; a project saved by a newer ENLENS, which this version does not open or change), else it is
+`null`.
 `POST /api/projects` `{"name": "Morocco"}` → `{"project": summary}` (also becomes the current project).
 `POST /api/projects/link` `{"path": "/path/to/workspace", "name": "Pilot"}` → links an existing workspace folder
 (not copied). When the folder is another person's project (its people do not include this person) the answer is 409 with
@@ -1210,7 +1213,7 @@ colleague's check they took back (withdrawn) is left out.
  "counts": {"contested": 2, "unsupported": 1}, "threshold": 0.6}
 ```
 newest first; `counts` cover the whole project (not the filter). 0.6 adds `docs_added_since` (documents added to the
-project since the check that it has not read from: tag "documents added since") and `disagreements` (excerpts
+project since the check that not every part of it has read from: tag "documents added since") and `disagreements` (excerpts
 where a second opinion differs from the AI's judgement: tag "second opinion differs on N"). 0.11.2 adds
 `status_before_stronger`: the answer the first model gave when a stronger model read excerpts again and changed it
 (else null). `supports`/`partly`/`refutes` count the excerpts whose
@@ -1257,8 +1260,8 @@ Each passage also has: `ai_verdict` (the AI's own grade or null), `user_verdict`
 (a person judged it) and `changed` (their judgement differs from the AI's), `location` (where the quote is: "page 2",
 "paragraph 6 of 8"; without a quote, the excerpt's span; documents stored before 0.5.1: "about 40% into the
 document"), `span` (what the whole excerpt covers: "paragraphs 1–6 of 8", "pages 2–3"), `doc_start` (the document
-offset where the excerpt starts), `position_pct`, `quote_by` ("the AI", "you" when the person chose the sentence, or
-null) and `ai_quote` (the AI's own quote). Each part also has `who` and `balance`. Each part has
+offset where the excerpt starts), `position_pct`, `quote_by` ("the AI", "you" when the person chose the sentence,
+the colleague's name, as in `judged_by`, when the sentence is that of a colleague's judgement in force, or null) and `ai_quote` (the AI's own quote). Each part also has `who` and `balance`. Each part has
 `rounds_info`: `[{"round", "status", "passages", "terms": [words searched for in that round], "ai_note": "the AI's own
 note on that round's excerpts"}]`, and (this endpoint only) `more_available`: false when "read more" would find
 nothing new. `who` lists the documents behind the answer by side, with the same rule as `balance` (a document with
@@ -1329,8 +1332,8 @@ run again, so reviews are kept. Documents without a matching excerpt are only ma
 hypothesis no longer counts them. `POST /api/projects/<p>/read-new` `{}` (every hypothesis with documents added
 since), `{"hyp_ids": […]}` or `{"batch": "b…"}` → one job that does this for each, one after the other (400 when
 none has new documents). A second press for hypotheses a `read-new` job reads already gives that job back; one that
-covers others too, or a hypothesis whose `read-unread` job runs, is a 409 (wait, then press again). `result`: `{"hypotheses": [{"hyp_id", "documents", "matching", "passages", "rounds"}],
-"passages"}`.
+covers others too, or a hypothesis whose `read-unread` job runs, is a 409 (wait, then press again). `result`: `{"hypotheses": [{"hyp_id", "documents", "matching", "passages", "rounds", "failed"}],
+"passages", "checked": [the hypotheses brought up to date, without those whose reading failed], "total"}`.
 
 `GET /api/projects/<p>/hypotheses/<hyp_id>/unread` (roadmap N5, 0.18.7) → the documents this check never showed an
 excerpt of, asked again of the keyword search with each part's claim and search words (no model reads anything):

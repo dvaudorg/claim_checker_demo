@@ -177,7 +177,9 @@ def export(ws: Workspace, out: str | Path, framework: str = "sdg", embed_model: 
                         continue
                     sid = max(cands, key=lambda i: (sum(w in text[sents[i][0]:sents[i][1]].lower() for w in matched), -i))
                 cur = best.get(sid)
-                if cur is None or (_RANK[r["source"]], -(r["confidence"] or 0)) < (_RANK[cur["source"]], -(cur["confidence"] or 0)):
+                # (hunt phase 1.5: a source this version does not know, from a colleague's newer ENLENS, ranks last)
+                if cur is None or (_RANK.get(r["source"], len(_RANK)), -(r["confidence"] or 0)) < \
+                        (_RANK.get(cur["source"], len(_RANK)), -(cur["confidence"] or 0)):
                     best[sid] = r
             kt = {k["term_id"]: k["score"] for k in key_terms(ws, doc_id=doc_id, n=30, _docs=kt_docs,
                                                               _info=kt_info)} if has_terms else {}

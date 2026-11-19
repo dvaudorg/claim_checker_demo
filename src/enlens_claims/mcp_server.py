@@ -33,7 +33,7 @@ from . import home as core
 # Anthropic, as before. CLAUDE stays the name of Anthropic for what imports it.
 CLAUDE = access.ANTHROPIC
 from .sources import document_overview  # noqa: E402
-from .store import DamagedConfig  # noqa: E402
+from .store import DamagedConfig, ProjectTooNew  # noqa: E402
 
 
 def route() -> str:
@@ -150,7 +150,8 @@ def _projects(fn, unreadable: list[str] | None = None):
     for name in core.list_projects():
         try:
             got = fn(name, core.open_project(name))
-        except (sqlite3.DatabaseError, OSError, DamagedConfig):  # (hunt phase 1: a settings file that does not read)
+        # (hunt phase 1: a settings file that does not read; phase 1.5: a project saved by a newer ENLENS)
+        except (sqlite3.DatabaseError, OSError, DamagedConfig, ProjectTooNew):
             if unreadable is not None:
                 unreadable.append(name)
             continue
@@ -160,7 +161,8 @@ def _projects(fn, unreadable: list[str] | None = None):
 
 
 def _unreadable_note(names: list[str]) -> str:
-    return (f" {len(names)} project(s) could not be opened (a damaged database, or one held by another program): "
+    return (f" {len(names)} project(s) could not be opened (a damaged database or settings "
+            f"file, one held by another program, or one saved by a newer ENLENS: the app's Projects page says which): "
             f"{', '.join(names)}." if names else "")
 
 
@@ -219,15 +221,15 @@ def _summary(ws, check_id: str, threshold: float | None = None) -> dict:
     lv = access.levels(ws, {p["doc_id"] for p in r["passages"]}, provider=reader())
     every, ok = _shareable(ws, check_id)
     evidence, restricted = [], {"supports": 0, "partially_supports": 0, "refutes": 0, "waiting_for_the_user": 0,
-                                "waiting_for_the_local_model": 0}
+                                "waiting_for_the_local_model": 0, "not_counted": 0}
     held_notes = 0
     nonsci = 0  # 0.18.6: judgements of documents marked Non-scientific: shown, never counted
     for p in r["passages"]:
         if lv.get(p["doc_id"], "none") != "cloud":  # 0.11: no text of a restricted document, only what it says
             if p.get("nonscientific"):
                 nonsci += bool(p["verdict"])
-            elif p["verdict"]:
-                restricted[p["verdict"]] += 1
+            elif p["verdict"]:  # hunt phase 1.5: a grade below the strictness is not one that counts in the status
+                restricted[p["verdict"] if p.get("counted") else "not_counted"] += 1
             restricted["waiting_for_the_user"] += bool(p.get("waiting_for_you"))
             restricted["waiting_for_the_local_model"] += bool(p.get("waiting_local"))
             continue
@@ -251,7 +253,7 @@ def _summary(ws, check_id: str, threshold: float | None = None) -> dict:
     if any(restricted.values()):
         out["restricted_evidence"] = {k: v for k, v in restricted.items() if v}
         notes.append("Part of the evidence comes from documents the user keeps on this computer: their grades count "
-                     "in the status, their text is not shown.")
+                     "in the status (except those under not_counted, below the strictness), their text is not shown.")
     if (r["rationale"] and not every) or held_notes:
         if not every:
             out["summary"] = None

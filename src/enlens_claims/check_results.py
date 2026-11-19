@@ -480,7 +480,9 @@ def _result(ws: Workspace, claim_id: str, threshold: float | None = None) -> tup
                     s0 = p["text"].index(v["quote"])
                     item.update(quote_start=s0, quote_end=s0 + len(v["quote"]))
             if v.get("user_quote") and v.get("user_verdict"):  # the sentence the person points to
-                item.update(quote=v["user_quote"], quote_by="you")
+                # hunt phase 1.5: whose sentence it is, as `judged_by` says whose judgement (a colleague's in force
+                # is theirs: "you" made the page and Excel call it yours)
+                item.update(quote=v["user_quote"], quote_by=item.get("judged_by") or "you")
                 if earlier:
                     pass
                 elif base is not None and v.get("user_start") is not None:
@@ -676,8 +678,8 @@ def hypothesis_result(ws: Workspace, hyp_id: str, threshold: float | None = None
     out["second_read"] = len(with_second)
     out["disagreements"] = sum(1 for x in with_second if not x["second"]["agrees"])
     out["disagreements_to_review"] = sum(1 for x in with_second if not x["second"]["agrees"] and not yours(x))
-    out["docs_added_since"] = new_documents(ws, hyp_id, _seen={x[1] for cid in part_ids for g in extras[cid]["groups"]
-                                                               for t in g for x in _cc._excerpts(t)})
+    out["docs_added_since"] = new_documents(ws, hyp_id, _seen=read_by_every_part(
+        [{x[1] for g in extras[cid]["groups"] for t in g for x in _cc._excerpts(t)} for cid in part_ids]))
     out["docs_added_since_matching"] = sum(1 for d in out["docs_added_since"] if d["matching"])
     # 0.18.1 (N4): the assessment in words under the verdict, made by rules from the judgements above (it changes none)
     from . import assessment
@@ -769,6 +771,16 @@ def evidence_added(ws: Workspace) -> tuple[list[str], list[dict]]:
     return [d["added_at"] or "" for d in rows], rows
 
 
+def read_by_every_part(shown: list[set[str]]) -> set[str]:
+    """Of the documents each part of a check showed an excerpt of (one set per part), those every part showed: a
+    document added since the check is read for it only then (`added_since`). Hunt phase 1.5 (CHECKS-3, the gap the
+    review found): a reading of the new documents that failed for one part keeps a sibling part's round when the person
+    judged an excerpt of it meanwhile, and the document it showed then counted as read for every part, so the part
+    whose reading failed never got it again. The same for a part that read a new document by *Read more excerpts*:
+    *Read it* reads it for the other parts."""
+    return set.intersection(*shown) if shown else set()
+
+
 def added_since(added: tuple[list[str], list[dict]], cutoff: str, seen: set[str]) -> list[dict]:
     """Of `evidence_added`, the documents added after `cutoff` (the check, or the last reading of its new documents)
     that none of its rounds showed an excerpt of (`seen`)."""
@@ -789,8 +801,8 @@ def new_documents(ws: Workspace, hyp_id: str, matching: bool = True, _seen: set[
     cutoff = max(h[0]["created_at"] or "", h[0]["docs_checked_at"] or "")
     claims = [dict(r) for r in ws.query("SELECT claim_id, text, terms_json FROM user_claims WHERE hyp_id=?", (hyp_id,))]
     # `_seen`: the documents its rounds read, when the caller has read them (hypothesis_result)
-    seen_docs = _seen if _seen is not None else _shown_docs([t for c in claims
-                                                             for t in _cc._check_tasks(ws, c["claim_id"])])
+    seen_docs = _seen if _seen is not None else read_by_every_part(
+        [_shown_docs(_cc._check_tasks(ws, c["claim_id"])) for c in claims])
     rows = added_since(evidence_added(ws), cutoff, seen_docs)
     hits: set[str] = set()
     if matching and rows:
