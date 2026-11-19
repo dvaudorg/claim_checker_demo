@@ -112,7 +112,8 @@ def test_a_damaged_list_of_linked_projects_is_not_overwritten_by_linking_another
         home.link_existing(str(b.root))
     # (fix review: refused, kept, or set aside as links.json.damaged: A's link is still somewhere a person can find it)
     kept = [f.read_text(encoding="utf-8") for f in (links, links.with_name("links.json.damaged")) if f.exists()]
-    assert any(str(a.root.resolve()) in t for t in kept)
+    path = str(a.root.resolve())   # (in the file's JSON a Windows path has each backslash twice: CI's Windows run, 19 Nov)
+    assert any(path in t or json.dumps(path)[1:-1] in t for t in kept)
 
 
 def test_a_project_made_with_the_name_of_a_vanished_quick_look_is_not_sent_to_the_trash():

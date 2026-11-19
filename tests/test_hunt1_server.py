@@ -510,7 +510,9 @@ def test_read_the_new_documents_pressed_twice_by_queue_starts_one_round(served, 
     path = f"/api/projects/P/hypotheses/{hid}/read-new" if second == "one" else "/api/projects/P/read-new"
     st, b = api("POST", path, {})
     try:
-        assert st in (200, 409), b
+        # (CI's Linux run, 19 Nov: on a fast machine the first press's round is already made, so the second finds no
+        # document added since and says so in words; that is "no second round" as well)
+        assert st in (200, 409) or (st == 400 and "added since" in b.get("error", "")), b
         if st == 200:
             assert b["job"]["id"] == a["job"]["id"], (a["job"], b["job"])
         t0 = time.monotonic()
