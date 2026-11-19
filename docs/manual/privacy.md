@@ -107,7 +107,7 @@ Antigravity, until you allow it ([Settings](settings.md#an-api-key-claude-or-ano
 - **A model server on another computer** (not `localhost`, `127.0.0.1` or `::1`) counts as a cloud provider too: an
   OpenAI address as OpenAI, any other as *a server on another computer*, which no document allows until you do.
 - **In a shared project each person chooses their own provider.** The providers you tick stay in your copy: they
-  never travel to a colleague's, nor theirs to yours; the team shares each document's AI setting, as before. The owner
+  never travel in a file, not even your own backup; the team shares each document's AI setting, as before. The owner
   may limit the providers the team may use (no limit by default): a provider outside it reads none of the project's
   documents in anyone's copy, and its work waits with a note naming the limit and who set it ([Roles](roles.md#on-the-activity-view),
   which also says what is not signed yet). A colleague's older ENLENS allows Anthropic only. The

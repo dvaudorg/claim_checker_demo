@@ -91,6 +91,22 @@ log in 0.20.1)
 - **The AI mix (I1) from every route.** It lends work to the local model only from an agent route (Claude Code, Codex,
   Antigravity), not from the Claude API or another provider's API key (`routing.MIX_ROUTES`).
 
+**Signed share marks** · Level 0 · hunt phase 1.5, 19 November 2026 (the owner's item; feature freeze)
+- What is signed today: in a storage space every file a member writes in their own part (`sync/seal.py`: Ed25519, the
+  member's own key, checked against the roster the keeper signs). So a copy knows which member wrote each bundle, and
+  since this hunt a mark (*Share*, *Unshare*) in a member's name counts only from that member's own file
+  (`sharing.signers`, `sharing.trusted`); a member's own part always carries their marks.
+- What it cannot cover: a zip brought by hand and a plain shared folder carry no signature, and the people who use only
+  them have no keys (keys exist per storage space, in its members' keychains). There a mark is data relayed by design:
+  a colleague's file can still say, in an item's owner's name, that the owner took it back. Since this hunt such a mark
+  dated ahead counts as made when it arrived (`sharing.mark_at`), so the owner's own later *Share* counts over it; one
+  that arrives before the owner's own earlier mark still keeps the item out of that copy until the owner shares it
+  again. Nor can a mark relayed in a storage space by a member, in the name of someone who is not a member (a colleague
+  who sends zips only), be checked.
+- To build: each person a signing key of their own (not one per space), the public keys known to the team (in the
+  project, by the owner's word), and every mark signed by its maker, with its item, state and time, so it can be
+  checked whichever file carries it. The same keys would sign the owner's settings (*Open decisions*).
+
 ## Small things left
 
 Known gaps of built features, gathered on 18 November 2026 from the *Not yet done* lists of the changelog (the

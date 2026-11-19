@@ -71,6 +71,21 @@ def _quote(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
+def _used_by_another(cx: sqlite3.Connection, doc_id: str, f: Path) -> bool:
+    """Whether another document held here reads the file `f`."""
+    try:
+        mine = f.resolve()
+    except OSError:
+        return False
+    for (p,) in cx.execute("SELECT path FROM documents WHERE doc_id != ? AND path IS NOT NULL", (doc_id,)):
+        try:
+            if Path(p).resolve() == mine:
+                return True
+        except (OSError, ValueError):
+            continue
+    return False
+
+
 def archive(ws: Workspace, cx: sqlite3.Connection, doc_id: str, by: str | None, why: str, cause: str) -> None:
     """Keep the rows and the original of a document before a colleague's word removes it (cause: "removed" |
     "declined"). Called in the transaction `cx` that removes it (`ownership._Ctx.remove_here`): the rows are read
@@ -100,7 +115,13 @@ def archive(ws: Workspace, cx: sqlite3.Connection, doc_id: str, by: str | None, 
         f = Path(path)
         if not f.is_file():
             f = next((g for g in sorted(folder.glob(f"{doc_id}-*/{f.name}")) if g.is_file()), f)
-        if f.is_file() and (_inside(f, root / "originals") or _inside(f, folder)):
+        if f.is_file() and _used_by_another(cx, doc_id, f):
+            # another reading of the same file (a sync-clash reading, or a colleague's reading of a file held here:
+            # sync/merge.py `_document_files` points it at the file that is here) keeps it: it stays where it is, and
+            # the archive's rows name it there (hunt phase 1.5: it was moved away, and the document that stays lost
+            # its original, deleted with the archive after 30 days)
+            pass
+        elif f.is_file() and (_inside(f, root / "originals") or _inside(f, folder)):
             dest = folder / name / f.name
             dest.parent.mkdir(parents=True, exist_ok=True)
             was = (root / "originals" / doc_id / f.name) if _inside(f, folder) else f

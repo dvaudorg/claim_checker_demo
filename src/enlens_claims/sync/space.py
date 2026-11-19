@@ -189,6 +189,35 @@ def _others_using(ws: Workspace | None, space_id: str) -> list[str]:
     return out
 
 
+def _mixed_up_here(ctx: "_Ctx") -> str | None:
+    """What to do, in words, when this project cannot work in its storage space on this computer because another
+    project here came to work in the same space (an ENLENS before phase 1's refusal let a second project join it, e.g.
+    the owner trying their own invite link): the keychain's entries and the copy of the space are the space's, not the
+    project's, so the second join replaced this computer's keys, and both projects' rounds would write one copy and one
+    state. A project whose own part the team's list knows by other keys than this computer's (its keys were replaced)
+    and a project whose part was never let in while another uses the space here do nothing in a round; the copy that
+    still holds the keys the team knows goes on. None when nothing is mixed up (hunt phase 1.5). Only while another
+    project here names the space: a part known by other keys with no such project is the roster's word, which the
+    round reads and judges as before (selfsync's `keys_differ`)."""
+    others = _others_using(ctx.ws, ctx.id)
+    if not others:
+        return None
+    m = (ctx.roster.get("members") or {}).get(ctx.desc.get("part"))
+    if isinstance(m, dict) and isinstance(m.get("sign"), str):
+        if m["sign"] == ctx.ident.public()["sign"]:
+            return None
+        then = ("then set up a new storage space in this project and send your colleagues new invite links"
+                if ctx.keeper else "then ask the owner for a new invite link and join with it in this project (Join a "
+                                   "team)")
+        return (f"This computer's keys for the storage space are no longer this project's: the project ‘{others[0]}’ "
+                f"joined the same space here and replaced them, so the team would set aside what this project sends. "
+                f"Choose Stop using the storage space here in ‘{others[0]}’ and in this project, {then}. Your work "
+                f"stays in this project.")
+    return (f"Another project on this computer, ‘{others[0]}’, works in the same storage space, and one computer works "
+            f"in a storage space from one project only. Choose Stop using the storage space here in this project "
+            f"(Team page); your work in it stays.")
+
+
 def _evaluation_copy(root: Path) -> bool:
     """Whether a project is a copy made to evaluate the AI or test a model (`evaluation._copy` marks its database with
     meta "evaluation"): it carries the original's config.json, storage space and all, but nobody works in the team
@@ -359,6 +388,7 @@ class _Ctx:
         self.problems: list[dict] = []
         self.changed_desc = False
         self.missing: set[str] = set()   # the space's own files this round asked for and did not find
+        self.older_roster = False        # the space held an older list of members than this copy read (`_read_roster`)
         self.walked = False              # this round listed the space (`_walk`)
 
     @property
@@ -370,20 +400,9 @@ class _Ctx:
         return max(self.epochs)
 
     def save(self) -> None:
-        import time
-
         data = json.dumps(self.state)
         if data != self._saved or not self.state_path.is_file():
-            part = self.state_path.with_name(self.state_path.name + ".part")
-            part.write_text(data, encoding="utf-8")
-            for i in range(20):   # (Windows: a reader that has the file open makes the replace wait a moment)
-                try:
-                    os.replace(part, self.state_path)
-                    break
-                except PermissionError:
-                    if i == 19:
-                        raise
-                    time.sleep(0.05)
+            _mirror_put(self.state_path, data.encode("utf-8"))   # (whole; on Windows it waits for a reader a moment)
             self._saved = data
         if self.changed_desc:
             _save(self.ws, self.desc)
@@ -678,7 +697,10 @@ def _member_access(desc: dict, keeper: dict | None, part: str) -> tuple[dict, li
             rid, rkey = _b2(lambda: b2.create_key(acc, f"ENLENS {part} read", b2.MEMBER_READ_CAPS,
                                                    bucket_id=desc.get("bucket_id"), name_prefix=desc["prefix"]))
         except SpaceProblem:
-            b2.delete_key(acc, wid)
+            try:   # (best effort: a failed clean-up must not hide why the invite failed, hunt phase 1.5)
+                b2.delete_key(acc, wid)
+            except (b2.B2Problem, StorageProblem):
+                pass
             raise
         return {"key_id": wid, "secret": wkey, "read_key_id": rid, "read_secret": rkey}, [wid, rid]
     if service == "r2":
@@ -933,7 +955,9 @@ def _cancel_invite_unlocked(ws: Workspace, part: str) -> dict:
     try:   # (a note that a key file for it was set aside goes with it)
         st = json.loads((base / ".space-state.json").read_text(encoding="utf-8"))
         if st.get("aside", {}).pop(f"parts/{part}/m/key.json", None) is not None:
-            (base / ".space-state.json").write_text(json.dumps(st), encoding="utf-8")
+            # written whole (hunt phase 1.5): half a file, cut off, read as nothing, and the copy forgot the team's
+            # list of members and what it took of each colleague (an older file put back was then taken again)
+            _mirror_put(base / ".space-state.json", json.dumps(st).encode("utf-8"))
     except (OSError, ValueError, AttributeError):
         pass
     out = status(ws)
@@ -1136,16 +1160,21 @@ def _bind_joins(ctx: _Ctx) -> bool:
         held = {m.get("person") for m in members.values() if isinstance(m, dict) and not m.get("removed")}
         why = "A key file for an invite did not hold that invite's proof. It was set aside; the invite still waits."
         try:
+            # hunt phase 1.5: an invite whose secret is gone from the keychain lets nobody in: a proof made with an
+            # empty key is one any member (who holds the project's key) can make
+            join_key = seal.unb64(sec.get("join") or "") if isinstance(sec, dict) else b""
+            if not join_key:
+                why = ("A key file came for an invite whose secret is no longer on this computer, so ENLENS cannot "
+                       "tell who wrote it. It was set aside. Withdraw the invite and make a new one.")
             h, data = seal.open_unverified(blob, ctx.epochs)
             body = json.loads(data)
             if not isinstance(body, dict):
                 raise ValueError("not a key file")
             person = str(body.get("person") or "")
             public = {"sign": body.get("sign"), "box": body.get("box")}
-            ok = bool(people.ID_RE.fullmatch(person) and h.by == part and h.path == f"{person}/key.json"
+            ok = bool(join_key and people.ID_RE.fullmatch(person) and h.by == part and h.path == f"{person}/key.json"
                       and isinstance(public["sign"], str) and isinstance(public["box"], str)
-                      and seal.check_join_proof(seal.unb64(sec.get("join") or ""), part, person, public,
-                                                str(body.get("proof") or "")))
+                      and seal.check_join_proof(join_key, part, person, public, str(body.get("proof") or "")))
             if ok:
                 seal.verify(blob, public["sign"])
             if ok and person in held:   # someone in the team already: nobody joins under another's name
@@ -1241,6 +1270,7 @@ def _read_roster(ctx: _Ctx) -> None:
         if seq is None or obj.get("space") != ctx.id or not isinstance(obj.get("members"), dict):
             raise ValueError("not a roster")
         if seq < (_as_int(ctx.desc.get("roster_seq")) or 0):
+            ctx.older_roster = True   # (put back: the keeper writes its own again, `_put_back_roster`)
             return  # (an older list: nothing new)
         if seq == (_as_int(ctx.desc.get("roster_seq")) or 0) and ctx.state.get("roster"):
             return
@@ -1306,10 +1336,10 @@ def _read_keys(ctx: _Ctx) -> None:
 
 
 def _mirror_put(path: Path, data: bytes) -> None:
+    """A file of the copy of the space on this computer, written whole (`folder._put_bytes`: on Windows the replace
+    waits a moment for a reader that holds the file open, such as the Team tab's status, hunt phase 1.5)."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    part = path.with_name(path.name + ".part")
-    part.write_bytes(data)
-    os.replace(part, path)
+    folder._put_bytes(path, data)
 
 
 def _logical(kind: str, pid: str, leaf: str) -> str | None:
@@ -1477,7 +1507,12 @@ def _older(ctx: _Ctx, part: str, leaf: str, have: Path, data: bytes) -> bool:
         if not (isinstance(had, list) and len(had) == 2 and isinstance(had[0], str)):
             had = _person_age(folder._json(have) or {})   # (no record yet: the mirror's copy, as taken before)
         at = _person_age(new)
-        return had is not None and (at is None or at < tuple(had))
+        older = had is not None and (at is None or at < tuple(had))
+        # hunt phase 1.5: a file without "n" comes from an ENLENS before it was counted, whose "updated_at" goes back
+        # with its computer's clock: older by its time, it may still be the newest. One that turns the switch on is
+        # taken (the stricter wins: an old one put back can only keep more documents out); one with the switch off
+        # stays aside until a time after the newest taken (`_taken` keeps that time)
+        return older and not (new.get("n") is None and new.get("keep_out") is True)
     return False
 
 
@@ -1510,7 +1545,9 @@ def _taken(ctx: _Ctx, part: str, leaf: str, data: bytes) -> None:
         rec["epoch"], rec["last"] = new["epoch"], _as_int(new.get("last"))
         rec["at"] = new.get("at") if isinstance(new.get("at"), str) else None
     elif leaf == "person.json" and _person_age(new) is not None:
-        rec["person"] = list(_person_age(new))
+        had = rec.get("person")   # (never back: a file taken although older, `_older`, leaves the newest time)
+        held = tuple(had) if isinstance(had, list) and len(had) == 2 and isinstance(had[0], str) else None
+        rec["person"] = list(max(_person_age(new), held) if held is not None else _person_age(new))
 
 
 def _pull(ctx: _Ctx, deep: bool = False) -> dict | None:
@@ -1719,10 +1756,13 @@ def _read_keeper_handover(ctx: _Ctx) -> None:
     if isinstance(secret.get("drive_users"), dict):   # (a drive: the user names, so a later move shares by itself)
         ctx.desc["drive_users"] = {p: str(u)[:200] for p, u in secret["drive_users"].items()
                                    if _PART.fullmatch(str(p)) and isinstance(u, str) and u.strip()}
-    ctx.desc["invites"] = [i for i in secret.get("invites") or [] if isinstance(i, dict) and
+    # hunt phase 1.5: each list of a shape this version does not write is taken as empty: iterated unchecked, it stopped
+    # the round's pull at this step every round, and the new owner never became the keeper
+    invites, secrets = secret.get("invites"), secret.get("invite_secrets")
+    ctx.desc["invites"] = [i for i in (invites if isinstance(invites, list) else []) if isinstance(i, dict) and
                            _PART.fullmatch(str(i.get("part")))]
-    for part, sec in (secret.get("invite_secrets") or {}).items():
-        if sec and _PART.fullmatch(str(part)):
+    for part, sec in (secrets if isinstance(secrets, dict) else {}).items():
+        if isinstance(sec, dict) and sec and _PART.fullmatch(str(part)):   # ({"join": …}, as `invite` keeps it)
             _put_secret(ctx.id, f"invite:{part}", sec)
     ctx.state["keeper_taken"] = n
     ctx.changed_desc = True
@@ -1995,6 +2035,10 @@ def _sync_now_unlocked(ws: Workspace, progress: Progress | None = None, should_s
     if isinstance(refused, dict):   # (nothing is asked of the drive, and nothing written, until a new app password)
         out["problems"].append({"kind": "denied", "person": None, "seq": None, "message": _refused_words(refused)})
         return out
+    mixed = _mixed_up_here(ctx)
+    if mixed:   # (nothing read, nothing sent: the copy of the space here and its state are shared with that project)
+        out["problems"].append({"kind": "other_project_here", "person": None, "seq": None, "message": mixed})
+        return out
 
     def storage_problem(e: StorageProblem, doing: str) -> None:
         kind = "unreachable" if e.kind in ("unreachable", "maintenance") else e.kind
@@ -2019,6 +2063,12 @@ def _sync_now_unlocked(ws: Workspace, progress: Progress | None = None, should_s
         traceback.print_exc()
         ctx.problem("set_aside", f"Something in the storage space could not be read ({type(e).__name__}); it was "
                                  "left aside. Your work and your colleagues' is safe.")
+        moved = None
+    except OSError as e:   # hunt phase 1.5: this computer's copy of the space (on Windows, a file another program
+        # holds open past `folder._replace`'s wait; a full disk): what was not written is fetched again next round
+        ctx.problem("busy", f"ENLENS could not write its copy of the storage space on this computer "
+                            f"({e.strerror or e}): another program may have held one of its files open. Nothing was "
+                            "lost; ENLENS tries again on the next round.")
         moved = None
     if moved is not None and moved.get("invite_again"):
         out["moved_away"] = moved["where"]
@@ -2131,11 +2181,15 @@ def _walk(ctx: _Ctx) -> list[str]:
 def _put_back_roster(ctx: _Ctx) -> list[str]:
     """The keeper writes the list of members and the keys again when this round did not find them (with a new number,
     so every copy takes it); nobody can join without them. No request when they are there: the round reads them
-    anyway."""
+    anyway. An older list put back in place of the newest (hunt phase 1.5: a removed colleague still in it) is written
+    over the same way: copies that read the newer one ignore it, but a colleague who joins now would take it."""
     gone = sorted(ctx.missing & {"space/roster.json", "space/keys.json"})
-    if not gone or not ctx.keeper or ctx.desc["part"] not in (ctx.roster.get("members") or {}):
+    if not (gone or ctx.older_roster) or not ctx.keeper or ctx.desc["part"] not in (ctx.roster.get("members") or {}):
         return []
     _write_roster(ctx, json.loads(json.dumps(ctx.roster)), rekey=False)
+    if ctx.older_roster and not gone:
+        _note(ctx.ws, "space-restored", "An older list of the team's members was found in the storage space; this "
+                                        "copy wrote the newest again.")
     return gone
 
 

@@ -12,8 +12,8 @@ from typing import Any
 from .. import people
 from ..store import Workspace, now
 from .codebook_merge import CodebookRules
-from .common import (DOC_ID, ID_COLS, LOCAL_ONLY, OWN_RULES, READING_TABLES, UNFINISHED, _TEXT_COLS, _TOKEN, _cols,
-                     _pk, _rows, _sha, _tokens, base_id, text_fps)
+from .common import (ALSO_REMOVED, DOC_ID, ID_COLS, LOCAL_ONLY, OWN_RULES, READING_TABLES, UNFINISHED, _TEXT_COLS,
+                     _TOKEN, _cols, _pk, _rows, _sha, _tokens, base_id, text_fps)
 from .fingerprints import (_canon, _check_unit, _fingerprints, _known, _plain, _running, _themes_unit,
                            record_seen)
 from .owner_merge import OwnerRules
@@ -1050,8 +1050,17 @@ class _Merge(CodebookRules, ReadingRules, ShareRules, OwnerRules):
             elif row is None:
                 # one not held here: noted under the name of whoever removed it, so it keeps out only a row of theirs
                 # (notes.merge and researchlog.merge read the name; hunt phase 1, MERGE-6)
-                cx.execute("INSERT OR IGNORE INTO sync_removed(kind, key, title, at, person_id) VALUES (?,?,?,?,?)",
-                           (r["kind"], r["key"], r["title"], r["at"], r["person_id"]))
+                held = cx.execute("SELECT person_id FROM sync_removed WHERE kind=? AND key=?",
+                                  (r["kind"], r["key"])).fetchone()
+                if held is None:
+                    cx.execute("INSERT INTO sync_removed(kind, key, title, at, person_id) VALUES (?,?,?,?,?)",
+                               (r["kind"], r["key"], r["title"], r["at"], r["person_id"]))
+                elif held[0] and r["person_id"] and held[0] != r["person_id"]:
+                    # someone else said first that they removed it: this one is kept beside it, so the author's own
+                    # removal keeps the note out whichever came first (hunt phase 1.5, MERGE-6; common.ALSO_REMOVED)
+                    cx.execute("INSERT OR IGNORE INTO sync_removed(kind, key, title, at, person_id) VALUES (?,?,?,?,?)",
+                               (ALSO_REMOVED[r["kind"]], f"{r['key']}|{r['person_id']}", None, r["at"],
+                                r["person_id"]))
 
     def _other_tables(self, cx: sqlite3.Connection) -> None:
         """The SDG pack's tables, an add-on's, the record of model runs: rows not here yet come in (yours are kept)."""

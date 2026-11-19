@@ -153,7 +153,9 @@ installation ([Switching everything off](#switching-everything-off)).
 - **Shared projects (I7 stage 3).** Each person chooses their own provider. In a project that is shared (a shared
   folder, a storage space, an owner, or work exchanged with a colleague) the providers a person ticks are their own
   consent: kept in their copy, never sent to a colleague's, and not taken from a colleague's documents or project file
-  (`sync/merge.py`, `bundle._forget_folder`). Lists that earlier versions copied from a colleague are cleared once, in
+  (`sync/merge.py`, `bundle._forget_folder`), nor from any project zip, one that says it is the person's own too
+  (nothing in a zip proves whose it is: `bundle._providers_asked_again`; the Documents page asks to tick them again).
+  Lists that earlier versions copied from a colleague are cleared once, in
   a shared project, unless this person set them (their own research-log entry), and the person is told on the
   Documents page (`access.settle_own_providers`). Which documents may go to cloud AI at all stays the team's. The
   owner may limit the providers the team may use (`teamproviders.py`, off by default): a provider outside it reads

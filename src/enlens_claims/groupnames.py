@@ -40,7 +40,8 @@ and a name that fits no group there is kept, listed apart, not drawn.
   (`also_named`: "Also named … by …", with *Remove*, a removal like *Forget this name*).
 - *What comes in is checked* (`valid_row`): a row ENLENS could not have written (broken JSON, a wrong type, an id that
   is not a person's) is left out, and one dated more than `FUTURE` seconds ahead of this clock waits. A version last
-  changed by this copy's person, from someone else's file, is not taken (as for reviews). A colleague's file may carry
+  changed by this copy's person, or a removal in their name, is not taken from any file (as for reviews; also not from
+  one that says it is their own: a zip's "from" proves nothing). A colleague's file may carry
   a third person's names, as it carries their reviews: they are trusted as the rest of the team's work is.
 - *A name removed* (*Use its concepts as the name*, *Forget this name*) is noted in `sync_removed` (kind `group_name`),
   so a colleague's copy does not bring it back; a change made after the removal (a rename on another copy) wins.
@@ -593,8 +594,8 @@ def merge(cx, names: list[dict], quotes: list[dict], removed: list[dict], sender
     apart (neither knows the other) are settled by the later change, then the larger id of who made it, whatever their
     kind, so every copy ends the same; the one that lost stays as a name of its own when it was a person's decision in
     other words. Every row is checked first (`valid_row`), and one dated more than FUTURE seconds ahead of this clock
-    waits. A version or removal last changed by this person, from someone else's file, is not taken (as for reviews:
-    a file cannot change your work in your name). Returns how many names came in or changed."""
+    waits. A version or removal last changed by this person is not taken from any file, one that says it is this
+    person's own too (as for reviews: a file cannot change your work in your name). Returns how many names came in or changed."""
     fill_people(cx, me)
     latest = _plus(now(), FUTURE)
     gone = {r[0]: r[1] or "" for r in cx.execute("SELECT key, at FROM sync_removed WHERE kind=?", (REMOVED,))}
@@ -602,7 +603,9 @@ def merge(cx, names: list[dict], quotes: list[dict], removed: list[dict], sender
         key, at = r.get("key"), _iso(r.get("at"))
         if not isinstance(key, str) or not key or at is None or at > latest:
             continue
-        if r.get("person_id") == me and sender != me:
+        if r.get("person_id") == me:
+            # this person's own removals are made here, never taken from a file, whoever it says sent it (a zip's
+            # "from" proves nothing: hunt phase 1.5, as sync/merge.py `_removed` since phase 1, MERGE-1)
             continue
         row = cx.execute("SELECT updated_at FROM concept_group_names WHERE name_id=?", (key,)).fetchone()
         if row is not None and (row[0] or "") <= at:
@@ -633,8 +636,8 @@ def merge(cx, names: list[dict], quotes: list[dict], removed: list[dict], sender
         if r is None:
             continue
         nid = r["name_id"]
-        if r["changed_by"] == me and sender != me:
-            continue
+        if r["changed_by"] == me:
+            continue                         # (nor a version in this person's name, whoever the file says sent it)
         if nid in gone and gone[nid] >= r["updated_at"]:
             continue                         # removed after this version was made
         mine = cx.execute("SELECT * FROM concept_group_names WHERE name_id=?", (nid,)).fetchone()

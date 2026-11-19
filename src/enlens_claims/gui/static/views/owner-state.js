@@ -359,6 +359,14 @@ export function refusedWords(r, v) {
     return { title: "A change in your name was refused",
       text: `${viaFile} says you handed the project ${to && to !== "you" ? `to ${cap1(to)}` : "over"}. You did not: nothing was changed here.`, takeBack: true };
   }
+  if (r.kind === "removal") {
+    // hunt phase 1.5: often the person's own earlier word (their old backup brought in again): what happened, and
+    // what to do to remove the document now
+    const t = (r.what && r.what.title) || r.title;
+    return { title: "A removal in your name was not taken",
+      text: `${viaFile} says you removed ${t ? `“${t}”` : "a document"}, which is in your copy now. A file never removes a document in your name, so it stays. To remove it, use its menu on Documents.`,
+      takeBack: false };
+  }
   const what = r.kind === "canon" ? (r.title ? `a change to “${r.title}”` : "a change to a document")
     : r.kind === "roles" ? "a change of a role" : r.kind === "decisions" ? "an answer to a proposal" : r.kind === "proposals" ? "a proposal" : "a change";
   return { title: "A change in your name was refused",

@@ -313,6 +313,9 @@ def merge(cx: sqlite3.Connection, rows: list[dict], fix, sender: str | None = No
     # who removed each entry noted as removed: only its author's removal keeps an entry out (as for notes,
     # notes.merge; hunt phase 1, MERGE-6). A note of removal without a name (from before 0.14) still keeps it out
     gone = {r[0]: r[1] for r in cx.execute("SELECT key, person_id FROM sync_removed WHERE kind='log'")}
+    from .sync.common import removed_also
+
+    also = removed_also(cx, "log")  # a second person's removal of an entry not held here (hunt phase 1.5, MERGE-6)
     cols = [r[1] for r in cx.execute("PRAGMA table_info(research_log)")]
     via_here: set[str] = set()
     if sender:
@@ -328,6 +331,8 @@ def merge(cx: sqlite3.Connection, rows: list[dict], fix, sender: str | None = No
             continue
         if r["entry_id"] in gone and (gone[r["entry_id"]] is None or not r.get("person_id")
                                       or gone[r["entry_id"]] == r.get("person_id")):
+            continue
+        if (r["entry_id"], r.get("person_id")) in also:
             continue
         r = fix(r)
         if r is None:

@@ -482,9 +482,12 @@ and original files are stored there once for the whole team.
 - `PUT /api/projects/<p>/shared-folder {"path", "keep_out"?}` → the status above. The folder must exist, be writable,
   not be inside the project's own folder, and not hold the project nor ENLENS's own folder (the cloud service would
   copy the project's database to the team): 400 in plain words otherwise. The project's folder in it (`ENLENS-…`)
-  chosen by mistake stands for the folder that holds it. The research log notes the choice (kind `sync`).
+  chosen by mistake stands for the folder that holds it. The research log notes the choice (kind `sync`). Refused (400,
+  in words) while the project works through a storage space: leaving the space forgets its keys, so that is done only
+  by the DELETE below.
 - `DELETE /api/projects/<p>/shared-folder` → the status: the project stops using the folder (nothing in it is
-  removed; what came in stays).
+  removed; what came in stays). With a storage space, this is *Stop using the storage space here*: this computer
+  forgets its keys to it (`DELETE …/space` does the same).
 - `PUT /api/projects/<p>/shared-folder/keep-out {"keep_out": bool}` → the status. On: documents marked *Only a local
   AI* or *No AI* stay out of the folder (their readings, files, the AI work on them, and their passages in what a
   shared check handed to the AI); colleagues add those files themselves, and checks that read them still come in
@@ -524,7 +527,11 @@ folder's (a space is looked at every 10 minutes at most, and about 20 s after a 
 password is asked nothing more until `PUT …/space/drive-password` or `POST …/space/drive-retry`), `not_found` (a drive's
 folder is not where this copy has it: looked for again by its contents every half hour), `full` (the service's cap or
 billing), `set_aside` (a file or the list of members not signed as it must be: nothing of it came in), `no_keys` (this
-computer has not got the space's keys: a project copied from elsewhere; ask for a new invite).
+computer has not got the space's keys: a project copied from elsewhere; ask for a new invite), `other_project_here`
+(another project on this computer came to work in the same space before such joins were refused, and this copy's keys
+or its part are not the team's: the round does nothing; the message says what to do), `busy` (a file of the copy on
+this computer could not be written, on Windows one another program held open: what was not written is fetched again
+next round).
 - `GET …/shared-folder` → as above, with `"space": null | {"id", "service": "b2" | "r2" | "webdav" | "dir", "where",
   "region", "in_eu", "keeper" (this copy keeps the space's keys: it invites, removes and moves), "joined" (the keeper's
   copy has let this copy in), "members": [{"part", "person", "name", "me", "keeper", "removed", "since"}], "invites":

@@ -141,11 +141,28 @@ def _json(path: Path) -> dict | None:
     return out if isinstance(out, dict) else None
 
 
+def _replace(part: Path, path: Path) -> None:
+    """`part` in place of `path`, at once. On Windows a file another reader holds open for a moment (the Team tab's
+    status reading a colleague's head.json, a cloud service's program, an indexer) cannot be replaced: the replace
+    waits a moment and tries again, as `space._Ctx.save` always did, and only then raises (PermissionError, an
+    OSError: each round reports it in words)."""
+    import time
+
+    for i in range(20):
+        try:
+            os.replace(part, path)
+            return
+        except PermissionError:
+            if i == 19:
+                raise
+            time.sleep(0.05)
+
+
 def _put_bytes(path: Path, data: bytes) -> None:
     """Written whole or not at all: a reader (or the cloud service) never sees half a file under its name."""
     part = path.with_name(path.name + ".part")
     part.write_bytes(data)
-    os.replace(part, path)
+    _replace(part, path)
 
 
 def _put_json(path: Path, obj: dict) -> None:
@@ -155,7 +172,7 @@ def _put_json(path: Path, obj: dict) -> None:
 def _copy_whole(src: Path, dest: Path) -> None:
     part = dest.with_name(dest.name + ".part")
     shutil.copyfile(src, part)
-    os.replace(part, dest)
+    _replace(part, dest)
 
 
 def _int(v: Any) -> int | None:
@@ -285,12 +302,15 @@ def check_folder(ws: Workspace, raw: Any) -> Path:
 
 def set_folder(ws: Workspace, raw: Any) -> dict:
     """Use this shared folder for the project (checked: `check_folder`). Nothing is written in it until the next round
-    (`sync_now`). Returns `status`."""
-    p = check_folder(ws, raw)
+    (`sync_now`). Returns `status`. Refused while the project works through a storage space (hunt phase 1.5):
+    leaving it here forgets its keys, the owner's master key or token with no way back, so only the Team page's *Stop
+    using the storage space here* does that, after it asks (`clear_folder`)."""
     from . import space
 
-    if space.configured(ws) is not None:  # (a folder instead of the storage space: the space is left on this computer)
-        space.leave(ws)
+    if space.configured(ws) is not None:
+        raise FolderProblem("This project works through a storage space. To use a shared folder instead, first choose "
+                            "Stop using the storage space here on the Team page.", "space")
+    p = check_folder(ws, raw)
     before = chosen(ws)
     _set_config(ws, **{FOLDER: str(p)})
     if before is None or Path(before) != p:
@@ -2185,11 +2205,14 @@ def _withdrawals_first(ws: Workspace, team: Path, me: str, opened: _Opened, shou
     if not said:
         return
     root = Path(ws.root)
+    # in a storage space each file is its writer's, signed: a member's mark only from their own (hunt phase 1.5)
+    signed = sharing.signers(ws)
     with ws.connect() as cx:
         for r, sender in said:
             kind, key = r.get("kind"), r.get("key")
             if kind in sharing.KINDS and isinstance(key, str) and key and not sharing.exists(cx, root, kind, key):
-                sharing.receive(cx, kind, key, r, me, False, had=False, sender=sender)
+                sharing.receive(cx, kind, key, r, me, False, had=False, sender=sender, first_hand=bool(signed),
+                                signed=signed)
 
 
 def _once(ws: Workspace) -> Callable[[], None]:

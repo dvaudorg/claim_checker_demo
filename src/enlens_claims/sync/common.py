@@ -93,6 +93,26 @@ def _tokens(s: str, mp: dict[str, str]) -> str:
     return _TOKEN.sub(lambda m: mp.get(m.group(0), m.group(0)), s) if mp and s else s
 
 
+# Hunt phase 1.5 (MERGE-6): a note or a research log entry this copy does not hold, that two people each say they
+# removed. `sync_removed` holds one note of removal per (kind, key), and the first one kept the place: when a
+# colleague's file said first that they removed a third person's note, the author's own removal that came after was not
+# recorded, and a relayed copy of the note came in. Which of the two is the author cannot be told without the note, but
+# no choice is needed: a removal keeps out only a row of its own remover's (notes.merge, researchlog.merge), so each
+# further one is kept beside the first, under its own kind (`ALSO_REMOVED`, key "<id>|<person>"). They stay on this
+# computer (sharing.strip; the shared folder writes no note's removal but its item's own) and older versions skip them.
+ALSO_REMOVED = {"note": "note-also", "log": "log-also"}
+
+
+def removed_also(cx: sqlite3.Connection, kind: str) -> set[tuple[str, str]]:
+    """{(key, person)} of the further notes of removal of `kind` ("note" or "log") kept here (`ALSO_REMOVED`)."""
+    out = set()
+    for (k,) in cx.execute("SELECT key FROM sync_removed WHERE kind=?", (ALSO_REMOVED[kind],)):
+        key, _, person = (k or "").partition("|")
+        if key and person:
+            out.add((key, person))
+    return out
+
+
 def _rows(cx: sqlite3.Connection, sql: str, args: Iterable = ()) -> list[dict]:
     cur = cx.execute(sql, tuple(args))
     cols = [c[0] for c in cur.description]

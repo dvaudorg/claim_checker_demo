@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from . import __version__
-from .store import Workspace, scratch, write_config
+from .store import Workspace, now, scratch, write_config
 
 STORED = {".pdf", ".zip", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".docx", ".xlsx", ".pptx", ".gz"}  # compressed
 MAX_IMPORT = 8 * 1024 ** 3
@@ -453,9 +453,47 @@ def import_project(zip_path: str | Path, dest: str | Path, merge_only: bool = Fa
         # roles (§4.11): whose copy this is, so linking its folder later does not take it for another person's
         ws.set_meta(COPY_FOR, me(), cx)
     _forget_folder(ws, sender)
+    _providers_asked_again(ws)
     if not merge_only:
         _adopt(ws, sender)
+    _no_local_drafts(ws, sender)
     return ws
+
+
+def _providers_asked_again(ws: Workspace) -> None:
+    """Hunt phase 1.5 (MERGE15-7): which cloud providers may read each document is consent, and a zip never carries it,
+    not even one that says it is this person's own. Nothing in a zip can tell this person's own backup from a zip a
+    colleague made and named them in (bundle.json "from", the project's rows and its research log are all written by
+    whoever made the zip; no secret of the person's goes into one), and a list taken from it would let text go to a
+    provider they never allowed. So every list is cleared and the person is told in place (`access.PROVIDERS_RESET`,
+    the line on the Documents page) to tick them again. A colleague's lists were cleared already (`_forget_folder`)."""
+    from .access import PROVIDERS_RESET, relabel
+
+    with ws.connect() as cx:
+        n = cx.execute("SELECT COUNT(*) FROM documents WHERE ai_providers IS NOT NULL").fetchone()[0]
+        if not n:
+            return
+        cx.execute("UPDATE documents SET ai_providers=NULL")
+        ws.set_meta(PROVIDERS_RESET, {"documents": n, "at": now()}, cx)
+        relabel(cx)
+
+
+def _no_local_drafts(ws: Workspace, sender: str | None) -> None:
+    """Hunt phase 1.5 (MERGE15-6): the AI's drafts for one computer only (sharing.LOCAL_TASK_KINDS: draft names of the
+    concept map's groups, draft definitions of codes, the concepts drafted from a theory document, the framework drafted
+    from several) never leave in a zip for a colleague or the shared folder, and a merge skips them; a whole-project zip
+    from a colleague on an older version still held them, and a new copy made from it kept them, the colleague's focus
+    and draft codes with them. Kept only in a zip that says it is this person's own (their backup: their own drafts)."""
+    from .home import load_settings
+    from .sharing import LOCAL_TASK_KINDS
+
+    if sender and sender == (load_settings().get("person_id") or ""):
+        return
+    q = ",".join("?" * len(LOCAL_TASK_KINDS))
+    with ws.connect() as cx:
+        cx.execute(f"DELETE FROM results WHERE task_id IN (SELECT task_id FROM tasks WHERE kind IN ({q})) OR kind IN "
+                   f"({q})", (*LOCAL_TASK_KINDS, *LOCAL_TASK_KINDS))
+        cx.execute(f"DELETE FROM tasks WHERE kind IN ({q})", LOCAL_TASK_KINDS)
 
 
 # ---------------------------------------------------------------------------------------------

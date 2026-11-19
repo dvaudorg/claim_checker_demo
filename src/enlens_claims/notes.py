@@ -393,6 +393,9 @@ def merge(cx: sqlite3.Connection, rows: list[dict], fix, sender: str | None = No
     # say that they removed a third person's note, and that note then never came here, from its author's own file
     # either (hunt phase 1, MERGE-6). A note of removal without a name (from before 0.14) still keeps it out
     gone = {r[0]: r[1] for r in cx.execute("SELECT key, person_id FROM sync_removed WHERE kind='note'")}
+    from .sync.common import removed_also
+
+    also = removed_also(cx, "note")  # a second person's removal of a note not held here (hunt phase 1.5, MERGE-6)
     docs = {r[0] for r in cx.execute("SELECT doc_id FROM documents")}
     cols = [r[1] for r in cx.execute("PRAGMA table_info(notes)")]
     via_here: set[str] = set()
@@ -409,6 +412,8 @@ def merge(cx: sqlite3.Connection, rows: list[dict], fix, sender: str | None = No
             continue
         if r["note_id"] in gone and (gone[r["note_id"]] is None or not r.get("person_id")
                                      or gone[r["note_id"]] == r.get("person_id")):
+            continue
+        if (r["note_id"], r.get("person_id")) in also:
             continue
         r = fix(r)
         if r is None or r.get("doc_id") not in docs:
