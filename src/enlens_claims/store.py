@@ -6,7 +6,9 @@ import json
 import os
 import sqlite3
 import threading
+import time
 import weakref
+from collections import deque
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -970,43 +972,63 @@ class _Cur(sqlite3.Cursor):
     """Hunt phase 1.5: a cursor whose every step runs holding its connection's lock (`_Cx._use`), so `close_all` never
     closes a connection another thread is inside (closing it freed the statement under that thread's step, and the
     app crashed: a removal just as a finished job's hook read the project). Rows are taken in batches when iterated,
-    so the lock costs little per row."""
+    so the lock costs little per row; the rows taken ahead and not yet given (a loop that stopped early) are given by
+    the next fetch of this cursor, so nothing is lost."""
+
+    _ahead: deque | None = None
 
     def execute(self, sql, parameters=()):
+        self._ahead = None
         with self.connection._use:
             return super().execute(sql, parameters)
 
     def executemany(self, sql, seq):
+        self._ahead = None
         with self.connection._use:
             return super().executemany(sql, seq)
 
     def executescript(self, script):
+        self._ahead = None
         with self.connection._use:
             return super().executescript(script)
 
     def fetchone(self):
+        if self._ahead:
+            return self._ahead.popleft()
         with self.connection._use:
             return _FETCHONE(self)
 
     def fetchmany(self, size=None):
-        with self.connection._use:
-            return super().fetchmany(self.arraysize if size is None else size)
+        size = self.arraysize if size is None else size
+        out = []
+        while self._ahead and len(out) < size:
+            out.append(self._ahead.popleft())
+        if len(out) < size:
+            with self.connection._use:
+                out += super().fetchmany(size - len(out))
+        return out
 
     def fetchall(self):
+        out = list(self._ahead or ())
+        self._ahead = None
         with self.connection._use:
-            return super().fetchall()
+            return out + super().fetchall()
 
     def __next__(self):
-        with self.connection._use:
-            return super().__next__()
+        row = self.fetchone()
+        if row is None:
+            raise StopIteration
+        return row
 
     def __iter__(self):
         while True:
-            with self.connection._use:
-                rows = super().fetchmany(256)
-            if not rows:
-                return
-            yield from rows
+            if not self._ahead:
+                with self.connection._use:
+                    rows = super().fetchmany(256)
+                if not rows:
+                    return
+                self._ahead = deque(rows)
+            yield self._ahead.popleft()
 
 
 class _Cx(sqlite3.Connection):
@@ -1053,24 +1075,21 @@ class _Cx(sqlite3.Connection):
         with self._use:
             return super().close()
 
-    def close_from_elsewhere(self, wait: float = 2.0, after_interrupt: float = 10.0) -> bool:
-        """Close this connection from another thread: when no statement of it runs (waiting `wait` s for the one that
-        does, then interrupting it and waiting `after_interrupt` s more). False when it could not be closed safely:
-        the thread that uses it closes it at its next use (`Workspace._conn`)."""
-        if not self._use.acquire(timeout=wait):
-            try:
-                self.interrupt()
-            except sqlite3.Error:
-                pass
-            if not self._use.acquire(timeout=after_interrupt):
-                return False
+    def _close_if_free(self) -> bool:
+        """Close this connection from another thread if no statement of it runs and no transaction of it is open
+        (hunt phase 1.5: closing between two statements of a transaction threw its first half away, and the rest was
+        saved on a new connection). True when it is closed (or was already)."""
+        if not self._use.acquire(blocking=False):
+            return False
         try:
+            if self.in_transaction:
+                return False
             super().close()
-        except sqlite3.Error:
-            pass
+            return True
+        except sqlite3.ProgrammingError:   # closed already
+            return True
         finally:
             self._use.release()
-        return True
 
 
 class Workspace:
@@ -1195,13 +1214,11 @@ class Workspace:
 
     def _conn(self) -> sqlite3.Connection:
         cx = getattr(self._local, "cx", None)
-        if cx is not None and getattr(self._local, "gen", 0) != self._gen:
-            # 0.15.7: closed by close_all; a new one if this thread goes on using the project (hunt phase 1.5: closed
-            # here, by its own thread, when close_all could not close it safely)
-            try:
-                cx.close()
-            except sqlite3.Error:
-                pass
+        if cx is not None and getattr(self._local, "gen", 0) != self._gen and not getattr(self._local, "depth", 0):
+            # 0.15.7: closed by close_all; a new one if this thread goes on using the project. Hunt phase 1.5: never
+            # inside a transaction (`depth`): it finishes on its own connection or fails whole (a nested block on a new
+            # connection committed half of it on its own). One close_all could not close is left to the collector:
+            # this thread may still be reading rows of it
             cx = None
         if cx is None:
             # transactions are ours, see connect(); check_same_thread=False only lets close_all close it from another
@@ -1228,22 +1245,42 @@ class Workspace:
             cx.close()
             self._local.cx = None
 
-    def close_all(self) -> None:
+    def close_all(self, wait: float = 12.0, interrupt: bool = True) -> bool:
         """0.15.7: close every connection to this project, in every thread, before its folder is moved or removed (on
-        Windows an open database file cannot be). A thread that uses the project afterwards opens a new one."""
+        Windows an open database file cannot be). A thread that uses the project afterwards opens a new one.
+
+        Hunt phase 1.5: a connection is closed only between two statements and outside a transaction (closing it from
+        under a running statement crashed the app; between two statements of a transaction it threw half of it away).
+        The busy ones are waited for together, against one deadline of `wait` seconds; with `interrupt`, a statement
+        still running after a short grace is interrupted (its transaction then fails whole). `wait=0, interrupt=False`
+        (a project that is not going away: `home.open_project` dropping a replaced file) never waits and never stops
+        anyone's work. Returns whether every connection is closed: False means the folder is still in use."""
         with self._all_lock:
             cxs = list(self._all)
             self._gen += 1
-        # hunt phase 1.5: never from under a thread inside a statement of it (that crashed the app): each is closed
-        # once no statement of it runs (a long one is interrupted); this thread's own is simply closed
+        busy = []
         for cx in cxs:
             try:
-                if isinstance(cx, _Cx):
-                    cx.close_from_elsewhere()
-                else:
-                    cx.close()
+                if not (cx._close_if_free() if isinstance(cx, _Cx) else (cx.close() or True)):
+                    busy.append(cx)
             except sqlite3.Error:
                 pass
+        if not busy:
+            return True
+        start = time.monotonic()
+        end, grace = start + max(0.0, wait), start + min(2.0, max(0.0, wait))
+        interrupted = False
+        while busy and time.monotonic() < end:
+            if interrupt and not interrupted and time.monotonic() >= grace:
+                for cx in busy:
+                    try:
+                        cx.interrupt()
+                    except sqlite3.Error:
+                        pass
+                interrupted = True
+            time.sleep(0.02)
+            busy = [cx for cx in busy if not cx._close_if_free()]
+        return not busy
 
     @property
     def config(self) -> dict[str, Any]:

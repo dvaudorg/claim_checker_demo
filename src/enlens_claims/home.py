@@ -1111,10 +1111,22 @@ def claim_name(name: str) -> None:
 _OPEN: dict[str, tuple[float, Workspace]] = {}
 
 
+class BeingRemoved(RuntimeError):
+    """Hunt phase 1.5: the project's folder is being moved to the trash: nothing opens it meanwhile."""
+
+
+_REMOVING: set[str] = set()   # the folders `remove_project` is moving now (resolved paths)
+REMOVE_WAIT = 12.0            # seconds a removal waits, in all, for the project's connections still in use
+
+
 def open_project(name: str) -> Workspace:
-    """Open a project (kept open for reuse: opening runs the schema checks)."""
+    """Open a project (kept open for reuse: opening runs the schema checks). Hunt phase 1.5: a project whose folder
+    is being removed is not opened (BeingRemoved): a look at it then (the Projects list, the shared folder's poller)
+    wrote to it and held its database open, so the folder could not move on Windows."""
     path = project_path(name)
     key = str(path.resolve())
+    if key in _REMOVING:
+        raise BeingRemoved(f"The project “{name}” is being removed.")
     hit = _OPEN.get(key)
     try:
         stamp = (path / "enlens.sqlite").stat().st_ino
@@ -1127,8 +1139,10 @@ def open_project(name: str) -> Workspace:
             # hunt phase 1.5 (NEEDS WINDOWS in notes/files.md): the database is another file now (the folder was
             # replaced): the project kept for the old one is dropped with its connections closed, in every thread,
             # not left to the garbage collector (on Windows an open database keeps its folder from being moved)
+            # (hunt phase 1.5: the project stays: closed only where no statement or transaction runs, without
+            # waiting and without stopping anyone's work; the others move to the new file at their next use)
             _OPEN.pop(key, None)
-            hit[1].close_all()
+            hit[1].close_all(wait=0, interrupt=False)
         ws = Workspace.open(path)
         _OPEN[key] = (stamp, ws)
     _follow_codebooks(ws)
@@ -1149,12 +1163,12 @@ def _follow_codebooks(ws: Workspace) -> None:
         pass
 
 
-def close_project(path: str | Path) -> None:
+def close_project(path: str | Path, wait: float = 12.0, interrupt: bool = True) -> bool:
     """0.15.7: forget the project at `path` that open_project keeps, closing its connections in every thread, before
-    its folder is moved or removed (Windows refuses while its database is open)."""
+    its folder is moved or removed (Windows refuses while its database is open). Hunt phase 1.5: returns whether every
+    connection is closed (`Workspace.close_all`, with its `wait` and `interrupt`)."""
     hit = _OPEN.pop(str(Path(path).resolve()), None)
-    if hit:
-        hit[1].close_all()
+    return hit[1].close_all(wait=wait, interrupt=interrupt) if hit else True
 
 
 def release_open_projects() -> None:
@@ -1188,7 +1202,9 @@ def link_existing(path: str, name: str | None = None, clean: bool = False) -> st
         raise NeedsCleaning(report, f"This folder is {who}’s project. ENLENS will clean it like a project brought in "
                                     "from a file: its record of a shared folder, file paths on the other computer, and "
                                     "what was stored for speed go. The documents and the work stay.")
-    close_project(src)  # (a connection this program holds on it: the cleaning writes through its own)
+    # (a connection this program holds on it: the cleaning writes through its own. Hunt phase 1.5: a folder linked
+    # already under another name stays a project: nothing waits, and no work of it is stopped)
+    close_project(src, wait=0, interrupt=False)
     bundle.clean_linked(src, other=bool(report["other"]))
     with LOCK:
         links = _links(strict=True)
@@ -1213,11 +1229,20 @@ def remove_project(name: str) -> str:
         return "unlinked"
     if not (p / "enlens.sqlite").exists():
         raise KeyError(name)
-    close_project(p)  # 0.15.7: Windows cannot move a folder whose database is still open
-    trash = home() / "trash"
-    trash.mkdir(exist_ok=True)
-    dest = trash / f"{name}-{time.strftime('%Y%m%d-%H%M%S')}"
-    move_folder(p, dest)
+    key = str(p.resolve())
+    _REMOVING.add(key)   # hunt phase 1.5: nothing opens it while its connections close and its folder moves
+    try:
+        # 0.15.7: Windows cannot move a folder whose database is still open. Hunt phase 1.5: and nowhere is a folder
+        # moved under a connection still writing (on macOS its write went on, into the trash, and said it was saved)
+        if not close_project(p, wait=REMOVE_WAIT):
+            raise FolderInUse(f"{name} could not be moved: a file in it is still open, in ENLENS or another program "
+                              "(a search index, a sync tool, an antivirus check). Wait a moment and try again.")
+        trash = home() / "trash"
+        trash.mkdir(exist_ok=True)
+        dest = trash / f"{name}-{time.strftime('%Y%m%d-%H%M%S')}"
+        move_folder(p, dest)
+    finally:
+        _REMOVING.discard(key)
     return f"moved to {dest}"
 
 

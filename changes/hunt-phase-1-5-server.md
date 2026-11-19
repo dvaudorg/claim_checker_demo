@@ -39,7 +39,9 @@
 - **Removing a project just as work of it ends no longer closes ENLENS.** Removing a project (or a quick look's week
   running out) at the moment a job of it finished, while what follows its end still read the project, could crash
   the app. A removal now waits for that to finish (or says to try again in a moment), nothing of the app opens a
-  project being removed, and a project's database connections are closed only between two of their steps.
+  project being removed, and a project's database connections are closed only between two of their steps and outside
+  a change being saved: a change is saved whole or not at all, and a project still being written to is not moved to
+  the trash (you are asked to try again in a moment).
 - **A hypothesis removed while its check waited says so.** The check ended with the hypothesis's bare id as its
   problem.
 - **Downloaded file names stay whole.** A hypothesis exported from a colleague's copy, whose id holds a quote, or a

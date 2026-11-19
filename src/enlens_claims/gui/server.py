@@ -271,6 +271,9 @@ class App(LibraryMixin, QueueMixin):
         except (DamagedConfig, ProjectTooNew) as e:  # hunt phase 1.5: why it cannot be opened, and what to do
             docs = hyps = 0
             ok, problem = False, str(e)
+        except home.BeingRemoved:   # (hunt phase 1.5: going to the trash now: passed over quietly, not "damaged")
+            docs = hyps = 0
+            ok = True
         except Exception:
             docs = hyps = 0
             ok = False

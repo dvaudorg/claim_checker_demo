@@ -1284,17 +1284,25 @@ def test_closing_a_projects_connections_while_threads_use_them_never_crashes(tmp
 
 
 def test_a_closed_project_can_still_be_moved_at_once(tmp_path):
-    """What close_all is for (Windows: an open database file cannot be moved): after it returns, the folder moves."""
+    """What close_all is for (Windows: an open database file cannot be moved): after it returns, no descriptor of
+    this process is left on the database's files (checked on every system: macOS and Linux move a folder with files
+    open, so the move alone proves it only on Windows), and the folder moves."""
     import shutil
 
     from enlens_claims.store import Workspace
+    from test_hunt15_files import _fds_on
 
     ws = Workspace.create(tmp_path / "p")
     ws.scalar("SELECT 1")
     done = threading.Event()
     threading.Thread(target=lambda: (ws.scalar("SELECT 1"), done.set()), daemon=True).start()
     done.wait(5)
-    ws.close_all()
+    files = [ws.db_path, Path(str(ws.db_path) + "-wal"), Path(str(ws.db_path) + "-shm")]
+    if os.name != "nt":
+        assert _fds_on(files), "the test opened nothing"
+    assert ws.close_all() is True
+    if os.name != "nt":
+        assert _fds_on(files) == set(), "a descriptor is still open on the database"
     shutil.move(str(tmp_path / "p"), str(tmp_path / "q"))
     assert (tmp_path / "q" / "enlens.sqlite").exists()
 
@@ -1361,3 +1369,219 @@ def test_a_project_being_removed_is_not_opened_by_the_apps_own_threads(served, m
         api_owner.after_job(app, SimpleNamespace(project="P", kind=folder.JOB, state="done"))
         assert opened == []
     assert app.ws("P") is not None
+
+
+# ---- review of the connection lock (reviews/lock.md) -----------------------------------------------------------------
+def _meta_abc(root):
+    from enlens_claims.store import Workspace
+
+    fresh = Workspace.open(root)
+    out = (fresh.meta("a"), fresh.meta("b"), fresh.meta("c"))
+    fresh.close_all()
+    return out
+
+
+def test_a_transaction_across_a_close_all_is_never_saved_in_half(tmp_path):
+    """1 (must fix): close_all closed a connection between two statements of a transaction, and a nested block then
+    committed on a new connection: b was saved, a and c not. Now the transaction finishes on its own connection (or
+    fails whole), and close_all says it could not close it."""
+    from enlens_claims.store import Workspace
+
+    ws = Workspace.create(tmp_path / "p")
+    a_in, go, err = threading.Event(), threading.Event(), []
+
+    def worker():
+        try:
+            with ws.connect() as cx:
+                cx.execute("INSERT OR REPLACE INTO meta VALUES ('a', '1')")
+                a_in.set()
+                go.wait(10)
+                ws.set_meta("b", 2)                     # a nested block of the same transaction
+                ws.query("SELECT 1")                    # and a plain read on the project
+                cx.execute("INSERT OR REPLACE INTO meta VALUES ('c', '3')")
+        except Exception as e:  # noqa: BLE001
+            err.append(repr(e))
+
+    t = threading.Thread(target=worker)
+    t.start()
+    assert a_in.wait(10)
+    closed = ws.close_all(wait=0.3)
+    go.set()
+    t.join(10)
+    got = _meta_abc(tmp_path / "p")
+    assert closed is False
+    assert got in ((None, None, None), ("1", 2, "3"), (1, 2, 3)), (got, err)
+    assert got[0] is not None and not err, (got, err)   # here: it completed, on its own connection
+
+
+def test_a_transaction_whose_statement_is_interrupted_fails_whole(tmp_path):
+    from enlens_claims.store import Workspace
+
+    ws = Workspace.create(tmp_path / "p")
+    started, err = threading.Event(), []
+
+    def worker():
+        try:
+            with ws.connect() as cx:
+                cx.execute("INSERT OR REPLACE INTO meta VALUES ('a', '1')")
+                started.set()
+                cx.execute("WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 500000000) "
+                           "SELECT count(*) FROM c").fetchone()
+                cx.execute("INSERT OR REPLACE INTO meta VALUES ('c', '3')")
+        except Exception as e:  # noqa: BLE001
+            err.append(repr(e))
+
+    t = threading.Thread(target=worker)
+    t.start()
+    assert started.wait(10)
+    time.sleep(0.2)
+    closed = ws.close_all(wait=8)
+    t.join(30)
+    assert err and "interrupt" in err[0].lower(), err
+    assert _meta_abc(tmp_path / "p") == (None, None, None)
+    assert closed is True   # once its transaction was rolled back, the connection closed
+
+
+def _blocked_writers(ws, n):
+    """`n` threads waiting in BEGIN IMMEDIATE behind another program's write lock (the connector's, say)."""
+    import sqlite3
+
+    other = sqlite3.connect(ws.db_path, timeout=60, isolation_level=None)
+    other.execute("BEGIN IMMEDIATE")
+    res, ts = [], []
+    for i in range(n):
+        def w(i=i):
+            try:
+                with ws.connect() as cx:
+                    cx.execute("INSERT OR REPLACE INTO meta VALUES (?, '1')", (f"w{i}",))
+                res.append("saved")
+            except Exception as e:  # noqa: BLE001
+                res.append(repr(e))
+        t = threading.Thread(target=w, daemon=True)
+        t.start()
+        ts.append(t)
+    time.sleep(0.5)
+    return other, res, ts
+
+
+def test_close_all_waits_once_for_all_busy_connections_and_says_so(tmp_path):
+    """2: 12 s per busy connection, and then it returned as if all were closed. Now one deadline for all, and the
+    answer says whether everything closed."""
+    from enlens_claims.store import Workspace
+
+    ws = Workspace.create(tmp_path / "p")
+    other, res, ts = _blocked_writers(ws, 3)
+    try:
+        t0 = time.monotonic()
+        closed = ws.close_all(wait=2.5)
+        took = time.monotonic() - t0
+        assert closed is False and took < 5, (closed, took)
+    finally:
+        other.execute("ROLLBACK")
+        other.close()
+        for t in ts:
+            t.join(30)
+
+
+def test_a_removal_does_not_move_a_folder_under_a_connection_still_writing(home, monkeypatch):  # noqa: F811
+    """2: on macOS the waiting write committed into the folder already moved to the trash, and said it was saved."""
+    home.create_project("P")
+    ws = home.open_project("P")
+    monkeypatch.setattr(home, "REMOVE_WAIT", 1.0)
+    other, res, ts = _blocked_writers(ws, 1)
+    try:
+        with pytest.raises(home.FolderInUse) as e:
+            home.remove_project("P")
+        assert "try again" in str(e.value)
+        assert (home.home() / "projects" / "P" / "enlens.sqlite").exists()
+    finally:
+        other.execute("ROLLBACK")
+        other.close()
+        for t in ts:
+            t.join(30)
+    assert home.remove_project("P").startswith("moved to")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows refuses to replace an open database file (test_hunt15_files)")
+def test_a_project_that_stays_is_never_stopped_or_waited_for_when_its_file_is_replaced(home):  # noqa: F811
+    """2: `open_project` dropping a Workspace whose database file was replaced interrupted a running statement of a
+    project that is not going away ("Unexpected problem: interrupted") and waited 12 s."""
+    import shutil
+
+    home.create_project("P")
+    old = home.open_project("P")
+    started, out = threading.Event(), {}
+
+    def long():
+        cx = old._conn()
+        started.set()
+        try:
+            out["n"] = cx.execute("WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 20000000) "
+                                  "SELECT count(*) FROM c").fetchone()[0]
+        except Exception as e:  # noqa: BLE001
+            out["e"] = repr(e)
+
+    t = threading.Thread(target=long)
+    t.start()
+    assert started.wait(10)
+    time.sleep(0.2)
+    db = old.db_path
+    shutil.copyfile(db, str(db) + ".new")
+    os.replace(str(db) + ".new", db)        # another file in its place (the folder replaced)
+    t0 = time.monotonic()
+    new = home.open_project("P")
+    assert time.monotonic() - t0 < 1.5 and new is not old
+    t.join(60)
+    assert out.get("n") == 20000000, out
+    old.close_all()
+    new.close_all()
+
+
+def test_nothing_opens_a_project_while_its_folder_is_removed(served, monkeypatch):
+    """3: a state request (the Projects list) and the shared folder's poller opened the project being removed: it
+    wrote to it and held its database open (Windows: the folder stayed in use) and left a stale entry behind."""
+    api, app = served
+    _project(api)
+    from enlens_claims import home as h
+
+    key = str(h.project_path("P").resolve())
+    h.close_project(h.project_path("P"))
+    h._REMOVING.add(key)
+    try:
+        st, r = api("GET", "/api/state")
+        assert st == 200, r
+        p = next(x for x in r["projects"] if x["name"] == "P")
+        assert p["ok"] is True and p["problem"] is None, p
+        poller = getattr(app, "poller", None)
+        if poller is not None:
+            poller.overview()
+            poller._start_round("P", poller._project("P") if hasattr(poller, "_project") else None)
+        with pytest.raises(h.BeingRemoved):
+            h.open_project("P")
+        assert key not in h._OPEN
+    finally:
+        h._REMOVING.discard(key)
+    assert h.open_project("P") is not None
+
+
+def test_rows_read_ahead_by_a_loop_that_stops_are_given_by_the_next_fetch(tmp_path):
+    """4a: a loop over a cursor reads rows in batches; one that stops early left the rest of the batch unread: a
+    `fetchone` after it skipped up to 255 rows."""
+    from enlens_claims.store import Workspace
+
+    ws = Workspace.create(tmp_path / "p")
+    with ws.connect() as cx:
+        cx.execute("CREATE TABLE t(x)")
+        cx.executemany("INSERT INTO t VALUES (?)", [(i,) for i in range(1000)])
+    cur = ws._conn().execute("SELECT x FROM t ORDER BY x")
+    for r in cur:
+        if r[0] == 9:
+            break
+    assert cur.fetchone()[0] == 10
+    assert [r[0] for r in cur.fetchmany(3)] == [11, 12, 13]
+    assert next(cur)[0] == 14
+    rest = cur.fetchall()
+    assert len(rest) == 985 and rest[0][0] == 15
+    cur.execute("SELECT x FROM t WHERE x < 3 ORDER BY x")   # a new statement: nothing of the last one is left
+    assert [r[0] for r in cur] == [0, 1, 2]
+    ws.close_all()
