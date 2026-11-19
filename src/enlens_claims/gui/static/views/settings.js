@@ -1391,7 +1391,7 @@ function reproSection(s) {
     setBusy(test, false);
   });
   return { id: "repeatable", title: "Repeatable results", summary: sum,
-    lead: "Every model request is sent with a fixed seed and temperature 0, and every result records the model and its exact version.",
+    lead: "A model on this computer, or another cloud provider's API that takes them, is sent a fixed seed and temperature 0; Claude Code, the Claude API, Codex and Antigravity are sent neither. Every result records the model and its exact version where the route reports one.",
     body: [setting("Seed", seed, { help: "Any whole number. Changing it can change the answers.",
       about: ["The seed", "With the same seed, documents and settings, a model gives the same answers, when its server honours the seed (test it below). The seed is shown in “How these results were made” in every Excel download."] }),
     h("div", { class: "btn-row" }, withAI(test)),

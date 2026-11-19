@@ -951,11 +951,42 @@ def work_folder(route: str, project: str) -> Path:
 def _write_record(run: dict) -> None:
     pids = [p["proc"].pid for p in run["procs"] if p["proc"].poll() is None and isinstance(p["proc"].pid, int)]
     try:
+        # hunt phase 1: with the project's folder and the model on each helper's command line, by the name it takes
+        # batches under (`models`), for the queue to record the model that really read a batch (`started_model`)
         _record_path(run["route"], run["project"]).write_text(json.dumps(
             {"project": run["project"], "route": run["route"], "pid": pids[0] if pids else 0, "pids": pids,
-             "started_at": run["started_at"], "t0": run["t0"], "plan": run["plan"] or {}}), encoding="utf-8")
+             "started_at": run["started_at"], "t0": run["t0"], "plan": run["plan"] or {},
+             "root": run.get("root") or "", "models": run.get("models") or {}}), encoding="utf-8")
     except OSError:
         pass
+
+
+def started_model(route: str, root: Path, taken_by: str | None) -> tuple[bool, str | None]:
+    """The model on the command line of the helper that takes batches as `taken_by` in the project at `root`, from
+    the run records of the runs ENLENS started (each helper has a name of its own, `_spawn`): (True, model), (True,
+    None) when ENLENS started it without naming a model (the CLI's own choice), (False, None) when ENLENS did not
+    start it (a person's own $enlens-run or /enlens-run: the CLI chose the model, ENLENS cannot tell which)."""
+    if not taken_by or route not in ROUTES:
+        return False, None
+    want = str(Path(root).resolve())
+    for f in runs_folder().glob(f"{route}-*.run.json"):
+        try:
+            rec = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        models = rec.get("models") if isinstance(rec, dict) else None
+        if isinstance(models, dict) and rec.get("root") == want and taken_by in models:
+            m = models[taken_by]
+            return True, (str(m) if m else None)
+    return False, None
+
+
+def _model_on_line(args: list[str]) -> str | None:
+    """The model a helper's command names (-m / --model), None when it names none."""
+    for i, a in enumerate(args[:-1]):
+        if a in ("-m", "--model"):
+            return args[i + 1]
+    return None
 
 
 def _read_record(route: str, project: str) -> dict:
@@ -1166,10 +1197,11 @@ def _say(run: dict, line: str) -> None:
         pass
 
 
-def _claims_since(ws, taken_by: str, since: str) -> int:
-    """The batches one helper process took (its own `taken_by`, `_spawn`)."""
-    return int(ws.scalar("SELECT COUNT(*) FROM task_claims WHERE taken_by=? AND claimed_at >= ?", (taken_by, since))
-               or 0)
+def _claims_since(ws, taken_by: str, since: str, answered: bool = False) -> int:
+    """The batches one helper process took (its own `taken_by`, `_spawn`); with `answered`, those of them with at
+    least one answer stored (hunt phase 1: the report said "answered" for batches taken, given back or lapsed too)."""
+    return int(ws.scalar("SELECT COUNT(*) FROM task_claims WHERE taken_by=? AND claimed_at >= ?"
+                         + (" AND COALESCE(stored, 0) > 0" if answered else ""), (taken_by, since)) or 0)
 
 
 def _group_waits(run: dict, ws, group: tuple) -> bool:
@@ -1210,6 +1242,11 @@ def _spawn(run: dict, g: dict, path: str, opts: set[str], work: Path, ws) -> Non
         _write_agy_connector(work)
         if always_proceeds():
             raise ValueError(ALWAYS_PROCEED.format(path=enlens_agy_settings_path()))
+    # hunt phase 1: the model on this helper's command line (Antigravity's slug as resolved against `agy models`;
+    # none when the CLI takes no --model), written to the run record before it starts, so the queue names it in the
+    # AI log and in each answer's record (taskqueue.next_tasks, submit)
+    run.setdefault("models", {})[taken_by] = _model_on_line(args)
+    _write_record(run)
     out = runs_folder() / f"{_key(route, project)}-{run['n']}.out"
     fh = open(out, "w", encoding="utf-8")
     try:
@@ -1244,7 +1281,8 @@ def _reap(run: dict, ws) -> dict | None:
             continue
         o = read_outcome(run["route"], text, p["proc"].returncode)
         took = _claims_since(ws, p["taken_by"], p["since"])
-        run["batches"] += took
+        answered = _claims_since(ws, p["taken_by"], p["since"], answered=True)
+        run["batches"] += answered   # the report's "Done: N batches answered"
         if o["refused"]:
             run["refused"].append({"helper": p["taken_by"], "tools": o["refused"], "at": now()})
             _say(run, f"{p['taken_by']} tried to use {', '.join(o['refused'])}, and {cli(run['route']).title} refused "
@@ -1265,7 +1303,8 @@ def _reap(run: dict, ws) -> dict | None:
                                 f"ended without taking a batch. The last one said: {why}"}
         else:
             run["failed_in_row"] = 0
-            _say(run, f"{p['taken_by']} finished: {took} batch{'es' if took != 1 else ''}. {o['message']}".strip())
+            _say(run, f"{p['taken_by']} finished: {answered} batch{'es' if answered != 1 else ''} answered"
+                      f"{f' of {took} taken' if answered != took else ''}. {o['message']}".strip())
     _write_record(run)
     return end
 
@@ -1426,7 +1465,8 @@ def start_run(route: str, project: str, parallel=None, helpers=None) -> dict:
                "work": work_folder(route, project), "available": list(info.get("models_available") or []),
                "procs": [], "stop": threading.Event(), "log": log, "t0": time.time(), "started_at": now(),
                "exit_code": None, "stopped": False, "limit": None, "n": 0, "started": 0, "batches": 0,
-               "failed_in_row": 0, "router": None, "refused": []}
+               "failed_in_row": 0, "router": None, "refused": [],
+               "root": str(core.project_path(project).resolve()), "models": {}}
         with _RUNS_LOCK:
             _RUNS[(route, project)] = run
         _write_record(run)

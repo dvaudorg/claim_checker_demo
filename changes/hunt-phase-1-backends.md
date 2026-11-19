@@ -27,8 +27,10 @@
   only documents you allow it. If you used such an address, type `localhost` or `127.0.0.1` instead.
 - **The AI log names the model that really read the text.** With the Claude API it named the model the task was made
   for (Opus) where Haiku read it, or the first model after a step up; with Codex and Antigravity it named Claude's
-  "haiku" for text sent to OpenAI or Google. It now names the model asked: the provider's own model on Codex and
-  Antigravity, Claude's own name for Claude Code. A model test or label comparison answered by Codex or Antigravity
+  "haiku" for text sent to OpenAI or Google. It now names the model asked: on Codex and Antigravity the model on the
+  command line ENLENS started the helper with (the same in each answer's record), Claude's own name for Claude Code.
+  Where you start the helpers yourself in Codex or Antigravity, the model is that program's own choice, and the log
+  says it is not known rather than guess. A model test or label comparison answered by Codex or Antigravity
   is no longer recorded as sent to Anthropic.
 
 ### Fixed
@@ -39,6 +41,9 @@
   provider), as an answer that goes silent already was.
 - **Codex and Antigravity runs count each helper's batches once.** With two helpers of one kind at work, the report
   counted each other's batches too ("Done: 2 batches" for one), and a helper that found its colleague had taken the
-  work, or one that took nothing, was counted wrongly as working or as failed.
+  work, or one that took nothing, was counted wrongly as working or as failed. "Batches answered" now counts only
+  batches with an answer stored, not those given back or left to lapse.
+- **Settings › Repeatable results says what is really sent**: a seed and temperature 0 to a model on your computer
+  (and to a cloud provider's API that takes them), neither to Claude Code, the Claude API, Codex or Antigravity.
 - **A gold set saved with semicolons** (as Excel does in most of Europe) is read as one saved with commas; a row
   with more cells than its header is said plainly instead of stopping `enlens validate` with an error.

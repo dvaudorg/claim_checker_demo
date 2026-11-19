@@ -492,7 +492,8 @@ def test_a_model_test_on_a_scratch_copy_keeps_the_provider_and_model_in_the_ai_l
     taskqueue.answer_on_copy(ws, [(t["task_id"], "label", json.loads(t["payload_json"]), "haiku")], be)
     rows = [r for r in ailog.entries(ws)["rows"] if r["kind"].startswith("label (")]
     assert rows, ailog.entries(ws)["rows"]
-    assert {(r["provider"], r["model"]) for r in rows} == {("openai", "gpt-6-luna")}, rows
+    # (a helper ENLENS's runner did not start: the model is Codex's own choice, recorded as such since the review)
+    assert {(r["provider"], r["model"]) for r in rows} == {("openai", "not known (Codex's own choice)")}, rows
 
 
 def test_the_ai_log_names_the_model_codex_read_with(monkeypatch, corpus):
@@ -514,3 +515,121 @@ def test_the_ai_log_names_the_model_codex_read_with(monkeypatch, corpus):
     rows = ailog.entries(ws)["rows"]
     assert rows and all(r["provider"] == "openai" for r in rows)
     assert {r["model"] for r in rows} == {"gpt-6-luna"}, {r["model"] for r in rows}
+
+
+# --------------------------------------------------------------------------------------------- after review: the model
+def _models_in_log_and_answers(ws):
+    log = {r["model"] for r in __import__("enlens_claims.ailog", fromlist=["entries"]).entries(ws)["rows"]}
+    ans = {json.loads(s).get("model_id") for (s,) in ws.query("SELECT settings_json FROM results WHERE valid=1")}
+    return log, ans
+
+
+def test_the_ai_log_names_the_model_on_codexs_command_line(monkeypatch, corpus):
+    """Review of BACKENDS-3: the runner resolves Codex's line-up against the models the plan offers, the queue's
+    router did not, so where the plan offers gpt-6.1-sol and not gpt-6.2-sol the helper ran gpt-6.1-sol while the AI
+    log and every answer's record named gpt-6.2-sol. Both now name the model on the helper's command line."""
+    from enlens_claims import agentcli, home
+    from test_agent_cli import CODEX, _project, _wait_done
+
+    monkeypatch.setenv("ENLENS_CODEX", CODEX)
+    monkeypatch.setattr(agentcli, "POLL", 0.2)
+    monkeypatch.setattr(agentcli, "IDLE_ROUNDS", 3)
+    real = agentcli.status
+
+    def offers(route, refresh=False):   # this plan's Codex lists its models (gpt-6.2-sol is not among them)
+        st = dict(real(route, refresh))
+        if route == "codex":
+            st["models_available"] = ["gpt-6-luna", "gpt-6.1-sol", "gpt-6.2-astra"]
+        return st
+
+    monkeypatch.setattr(agentcli, "status", offers)
+    agentcli.forget_status()
+    ws = _project(corpus, "codex")
+    home.update_settings({"claude_thought": "intelligence"})   # labels move up to the middle tier
+    agentcli.start_run("codex", "Q")
+    assert _wait_done(agentcli, "codex")["exit_code"] == 0
+    argv = json.loads((home.home() / "fake-codex.json").read_text())["execs"][0]["argv"]
+    assert argv[argv.index("-m") + 1] == "gpt-6.1-sol"
+    assert _models_in_log_and_answers(ws) == ({"gpt-6.1-sol"}, {"gpt-6.1-sol"})
+
+
+def test_the_ai_log_names_the_slug_on_antigravitys_command_line(monkeypatch, corpus):
+    """The Antigravity case of the review: the line-up names a family (gemini-4-hydrogen), the runner passes the slug
+    `agy models` lists (gemini-4-hydrogen-high), and the AI log and the answers named the family."""
+    from enlens_claims import agentcli, home
+    from test_agent_cli import AGY, _project, _wait_done
+
+    monkeypatch.setenv("ENLENS_AGY", AGY)
+    monkeypatch.setenv("FAKE_AGY_PLAN", "pro")
+    monkeypatch.setattr(agentcli, "POLL", 0.2)
+    monkeypatch.setattr(agentcli, "IDLE_ROUNDS", 3)
+    agentcli.forget_status()
+    ws = _project(corpus, "antigravity")
+    home.update_settings({"claude_thought": "intelligence"})
+    agentcli.start_run("antigravity", "Q")
+    assert _wait_done(agentcli, "antigravity")["exit_code"] == 0
+    argv = json.loads((home.home() / "fake-agy.json").read_text())["runs"][0]["argv"]
+    slug = argv[argv.index("--model") + 1]
+    assert slug.startswith("gemini-4-hydrogen-")
+    assert _models_in_log_and_answers(ws) == ({slug}, {slug})
+
+
+def test_a_helper_enlens_did_not_start_is_recorded_as_not_known(monkeypatch, corpus):
+    """A person's own $enlens-run in Codex: ENLENS does not know which model Codex chose, so the AI log and the answer
+    say so instead of naming the line-up's guess; Claude Code's helpers keep Claude's alias."""
+    from enlens_claims import ailog, taskqueue
+    from test_agent_cli import CODEX, _project
+
+    monkeypatch.setenv("ENLENS_CODEX", CODEX)
+    ws = _project(corpus, "codex")
+    b = taskqueue.next_tasks(ws, "label", route="codex", taken_by="enlens-labeller in Codex")
+    assert b["claim"]
+    assert {r["model"] for r in ailog.entries(ws)["rows"]} == {"not known (Codex's own choice)"}
+    taskqueue.submit(ws, b["claim"], [{"task_id": t["task_id"], "answer": {"labels": [], "note": "none"}}
+                                      for t in b["tasks"]])
+    rec = [json.loads(s) for (s,) in ws.query("SELECT settings_json FROM results")]
+    assert rec and all(s["model_id"] is None and s["model_id_note"].startswith("not known") for s in rec), rec
+    with ws.connect() as cx:
+        cx.execute("DELETE FROM ai_sent")
+    c = taskqueue.next_tasks(ws, "label", route="claude_code", taken_by="enlens-labeller in Claude Code")
+    if c["claim"]:   # (only tasks Anthropic may read: the project allows it)
+        assert {r["model"] for r in ailog.entries(ws)["rows"]} == {c["model"]} and c["model"] in ("haiku", "sonnet")
+
+
+def test_the_run_report_counts_batches_answered_not_taken(monkeypatch, corpus, tmp_path):
+    """Review of BACKENDS-7: "Done: N batches answered" counted every batch a helper took, one it gave back or let
+    lapse with nothing stored too."""
+    from enlens_claims import agentcli, routing
+    from enlens_claims.store import now
+    from test_agent_cli import CODEX, _project
+
+    monkeypatch.setenv("ENLENS_CODEX", CODEX)
+    agentcli.forget_status()
+    ws = _project(corpus, "codex")
+    since = now()
+    with ws.connect() as cx:
+        for cid, stored in (("q1", 3), ("q2", 0)):   # one batch answered, one given back
+            cx.execute("INSERT INTO task_claims(claim_id, kind, model, helper, route, taken_by, task_ids_json, "
+                       "claimed_at, expires_at, stored) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                       (cid, "label", "haiku", "enlens-labeller", "Codex", "enlens-labeller in Codex #1", "[]", since,
+                        since, stored))
+
+    class Ended:
+        pid, returncode = None, 0
+
+        def poll(self):
+            return 0
+
+    said = []
+    monkeypatch.setattr(agentcli, "read_outcome", lambda *a: {"ok": True, "limit": "", "signed_out": False,
+                                                                "message": "", "refused": []})
+    monkeypatch.setattr(agentcli, "_write_record", lambda run: None)
+    monkeypatch.setattr(agentcli, "_say", lambda run, line: said.append(line))
+    out = tmp_path / "helper.out"
+    out.write_text("done", encoding="utf-8")
+    run = {"route": "codex", "project": "Q", "batches": 0, "refused": [], "failed_in_row": 0,
+           "router": routing.from_settings({"backend": "codex"}, route="codex"),
+           "procs": [{"proc": Ended(), "group": ("label", "haiku", "enlens-labeller"), "out": out, "since": since,
+                      "taken_by": "enlens-labeller in Codex #1", "model_id": "gpt-6-luna", "waited": 1}]}
+    agentcli._reap(run, ws)
+    assert run["batches"] == 1 and "1 batch answered of 2 taken" in said[-1], (run["batches"], said)

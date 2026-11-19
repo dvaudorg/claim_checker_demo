@@ -659,6 +659,22 @@ def plan_helpers(groups: list[dict], parallel: int, helpers: dict[str, int] | No
 # ---------------------------------------------------------------------------------------------
 # handing out and taking back
 # ---------------------------------------------------------------------------------------------
+def read_with(ws: Workspace, route: str, taken_by: str | None, alias: str) -> tuple[str, str | None]:
+    """The model a batch is really read with, for the AI log and the answer's record: (the name to record, the
+    provider's model id or None). Claude Code: Claude's alias, which its helper runs on. Codex and Antigravity: the
+    model on the command line ENLENS started the helper with (agentcli.started_model, by the helper's own name).
+    Hunt phase 1: the queue's router guessed it from the line-up without the models the CLI offers, so it could name
+    one the plan does not offer (gpt-6.2-sol where the helper ran gpt-6.1-sol) or Antigravity's family name for the
+    model it resolved; a helper ENLENS did not start, or started without naming a model, ran on the CLI's own choice,
+    which ENLENS cannot know: that is what is recorded then."""
+    if route not in providers.AGENT_CLIS:
+        return alias, None
+    from .agentcli import started_model
+
+    _known, mid = started_model(route, ws.root, taken_by)
+    return (mid, mid) if mid else (f"not known ({route_title(route)}'s own choice)", None)
+
+
 def next_tasks(ws: Workspace, kind: str | None = None, n: int | None = None, model: str | None = None,
                taken_by: str | None = None, helper: str | None = None, route: str | None = None,
                provider: str | None = None) -> dict:
@@ -740,6 +756,7 @@ def next_tasks(ws: Workspace, kind: str | None = None, n: int | None = None, mod
 
         system = prompts.system_prompt(k)
         cap = min(TOKEN_BUDGET, CONNECTOR_CAP - 2000 - estimate_tokens(system))
+        sent_model = read_with(ws, route, taken_by, m)[0]
         with ws.connect() as cx, access.words_memo():   # (a term shared by the batch's tasks is looked up once)
             dflt = access._default_from_cx(cx)  # once per batch, not per task
             for t in itertools.chain(cand, rest()):
@@ -769,11 +786,11 @@ def next_tasks(ws: Workspace, kind: str | None = None, n: int | None = None, mod
                     picked.append({"task_id": t["task_id"], "prompt": user, "payload_json": full["payload_json"]})
                     budget += cost
                     # 0.11: the passages of this task leave the computer now, with the batch; hunt phase 1: under
-                    # the model that reads them, as the answer records it (submit_answers): the provider's own id
-                    # on Codex and Antigravity (the line-up), Claude's alias on Claude Code, never the task's
-                    # stored model (Claude's "haiku" for text sent to OpenAI, or the first model after a step up)
+                    # the model that reads them, as the answer records it (submit, `read_with`): on Codex and
+                    # Antigravity the one on the helper's command line, Claude's alias on Claude Code, never the
+                    # task's stored model (Claude's "haiku" for text sent to OpenAI) nor a guess from the line-up
                     access.record_sent(cx, t["task_id"], json.loads(full["payload_json"]), title, k,
-                                       provider=prov, model=r.api_id(m) if r.lineup else m, person=me)
+                                       provider=prov, model=sent_model, person=me)
             if not picked:
                 continue
             cx.execute("INSERT INTO task_claims(claim_id, kind, model, helper, route, taken_by, task_ids_json, claimed_at, "
@@ -977,6 +994,7 @@ def submit(ws: Workspace, claim_id: str, answers: list[dict]) -> dict:
     route = route_of_name(c["route"])   # stage 2: the agent route that took the batch (Claude Code, Codex, Antigravity)
     title = route_title(route)
     r = router(ws, route)
+    mid = read_with(ws, route, c["taken_by"], c["model"])[1]   # one helper, one model for the whole claim
     results = []
     stored = problems = 0
     kinds_stored: set[str] = set()
@@ -1010,7 +1028,11 @@ def submit(ws: Workspace, claim_id: str, answers: list[dict]) -> dict:
         prov = {"digest": None, "seed": None,
                 "settings": {"backend": route, "route": title, "helper": helper, "model_as_set": model}}
         if route != "claude_code":   # which provider, and its own model id the alias stood for (as llm.provenance)
-            prov["settings"].update(provider=route_provider(route), model_id=r.api_id(model))
+            # hunt phase 1: the model on the helper's command line (`read_with`), not a guess from the line-up; when
+            # ENLENS did not start the helper, none, and the record says why
+            prov["settings"].update(provider=route_provider(route), model_id=mid)
+            if mid is None:
+                prov["settings"]["model_id_note"] = f"not known: {title} chose the model itself"
         try:  # stored only while this claim still holds the task, checked where the answer is written
             ok, errors = ingest_result(ws, tid, raw, model=model, provenance=prov, route=title, helper=helper,
                                        claimed_at=c["claimed_at"], claim=claim_id)
