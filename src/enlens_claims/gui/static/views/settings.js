@@ -1217,7 +1217,8 @@ function secondModelSection(s, servers) {
   const sum = h("span", {}, current || "None");
   const sel = selectField({ id: "second-model" }, h("option", { value: "" }, "None (no second opinions)"),
     models.map((m) => h("option", { value: m, selected: m === current }, m)),
-    current && !models.includes(current) ? h("option", { value: current, selected: true }, `${current} (not installed now)`) : null);
+    // hunt phase 1: "not installed" only when a server answered (GET /api/servers failed, or none runs: nothing is known)
+    current && !models.includes(current) ? h("option", { value: current, selected: true }, servers.length ? `${current} (not installed now)` : current) : null);
   const txt = fieldInput({ mono: true, type: "text", placeholder: "or type a model name", value: "", "aria-label": "Model for second opinions, typed" });
   const keep = async (v) => {
     if (v && v === main) { toast("That is the main model. Choose a different one for second opinions.", "warn"); return false; }
@@ -1321,7 +1322,8 @@ function embedModelSection(s, servers) {
     sum.textContent = k === "off" ? "Off" : `${st.embed_model || "No model chosen"} on ${k === "openai" ? "an OpenAI-compatible server" : "Ollama"}`;
   };
   say();
-  const modelRow = setting("Embedding model", model, { help: all.length ? null : "None installed yet." });
+  // hunt phase 1: "none installed" only when a server answered and listed none
+  const modelRow = setting("Embedding model", model, { help: all.length ? null : servers.length ? "None installed yet." : "No model server answered just now, so the installed models could not be listed." });
   const urlRow = setting("Address (optional)", url, { help: "Empty: the chat server's address." });
   const toggle = () => { modelRow.hidden = urlRow.hidden = kind.value === "off"; };
   toggle();

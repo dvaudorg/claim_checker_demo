@@ -32,16 +32,25 @@ export async function editNote(note) {
   let colour = note.colour || "yellow";
   const ta = textarea({ rows: 5, maxlength: 10000, placeholder: "Your note (leave empty for a highlight)" });
   ta.value = note.text || "";
+  const err = h("p", { class: "field-error", role: "alert" });
   const body = h("div", {}, h("blockquote", { class: "note-quote" }, note.quote),
     h("label", { class: "field" }, h("span", { class: "field-label" }, "Note"), ta),
-    h("div", { class: "field" }, h("span", { class: "field-label" }, "Colour"), colourPicker(colour, (c) => { colour = c; })));
-  const r = await dialog({ title: "Your note", body, actions: [{ text: "Cancel", value: null }, { text: "Save", value: true, primary: true }],
+    h("div", { class: "field" }, h("span", { class: "field-label" }, "Colour"), colourPicker(colour, (c) => { colour = c; })), err);
+  // hunt phase 1 (PAGESB-2): saved from the dialog's Save, which stays open with the words and the reason when the
+  // save is refused or fails (the note was removed meanwhile, the app restarted): closing first lost the words
+  let saved = null;
+  const lock = { on: false };
+  await dialog({ title: "Your note", body, lock, actions: [{ text: "Cancel", value: null }, { text: "Save", value: true, primary: true,
+    async onClick() {
+      err.textContent = "";
+      lock.on = true;
+      try { saved = (await api("PUT", `/api/projects/${P(App.project)}/notes/${P(note.note_id)}`, { text: ta.value, colour })).note; }
+      catch (e) { err.textContent = e.message; ta.focus(); return false; }
+      finally { lock.on = false; }
+      return true;
+    } }],
     onOpen: () => ta.focus() });
-  if (!r) return null;
-  try {
-    const res = await api("PUT", `/api/projects/${P(App.project)}/notes/${P(note.note_id)}`, { text: ta.value, colour });
-    return res.note;
-  } catch (e) { showError(e); return null; }
+  return saved;
 }
 
 export async function removeNote(note) {
@@ -88,20 +97,28 @@ export async function useAsEvidence(note) {
     h("div", { class: "field" }, h("label", { class: "field-label" }, "Check"), sel), partBox,
     h("div", { class: "field" }, h("span", { class: "field-label" }, "Your judgement"), verdicts),
     h("label", { class: "field" }, h("span", { class: "field-label" }, "Comment"), comment));
-  const r = await dialog({ title: "Use this note as evidence", wide: true, body,
-    actions: [{ text: "Cancel", value: null }, { text: "Add as evidence", value: true, primary: true, onClick: () => {
+  const err = h("p", { class: "field-error", role: "alert" });
+  body.appendChild(err);
+  // hunt phase 1 (as PAGESB-2): sent from Add as evidence, and a refused or failed save keeps the dialog open with the
+  // comment typed and the reason in it (the check was removed meanwhile, the app restarted); it was sent after closing
+  let res = null;
+  const lock = { on: false };
+  await dialog({ title: "Use this note as evidence", wide: true, body, lock,
+    actions: [{ text: "Cancel", value: null }, { text: "Add as evidence", value: true, primary: true, onClick: async () => {
+      err.textContent = "";
       if (!sel.value) { sel.focus(); toast("Choose a check first.", "info"); return false; }
+      const claimId = parts.length > 1 ? partSel.value : (parts[0] && parts[0].claim_id);
+      if (!claimId) { err.textContent = "This check has no part to add evidence to yet."; return false; }
+      lock.on = true;
+      try { res = await api("POST", `${base}/notes/${P(note.note_id)}/evidence`, { claim_id: claimId, verdict, comment: comment.value.trim() || null }); }
+      catch (e) { err.textContent = e.message; return false; }
+      finally { lock.on = false; }
       return true;
     } }] });
-  if (!r) return null;
-  const claimId = parts.length > 1 ? partSel.value : (parts[0] && parts[0].claim_id);
-  if (!claimId) { toast("This check has no part to add evidence to yet.", "info"); return null; }
-  try {
-    const res = await api("POST", `${base}/notes/${P(note.note_id)}/evidence`, { claim_id: claimId, verdict, comment: comment.value.trim() || null });
-    toast(res.new ? "Added to the check as an excerpt you judged." : "The check had this passage already: your judgement of it is set, with the note's words.", "ok",
-      { action: { text: "Open the check", href: `#/h/${encodeURIComponent(res.hyp_id)}` } });
-    return res;
-  } catch (e) { showError(e); return null; }
+  if (!res) return null;
+  toast(res.new ? "Added to the check as an excerpt you judged." : "The check had this passage already: your judgement of it is set, with the note's words.", "ok",
+    { action: { text: "Open the check", href: `#/h/${encodeURIComponent(res.hyp_id)}` } });
+  return res;
 }
 
 export async function renderNotes(view, _params, query) {

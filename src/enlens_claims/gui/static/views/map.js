@@ -4,7 +4,7 @@
 // Non-scientific is shown too, its cells with a mark of their own (the symbol with no fill and a dashed edge: read, not
 // counted); they change no count or answer. Where a hypothesis counts them (its own setting), its cells are as any.
 import { featureEyebrow, viewTabs } from "../features.js";
-import { App, api, h, icon, showError, download, pageHead, statusBadge, emptyState, P, strictness, shortTitle, downloadLinks, link, iconButton, tag, notice, heatGrid, store, navigate } from "../lib.js";
+import { App, api, h, icon, showError, failedLoad, download, pageHead, statusBadge, emptyState, P, strictness, shortTitle, downloadLinks, link, iconButton, tag, notice, heatGrid, store, navigate } from "../lib.js";
 
 const SIDE = {
   supports: { symbol: "+", word: "supports", cls: "m-sup" },
@@ -19,8 +19,10 @@ export async function renderMap(view, params, query) {
   const threshold = App.settings().threshold ?? 0.6;
   const qs = new URLSearchParams({ threshold: String(threshold) });
   if (batch) qs.set("batch", batch);
-  let m;
-  try { m = await api("GET", `/api/projects/${P(project)}/map?${qs}`); } catch (e) { showError(e); m = { hypotheses: [], documents: [], cells: {} }; }
+  // hunt phase 1 (PAGESA-8): a failed load is said in the page (lib.js failedLoad), not drawn as an empty map: "Nothing
+  // to map yet" would tell a person with answers to check something
+  let m = null, failed = null;
+  try { m = await api("GET", `/api/projects/${P(project)}/map?${qs}`); } catch (e) { failed = e; m = { hypotheses: [], documents: [], cells: {} }; }
   const hyps = m.hypotheses || [], docs = m.documents || [], cells = m.cells || {};
   // 0.13.3: the download is a quiet link, as on the result page
   const xlsx = downloadLinks([{ text: "Excel (.xlsx)", title: "Three sheets: a summary, every excerpt read, and this map", onClick: () => download(`/api/projects/${P(project)}/export.xlsx?threshold=${threshold}`).catch(showError) }]);
@@ -35,6 +37,12 @@ export async function renderMap(view, params, query) {
     const answersTab = tabs.querySelector('a[href="#/hypotheses"]');
     if (answersTab && batch) answersTab.setAttribute("href", `#/hypotheses?batch=${encodeURIComponent(batch)}`);
     view.appendChild(tabs);
+  }
+  if (failed) {
+    const out = h("div", { class: "map-failed" });
+    view.appendChild(out);
+    failedLoad(out, { message: `The evidence map could not be loaded: ${String(failed.message || "no answer").replace(/\.?\s*$/, ".")} Reload the page to try again.` });
+    return;
   }
   if (batch) view.appendChild(notice({ kind: "info", icon: "list-checks", class: "map-batch" }, h("p", {}, `Showing the ${hyps.length} ${hyps.length === 1 ? "hypothesis" : "hypotheses"} of one set checked together. `, link({ kind: "back", href: "#/map" }, "Show all hypotheses"))));
 

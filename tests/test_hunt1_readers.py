@@ -383,7 +383,9 @@ def test_the_page_offers_reader_7_as_the_server_does(tmp_path):
                        if languages.new_reader_changes(d["reader"], None, d["kind"], 7)}
     assert re.search(r"^export const reader = \{ latest: 7 \};", src, re.M) and "export const READER_7_NEWS = " in src
     page = (views / "doc-reading.js").read_text(encoding="utf-8") + (views / "sources.js").read_text(encoding="utf-8")
-    assert "`Read by the reader of ENLENS 0.19.0rc2 to 0.20.3. ${READER_7_NEWS}`" in page and ": READER_7_NEWS)" in page
+    # hunt phase 1 (PAGESB-8): the list and the page say the news through readerNews (doc-shared.js), not a chain
+    # ending in READER_7_NEWS; test_hunt1_pagesb.py runs it on a reader-4 text file
+    assert "0.19.0rc2 to 0.20.3" in page and "readerNews([d], d.new_reader || reader.latest)" in page and "readerNews(older, reader.latest)" in page
 
 
 # ---- READERS-1 and READERS-6: zips and files of other kinds ---------------------------------------------------------

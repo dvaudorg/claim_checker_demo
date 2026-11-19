@@ -69,6 +69,12 @@ export async function renderTheoryDraft(view) {
   let kept = new Map();                                         // each concept as the server last had it (key -> JSON)
   const keptNow = () => { kept = new Map(draft.concepts.map((c) => [c.key, JSON.stringify(c)])); };
   keptNow();
+  // hunt phase 1: the draft's settings as the server last had them. A reload (the reading's end, a change elsewhere)
+  // drew every field from the server's draft: a short name typed while the AI read (only the title and the question are
+  // sent then) and a title or question typed in the 800 ms before it were gone. What differs from these stays.
+  const SETTINGS = ["title", "focus", "name", "where"];
+  const settingsOf = (d) => Object.fromEntries(SETTINGS.map((k) => [k, d[k] ?? ""]));
+  let keptSettings = settingsOf(draft);
   let counts = null;                                            // {documents, counts: {key: n}}: the rows' documents
   let countSeq = 0;
   async function askCounts() {
@@ -107,6 +113,7 @@ export async function renderTheoryDraft(view) {
       if (r.draft && r.draft.rev !== undefined) draft.rev = r.draft.rev;
       if (r.draft && r.draft.reading) draft.reading.stale = r.draft.reading.stale;
       if (sent) kept = sent;
+      for (const k of SETTINGS) if (k in body) keptSettings[k] = body[k] ?? "";
       failed = false;
       return true;
     } catch (e) {
@@ -137,12 +144,33 @@ export async function renderTheoryDraft(view) {
     try { d = await api("GET", base); } catch (e) { showError(e); return; }
     if (!view.isConnected) return;
     if (!d.draft) { gone = true; location.hash = "#/codebooks"; return; }
+    const typed = Object.fromEntries(SETTINGS.filter((k) => (draft[k] ?? "") !== keptSettings[k]).map((k) => [k, draft[k]]));
+    const place = fieldInUse();
     data = d; draft = d.draft; offer = d.offer; pending = false; failed = false;
     keptNow();
+    keptSettings = settingsOf(draft);
+    Object.assign(draft, typed);
     evid.clear();
     askCounts();
     drawAll();
+    focusBack(place);
     follow();
+    if (Object.keys(typed).length) changed();   // sent as any change is
+  }
+  // the field being typed in when the page is drawn anew: which box, which of its fields, and the caret
+  const BOXES = () => [head, settingsBox, theoryBox, frame];
+  const FIELDS = "input, textarea, select";
+  function fieldInUse() {
+    const el = document.activeElement;
+    const box = el && BOXES().find((b) => b.contains(el));
+    if (!box || !el.matches(FIELDS)) return null;
+    return { box, i: [...box.querySelectorAll(FIELDS)].indexOf(el), a: el.selectionStart, b: el.selectionEnd };
+  }
+  function focusBack(at) {
+    const el = at && at.i >= 0 ? [...at.box.querySelectorAll(FIELDS)][at.i] : null;
+    if (!el || el.disabled) return;
+    el.focus({ preventScroll: true });
+    if (at.a != null && el.setSelectionRange && el.tagName !== "SELECT") { try { el.setSelectionRange(at.a, at.b); } catch (_) { /* no caret */ } }
   }
 
   function drawAll() { drawHead(); drawSettings(); drawTheory(); drawFrame(); drawBar(); }

@@ -21,7 +21,7 @@ function cloudSub() {
   return othersSetUp() ? `Cloud AI may read them when it is the AI you use and their provider is ticked; ${local}` : `Claude may read them when Claude is the AI you use; ${local}`;
 }
 import { documentMarks, roleMenuItems, bulkRoleItems, roleLine, nonsciMenuItem, NONSCI_MEANS, suggestLine } from "./doc-role.js";   // 0.18.1 K2: theory documents; 0.18.6: non-scientific ones; 0.19.0 N3: working documents
-import { reader, newReaderFor, readingNote, READER_4_NEWS, READER_5_NEWS, READER_6_NEWS, READER_7_NEWS, renameDocument } from "./doc-shared.js";
+import { reader, newReaderFor, readingNote, readerNews, renameDocument } from "./doc-shared.js";
 
 const ACCEPT = ".pdf,.docx,.html,.htm,.txt,.md,.zip";
 const OK_EXT = ["pdf", "docx", "html", "htm", "txt", "md", "zip"];
@@ -41,6 +41,10 @@ export async function renderSources(view) {
   const files = [];
   let sent = [];            // 0.14.3: the files of the run that is going; files picked meanwhile wait in `files` for the next
   let adding = false;       // 0.14.3: copying or reading is going: "Add" stays off, and picks are kept, not sent
+  // hunt phase 1 (PAGESB-5): the files of the run copied into the project already (their x is off: they are read in),
+  // and the ones the server stored under another name (two files of one name, from two folders: "notes (2).txt")
+  const copied = new Set();
+  let renamed = [];
   const fileInput = h("input", { type: "file", multiple: true, accept: ACCEPT, class: "visually-hidden", id: "src-files" });
   const fileList = h("ul", { class: "file-list", hidden: true });
   const addBtn = button({ kind: "main", disabled: true }, icon("upload", { size: 15 }), "Add to the project");
@@ -49,7 +53,8 @@ export async function renderSources(view) {
   const drawFiles = () => {
     fileList.hidden = !files.length;
     replace(fileList, files.map((f, i) => h("li", {}, icon("file-text", { size: 13 }), h("span", { class: "grow docs-file-name" }, f.name), h("span", { class: "fs" }, fmt.bytes(f.size)),
-      iconButton({ icon: "x", size: 12, label: `Remove ${f.name} from the list`, title: null, sm: true, onClick: () => { files.splice(i, 1); drawFiles(); } }))));
+      iconButton({ icon: "x", size: 12, label: `Remove ${f.name} from the list`, title: copied.has(f) ? "Copied into the project already: it is being added" : null, sm: true,
+        disabled: copied.has(f), onClick: () => { files.splice(i, 1); drawFiles(); } }))));
     addBtn.disabled = !files.length || needLevel() || adding;
     addWhy.textContent = adding ? "" : !files.length ? "Choose or drop files first." : needLevel() ? "Choose who may read them with AI first." : "";
     addBtn.title = addWhy.textContent;
@@ -114,7 +119,7 @@ export async function renderSources(view) {
     try {
       const r = await api("POST", `/api/projects/${P(project)}/ingest`, body);
       followIngest(r.job.id, label);
-    } catch (e) { showError(e); adding = false; sent = []; drawFiles(); pathBtn.disabled = false; }
+    } catch (e) { showError(e); adding = false; sent = []; copied.clear(); drawFiles(); pathBtn.disabled = false; }
   }
 
   function followIngest(jobId, label) {
@@ -138,7 +143,7 @@ export async function renderSources(view) {
       // only the files that were sent leave the list; what was picked during the run stays for the next one
       for (const f of sent) { const i = files.indexOf(f); if (i >= 0) files.splice(i, 1); }
       const waiting = files.length;
-      sent = []; adding = false; drawFiles(); pathBtn.disabled = false;
+      sent = []; adding = false; copied.clear(); drawFiles(); pathBtn.disabled = false;
       if (waiting) toast(`${waiting === 1 ? "1 file you picked" : `${waiting} files you picked`} while the documents were being added ${waiting === 1 ? "is" : "are"} still in the list: press Add to add ${waiting === 1 ? "it" : "them"}.`, "info", { ttl: 7000 });
       forgetOriginals();
       await reloadDocs();
@@ -163,6 +168,10 @@ export async function renderSources(view) {
     if (emptyOther.length) bits.push(notice({ kind: "attention" }, h("p", {}, `${emptyOther.length} ${emptyOther.length === 1 ? "file has" : "files have"} no readable text: ${emptyOther.join(", ")}`)));
     if (st.mostly_unreadable && st.mostly_unreadable.length) bits.push(notice({ kind: "attention" }, h("p", {}, "The text of these could mostly not be read: " + st.mostly_unreadable.join(", ") + ". Try another copy (for example from the publisher), or run OCR.")));
     if (st.failed && st.failed.length) bits.push(notice({ kind: "error", live: false }, h("div", {}, h("p", {}, "These could not be read:"), h("ul", { class: "errors-list" }, st.failed.map((f) => h("li", {}, f))))));
+    // hunt phase 1: two files of one name are both added now, the second under a name of its own; said here, so the
+    // list of documents and any line above that names it can be matched to the file picked
+    if (renamed.length) bits.push(h("p", { class: "muted small docs-renamed" }, `Two files had the same name, so ${renamed.length === 1 ? "one was" : `${renamed.length} were`} added under another: `
+      + renamed.map(([a, b]) => `${a} as “${b}”`).join(", ") + "."));
     if (st.excluded && st.excluded.length) bits.push(h("p", { class: "muted small" }, `Left out: ${st.excluded.join(", ")}`));
     if (st.not_in_manifest && st.not_in_manifest.length) bits.push(h("p", { class: "muted small" }, `Not named in the manifest: ${st.not_in_manifest.slice(0, 10).join(", ")}${st.not_in_manifest.length > 10 ? "…" : ""}`));
     if (st.glossary_error || st.codes_error) bits.push(notice({ kind: "attention" }, h("div", {}, h("p", {}, "The documents were added, but " + (st.glossary_error ? "the glossary of terms" : "the codes found by keywords") + " could not be updated. Update them from the Concepts or Profile page."), fold({}, "Technical details", h("div", { class: "mono small" }, st.glossary_error || st.codes_error)))));
@@ -192,14 +201,22 @@ export async function renderSources(view) {
     progressBox.hidden = false;
     const holder = card({ as: "div", title: "Copying the files into the project" }, h("div", { class: "pb" }));
     replace(progressBox, holder);
-    let n = 0;
+    copied.clear(); renamed = [];
     try {
       for (const f of sent) {
-        replace(holder.querySelector(".pb"), simpleProgress({ state: "running", seconds: 0, progress: { done: n, total: sent.length, file: f.name } }, () => `Copying ${f.name} (${n + 1} of ${sent.length})`));
-        await api("POST", `/api/projects/${P(project)}/uploads?batch=${batch}&name=${encodeURIComponent(f.name)}`, f);
-        n++;
+        // hunt phase 1 (PAGESB-5): a file taken off the list (its x) while the ones before it were copied is not sent:
+        // the list is what is added, and the AI access chosen for the batch must not reach a file the person withdrew
+        if (!files.includes(f)) continue;
+        const total = copied.size + sent.filter((x) => !copied.has(x) && files.includes(x)).length;
+        replace(holder.querySelector(".pb"), simpleProgress({ state: "running", seconds: 0, progress: { done: copied.size, total, file: f.name } }, () => `Copying ${f.name} (${copied.size + 1} of ${total})`));
+        const r = await api("POST", `/api/projects/${P(project)}/uploads?batch=${batch}&name=${encodeURIComponent(f.name)}`, f);
+        copied.add(f);
+        if (r && r.name && r.name !== f.name) renamed.push([f.name, r.name]);
+        drawFiles();
       }
-    } catch (e) { showError(e); adding = false; sent = []; drawFiles(); progressBox.hidden = true; return; }
+    } catch (e) { showError(e); adding = false; sent = []; copied.clear(); drawFiles(); progressBox.hidden = true; return; }
+    sent = sent.filter((f) => copied.has(f));
+    if (!sent.length) { adding = false; drawFiles(); progressBox.hidden = true; return; }   // every file was taken off
     const body = { batch, ai_access: chosenLevel };
     if (excludeInput.value.trim()) body.exclude = excludeInput.value.trim();
     await runIngest(body, `Reading ${sent.length === 1 ? "the document" : `the ${sent.length} documents`}`);
@@ -798,8 +815,7 @@ export async function renderSources(view) {
         h("p", {}, h("strong", {}, `${fmt.num(n)} ${n === 1 ? "document was" : "documents were"} read by an earlier reader of ENLENS.`),
           ` ${n === 1 ? "It keeps" : "They keep"} that reading, so your quotes and judgements stay where they are. `,
           older.some((d) => (d.reader || 1) < 3) ? "The new reader reads two columns in the right order, sets running heads, page numbers and the like aside, keeps tables as tables and repairs words broken over lines."
-            : older.some((d) => d.reader === 3) ? READER_4_NEWS : older.some((d) => d.reader === 4) ? READER_5_NEWS
-              : older.some((d) => d.reader === 5 && d.kind === "pdf") ? READER_6_NEWS : READER_7_NEWS),
+            : readerNews(older, reader.latest)),   // hunt phase 1 (PAGESB-8): every reader since theirs that changes their kinds
         h("div", { class: "btn-row docs-nr-actions" },
           button({ kind: "main", sm: true, onClick: () => startNr(sel.length ? sel : older, !!sel.length) }, icon("layers", { size: 13 }),
             sel.length ? `Read the ${sel.length === 1 ? "selected one" : `${fmt.num(sel.length)} selected`} with the new reader` : n === 1 ? "Read it with the new reader" : `Read all ${fmt.num(n)} with the new reader`),

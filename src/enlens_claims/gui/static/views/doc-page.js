@@ -467,7 +467,8 @@ export async function renderDocument(view, [docId], query) {
     paint();
     if (panels.notes) panels.notes.refresh();
   }
-  async function addNote(x, text, colour) {
+  // `onFail(e)`: who says a refusal (the note dialog, in itself, so the words typed stay); else a toast
+  async function addNote(x, text, colour, onFail = showError) {
     try {
       const r = await api("POST", `${base}/notes`, { doc_id: docId, start: x.start, end: x.end, quote: x.text, text, colour });
       const sel = window.getSelection();
@@ -476,17 +477,29 @@ export async function renderDocument(view, [docId], query) {
       paint();
       if (panels.notes) panels.notes.refresh();
       toast(text ? "Note kept. It is in Notes, and can be evidence in a check." : "Highlighted. Click it to add a note, use it as evidence or remove it.", "ok", { small: true, group: "note" });
-    } catch (e) { showError(e); }
+      return true;
+    } catch (e) { onFail(e); return false; }
   }
   async function noteDialog(x) {
     let colour = "yellow";
     const ta = textarea({ rows: 4, maxlength: 10000, placeholder: "What these words mean for your work…" });
+    const err = h("p", { class: "field-error", role: "alert" });
     const body = h("div", {}, h("blockquote", { class: "note-quote" }, x.text),
       h("label", { class: "field" }, h("span", { class: "field-label" }, "Your note"), ta),
-      h("div", { class: "field" }, h("span", { class: "field-label" }, "Colour"), colourPicker(colour, (c) => { colour = c; })));
+      h("div", { class: "field" }, h("span", { class: "field-label" }, "Colour"), colourPicker(colour, (c) => { colour = c; })), err);
     ta.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); const b = ta.closest("dialog").querySelector(".btn-primary"); if (b) b.click(); } });
-    const r = await dialog({ title: "Add a note", body, actions: [{ text: "Cancel", value: null }, { text: "Keep the note", value: true, primary: true }], onOpen: () => ta.focus() });
-    if (r) await addNote(x, ta.value.trim(), colour);
+    // hunt phase 1 (PAGESB-2): the note is saved from the dialog's own button, and a refused or failed save keeps the
+    // dialog open with the words typed and the reason under them; closing first lost a note that may have taken minutes
+    const lock = { on: false };
+    await dialog({ title: "Add a note", body, lock, actions: [{ text: "Cancel", value: null }, { text: "Keep the note", value: true, primary: true,
+      async onClick() {
+        err.textContent = "";
+        lock.on = true;
+        let ok;
+        try { ok = await addNote(x, ta.value.trim(), colour, (e) => { err.textContent = e.message; }); } finally { lock.on = false; }
+        if (!ok) ta.focus();
+        return ok;
+      } }], onOpen: () => ta.focus() });
   }
   function showNoteBar(n, rect) {
     selNow = null;

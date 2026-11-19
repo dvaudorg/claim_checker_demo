@@ -53,7 +53,7 @@ await scenario("codebook: typing while Try it runs", async (t) => {
   state = "done";
   await t.settle(1200);
   const now = t.field("Definition");
-  return { same: now === f, focused: t.focused(), value: now ? now.value : null };
+  return { same: now === f, focused: t.focused(), value: now ? now.value : null, focusedIsField: !!now && document.activeElement === now };
 });
 
 // ---- the Documents page: adding files ----------------------------------------------------------------------
@@ -84,6 +84,40 @@ await scenario("documents: a file removed from the list while the others are cop
   first.release();
   await t.settle();
   return { listed, removable, sent: t.calls.filter((c) => c.path.includes("/uploads")).map((c) => decodeURIComponent(c.path.split("name=")[1])) };
+});
+
+// the server keeps two files of one name apart now (hunt phase 1, `_free_upload_name`): the page says both were added
+await scenario("documents: two files of one name", async (t) => {
+  await documents(t);
+  const input = t.view.querySelector("#src-files");
+  input.files = [new File(["aaa"], "notes.txt"), new File(["bbbbbb"], "notes.txt")];
+  input.dispatchEvent(new Event("change"));
+  await t.settle();
+  let n = 0;
+  t.answer(/^POST \/api\/projects\/Study\/uploads/, () => (++n === 1 ? { batch: "b", name: "notes.txt", size: 3 } : { batch: "b", name: "notes (2).txt", size: 6 }));
+  t.answer("POST /api/projects/Study/ingest", { job: { id: "ji" } });
+  t.answer("GET /api/jobs/ji", { id: "ji", state: "done", progress: {}, result: { added: 2 } });
+  t.answer("GET /api/projects/Study/hypotheses", { hypotheses: [] });
+  const listed = t.text(t.view.querySelector(".file-list"));
+  await t.click(/^Add these 2 documents/);
+  await t.settle(3000);
+  return { listed, said: t.text(t.view) };
+});
+
+// files of kinds it does not read, and a damaged zip, come back in the job's `failed` (hunt phase 1, the server)
+await scenario("documents: a damaged zip and a kind it does not read", async (t) => {
+  await documents(t);
+  const input = t.view.querySelector("#src-files");
+  input.files = [new File(["PK"], "interviews.zip")];
+  input.dispatchEvent(new Event("change"));
+  await t.settle();
+  t.answer(/^POST \/api\/projects\/Study\/uploads/, { batch: "b", name: "interviews.zip", size: 2 });
+  t.answer("POST /api/projects/Study/ingest", { job: { id: "ji" } });
+  t.answer("GET /api/jobs/ji", { id: "ji", state: "done", progress: {}, result: { added: 0,
+    failed: ["interviews.zip: damaged zip: copy or download it again", "old.doc: an older Word file, which ENLENS does not read: save it as .docx or PDF and add that"] } });
+  await t.click(/^Add this document/);
+  await t.settle(3000);
+  return t.text(t.view.querySelector(".pb"));
 });
 
 // ---- reader 7 offered to a document an earlier reader read ---------------------------------------------------
@@ -131,7 +165,7 @@ await scenario("note: a new note whose save fails", async (t) => {
   await t.click("Note", { within: t.view.querySelector(".dv-selbar") });
   const words = "This is the heart of my second chapter: repair as a habit, not an event.";
   await t.type("Your note", words);
-  t.answer("POST /api/projects/Study/notes", t.fail(400, "These words are not in the document's text now."));
+  t.answer("POST /api/projects/Study/notes", t.fail(400, "These words are not in the document's text: select them in the text."));
   await t.click("Keep the note", { within: t.dialog() });
   return { kept: typedStill(words), errors: t.toasts() };
 });
@@ -144,7 +178,7 @@ await scenario("note: an edit whose save fails", async (t) => {
   await t.click("Edit");
   const words = "first thought, and a long second one I spent ten minutes on";
   await t.type("Note", words);
-  t.answer("PUT /api/projects/Study/notes/n1", t.fail(503, "The project is busy: try again in a moment."));
+  t.answer("PUT /api/projects/Study/notes/n1", t.fail(404, "Not found: n1"));   // removed meanwhile by one's other account
   await t.click("Save", { within: t.dialog() });
   return { kept: typedStill(words), errors: t.toasts() };
 });
@@ -179,9 +213,72 @@ await scenario("log: an edit of an entry whose save fails", async (t) => {
   const words = "Decided to drop the 2019 reports: their method changed halfway, so they cannot be compared with the rest.";
   const ta = t.dialog().querySelector("textarea");
   await t.type(ta, words);
-  t.answer("PUT /api/projects/Study/log/e1", t.fail(503, "The project is busy: try again in a moment."));
+  t.answer("PUT /api/projects/Study/log/e1", t.fail(404, "Not found: e1"));     // removed meanwhile by one's other account
   await t.click("Save", { within: t.dialog() });
   return { kept: typedStill(words), errors: t.toasts() };
+});
+
+// ---- siblings of PAGESB-2/3 (fixer): other dialogs of these views that took words and saved them after closing ------
+const inOpenDialog = (el) => !!el && !!el.closest("dialog") && el.closest("dialog").open && el.isConnected;
+await scenario("rename: a document title whose save fails", async (t) => {
+  t.state({ settings: {} });
+  const m = await t.module("views/doc-shared.js");
+  m.renameDocument("Study", { doc_id: "d1", title: "Interviews", file: "interviews.txt", named: false });
+  await t.settle();
+  await t.type("New title", "Interviews with the volunteers of the Leiden repair café, spring 2026");
+  t.answer("PUT /api/projects/Study/documents/d1/title", t.fail(404, "Not found: d1"));
+  await t.click("Rename", { within: t.dialog() });
+  const f = t.field("New title");
+  return { kept: inOpenDialog(f) && f.value === "Interviews with the volunteers of the Leiden repair café, spring 2026", said: t.text(t.dialog()) };
+});
+await scenario("evidence: a note's comment whose save fails", async (t) => {
+  t.state({ settings: {} });
+  t.answer("GET /api/projects/Study/hypotheses", { hypotheses: [{ hyp_id: "h1", text: "Repair cafés build a community" }] });
+  t.answer("GET /api/projects/Study/hypotheses/h1", { parts: [{ claim_id: "c1", claim: "Repair cafés build a community" }] });
+  const m = await t.module("views/notes.js");
+  m.useAsEvidence({ note_id: "n1", quote: "Repair cafés" });
+  await t.settle();
+  await t.type(t.dialog().querySelector("select"), "h1");
+  await t.settle();
+  const words = "The volunteers say so in four interviews, not only in this one.";
+  await t.type("Comment", words);
+  t.answer("POST /api/projects/Study/notes/n1/evidence", t.fail(404, "Not found: c1"));   // the check was removed meanwhile
+  await t.click("Add as evidence", { within: t.dialog() });
+  const f = t.field("Comment");
+  return { kept: inOpenDialog(f) && f.value === words, said: t.text(t.dialog()) };
+});
+const HELD = "A removed codebook called 'remote_work' still has its labels or its earlier versions, kept under that name: a new codebook of the name would take them over. Bring it back from History (Restore), or choose another name.";
+await scenario("new codebook: a name a removed codebook still holds", async (t) => {
+  t.state({ settings: {} });
+  t.answer("GET /api/projects/Study/codebooks", { codebooks: [] });
+  t.answer("POST /api/projects/Study/codebooks", t.fail(400, HELD));
+  const m = await t.module("views/codebooks.js");
+  m.newCodebook();
+  await t.settle();
+  await t.type("Title", "Remote work");
+  await t.click("Create", { within: t.dialog() });
+  const f = t.field("Title");
+  return { kept: inOpenDialog(f) && f.value === "Remote work", said: t.dialog() ? t.text(t.dialog()) : "", toasts: t.toasts() };
+});
+await scenario("new codebook from theory: a name a removed codebook still holds", async (t) => {
+  t.state({ settings: {} });
+  t.answer("GET /api/projects/Study/codebooks", { codebooks: [] });
+  t.answer("GET /api/projects/Study/codebook-theory/draft", { draft: null, documents: [{ doc_id: "d1", title: "Practice theory", theory: true }] });
+  t.answer("POST /api/projects/Study/codebook-theory/draft", t.fail(400, HELD));
+  const m = await t.module("views/codebooks.js");
+  m.newCodebook("theory");
+  await t.settle();
+  await t.type("Title", "Remote work");
+  await t.click("Next", { within: t.dialog() });
+  const focus = "How do people working from home keep a working day?";
+  await t.type(t.dialog().querySelector("textarea"), focus);
+  await t.click("Start the draft", { within: t.dialog() });
+  const f = t.field("Title");
+  const out = { kept: inOpenDialog(f) && f.value === "Remote work", said: t.dialog() ? t.text(t.dialog()) : "" };
+  await t.click("Next", { within: t.dialog() });
+  const ta = t.dialog() && t.dialog().querySelector("textarea");
+  out.focusKept = !!ta && ta.value === focus;
+  return out;
 });
 """
 
@@ -206,7 +303,8 @@ def test_typing_in_the_codebook_editor_while_try_it_finishes_keeps_the_field_and
     in is replaced and the keyboard's focus is lost mid-word (codebooks.js:998 `tryIt` calls draw())."""
     r = page["codebook: typing while Try it runs"]
     assert r["value"] == "Fixing things toge"
-    assert r["same"] is True and r["focused"] is not None
+    # loosened as the verdict says: the field may be rebuilt, if the focus is back in the (new) Definition field
+    assert r["focusedIsField"] is True and r["focused"]["label"] == "Definition", r
 
 
 @needs_node
@@ -225,7 +323,10 @@ def test_the_new_reader_offered_to_a_reader_4_text_file_says_what_reader_7_chang
     (sources.js:801, doc-reading.js:64)."""
     told = {scen: page[scen] for scen in ("documents: the offer of the new reader to a reader-4 text file",
                                           "document page: the Reading panel of a reader-4 text file")}
-    assert [s for s, said in told.items() if "reads text files, Word files and web pages otherwise" not in said] == [], told
+    # loosened as the verdict says (it pinned one sentence of READER_7_NEWS): not reader 5's "Other text reads the same",
+    # and what reader 7 changes for text files (a line that comes back in an interview, one paragraph per line)
+    assert [s for s, said in told.items() if "Other text reads the same" in said
+            or not ("interview" in said and "one per line" in said)] == [], told
 
 
 @needs_node
@@ -338,3 +439,202 @@ def test_a_label_given_to_selected_words_lands_on_those_words(tmp_path):
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+# ---- siblings found by the fixer -----------------------------------------------------------------------------------
+@needs_node
+def test_a_document_title_whose_save_fails_keeps_the_words_typed(page):
+    """Sibling of PAGESB-2 (doc-shared.js `renameDocument`): the dialog closed, then the title was sent; a refusal
+    left a toast and lost the title typed."""
+    r = page["rename: a document title whose save fails"]
+    assert r["kept"] is True and "Not found: d1" in r["said"], r
+
+
+@needs_node
+def test_a_comment_given_with_a_note_as_evidence_is_kept_when_the_save_fails(page):
+    """Sibling of PAGESB-2 (notes.js `useAsEvidence`): the comment typed beside the judgement was sent after the dialog
+    had closed, and lost when the save failed."""
+    r = page["evidence: a note's comment whose save fails"]
+    assert r["kept"] is True and "Not found: c1" in r["said"], r
+
+
+@needs_node
+def test_new_codebook_refused_for_a_removed_codebooks_name_stays_open_with_what_was_typed(page):
+    """The page side of CONCEPTS-1 (codebooks.js `newCodebook`): the server refuses a name a removed codebook still
+    holds; the dialog had closed, so the refusal was a toast and the title had to be typed again."""
+    r = page["new codebook: a name a removed codebook still holds"]
+    assert r["kept"] is True and "removed codebook called 'remote_work'" in r["said"], r
+
+
+@needs_node
+def test_new_codebook_from_theory_refused_for_a_removed_codebooks_name_keeps_what_was_typed(page):
+    """The same through *From theory documents* (`startTheoryDraft`): the refusal comes after the theory step; the
+    first dialog comes back with the title and the reason, and the theory step keeps the question typed in it."""
+    r = page["new codebook from theory: a name a removed codebook still holds"]
+    assert r["kept"] is True and "removed codebook called 'remote_work'" in r["said"] and r["focusKept"] is True, r
+
+
+@needs_node
+def test_two_files_of_one_name_are_both_said_to_be_added(page):
+    """The page side of the server's fix (two files called notes.txt from two folders: the second was written over the
+    first): both are listed, both are sent, and the summary says the second was added under its own name."""
+    r = page["documents: two files of one name"]
+    assert r["listed"].count("notes.txt") == 2, r
+    assert "2 documents added" in r["said"] and "notes.txt as “notes (2).txt”" in r["said"], r["said"]
+
+
+@needs_node
+def test_the_news_of_a_move_names_every_reader_since_that_changes_the_file(tmp_path):
+    """Sibling of PAGESB-8: the chain told a reader-3 Word file reader 4's news alone (reader 5 and 7 change Word files
+    again), and a reader-4 PDF reader 5's alone (reader 6 changes PDFs). Each now hears every reader that changes its
+    kind, without the "reads the same" lines that one reader's news says of the others."""
+    from test_reader5_reading_view import _news
+
+    got = _news(tmp_path, [[[{"reader": 3, "kind": "docx"}], 7], [[{"reader": 4, "kind": "pdf"}], 7], [[{"reader": 6, "kind": "html"}], 7],
+                           [[{"reader": 4, "kind": "text"}, {"reader": 5, "kind": "pdf"}], 7]])
+    word, pdf, page, both = got
+    assert "content controls" in word and "ruled lines" in word and "text box is read once" in word, word
+    assert "ruled lines" in pdf and "hides behind a figure" in pdf and "text box" not in pdf, pdf
+    assert page == "7"
+    assert "hides behind a figure" in both and "one per line" in both and "ruled lines" not in both, both
+    assert not any("reads the same" in x or "read the same" in x for x in (word, pdf, both)), got
+
+
+def test_a_label_given_with_its_quote_alone_lands_on_the_first_place_as_before(tmp_path):
+    """PAGESB-4, the server's half: `profile.add_label` places the quote nearest `start` when the page says where the
+    words were selected, and a call with the quote alone (other callers, an older page) keeps the first place."""
+    from enlens_claims import home, ingest, profile
+
+    ws = home.create_project("Study")
+    text = ("In spring the water was clean and the town was proud of its river. "
+            "By the autumn the water was dirty and nobody in the town drank it any more.")
+    src = tmp_path / "river.txt"
+    src.write_text(text, encoding="utf-8")
+    ingest.ingest(ws, [src])
+    p = next(r for r in ws.query("SELECT passage_id, start, text FROM passages") if r["text"].count("water was") == 2)
+    first = p["start"] + p["text"].index("water was")
+    second = p["start"] + p["text"].index("water was dirty")
+    profile.add_label(ws, "sdg", p["passage_id"], "6.4", quote="water was")
+    assert [(r["start"], r["end"]) for r in ws.query("SELECT start, end FROM labels WHERE source='person'")] == [(first, first + 9)]
+    profile.add_label(ws, "sdg", p["passage_id"], "6.4", quote="water was", start=second)   # the same label id: replaced
+    assert [(r["start"], r["end"]) for r in ws.query("SELECT start, end FROM labels WHERE source='person'")] == [(second, second + 9)]
+    profile.add_label(ws, "sdg", p["passage_id"], "6.4", quote="water was", start="nonsense")   # a bad start: as before
+    assert [r["start"] for r in ws.query("SELECT start FROM labels WHERE source='person'")] == [first]
+
+
+# ---- the redraw sweep (fixer): the framework draft page when the theory's reading ends ------------------------------
+THEORY_PROBE = r"""
+const BASE = "/api/projects/Study/codebook-theory/draft";
+const DRAFT = (o = {}) => ({ title: "Repair theory", name: "repair", where: "project", doc_ids: ["d1"], focus: "", rev: 3,
+  reading: { state: "none", job: null, problems: [] }, left_out: [], groups: [{ key: "g1", name: "Practice", about: "" }],
+  concepts: [{ key: "c1", name: "habitus", group: "g1", meaning: "Lasting dispositions", when_to_use: "", when_not: "", keep: true,
+    checked: false, how: "found", sources: [], examples: [], words: [], ai: null }], ...o });
+await scenario("theory draft: settings typed while the theory is read", async (t) => {
+  let state = "running";
+  t.state({ settings: { backend: "claude_code" } });
+  const offer = { offered: true, reader: "claude", parts: 1, why: "", documents: [{ doc_id: "d1", title: "Practice theory", level: "cloud", parts: 1, offered: true, why: "" }] };
+  t.answer(`GET ${BASE}`, () => ({ draft: state === "running" ? DRAFT({ reading: { state: "running", job: "jr", problems: [] } })
+    : DRAFT({ rev: 5, reading: { state: "read", job: null, problems: [] } }), offer, documents: [{ doc_id: "d1", title: "Practice theory" }] }));
+  t.answer(`GET ${BASE}/counts`, { documents: 1, counts: {} });
+  t.answer(`PUT ${BASE}`, (body) => ({ draft: { rev: (body.rev || 0) + 1, reading: { stale: false } } }));
+  t.answer("GET /api/jobs/jr", () => ({ id: "jr", state, progress: { done: 1, total: 3 }, result: state === "done" ? { ok: true, concepts: 1, groups: 1 } : null }));
+  await t.render("views/theory-draft.js", "renderTheoryDraft");
+  await t.click(t.view.querySelector("details.cb-settings > summary"));
+  await t.type("Short name", "repair_theory");          // not sent while the AI reads: only the title and the question are
+  await t.type("Title", "Repair theory, revised");      // sent 800 ms after the last key
+  state = "done";
+  await t.settle(600);                                   // the reading ends (the job is asked every 500 ms)
+  const now = { name: (t.field("Short name") || {}).value, title: (t.field("Title") || {}).value, focused: t.focused() };
+  await t.settle(1500);
+  const last = t.calls.filter((c) => c.method === "PUT").pop();
+  return { ...now, sent: last ? { name: last.body.name, title: last.body.title } : null };
+});
+
+// the Codes panel of a document: a note typed in a label's "Change how it applies" when the codes are read again (the AI's
+// labelling of the document ends, or the keyword pass: both call load(); `live` is the same load)
+await scenario("codes panel: a label's note typed when the codes are read again", async (t) => {
+  t.state({ settings: {} });
+  const item = { passage_id: "p1", source: "model", label_id: "l1", relevance: "main", confidence: 0.8, quote: "a quote", reason: "why", location: "page 1", provisional: false };
+  t.answer("GET /api/projects/Study/documents/d1/profile?*", { framework_title: "B", code_label: "code", pass1: { done: true }, passages: 5, n_pages: 2, read_by_model: 1,
+    codes: [{ code: "X1", description: "Same code", share: 0.5, passages: 1, main: 1, pages: [1], positions: [10], items: [item] }] });
+  t.answer("GET /api/projects/Study/frameworks", { frameworks: [{ name: "B", title: "B" }] });
+  t.answer("GET /api/projects/Study/profile/plan?*", { passages: 5, with_candidates: 5, already_read: 5, to_read: 0, run: {} });
+  t.answer(/^GET \/api\/projects\/Study\/search/, { lines: [] });
+  const m = await t.module("views/doc-codes.js");
+  const ctx = { query: { code: "X1" }, docBase: "/api/projects/Study/documents/d1", base: "/api/projects/Study", keepUrl() {}, project: "Study",
+    watchers: [], docId: "d1", jumpTo() {}, paint() {}, framework: "B", tab: "codes" };
+  const panel = m.codesPanel(ctx);
+  document.getElementById("view").appendChild(panel.el);
+  await t.settle(50);
+  await t.click(document.querySelector(".judge-diff > summary"));
+  await t.click(document.querySelector('.judge-diff input[value="mentioned"]'));
+  await t.type("Your note on this label", "only in passing, in the last sentence");
+  await panel.live();
+  await t.settle(50);
+  const f = t.field("Your note on this label");
+  const r = document.querySelector('.judge-diff input[value="mentioned"]');
+  return { note: f ? f.value : null, mentioned: !!r && r.checked, focused: t.focused() };
+});
+
+// the Bibliography: a list's filter typed while the check for retractions runs; its end draws the page again
+await scenario("bibliography: a filter typed while the retractions are checked", async (t) => {
+  t.state({ settings: {} });
+  const W = (key, title, authors, year) => ({ key, title, authors, year, cite: `${authors} ${year}`, type: "article", notices: [] });
+  t.answer("GET /api/projects/Study/bibliography", { bibliography: { kind: "file", name: "refs.ris", pulled_at: "2026-11-18T10:00:00Z" },
+    counts: { works: 3, to_find: 3, linked: 0, confirm: 0, not_in: 0 }, to_find: [W("a", "Governing the commons", "Ostrom", 1990), W("b", "Repair cafés", "Charter", 2018), W("c", "The craftsman", "Sennett", 2008)],
+    linked: [], confirm: [], not_in: [], retractions: {}, ai_access: { chosen: true, default: "cloud" } });
+  let state = "running";
+  t.answer("POST /api/projects/Study/retractions/check", { job: { id: "jx" } });
+  t.answer("GET /api/jobs/jx", () => ({ id: "jx", state, progress: { done: 1, total: 3 }, result: state === "done" ? { looked_up: 3, notices: 0 } : null }));
+  await t.render("views/bibliography.js", "renderBibliography");
+  await t.click("Check for retractions");
+  await t.type("Filter by title, author or year", "ostrom");
+  state = "done";
+  await t.settle(1200);
+  const f = t.field("Filter by title, author or year");
+  return { filter: f ? f.value : null, rows: t.view.querySelectorAll(".bib-table tbody tr").length, focused: t.focused() };
+});
+"""
+
+
+@needs_node
+def test_settings_typed_in_a_framework_draft_while_the_theory_is_read_are_kept(tmp_path):
+    """The redraw sweep, theory-draft.js `reload` (the hunter's suspicion, proven): the reading's end loads the draft
+    again and drew every field from it, so a short name typed while the AI read (never sent while it reads) and a title
+    typed in the last 800 ms were gone, and the field in use lost the keyboard's focus."""
+    r = run_views(THEORY_PROBE, tmp_path)["theory draft: settings typed while the theory is read"]
+    assert r["name"] == "repair_theory" and r["title"] == "Repair theory, revised", r
+    assert r["focused"] and r["focused"]["label"] == "Title", r
+    assert r["sent"] == {"name": "repair_theory", "title": "Repair theory, revised"}, r
+
+
+
+@needs_node
+def test_a_note_typed_on_a_label_is_kept_when_the_codes_are_read_again(tmp_path):
+    """The redraw sweep, doc-codes.js `draw`: the codes are read again when the AI's labelling of the document or the
+    keyword pass ends, and the list was drawn anew: a label's open *Change how it applies* closed, with the note typed
+    in it and the choice made, and the field lost the keyboard's focus."""
+    r = run_views(THEORY_PROBE, tmp_path)["codes panel: a label's note typed when the codes are read again"]
+    assert r["note"] == "only in passing, in the last sentence" and r["mentioned"] is True, r
+    assert r["focused"] and r["focused"]["label"] == "Your note on this label", r
+
+
+
+@needs_node
+def test_a_bibliography_filter_typed_while_a_check_runs_is_kept(tmp_path):
+    """The redraw sweep, bibliography.js: the end of a job it follows (retractions, bringing in, Zotero's files) draws
+    the whole page again, so the filter typed meanwhile was emptied, the list showed every work again and the field
+    lost the keyboard's focus."""
+    r = run_views(THEORY_PROBE, tmp_path)["bibliography: a filter typed while the retractions are checked"]
+    assert r["filter"] == "ostrom" and r["rows"] == 1, r
+    assert r["focused"] and r["focused"]["label"] == "Filter by title, author or year", r
+
+
+
+@needs_node
+def test_files_it_cannot_read_are_listed_under_these_could_not_be_read(page):
+    """The page side of the server's fix: a damaged zip and a file of a kind ENLENS does not read (an older .doc inside
+    a zip or a folder) come back in the job's `failed`, and the summary lists them under "These could not be read"."""
+    said = page["documents: a damaged zip and a kind it does not read"]
+    assert "No new document was added" in said and "These could not be read" in said, said
+    assert "interviews.zip: damaged zip" in said and "old.doc: an older Word file" in said, said

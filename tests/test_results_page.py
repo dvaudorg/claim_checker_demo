@@ -158,7 +158,7 @@ def test_an_excerpt_card_is_compact_and_can_be_dismissed():
     judge = js[js.index("  function judgeControl("):js.index("  function moreRow(")]
     # dismissing is a person's judgement "Not about this": recorded like any other, with Undo
     assert 'put("not_relevant", undefined,' in judge and '"Not about this")' in judge
-    assert 'p.user_verdict !== "not_relevant"' in judge and 'p.read_by !== "you"' in judge
+    assert 'mine !== "not_relevant"' in judge and 'p.read_by !== "you"' in judge   # hunt phase 1: your own verdict, not a colleague's in force
     # an agreement is a state on the card, not a filled button; agreeing with an uncounted judgement says it counts
     assert '"You agree with the AI")' not in judge
     # an agreement can be taken back from the card itself, the same way as a different judgement: one label, saved at

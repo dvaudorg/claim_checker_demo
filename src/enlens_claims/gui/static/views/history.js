@@ -41,6 +41,7 @@ export async function answersList(box, query, opts = {}) {
   const threshold = App.settings().threshold ?? 0.6;
   const watchers = [];
   let rowsNow = [], countsNow = {}, running = [], drawn = false, stopped = false, timer = null;
+  let following = null;     // hunt phase 1: the id of the job followed in jobBox (one at a time)
   let newDocs = new Map();  // 0.20.3: hyp_id -> what the last reading of the new documents changed (readNew result)
   let steps = null;         // the lazy list of the rows (0.18.1: lazyList): a table drawn again (a check changed) keeps as many as were shown
   const fresh = latest();   // the newest look at the answers: an older answer never draws over it
@@ -101,12 +102,17 @@ export async function answersList(box, query, opts = {}) {
   }
 
   function followJob(jobId, title, kind) {
+    // hunt phase 1: a second press of "Read the new documents" (or a second opinion) while it runs gets the same job
+    // back from the app: it is followed once, so it ends with one toast
+    if (following === jobId) return;
+    following = jobId;
     const panel = new ProgressPanel({ title, steps: kind === "second-opinion" ? ["grade"] : null, batchWords: kind === "read-new" ? READ_NEW_WORDS : null });
     replace(jobBox, h("div", { class: "section-title" }, h("h2", {}, title), h("span", { class: "muted" }, "you can leave this page; it continues")), panel.el);
     jobBox.hidden = false;
     const w = watchJob(jobId, (job) => panel.update(job));
     watchers.push(w);
     w.promise.then(async (job) => {
+      if (following === jobId) following = null;
       const st = jobBox.querySelector(".section-title h2"); if (st) st.textContent = job.state === "done" ? "Done" : job.state === "cancelled" ? "Stopped" : "Did not work";
       const sub = jobBox.querySelector(".section-title > .muted"); if (sub) sub.remove();   // it has ended: nothing continues
       if (job.state === "done") {
@@ -127,7 +133,13 @@ export async function answersList(box, query, opts = {}) {
         }
       } else if (job.state === "error") jobFailed(job);
       await refresh();
-    }).catch(showError);
+    }).catch((e) => {
+      // hunt phase 1 (PAGESA-6): the app no longer reports on the job (it started again, or does not answer): said in
+      // its box, which no longer shows it running with its Stop; the answers are looked at again
+      if (following === jobId) following = null;
+      failedLoad(jobBox, { message: `${title}: the app no longer reports on this work, so how it ended is not known here: ${String((e && e.message) || "no answer").replace(/\.?\s*$/, ".")} The answers below are as the app has them now.` });
+      refresh().catch(() => {});
+    });
   }
 
   function keepNewDocs(r) { newDocs = new Map(((r && r.hypotheses) || []).filter((d) => d.changed).map((d) => [d.hyp_id, d])); }

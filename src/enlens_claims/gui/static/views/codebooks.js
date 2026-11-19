@@ -153,54 +153,68 @@ export async function newCodebook(start = "fresh", opts = {}) {
     } });
   drawExtra();
   const err = h("div", { class: "field-error", role: "alert" });
-  const r = await dialog({
-    title: "New codebook", wide: true,
-    body: h("div", { class: "stack" }, h("div", { class: "fields-2" }, field("Title", title), field("Short name", name, { help: "letters, digits, - and _ (the file's name)" })),
-      h("div", { class: "field" }, h("span", { class: "field-label" }, "Kept"), whereSel, h("div", { class: "field-help" }, "All my projects: every project can use it, and a change shows in each. A project can still take its own copy later.")),
-      h("div", { class: "field" }, h("span", { class: "field-label" }, "Start"), startSel, extra), err),
-    actions: [{ text: "Cancel", value: null }, { text: start === "themes" || start === "theory" ? "Next" : "Create", value: true, primary: true, onClick: async () => {
-      err.textContent = "";
-      if (!title.value.trim()) { err.textContent = "Give the codebook a title."; title.focus(); return false; }
-      return true;
-    } }],
-    onOpen: () => title.focus(),
-  });
-  if (!r) return;
-  const body = { name: name.value.trim() || title.value.trim(), title: title.value.trim(), where, start, source: {} };
-  if (start === "copy") body.source = { of: copySel.value };
-  if (start === "csv") {
-    const f = file.files && file.files[0];
-    if (!f) { toast("Choose a CSV file.", "info"); return; }
-    body.source = { csv: await readTextFile(f) };
-  }
-  if (start === "qdc") {
-    const f = qdcFile.files && qdcFile.files[0];
-    if (!f) { toast("Choose a .qdc or .qdpx file.", "info"); return; }
-    if (f.size > 14 * 1024 * 1024) { toast("The file is larger than 14 MB. Export only the codebook (.qdc) and bring that in.", "info"); return; }
-    body.source = { file: await fileBase64(f), filename: f.name };
-  }
-  if (start === "themes") {
-    const picked = await pickThemes(where === "home");
-    if (!picked) return;
-    body.source = { codes: picked };
-  }
-  if (start === "theory") { await startTheoryDraft(body); return; }   // K2: a draft on a page of its own
-  try {
-    let res;
-    try { res = await api("POST", base, body); } catch (e) {
-      // a .qdpx ENLENS wrote with several codebooks: choose one, and send it again (qdc_import.SeveralCodebooks)
-      const several = start === "qdc" && e.data && Array.isArray(e.data.codebooks) ? e.data.codebooks : null;
-      if (!several) throw e;
-      const one = await pickQdcCodebook(several);
-      if (!one) return;
-      body.source.codebook = one;
-      res = await api("POST", base, body);
+  // hunt phase 1: a refusal (a name a removed codebook still holds, a CSV it cannot read…) opens the dialog again with
+  // everything as typed and the reason in it; it was a toast after the dialog had gone, and the title, name and choices
+  // had to be made again. The same fields are shown each time, so what was typed stays.
+  const theoryMemo = {};
+  for (;;) {
+    const r = await dialog({
+      title: "New codebook", wide: true,
+      body: h("div", { class: "stack" }, h("div", { class: "fields-2" }, field("Title", title), field("Short name", name, { help: "letters, digits, - and _ (the file's name)" })),
+        h("div", { class: "field" }, h("span", { class: "field-label" }, "Kept"), whereSel, h("div", { class: "field-help" }, "All my projects: every project can use it, and a change shows in each. A project can still take its own copy later.")),
+        h("div", { class: "field" }, h("span", { class: "field-label" }, "Start"), startSel, extra), err),
+      actions: [{ text: "Cancel", value: null }, { text: start === "themes" || start === "theory" ? "Next" : "Create", value: true, primary: true, onClick: async () => {
+        err.textContent = "";
+        if (!title.value.trim()) { err.textContent = "Give the codebook a title."; title.focus(); return false; }
+        return true;
+      } }],
+      onOpen: () => title.focus(),
+    });
+    if (!r) return;
+    const body = { name: name.value.trim() || title.value.trim(), title: title.value.trim(), where, start, source: {} };
+    if (start === "copy") body.source = { of: copySel.value };
+    if (start === "csv") {
+      const f = file.files && file.files[0];
+      if (!f) { err.textContent = "Choose a CSV file."; continue; }
+      body.source = { csv: await readTextFile(f) };
     }
-    forgetFrameworks();
-    if (res.codebook.imported) await importSummary(res.codebook);
-    else toast("Codebook made. The research log says so.", "ok");
-    location.hash = `#/codebooks/${encodeURIComponent(res.codebook.name)}`;
-  } catch (e) { showError(e); }
+    if (start === "qdc") {
+      const f = qdcFile.files && qdcFile.files[0];
+      if (!f) { err.textContent = "Choose a .qdc or .qdpx file."; continue; }
+      if (f.size > 14 * 1024 * 1024) { err.textContent = "The file is larger than 14 MB. Export only the codebook (.qdc) and bring that in."; continue; }
+      body.source = { file: await fileBase64(f), filename: f.name };
+    }
+    if (start === "themes") {
+      const picked = await pickThemes(where === "home");
+      if (!picked) return;
+      body.source = { codes: picked };
+    }
+    if (start === "theory") {   // K2: a draft on a page of its own
+      const failed = await startTheoryDraft(body, theoryMemo);
+      if (failed) { err.textContent = failed.message; continue; }
+      return;
+    }
+    try {
+      let res;
+      try { res = await api("POST", base, body); } catch (e) {
+        // a .qdpx ENLENS wrote with several codebooks: choose one, and send it again (qdc_import.SeveralCodebooks)
+        const several = start === "qdc" && e.data && Array.isArray(e.data.codebooks) ? e.data.codebooks : null;
+        if (!several) throw e;
+        const one = await pickQdcCodebook(several);
+        if (!one) return;
+        body.source.codebook = one;
+        res = await api("POST", base, body);
+      }
+      forgetFrameworks();
+      if (res.codebook.imported) await importSummary(res.codebook);
+      else toast("Codebook made. The research log says so.", "ok");
+      location.hash = `#/codebooks/${encodeURIComponent(res.codebook.name)}`;
+      return;
+    } catch (e) {
+      if (e.status !== 400) { showError(e); return; }   // a refusal of what was typed or chosen: said in the dialog
+      err.textContent = e.message;
+    }
+  }
 }
 
 // A file's bytes as base64, for a JSON body (a .qdpx is a zip; a .qdc may be UTF-16, read on the server).
@@ -309,7 +323,9 @@ async function pickThemes(all) {
 // again, then the theory documents are chosen (and, if the researcher likes, what they want to find out), and the
 // draft is made (without AI) and opened. A draft takes minutes of AI reading and many choices, so it is a page, not a
 // dialog (DESIGN.md 4.16).
-async function startTheoryDraft({ title, name, where }) {
+// Resolves to a refusal of the title, name or documents (shown in New codebook, opened again), else nothing.
+// `memo`: what was ticked and typed in the theory step, kept for the next try.
+async function startTheoryDraft({ title, name, where }, memo = {}) {
   const base = `/api/projects/${P(App.project)}/codebook-theory`;
   let got;
   try { got = await api("GET", `${base}/draft`); } catch (e) { showError(e); return; }
@@ -324,20 +340,24 @@ async function startTheoryDraft({ title, name, where }) {
     if (!r) return;
     if (r === "continue") { location.hash = "#/codebooks/draft/theory"; return; }
   }
-  const picked = await pickTheory(docs);
+  const picked = await pickTheory(docs, memo);
   if (!picked) return;
   try {
     await api("POST", `${base}/draft`, { title, name, where, doc_ids: picked.doc_ids, focus: picked.focus });
     location.hash = "#/codebooks/draft/theory";
-  } catch (e) { showError(e); }
+  } catch (e) {
+    if (e.status === 400) return e;
+    showError(e);
+  }
 }
 
 // Which theory documents (theory documents first and ticked), and what the researcher wants to find out (optional)
-async function pickTheory(docs) {
+async function pickTheory(docs, memo = {}) {
   if (!docs.length) { toast("Add the theory documents to the project first.", "info"); return null; }
   const theory = docs.filter((d) => d.theory);
-  const docBoxes = docs.map((d) => [h("input", { type: "checkbox", checked: d.theory }), d]);
+  const docBoxes = docs.map((d) => [h("input", { type: "checkbox", checked: memo.doc_ids ? memo.doc_ids.includes(d.doc_id) : d.theory }), d]);
   const focus = textarea({ rows: 2, maxlength: 500, placeholder: "e.g. How do repair cafés make repairing a shared, everyday practice again?" });
+  if (memo.focus) focus.value = memo.focus;
   const err = h("div", { class: "field-error", role: "alert" });
   const ok = await dialog({ title: "Start from theory documents", body: h("div", { class: "stack" },
     h("p", {}, theory.length ? "Which theories do you read your documents through? Tick every one: their concepts are put together into one framework."
@@ -353,7 +373,9 @@ async function pickTheory(docs) {
       return false;
     } }] });
   if (!ok) return null;
-  return { doc_ids: docBoxes.filter(([cb]) => cb.checked).map(([, d]) => d.doc_id), focus: focus.value.trim() };
+  memo.doc_ids = docBoxes.filter(([cb]) => cb.checked).map(([, d]) => d.doc_id);
+  memo.focus = focus.value;
+  return { doc_ids: memo.doc_ids, focus: focus.value.trim() };
 }
 
 // `text` in at most `n` characters, cut before a word (only a single word longer than `n` is cut inside)
@@ -561,7 +583,38 @@ export async function renderCodebook(view, [name]) {
     for (const c of st.codes) if (!gs.some((g) => g.group === c.group)) gs.push({ group: c.group, group_name: "" });
     return gs;
   }
+  // hunt phase 1 (PAGESB-7): draw() rebuilds every field, also when work ends by itself (Try it, a save's answer); the
+  // field being typed in was replaced and the keyboard's focus fell to the page, so the next keystrokes went nowhere.
+  // The field in use is found again in the new editor (its code's card, its place among the card's fields) and gets
+  // the focus and the caret back.
+  const FIELDS = "input, textarea, select, button";
+  function focusPlace() {
+    const el = document.activeElement;
+    if (!el || !body.contains(el) || !el.matches || !el.matches(FIELDS)) return null;
+    const li = el.closest(".cb-code"), root = li || body;
+    return { uid: li ? li.dataset.uid : null, code: li ? li.dataset.code : null, inCode: !!li,
+      open: !!li && li.classList.contains("cb-open"), i: [...root.querySelectorAll(FIELDS)].indexOf(el), a: el.selectionStart, b: el.selectionEnd };
+  }
+  function focusBack(at) {
+    if (!at || at.i < 0) return;
+    let root = body;
+    if (at.inCode) {
+      root = [...body.querySelectorAll(".cb-code")].find((x) => (at.uid && x.dataset.uid === at.uid) || (!at.uid && x.dataset.code === at.code))
+        || [...body.querySelectorAll(".cb-code")].find((x) => x.dataset.code === at.code)
+        || (at.open ? body.querySelector(".cb-code.cb-open") : null);   // a new code renamed meanwhile: the open one
+      if (!root) return;
+    }
+    const el = [...root.querySelectorAll(FIELDS)][at.i];
+    if (!el) return;
+    el.focus({ preventScroll: true });
+    if (at.a != null && el.setSelectionRange && /^(INPUT|TEXTAREA)$/.test(el.tagName)) { try { el.setSelectionRange(at.a, at.b); } catch (_) { /* a field without a caret */ } }
+  }
   function draw() {
+    const at = focusPlace();
+    drawBody();
+    focusBack(at);
+  }
+  function drawBody() {
     drawHead();
     drawClashes();
     drawNotices();
@@ -949,11 +1002,29 @@ export async function renderCodebook(view, [name]) {
   async function save(btn, why) {
     if (btn) btn.disabled = true;
     try {
+      // hunt phase 1 (PAGESB-1): the fields stay open while the save is on its way. What is typed meanwhile changes
+      // `st` after its copy was sent; the answer then must not put the sent state back over it (the words vanished and
+      // the bar said nothing was unsaved). So: what was sent, and which code object was sent under which name (a new
+      // code gets its uid in the answer, found by that name)
+      const sentKey = JSON.stringify(st), sentMerges = merges.length;
+      const sentName = new Map(st.codes.map((c) => [c, c.code]));
       const r = await api("PUT", base, { codebook: st, merges, why: why || null });
       drafts.delete(key);
       cb = r.codebook;
       const pend = [...pendingDraft], busy = [...definingNow];
-      fresh();
+      if (JSON.stringify(st) === sentKey) fresh();
+      else {
+        // edits made after the Save was sent: they stay on screen and unsaved, laid onto the saved codebook (the codes
+        // new in what was sent take the uids the save gave them, so the next save does not add them twice)
+        for (const c of st.codes) {
+          if (c.uid || !sentName.has(c)) continue;
+          const got = cb.codes.find((x) => x.code === sentName.get(c));
+          if (got && got.uid) c.uid = got.uid;
+        }
+        merges = merges.slice(sentMerges);
+        dirty = true;
+        drafts.set(key, { st, merges, base: stateKey(cb) });
+      }
       keepPendingThroughSave(pend, busy);
       whyInput.value = leftAfterSending(whyInput.value, why || "");   // words typed meanwhile stay
       setAside = false;

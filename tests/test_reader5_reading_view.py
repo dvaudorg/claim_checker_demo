@@ -23,6 +23,19 @@ def _src(*files: str) -> str:
     return "\n".join((VIEWS / f).read_text(encoding="utf-8") for f in files)
 
 
+def _news(tmp_path, cases: list) -> list:
+    """What doc-shared.js `readerNews` says to each case [documents, latest], with the news constants by name: hunt
+    phase 1 (PAGESB-8) put the news of a move in one place, said by the list and the document's page alike."""
+    from _views import run_views
+
+    probe = f"""await scenario("news", async (t) => {{
+  const m = await t.module("views/doc-shared.js");
+  const names = {{ [m.READER_4_NEWS]: "4", [m.READER_5_NEWS]: "5", [m.READER_6_NEWS]: "6", [m.READER_7_NEWS]: "7" }};
+  return {json.dumps(cases)}.map(([docs, latest]) => {{ const s = m.readerNews(docs, latest); return names[s] || s; }});
+}});"""
+    return run_views(probe, tmp_path)["news"]
+
+
 @pytest.mark.skipif(not NODE, reason="node is not installed")
 def test_reader_5_is_offered_where_it_can_change_the_reading(tmp_path):
     m = re.search(r"^export function newReaderFor\(d, latest\) \{.*?^\}", _src("doc-shared.js"), re.S | re.M)
@@ -89,11 +102,16 @@ def test_figure_key_is_kept_by_page_and_box():
     assert reader.figure_key(None, (1, 2, 3, 4)) is None and reader.figure_key(2, (None, None, None, None)) is None
 
 
-def test_the_news_of_reader_5_is_said_to_documents_of_reader_4():
+@pytest.mark.skipif(not NODE, reason="node is not installed")
+def test_the_news_of_reader_5_is_said_to_documents_of_reader_4(tmp_path):
     src = _src("sources.js", "doc-reading.js", "doc-shared.js")
     assert "const READER_5_NEWS = " in src and "shows figures and pictures with their captions" in src
-    assert "older.some((d) => d.reader === 4) ? READER_5_NEWS" in src and "`Read by the reader of ENLENS 0.17.2 to 0.18.0. ${READER_5_NEWS}`" in src
-    assert "`Read by the reader of ENLENS 0.15.1 to 0.17.1. ${READER_4_NEWS}`" in src  # reader 3 keeps its sentence
+    # hunt phase 1 (PAGESB-8): said by the list and the page through readerNews (was a chain of ifs in each, pinned
+    # here by its source text); what it says to a reader-4 and a reader-3 document is checked by running it
+    assert "readerNews(older, reader.latest)" in src and "readerNews([d], d.new_reader || reader.latest)" in src
+    assert "0.17.2 to 0.18.0" in src and "0.15.1 to 0.17.1" in src
+    got = _news(tmp_path, [[[{"reader": 4, "kind": k}], 5] for k in ("pdf", "docx", "html")] + [[[{"reader": 3, "kind": "text"}], 4]])
+    assert got == ["5", "5", "5", "4"]  # reader 3 keeps its sentence
 
 
 @needs_pdfminer

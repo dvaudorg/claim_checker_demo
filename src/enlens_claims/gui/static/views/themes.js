@@ -4,7 +4,7 @@
 // A theme that is not relevant can be removed (its passages are left out until it is brought back), and a new theme
 // found in its place, on this computer without AI (POST …/new, job "theme-new").
 import { featureEyebrow, withAI } from "../features.js";
-import { App, api, h, icon, madeWithFact, replace, clear, toast, showError, fmt, pageHead, watchJob, P, emptyState, TERMINAL, dialog, download, rangeControl, passageNode, navigate, store, plural, shortTitle, runningJob, heatCell, downloadLinks, button, choice, link, tag, notice, card, input, select, textarea, fold, readsLine, aiWhere, ownStartNote, stopButton, menu, inset, searchHref, drawInSteps, heatGrid, heatHead, jobFailed, workState, aiButton, setBusy } from "../lib.js";
+import { App, api, h, icon, madeWithFact, replace, clear, toast, showError, fmt, pageHead, watchJob, P, emptyState, TERMINAL, dialog, download, rangeControl, passageNode, navigate, store, plural, shortTitle, runningJob, heatCell, downloadLinks, button, choice, link, tag, notice, card, input, select, textarea, fold, readsLine, aiWhere, ownStartNote, stopButton, menu, inset, searchHref, drawInSteps, heatGrid, heatHead, jobFailed, workState, aiButton, setBusy, appName } from "../lib.js";
 import { simpleProgress, MiniJob, jobError, timeLeft } from "./progress.js";
 import { historyButton, askWhy } from "./versions.js";
 import { shareBar } from "./share.js";   // 0.18 (L1)
@@ -597,7 +597,7 @@ export async function renderTheme(view, [runId, themeId], query) {
   function draw() {
     const t = d.theme;
     const docs = t.documents || [];
-    document.title = `${t.name} · Themes · ENLENS`;
+    document.title = `${t.name} · Themes · ${appName()}`;   // hunt phase 1 (PAGESA-11): the app's name as brand.json gives it
     const renameBtn = button({ sm: true }, icon("type", { size: 13 }), "Rename");
     renameBtn.addEventListener("click", async () => {
       const nameIn = input({ value: t.name, maxlength: 80 });

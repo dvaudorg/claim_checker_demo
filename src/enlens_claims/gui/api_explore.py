@@ -183,7 +183,7 @@ class ExploreApi:
         lid = profile.add_label(ws, str(body.get("framework") or "sdg"), str(body.get("passage_id") or ""),
                                 str(body.get("code") or ""), body.get("quote") or None,
                                 str(body.get("relevance") or "main"), str(body.get("direction") or "not_stated"),
-                                body.get("note"))
+                                body.get("note"), start=body.get("start"))   # hunt phase 1: where it was selected
         return {"label_id": lid}
 
     def put_label(self, name, label_id, q):

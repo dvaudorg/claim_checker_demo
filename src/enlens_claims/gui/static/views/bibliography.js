@@ -33,6 +33,7 @@ export async function renderBibliography(view) {
   let data = null;
   let tab = session(`bib-tab:${project}`) || null;
   let picking = false;   // the source card is open over an existing bibliography ("Use another collection or file")
+  const filters = new Map();   // hunt phase 1: each list's filter as typed, by its placeholder, kept across drawings
 
   async function load() {
     try { data = await api("GET", `${base}/bibliography`); } catch (e) { failedLoad(body, e); return; }
@@ -40,12 +41,19 @@ export async function renderBibliography(view) {
   }
 
   function draw() {
+    // hunt phase 1 (the redraw sweep): the end of a job drew the page again, and a list's filter typed meanwhile was
+    // emptied (the whole list again) and lost the keyboard's focus; the filters are kept (`filters`), and the one in
+    // use gets the focus and the caret back
+    const ae = document.activeElement;
+    const typing = ae && body.contains(ae) && ae.classList.contains("bib-filter") ? [ae.placeholder, ae.selectionStart, ae.selectionEnd] : null;
     clear(top); clear(body);
     const bib = data && data.bibliography;
     if (!bib) { top.appendChild(sourceCard(false)); return; }
     top.appendChild(summaryCard(bib, data.counts));
     if (picking) top.appendChild(sourceCard(true));
     drawLists();
+    const again = typing && [...body.querySelectorAll(".bib-filter")].find((x) => x.placeholder === typing[0]);
+    if (again) { again.focus({ preventScroll: true }); if (typing[1] != null) again.setSelectionRange(typing[1], typing[2]); }
   }
 
   // ----------------------------------------------------------------- where the bibliography comes from
@@ -406,7 +414,9 @@ export async function renderBibliography(view) {
 
   function filterBox(placeholder, onInput) {
     const inp = input({ sm: true, class: "bib-filter", type: "search", placeholder, "aria-label": placeholder });
-    inp.addEventListener("input", () => onInput(inp.value.trim().toLowerCase()));
+    inp.addEventListener("input", () => { filters.set(placeholder, inp.value); onInput(inp.value.trim().toLowerCase()); });
+    const was = filters.get(placeholder);   // the filter typed before the list was drawn again (by placeholder: one per list)
+    if (was) { inp.value = was; onInput(was.trim().toLowerCase()); }
     return inp;
   }
 

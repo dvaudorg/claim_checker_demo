@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 from _fakedom import NODE
-from test_reader5_reading_view import _src
+from test_reader5_reading_view import _news, _src
 from test_reader5_tables_figures import _whole, docx_with_image, html_with_image
 
 from enlens_claims import ingest, pdfmake, reader
@@ -294,7 +294,9 @@ def test_reader_6_is_offered_to_pdfs_of_reader_5(tmp_path):
     assert offered == every | {(4, "pdf"), (4, "html"), (4, "docx"), (5, "pdf")}
     assert re.search(r"^export const reader = \{ latest: 7 \};", _src("doc-shared.js"), re.M)   # 0.20.4: reader 7
     src = _src("sources.js", "doc-reading.js", "doc-shared.js")
-    assert "const READER_6_NEWS = " in src and "`Read by the reader of ENLENS 0.18.1 to 0.19.0rc1. ${READER_6_NEWS}`" in src
+    # hunt phase 1 (PAGESB-8): the news comes from readerNews (it was pinned here by the chain's source text)
+    assert "const READER_6_NEWS = " in src and "0.18.1 to 0.19.0rc1" in src
+    assert _news(tmp_path, [[[{"reader": 5, "kind": "pdf"}], 6]]) == ["6"]
 
 
 # ------------------------------------------------------------------------------------------------------------------

@@ -6,7 +6,7 @@
 // after the other. The progress of the check the page follows is under the box, then every answer (history.js), with
 // the checks still running or waiting their turn at the top. The evidence map is the place's other view (map.js).
 import { featureEyebrow, withAI, viewTabs } from "../features.js";
-import { App, api, h, icon, readsLine, replace, clear, append, toast, showError, fmt, pageHead, navigate, watchJob, P, debounce, session, emptyState, statusBadge, download, downloadLinks, button, iconButton, link, notice, tag, card, fold, fileButton, select, textarea, input as fieldInput, choice, latest, norm, readTextFile, jobFailed, aiButton, plural, agentTitle } from "../lib.js";
+import { App, api, h, icon, readsLine, replace, clear, append, toast, showError, failedLoad, fmt, pageHead, navigate, watchJob, P, debounce, session, emptyState, statusBadge, download, downloadLinks, button, iconButton, link, notice, tag, card, fold, fileButton, select, textarea, input as fieldInput, choice, latest, norm, readTextFile, jobFailed, aiButton, plural, agentTitle } from "../lib.js";
 import { checkOptions, pickCode } from "./options.js";
 import { ProgressPanel } from "./progress.js";
 import { answersList } from "./history.js";
@@ -31,10 +31,10 @@ export function composerMode(text) {
 
 export async function renderHypotheses(view, params, query) {
   const project = App.project;
-  let info, docsRes;
+  let info, docsRes, loadFailed = null;
   try {
     [info, docsRes] = await Promise.all([api("GET", `/api/projects/${P(project)}`), api("GET", `/api/projects/${P(project)}/documents`)]);
-  } catch (e) { showError(e); info = { frameworks: [], search: null, passages: 0 }; docsRes = { documents: [] }; }
+  } catch (e) { loadFailed = e; info = { frameworks: [], search: null, passages: 0 }; docsRes = { documents: [] }; }
   const docs = docsRes.documents || [];
   const frameworks = info.frameworks || [];
   const threshold = App.settings().threshold ?? 0.6;
@@ -89,7 +89,13 @@ export async function renderHypotheses(view, params, query) {
     view.appendChild(notice({ kind: "attention", class: "hyp-setup-notice" },
       h("p", {}, "No AI model is set up yet, so checks cannot run."), link({ kind: "next", href: "#/settings/model" }, "Set up the AI model")));
   }
-  if (!info.passages) {
+  // hunt phase 1 (PAGESA-7): a project that could not be read is said in the page (lib.js failedLoad), never "there
+  // are none yet": the app did not say it has no documents
+  if (loadFailed) {
+    const out = h("div", { class: "hyp-setup-notice" });
+    view.appendChild(out);
+    failedLoad(out, { message: `What this project holds could not be read: ${String(loadFailed.message || "no answer").replace(/\.?\s*$/, ".")} Reload the page to try again.` });
+  } else if (!info.passages) {
     view.appendChild(notice({ kind: "info", class: "hyp-setup-notice" },
       h("p", {}, h("strong", {}, "Add documents first."), " A hypothesis is checked against the reports and papers in this project, and there are none yet."), h("p", {}, link({ kind: "next", href: "#/sources" }, "Add documents on the Documents page"))));
   }
@@ -492,6 +498,14 @@ export async function renderHypotheses(view, params, query) {
     return true;
   };
 
+  // hunt phase 1 (PAGESA-6): the app no longer reports on the check or list the page follows (it started again, or does
+  // not answer): its panel is not left as if it ran, with its Stop. Said in the page; the answers below are looked at
+  // again (ended() did), and show it while the app still has it
+  function lostTrack(e) {
+    failedLoad(progressBox, { message: `The app no longer reports on this check, so how it ended is not known here: ${String((e && e.message) || "no answer").replace(/\.?\s*$/, ".")} Its answer is in the list below once the app has it.` });
+    progressBox.hidden = false;
+  }
+
   // `text`: the hypothesis; `how`: how it is checked, when the person set its parts and words
   function followCheck(jobId, text, how) {
     stopFollowing();
@@ -519,7 +533,7 @@ export async function renderHypotheses(view, params, query) {
       } else if (job.state === "error") {
         jobFailed(job);
       }
-    }).catch((e) => { session("activeCheck", null); ended(jobId); showError(e); });
+    }).catch((e) => { session("activeCheck", null); if (ended(jobId)) lostTrack(e); else showError(e); });
   }
 
   function followBatch(jobId, text) {
@@ -542,7 +556,7 @@ export async function renderHypotheses(view, params, query) {
       if (text) forgetDraft(text);
       const st = progressBox.querySelector(".section-title"); if (st) replace(st, h("h2", {}, job.state === "done" ? "Finished" : "Stopped"));
       summary(job);
-    }).catch((e) => { session("activeBatch", null); ended(jobId); showError(e); });
+    }).catch((e) => { session("activeBatch", null); if (ended(jobId)) lostTrack(e); else showError(e); });
   }
 
   // what a list came to: how many were checked, the answers, what could not be checked
@@ -658,6 +672,9 @@ export async function renderHypotheses(view, params, query) {
       if (id === session("activeBatch")) session("activeBatch", null);
       continue;
     }
+    // hunt phase 1 (PAGESA-4): a check of another project (started in this tab before the project was switched, or an
+    // old link) is not followed here: the session keeps it for its own project, and the sidebar's work box shows it
+    if (job.project && job.project !== project) continue;
     const live = job.state === "queued" || job.state === "running";
     if (live) {
       if (job.kind === "check") followCheck(job.id, job.title); else followBatch(job.id, null);

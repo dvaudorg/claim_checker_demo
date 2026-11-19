@@ -393,8 +393,12 @@ def _result(ws: Workspace, claim_id: str, threshold: float | None = None) -> tup
     others = people.others(ws, [claim_id])
     # 0.14.3: your own verdict on each excerpt (the one in force may be a colleague's, with your comment beside it):
     # what the page sends back with a comment of yours, so a colleague's verdict is never saved as yours
-    my_rows = {r["passage_id"]: r["verdict"] for r in ws.query(
-        "SELECT passage_id, verdict FROM judgements WHERE claim_id=? AND person_id=?", (claim_id, me))}
+    mine_q = ws.query("SELECT passage_id, verdict, note FROM judgements WHERE claim_id=? AND person_id=?",
+                      (claim_id, me))
+    my_rows = {r["passage_id"]: r["verdict"] for r in mine_q}
+    # hunt phase 1 (PAGESA-1): and your own comment, for the same reason (`user_note` is a colleague's where you wrote
+    # nothing on the excerpt)
+    my_notes = {r["passage_id"]: r["note"] for r in mine_q}
     # 0.13.3: the title a document has now (the work's title from the bibliography), not the one the check stored;
     # a document removed since keeps the stored one
     titles_now = {r["doc_id"]: r["title"] for r in ws.query("SELECT doc_id, title FROM documents")}
@@ -425,7 +429,7 @@ def _result(ws: Workspace, claim_id: str, threshold: float | None = None) -> tup
                 "waiting_for_you": False, "judged_by": None, "others": others.get((claim_id, p["passage_id"]), []),
                 # 0.14.3: whether a model's judgement of it is stored (not for an excerpt no AI may read, nor for one
                 # whose part is not answered yet or failed)
-                "ai_read": False, "round_failed": p["passage_id"] in failed, "my_verdict": None,
+                "ai_read": False, "round_failed": p["passage_id"] in failed, "my_verdict": None, "my_note": None,
                 # 0.15: the excerpt is the text of an earlier reading of its document (`earlier_reader` read it), and
                 # whether its quote has no place in the document as it reads now (it points nowhere)
                 "earlier_reading": earlier, "earlier_reader": p.get("reader"), "not_placed": False,
@@ -444,6 +448,8 @@ def _result(ws: Workspace, claim_id: str, threshold: float | None = None) -> tup
             by = v.get("user_by")
             item["my_verdict"] = (my_rows[p["passage_id"]] if p["passage_id"] in my_rows else
                                   v.get("user_verdict") if not by or by == me else None)
+            item["my_note"] = (my_notes[p["passage_id"]] if p["passage_id"] in my_notes else
+                               v.get("user_note") if not by or by == me else None)
             if v.get("user_verdict") or v.get("user_note"):
                 by = v.get("user_by")
                 item["judged_by"] = "you" if not by or by == me else who.get(by, "a colleague")

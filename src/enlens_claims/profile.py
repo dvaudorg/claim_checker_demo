@@ -932,8 +932,12 @@ def set_label(ws: Workspace, label_id_: str, decision: str, relevance: str | Non
 
 
 def add_label(ws: Workspace, framework: str, passage_id: str, code: str, quote: str | None = None,
-              relevance: str = "main", direction: str = "not_stated", note: str | None = None) -> str:
-    """A label of a person's own (it always counts)."""
+              relevance: str = "main", direction: str = "not_stated", note: str | None = None,
+              start: int | None = None) -> str:
+    """A label of a person's own (it always counts). `start`: where in the document the quote was selected (hunt
+    phase 1): words that stand twice in the passage are labelled where they were selected, as notes are; without it
+    (other callers, an older page) the quote's first place in the passage, as before."""
+    from .notes import find as find_near
     from .textutil import find_selection
 
     fw = frameworks.get(framework, ws)
@@ -946,7 +950,12 @@ def add_label(ws: Workspace, framework: str, passage_id: str, code: str, quote: 
     p = p[0]
     q = s = e = None
     if quote:
-        hit = find_selection(p["text"], quote)  # 0.14.3: a selection cutting a word is widened to whole words
+        try:
+            near = int(start) - p["start"] if start is not None else None
+        except (TypeError, ValueError):
+            near = None
+        hit = find_near(p["text"], quote, near) if near is not None and 0 <= near <= len(p["text"]) else None
+        hit = hit or find_selection(p["text"], quote)  # 0.14.3: a selection cutting a word is widened to whole words
         if not hit:
             raise ValueError("The quote must be text from this passage.")
         q, s, e = p["text"][hit[0]:hit[1]], p["start"] + hit[0], p["start"] + hit[1]

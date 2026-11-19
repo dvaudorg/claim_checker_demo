@@ -1261,7 +1261,9 @@ AI may read, or one whose part waits or failed); `round_failed`: its round's che
 counts (`counted` false; a person's own counts only when another round of the check was answered); and `my_verdict`:
 your own verdict (null when you gave none). In a shared project the verdict in force (`user_verdict`) may be a
 colleague's while `user_note` is your comment: a client that saves your comment sends `my_verdict` with it, never
-`user_verdict`, or the colleague's verdict would be saved as yours.
+`user_verdict`, or the colleague's verdict would be saved as yours. Hunt phase 1: `my_note` is your own comment (null
+when you wrote none); where you wrote nothing on the excerpt, `user_note` is the comment of the colleague whose
+judgement counts. A client that saves a sentence or a comment as yours starts from `my_verdict` and `my_note`.
 New in 0.6, on each passage:
 - `breaks`: `[{"at": 82, "kind": "paragraph"}, {"at": 120, "kind": "heading", "end": 127}]` (offsets in `text`):
   where a new paragraph or a heading begins inside the excerpt, from the layout found when the document was added.
