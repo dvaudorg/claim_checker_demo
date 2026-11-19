@@ -701,3 +701,28 @@ def test_the_file_queue_says_in_words_which_answers_it_did_not_store_and_what_to
     taskqueue.release(loaded, got["claim"])   # given back: imported again, they are stored
     again = tasks.import_results(loaded, [res])
     assert again["ok"] == 2 and "note" not in again
+
+
+# ---------------------------------------------------------------------------------------------
+# CI's Linux run of 19 November 2026 (tests/test_provider_allow.py, known as flaky before): the queue's status looks
+# twice at the tasks, and a kind whose first task is queued between the two looks was a KeyError
+# ---------------------------------------------------------------------------------------------
+def test_the_queues_status_counts_a_kind_whose_first_task_arrives_while_it_looks(loaded, monkeypatch):
+    """`taskqueue.status` listed the kinds in one query and counted the waiting tasks in a second; a job that queued
+    the first task of a new kind between the two made the second meet a kind the first had not listed: KeyError, which
+    the server answers as 404 "Not found: 'expand'" (taskqueue.py, `status`)."""
+    ws = loaded
+    real = ws.query
+    arrived = []
+
+    def query(sql, *a, **k):
+        rows = list(real(sql, *a, **k))
+        if not arrived and "GROUP BY kind" in sql and "ORDER BY MIN(rowid)" in sql:   # the first look is over
+            arrived.append(_label_tasks(ws))                                           # now a kind's first tasks arrive
+        return rows
+
+    monkeypatch.setattr(ws, "query", query)
+    st = taskqueue.status(ws, "P")
+    assert arrived, "the stand-in did not meet the first look: the query's text changed"
+    label = next(k for k in st["kinds"] if k["kind"] == "label")
+    assert label["waiting"] == len(arrived[0]) and st["waiting"] == len(arrived[0])

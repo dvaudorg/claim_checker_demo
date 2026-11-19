@@ -431,6 +431,11 @@ def _kind_order(ws: Workspace, o: list[str], kinds) -> list[str]:
     return [k for k in o if k in kinds] + rest
 
 
+def _kind_row(k: str, done: int = 0, failed: int = 0) -> dict:
+    return {"kind": k, "title": KIND_TITLE.get(k, k), "waiting": 0, "being_answered": 0, "done": done, "failed": failed,
+            "stronger_model": 0, "first_queued": None, "run_total": 0, "run_done": 0, "for_local": 0}
+
+
 def status(ws: Workspace, project: str | None = None, parallel: int = PARALLEL, helpers: dict | None = None,
            kind: str | None = None, route: str | None = None) -> dict:
     """The queue of one project: per kind what waits, is being answered, is done or failed; the groups a run hands
@@ -451,9 +456,7 @@ def status(ws: Workspace, project: str | None = None, parallel: int = PARALLEL, 
                         "WHERE COALESCE(queued, 0)=1 AND COALESCE(access, 'cloud')='cloud' GROUP BY kind "
                         "ORDER BY MIN(rowid)"):
         k = row[0]
-        per[k] = {"kind": k, "title": KIND_TITLE.get(k, k), "waiting": 0, "being_answered": 0, "done": int(row[1] or 0),
-                  "failed": int(row[2] or 0), "stronger_model": 0, "first_queued": None, "run_total": 0, "run_done": 0,
-                  "for_local": 0}
+        per[k] = _kind_row(k, int(row[1] or 0), int(row[2] or 0))
     groups: dict[tuple, dict] = {}
     # the tasks that wait, counted in SQL per what decides their model and helper (the router is asked once per
     # group, not twice per task), and whether a claim holds them now
@@ -462,7 +465,9 @@ def status(ws: Workspace, project: str | None = None, parallel: int = PARALLEL, 
                        "GROUP BY t.kind, t.role, t.step, t.forced_model, t.model, claimed, lent",
                        (cutoff, *share_args)):
         k, n = g0["kind"], int(g0["n"])
-        d = per[k]
+        # a kind whose first task was queued between the two looks (a job making its tasks while the page asks): CI's
+        # Linux run of 19 Nov 2026 met it as KeyError 'expand', which the server answers as "Not found: 'expand'"
+        d = per.setdefault(k, _kind_row(k))
         if g0["lent"]:
             d["for_local"] += n  # 0.18.1 (I1): the local model of the AI mix answers these first
             continue
