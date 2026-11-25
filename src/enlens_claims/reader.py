@@ -50,6 +50,10 @@ reader 6): a line that comes back in text whose every line is a paragraph (an in
 a running head, a text file of short sentences one per line is a paragraph per line, a Word file's text box is read
 once as paragraphs of its own (`ingest._read_docx`), and a file saved as ISO-8859-2 keeps its letters
 (`ingest.decode_text`). `read_blocks(raw, version=6)` still reads as reader 6 did.
+
+Reader 8 adds the rule of `reader8.py`, for PDFs only: lines whose boxes overlap in height stand side by side, so two
+columns whose lines fall between each other (a book's two facing pages on one PDF page) are read column by column, not
+line by line across both. `read_blocks(raw, version=7)` still reads as reader 7 did.
 """
 from __future__ import annotations
 
@@ -60,11 +64,13 @@ from bisect import bisect_left, bisect_right
 from collections import Counter
 from dataclasses import dataclass, field
 
+from . import reader8
 from .textutil import split_sentences
 
-READER = 7   # 2: ENLENS 0.15.0; 3: ENLENS 0.15.1 (reader3.py); 4: ENLENS 0.17.2 (reader4.py);
+READER = 8   # 2: ENLENS 0.15.0; 3: ENLENS 0.15.1 (reader3.py); 4: ENLENS 0.17.2 (reader4.py);
 #              5: ENLENS 0.18.1 (reader5.py); 6: ENLENS 0.19 (reader6.py; languages.py: no passage holds both
-#              languages of a document in two); 7: reader7.py (text, Word and web pages only)
+#              languages of a document in two); 7: reader7.py (text, Word and web pages only); 8: reader8.py (PDFs
+#              only: columns whose lines stand at other heights)
 INCLUDED = ("body", "heading", "title", "abstract", "caption")
 KINDS = ("title", "heading", "abstract", "body", "caption", "table", "footnote", "front", "back", "references",
          "figure", "furniture", "contents", "index")
@@ -546,10 +552,10 @@ def mark_furniture(pages: list[list[Line]], dims: list[tuple[float, float]], ver
 # ------------------------------------------------------------------------------------------------------------------
 # columns and reading order
 # ------------------------------------------------------------------------------------------------------------------
-def _gutters(lines: list[Line], lo: float, hi: float, depth: int = 0) -> list[float]:
+def _gutters(lines: list[Line], lo: float, hi: float, depth: int = 0, version: int = READER) -> list[float]:
     """x positions between `lo` and `hi` that split the lines into columns: lines of prose stand side by side on both
     sides of it at the same height (what spans the columns, such as a title or an abstract, stands at other heights),
-    and few lines cross it."""
+    and few lines cross it. Reader 8: lines whose boxes overlap in height stand side by side too (`reader8.py`)."""
     # lines of prose only: a table's cells and a figure's labels stand anywhere and would hide the gap
     span = hi - lo if depth == 0 else 2 * (hi - lo)
     ls = [ln for ln in lines if ln.x0 is not None and ln.x1 is not None and not ln.furniture and not ln.figure
@@ -565,7 +571,14 @@ def _gutters(lines: list[Line], lo: float, hi: float, depth: int = 0) -> list[fl
         cross = len(ls) - len(left) - len(right)
         if len(left) >= 4 and len(right) >= 4:
             rows = {round(ln.top / 3) for ln in right}
-            side = sum(1 for ln in left if {round(ln.top / 3) - 1, round(ln.top / 3), round(ln.top / 3) + 1} & rows)
+            side, cover = 0, None
+            for ln in left:
+                r = round(ln.top / 3)
+                if {r - 1, r, r + 1} & rows:
+                    side += 1
+                elif version >= 8:   # reader 8: or their boxes overlap in height
+                    cover = reader8.covered(right) if cover is None else cover
+                    side += reader8.beside(ln, cover)
             if side >= 4 and side >= 0.3 * min(len(left), len(right)) and cross <= 0.6 * (len(left) + len(right)):
                 score = (-side, cross, abs(x - (lo + hi) / 2))
                 if best_score is None or score < best_score:
@@ -578,17 +591,17 @@ def _gutters(lines: list[Line], lo: float, hi: float, depth: int = 0) -> list[fl
     left_edge = min((ln.x0 for ln in ls if ln.x0 >= best), default=best)
     g = (right_edge + left_edge) / 2 if left_edge > right_edge else best
     out = [g]
-    out += _gutters([ln for ln in ls if ln.x1 <= g], lo, g, depth + 1)
-    out += _gutters([ln for ln in ls if ln.x0 >= g], g, hi, depth + 1)
+    out += _gutters([ln for ln in ls if ln.x1 <= g], lo, g, depth + 1, version)
+    out += _gutters([ln for ln in ls if ln.x0 >= g], g, hi, depth + 1, version)
     return sorted(out)
 
 
-def reading_order(lines: list[Line], width: float) -> tuple[list[Line], int]:
+def reading_order(lines: list[Line], width: float, version: int = READER) -> tuple[list[Line], int]:
     """The page's lines in reading order and how many columns it has."""
     pos = [ln for ln in lines if ln.top is not None and ln.x0 is not None]
     if len(pos) < len(lines) or not pos:
         return lines, 1  # no boxes: the order the text came in
-    gut = _gutters(pos, 0.0, width)
+    gut = _gutters(pos, 0.0, width, version=version)
     if not gut:
         return sorted(lines, key=lambda ln: (round(ln.top, 1), ln.x0)), 1
     bounds = [float("-inf")] + gut + [float("inf")]
@@ -1068,7 +1081,8 @@ def _lang_break(a: Block, b: Block) -> bool:
 def read_blocks(raw, version: int = READER) -> tuple[list[Block], dict]:
     """The blocks of a RawDoc in reading order, with their kinds and repaired text, and the reading report. `version`
     2 reads as ENLENS 0.15.0 did; 3 adds the rules of `reader3.py`; 4 those of `reader4.py`; 5 those of `reader5.py`;
-    6 keeps the two languages of a document in two apart (`languages.py`); 7 those of `reader7.py`."""
+    6 keeps the two languages of a document in two apart (`languages.py`); 7 those of `reader7.py`; 8 that of
+    `reader8.py`."""
     from . import reader3, reader4, reader5, reader7
 
     raw = raw.as_read_by(version) if hasattr(raw, "as_read_by") else raw
@@ -1153,7 +1167,7 @@ def read_blocks(raw, version: int = READER) -> tuple[list[Block], dict]:
             # is put back where the object stands (`reader5.place`)
             objs, lines = reader5.page_objects(shapes[pno], lines, dims[pno], body_size, skip_figures, pno, forms=v6)
         if pdf and width:
-            lines, ncol = reading_order(lines, width)
+            lines, ncol = reading_order(lines, width, version)
             multi_col += ncol > 1
         # page furniture leaves the flow of the text: what stands above it first, the rest (and line numbers) last.
         # Reader 3: in lines without positions it stays where it stood, a block of its own.

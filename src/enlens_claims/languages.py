@@ -298,13 +298,18 @@ def new_reader_changes(reader: int, langs: dict | None, kind: str | None = None,
     document of a reader before 6 is offered it, and of reader 6 every one but a PDF. Which of those reads otherwise
     cannot be told without reading the file again (a Word file's text box, a file saved as ISO-8859-2, a line that
     comes back in an interview): the preview of the move says what changes, and one that reads the same is moved
-    without a change to its text."""
+    without a change to its text.
+
+    Reader 8 (`reader8.py`) reads PDFs only otherwise: of the documents reader 7 read, only a PDF is offered it (most
+    read the same: only a page whose columns' lines stand at other heights changes); of reader 6's, every one."""
     from .ingest import READER
 
     latest = READER if latest is None else latest
     if reader >= latest:
         return False
-    if latest >= 7 and reader == 6:
+    if latest >= 8 and reader == 7:
+        return kind == "pdf"
+    if latest == 7 and reader == 6:
         return kind != "pdf"
     if latest >= 7:
         return True

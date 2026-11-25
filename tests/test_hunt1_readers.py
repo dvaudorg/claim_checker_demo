@@ -188,8 +188,8 @@ def _turns() -> list[str]:
 
 def test_reader_7_is_the_current_reader_and_reader_6_still_sets_the_question_aside(tmp_path):
     """Readers 3 to 6 read exactly as before (a document keeps its reading until it is moved): reader 6 still sets the
-    interviewer's question aside, reader 7 keeps it."""
-    assert reader.READER == ingest.READER == 7
+    interviewer's question aside, reader 7 keeps it. (Reader 8, reader8.py, is current now and changes PDFs only.)"""
+    assert reader.READER == ingest.READER == 8
     text, q, asked = _transcript()
     path = tmp_path / "interview_03.txt"
     path.write_text(text, encoding="utf-8")
@@ -356,12 +356,14 @@ def test_a_latin_2_web_page_without_a_declared_encoding_keeps_its_letters(tmp_pa
 
 
 def test_reader_7_is_offered_to_text_word_and_web_documents_of_reader_6_not_to_its_pdfs():
+    # (while reader 7 was the newest; reader 8's rule is in test_reader8.py)
     for kind in ("text", "docx", "html"):
-        assert languages.new_reader_changes(6, None, kind)
-    assert not languages.new_reader_changes(6, None, "pdf") and not languages.new_reader_changes(7, None, "text")
+        assert languages.new_reader_changes(6, None, kind, latest=7)
+    assert not languages.new_reader_changes(6, None, "pdf", latest=7)
+    assert not languages.new_reader_changes(7, None, "text", latest=7)
     for r in (1, 2, 3, 4, 5):
         for kind in ("pdf", "text", "docx", "html"):
-            assert languages.new_reader_changes(r, None, kind), (r, kind)
+            assert languages.new_reader_changes(r, None, kind, latest=7), (r, kind)
     # reader 6's own rule, while it was the newest, is unchanged
     assert not languages.new_reader_changes(5, None, "text", latest=6)
 
@@ -383,7 +385,7 @@ def test_the_page_offers_reader_7_as_the_server_does(tmp_path):
                                                                                           (6, "docx")}
     assert offered == {(d["reader"], d["kind"]) for d in docs
                        if languages.new_reader_changes(d["reader"], None, d["kind"], 7)}
-    assert re.search(r"^export const reader = \{ latest: 7 \};", src, re.M) and "export const READER_7_NEWS = " in src
+    assert re.search(r"^export const reader = \{ latest: 8 \};", src, re.M) and "export const READER_7_NEWS = " in src
     page = (views / "doc-reading.js").read_text(encoding="utf-8") + (views / "sources.js").read_text(encoding="utf-8")
     # hunt phase 1 (PAGESB-8): the list and the page say the news through readerNews (doc-shared.js), not a chain
     # ending in READER_7_NEWS; test_hunt1_pagesb.py runs it on a reader-4 text file
@@ -472,7 +474,8 @@ def test_the_original_text_file_marks_a_quote_of_either_reading(tmp_path):
 
 def test_word_and_text_files_of_reader_6_move_to_reader_7(tmp_path, monkeypatch):
     """The offer leads somewhere: a Word file with a text box and a plain one, and a Latin-2 text file, read by reader
-    6, move to reader 7; the box is then read once and the letters are kept, the plain file reads the same."""
+    6, move to reader 7 (now to reader 8, which reads them as reader 7 does); the box is then read once and the
+    letters are kept, the plain file reads the same."""
     from enlens_claims import reread
 
     rng = random.Random(3)
@@ -495,7 +498,7 @@ def test_word_and_text_files_of_reader_6_move_to_reader_7(tmp_path, monkeypatch)
             assert reread.check(ws, doc)["ok"], name
             reread.move(ws, doc)
         text = {n: ws.scalar("SELECT text FROM documents WHERE doc_id=?", (d,)) for n, d in docs.items()}
-        assert dict(ws.query("SELECT doc_id, reader FROM documents")) == {d: 7 for d in docs.values()}
+        assert dict(ws.query("SELECT doc_id, reader FROM documents")) == {d: 8 for d in docs.values()}
         assert text["boxed.docx"].count("Forty wells") == 1 and text["plain.docx"] == before
         assert "Wartość ścieków" in text["raport.txt"]
     finally:

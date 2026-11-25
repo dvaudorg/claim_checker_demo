@@ -146,7 +146,7 @@ def test_reader_5_put_both_languages_into_one_passage_and_reader_6_does_not(pdf)
     assert any(len(s) == 2 for s in _passage_langs(d5))       # "…al siguiente (Participante 4)" + "of each season…"
     assert not any(len(s) == 2 for s in _passage_langs(d6))
     assert d5.reading["languages"]["mixed_passages"] >= 1 and d6.reading["languages"]["mixed_passages"] == 0
-    assert reader.READER == ingest.READER == 7   # (reader 7 is current and keeps reader 6's rule)
+    assert reader.READER == ingest.READER == 8   # (reader 8 is current and keeps reader 6's rule)
 
 
 def test_a_document_in_one_language_reads_as_reader_5_read_it(tmp_path):
@@ -254,7 +254,7 @@ def test_the_choice_holds_when_the_document_is_read_again(tmp_path, monkeypatch,
         assert langs["mixed_passages"] >= 1 and languages.new_reader_changes(5, langs)
         assert reread.check(ws, doc)["ok"]
         reread.move(ws, doc)
-        assert ws.scalar("SELECT reader FROM documents") == ingest.READER   # (6, now 7: the current reader)
+        assert ws.scalar("SELECT reader FROM documents") == ingest.READER   # (6, now 8: the current reader)
         assert not [r[0] for r in ws.query("SELECT text FROM passages WHERE doc_id=? AND section='body'", (doc,))
                     if "Participante" in r[0] or ES[0][:30] in r[0]]
         assert languages.summary_for(ws._conn(), doc)["mixed_passages"] == 0
@@ -297,7 +297,10 @@ def test_a_reader_5_document_in_one_language_is_offered_the_new_reader_only_as_a
             assert older == {(5, True): 1, (5, False): 1} and runs.made_with(ws)["older"]
         # reader 7 reads text files otherwise (and PDFs as reader 6 did), so now both are offered it
         assert languages.new_reader_changes(5, langs, "text") and languages.new_reader_changes(5, langs, "pdf")
-        assert languages.new_reader_changes(6, None, "text") and not languages.new_reader_changes(6, None, "pdf")
+        assert languages.new_reader_changes(6, None, "text", latest=7)
+        assert not languages.new_reader_changes(6, None, "pdf", latest=7)
+        # reader 8 reads PDFs otherwise (two columns whose lines do not line up), so a reader-6 PDF is offered it again
+        assert languages.new_reader_changes(6, None, "text") and languages.new_reader_changes(6, None, "pdf")
         assert reread.check(ws, txt_doc)["ok"]
         assert {d["doc_id"]: d["new_reader_changes"] for d in sources.document_overview(ws)} == {pdf_doc: True,
                                                                                                txt_doc: True}

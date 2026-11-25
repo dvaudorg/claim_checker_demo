@@ -108,8 +108,9 @@ tables over two pages or figures, and Word files and web pages with pictures; re
 behind a figure, publishing details at the foot of the first page, or running heads beside a page number, and any
 document in two languages one of whose passages holds both. Reader 7 changes text files, Word files and web pages
 only (an interview's repeated lines, short paragraphs one per line, Word text boxes, files saved as ISO-8859-2), so
-of the documents reader 6 read every one but a PDF is offered it. The preview
-says what would change.
+of the documents reader 6 read every one but a PDF is offered it. Reader 8 changes PDFs only (two columns whose
+lines do not line up, such as two facing pages on one PDF page), so of the documents reader 7 read only PDFs are
+offered it. The preview says what would change.
 
 ```mermaid
 flowchart LR

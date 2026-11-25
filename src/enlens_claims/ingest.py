@@ -45,7 +45,7 @@ NOT_READ_KINDS = {".doc": "an older Word file, which ENLENS does not read: save 
 # text or passages raises this number: documents already in a project keep the reading they have, so every result in
 # them stays where it is, until a person has one read with the new reader (planned with the next reader); only new
 # documents get the new reader.
-READER = 7  # 1: ENLENS 0.5 to 0.14 (pypdf's page text, cut by sentences); 2: ENLENS 0.15.0 (reader.py);
+READER = 8  # 1: ENLENS 0.5 to 0.14 (pypdf's page text, cut by sentences); 2: ENLENS 0.15.0 (reader.py);
             # 3: ENLENS 0.15.1 (reader.py with reader3.py: text-only files, books, words run together);
             # 4: ENLENS 0.17.2 (reader4.py: a text file's lines as paragraphs; Word's nested tables read once, and
             #    its content controls read)
@@ -59,6 +59,8 @@ READER = 7  # 1: ENLENS 0.5 to 0.14 (pypdf's page text, cut by sentences); 2: EN
             #    whose every line is a paragraph is not a running head, short sentences one per line are paragraphs,
             #    a Word text box read once as paragraphs of its own, ISO-8859-2 files and UTF-16 ones without a
             #    byte-order mark read as written)
+            # 8: reader8.py (PDFs only: two columns whose lines stand at other heights, as a book's two facing
+            #    pages on one PDF page, read column by column)
 REF_HEADING = re.compile(
     r"(?:^|\s)(References|REFERENCES|Bibliography|BIBLIOGRAPHY|Literature [Cc]ited|Works [Cc]ited|Reference [Ll]ist)"
     r"\s*:?\s+(?=\[?\(?\d|[A-Z][A-Za-z'\-]+,?\s+[A-Z]|[A-Z]{2,})"

@@ -138,6 +138,7 @@ themes and at 390 px wide.
 | `reader4.py` | What reader 4 (0.17.2) adds: a text file with one paragraph per line read paragraph by paragraph (its Word changes, content controls and nested tables, are in `ingest._read_docx`) |
 | `reader6.py` | What reader 6 (0.19) adds, for PDFs only: a pdfminer device that honours a form's /BBox (hidden text of a draft page shown through a window is not read), a form of many words kept as one figure, publishing details after the text has begun set aside as front matter, a journal's name that begins the running head not taken for the title (reader 5's rules are in `reader5.py`); reader 6's two languages kept apart, in any kind of file, are `languages.py`'s |
 | `reader7.py` | What reader 7 adds, for text files, Word files and web pages only: in text whose every line is a paragraph a line that comes back is a running head only at a page break or where a sentence runs across it, a text file of short sentences one per line read paragraph by paragraph (its Word change, a text box read once as paragraphs of its own, is in `ingest._read_docx`; its ISO-8859-2 decoding in `ingest.decode_text`, with readers 1 to 6's text kept in `RawDoc.before_7`) |
+| `reader8.py` | What reader 8 adds, for PDFs only: two lines whose boxes overlap in height stand side by side when the reader looks for the gap between columns (`reader._gutters`), so two columns whose lines fall between each other (a book's two facing pages on one PDF page) are read column by column |
 | `reread.py` | *Read with the new reader* (0.15): a document of a project read again by the new reader, its results moved by their quotes, all or nothing |
 | `measure.py`, `pdfmake.py` | `enlens measure` (0.15): how well each reader reads PDFs of known text (made by `pdfmake`, a small PDF writer), quotes that still find their place, timings, determinism; the validation report of each release |
 | `bundle.py` | A whole project as one zip (export and import); every project and the settings, to move to another computer (0.10) |
@@ -348,7 +349,8 @@ recorded and announced:
   holds both languages of a document in two), and 7 adds `reader7.py` (text files, Word files and web pages
   only: an interview's repeated line, short sentences one per line, a Word text box once, ISO-8859-2, UTF-16 without
   a byte-order mark; a file whose
-  text reader 7 reads otherwise keeps reader 6's in `RawDoc.before_7`). Check a change
+  text reader 7 reads otherwise keeps reader 6's in `RawDoc.before_7`), and 8 adds `reader8.py` (PDFs only: two
+  columns whose lines stand at other heights, such as two facing pages on one PDF page). Check a change
   with `tools/reader_fingerprints.py` (a folder of files, before and after) and `tools/reader_fingerprints_pytest.py`
   (every document the tests read). A change
   that gives a document other text or passages raises it, and goes
