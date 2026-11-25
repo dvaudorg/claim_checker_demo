@@ -1004,7 +1004,8 @@ cannot be read again now, and the result has `summary`: `{"moved", "left_as_they
 read is one of "the documents an earlier reader read" only when reader 6 would read it otherwise (a PDF, or a
 document one of whose passages holds both languages of a document in two); `POST …/reread` of any other answers 409
 with the reason. With reader 7: of the documents reader 6 read, every one but a PDF is one of them (reader 7 reads PDFs as
-reader 6 did).
+reader 6 did). With reader 8: of the documents reader 7 read, only a PDF is one of them (reader 8 reads other files
+as reader 7 did); of reader 6's, every one.
 
 `POST /api/projects/<p>/new-reader/preview` `{"doc_ids"?: [doc_id]}` (0.18.0rc2) → `{"job"}` (kind
 `new_reader_preview`): the dry run before moving several documents; same `doc_ids` rules, errors and 409 as the move.

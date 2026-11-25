@@ -27,6 +27,7 @@ where it is.
 | 5 | 0.18.1 | Reader 4, plus: tables found from their ruled lines and joined across pages, figures as blocks of their own with their captions, and a Word file's or web page's pictures by their alternative text (see *What reader 5 changed* below). Plain text files read as with reader 4. |
 | 6 | 0.19 | Reader 5, plus, in PDFs: text a figure hides is not read, publishing details at the foot of the first page are set aside, the title is not the journal's name, and running heads beside a page number are found; and, in a document printed in two languages (a side-by-side translation), no passage holds both (see *What reader 6 changed* below). Other documents read as with reader 5. |
 | 7 | the version after 0.20.3 | Reader 6, plus, in text files, Word files and web pages: a line that comes back in an interview is not taken for a running head, short paragraphs one per line are paragraphs, a Word file's text box is read once, and a text saved as ISO-8859-2, or as UTF-16 without its mark, keeps its letters (see *What reader 7 changed* below). PDFs read as with reader 6. |
+| 8 | the version after 0.21.0rc2 | Reader 7, plus, in PDFs: two columns whose lines stand at other heights, such as a book's two facing pages printed on one PDF page, are read one column after the other (see *What reader 8 changed* below). Text files, Word files and web pages read as with reader 7. |
 
 
 ## What the reader does
@@ -162,6 +163,20 @@ same. The changes came from searches for faults in how ENLENS reads (November 20
 
 Text files, Word files and web pages read by reader 6 are offered reader 7 (whether one reads otherwise is known only
 by reading it again: the preview of the move says what changes); PDFs read by reader 6 are not.
+
+**What reader 8 changed.** Reader 8 reads PDFs otherwise than reader 7; text files, Word files and web pages read
+the same.
+
+- **Two columns whose lines do not line up.** The reader finds two columns where lines stand side by side at the same
+  height on both sides of a gap, and took "the same height" to mean the same baseline. Where the lines of one column
+  fall between those of the other, as on a book's two facing pages printed side by side on one PDF page (many theses
+  and reports are made this way) or in two columns set with other line spacing, no gap was found, and the page was
+  read straight across both columns: each paragraph was one column's lines mixed with the other's, line by line.
+  Reader 8 also takes two lines whose boxes overlap in height to stand side by side, so such a page is read one
+  column, then the other. A page in one column, and a title or abstract set across two columns, read as before.
+
+PDFs read by reader 7 (or 6) are offered reader 8; most of their pages read the same, and the preview of the move
+says which change.
 
 
 ## Measuring how well ENLENS reads

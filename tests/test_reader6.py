@@ -182,7 +182,7 @@ def _files(folder: Path) -> dict[str, Path]:
 # frozen
 # ------------------------------------------------------------------------------------------------------------------
 def test_reader_6_is_the_current_reader():
-    assert reader.READER == 7 and ingest.READER == 7   # (reader 7 is current; reader 6 stays as it was)
+    assert reader.READER == 8 and ingest.READER == 8   # (reader 8 is current; reader 6 stays as it was)
 
 
 @needs_pdfminer
@@ -292,7 +292,7 @@ def test_reader_6_is_offered_to_pdfs_of_reader_5(tmp_path):
     offered = {(d["reader"], d["kind"]) for d, yes in zip(docs, json.loads(r.stdout)) if yes}
     every = {(r, k) for r in (1, 2, 3) for k in ("pdf", "html", "text", "docx")}
     assert offered == every | {(4, "pdf"), (4, "html"), (4, "docx"), (5, "pdf")}
-    assert re.search(r"^export const reader = \{ latest: 7 \};", _src("doc-shared.js"), re.M)   # reader 7
+    assert re.search(r"^export const reader = \{ latest: 8 \};", _src("doc-shared.js"), re.M)   # reader 8
     src = _src("sources.js", "doc-reading.js", "doc-shared.js")
     # hunt phase 1 (PAGESB-8): the news comes from readerNews (it was pinned here by the chain's source text)
     assert "const READER_6_NEWS = " in src and "0.18.1 to 0.19.0rc1" in src

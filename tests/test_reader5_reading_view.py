@@ -49,7 +49,7 @@ def test_reader_5_is_offered_where_it_can_change_the_reading(tmp_path):
     offered = {(d["reader"], d["kind"]) for d, yes in zip(docs, json.loads(r.stdout)) if yes}
     every = {(r, k) for r in (1, 2, 3) for k in ("pdf", "html", "text", "docx")}  # reader 3 text: offered 4 and 5
     assert offered == every | {(4, "pdf"), (4, "html"), (4, "docx")}  # a reader-4 text file reads the same by reader 5
-    assert re.search(r"^export const reader = \{ latest: 7 \};", _src("doc-shared.js"), re.M)   # reader 7
+    assert re.search(r"^export const reader = \{ latest: 8 \};", _src("doc-shared.js"), re.M)   # reader 8
 
 
 def test_a_figure_is_shown_in_the_text_with_its_caption_and_its_page():
