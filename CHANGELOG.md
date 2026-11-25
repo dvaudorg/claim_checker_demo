@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.21.0rc3 (November 2026): Two columns read in order (reader 8)
+
+Reader 8 reads two columns in order where their lines do not line up, such as a thesis printed with two book pages
+side by side on one PDF page: earlier readers mixed the two columns line by line. Only PDFs with such pages read
+otherwise, and documents already in a project keep their reading until you move them to the new reader. The Settings
+line about the network and some outdated wording on the pages are put right too. It is a pre-release: the install line
+and *Update* do not take it.
+
+### Changes that can alter your results
+
+- **Reader 8: two columns whose lines do not line up are read one after the other.** Where the lines of one column
+  stand between those of the other, as on a book's two facing pages printed side by side on one PDF page (many
+  theses are made this way), the reader found no gap between the columns and read straight across both, so a
+  paragraph came out as the two columns' lines mixed one by one. Reader 8 reads one column, then the other. It
+  changes PDFs only, and only such pages: in a 102-page thesis, 6 pages read otherwise, all of them now in order.
+  Documents already in a project keep their reading until you move them (*Read with the new reader*: PDFs read by
+  reader 7 are offered it, and the preview shows which pages change). Can change results, for PDFs you move to it.
+
+### Fixed
+
+- **Settings › This installation says truthfully what goes online.** The Network line still said "This computer only ·
+  nothing is loaded from the internet", which stopped being true long ago. It now says who can open the app (only
+  this computer, unless it was started with `--host`) and lists what ENLENS reaches over the internet: GitHub for
+  updates, the cloud AI you choose (left out under local-only), your team storage space (Backblaze B2, Cloudflare R2,
+  WebDAV), Crossref when you look up retractions, and ollama.com or Anthropic's installer when you press their
+  buttons. Does not change results.
+- **Outdated words on the pages, put right.** The sidebar no longer says your documents never leave this computer
+  when the model runs on another one. Notes, the list of what was sent, the *Only a local AI* level and the two-part
+  run now speak of the cloud, not only of Claude or Anthropic. "Profile" is called Codes everywhere, and a few other
+  stale lines (Backblaze in the EU, nothing stored, when the local model starts) say what the app does now. Does not
+  change results.
+
+### Not yet done
+
+- Reader 8 was tried on 108 PDFs on one Mac (a thesis and journal papers); every page it changed reads in order now,
+  but a page whose columns' lines overlap in other ways (three columns of other widths, a figure beside the text) may
+  still be read across.
+- Two faults seen in the same thesis are left for later: a heading set in a font without a map of its characters reads
+  as "soci(cid:73)(cid:84)", and one journal article did not finish reading in 15 minutes (with reader 7 too).
+
 ## 0.21.0rc2 (November 2026): The bug hunt: about 400 fixes and Reader 7
 
 This release candidate is the result of a bug hunt with no new features: about 400 faults are fixed, each with a test
