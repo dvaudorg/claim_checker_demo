@@ -82,6 +82,109 @@ def test_only_the_apps_quick_check_uses_the_page(monkeypatch):
     assert seen == [(True, update._peek), (True, None), (False, None)]
 
 
+def test_the_apps_own_look_on_the_early_channel_reads_the_page_and_never_the_api():
+    """0.21.0rc4: on the early channel the look every two minutes asked GitHub's API each time; a Mac and a Windows
+    PC on one home connection used up its 60 questions an hour between them. Release candidates are now looked for
+    only when the person asks (Check for updates); the app's own look reads the release page, as on stable."""
+    from enlens_claims import update
+
+    def no_api(url):
+        raise AssertionError(f"the API was asked: {url}")
+
+    asked = []
+
+    def peek(url):
+        asked.append(url)
+        return TAG + NEXT
+
+    assert update.latest_version(peek, channel="early", candidates=False) == NEXT and len(asked) == 1
+    assert update.latest_version(peek, channel="early") == "" and len(asked) == 1  # asked for: the API's list
+    r = update.update_release(check_only=True, fetch=no_api, peek=peek, run=Runs(), channel="early", candidates=False)
+    assert r["waiting"] == NEXT
+    r = update.update_release(check_only=True, fetch=no_api, peek=lambda url: TAG + __version__, run=Runs(),
+                              channel="early", candidates=False)
+    assert "waiting" not in r
+
+
+def test_only_the_apps_quick_check_can_leave_out_candidates(monkeypatch):
+    from enlens_claims import installation, update
+
+    monkeypatch.setattr(update, "source_root", lambda: None)
+    monkeypatch.setattr(installation, "kind", lambda: "script")
+    seen = []
+    monkeypatch.setattr(update, "update_release", lambda check_only=False, run=None, peek=None, candidates=True:
+                        seen.append((check_only, peek, candidates)) or {})
+    update.update(check_only=True, quick=True, candidates=False)
+    update.update(check_only=True, quick=True)
+    assert seen == [(True, update._peek, False), (True, update._peek, True)]
+
+
+def _http_error(code, reason, headers=None):
+    from email.message import Message
+    from urllib.error import HTTPError
+
+    m = Message()
+    for k, v in (headers or {}).items():
+        m[k] = v
+    return HTTPError("https://api.github.com/repos/x/y/releases?per_page=30", code, reason, m, None)
+
+
+def test_a_refusal_says_whose_problem_it_is():
+    """0.21.0rc4: GitHub's hourly limit read "HTTP Error 403: rate limit exceeded … Are you online?"."""
+    from enlens_claims import update
+
+    reset = time.time() + 600
+    spent = {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": str(int(reset))}
+    for err in (_http_error(403, "rate limit exceeded", spent), _http_error(429, "Too Many Requests")):
+        def limited(url, err=err):
+            raise err
+
+        with pytest.raises(update.UpdateError) as got:
+            update.latest_release(limited, channel="early")
+        msg = str(got.value)
+        assert "60 questions an hour" in msg and "nothing is wrong with ENLENS" in msg and "Are you online" not in msg
+    assert time.strftime("%H:%M", time.localtime(int(reset))) in update.github_problem(
+        _http_error(403, "rate limit exceeded", spent))
+    assert "Check again in an hour" in update.github_problem(_http_error(403, "rate limit exceeded"))
+    down = update.github_problem(_http_error(500, "Internal Server Error"))
+    assert "problem of its own (HTTP 500 Internal Server Error)" in down and "Are you online" not in down
+    assert "HTTP 404 Not Found" in update.github_problem(_http_error(404, "Not Found"))
+    from urllib.error import URLError
+    off = update.github_problem(URLError("getaddrinfo failed"))
+    assert "Could not reach GitHub" in off and "getaddrinfo failed" in off and "Are you online" in off
+
+
+def test_check_for_updates_alone_looks_for_candidates_and_a_found_one_is_kept(served, monkeypatch):  # noqa: F811
+    from enlens_claims import update
+    from enlens_claims.gui import server
+
+    a, app, _ = served
+    calls, answers = [], []
+
+    def fake(check_only=False, quick=False, candidates=True, **kw):
+        calls.append(candidates)
+        got = answers.pop(0)
+        if isinstance(got, str):
+            raise update.UpdateError(got)
+        return got
+
+    monkeypatch.setattr(update, "update", fake)
+    rc = {"updated": False, "version": __version__, "waiting": "9.9.0rc1", "message": "…"}
+    answers += [SAME, rc, SAME, "offline", {**NEWER, "waiting": "9.9.0"}]
+    assert a("GET", "/api/update")[1]["available"] is False and calls == [False]  # the page's own look: no candidates
+    r = a("GET", "/api/update?fresh=1")[1]
+    assert r["latest"] == "9.9.0rc1" and r["candidate"] is True and calls == [False, True]
+    app.update_seen["at"] -= server.UPDATE_LOOK_EVERY
+    r = a("GET", "/api/update")[1]  # the next own look sees no candidate: the one found stays offered
+    assert r["available"] is True and r["latest"] == "9.9.0rc1" and calls == [False, True, False]
+    app.update_seen["at"] -= server.UPDATE_LOOK_EVERY
+    st, r = a("GET", "/api/update")  # nor does an own look that failed
+    assert st == 200 and r["latest"] == "9.9.0rc1"
+    app.update_seen["at"] -= server.UPDATE_LOOK_EVERY
+    r = a("GET", "/api/update")[1]  # a newer stable version replaces it
+    assert r["latest"] == "9.9.0" and r["candidate"] is False
+
+
 # ---------------------------------------------------------------------------------------------
 # GET /api/update: one look shared by the tabs, fresh on request
 # ---------------------------------------------------------------------------------------------

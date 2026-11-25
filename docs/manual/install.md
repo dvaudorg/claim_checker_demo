@@ -144,7 +144,9 @@ closes the note, and it does not come back. The list is also beside the version 
 version at the top right of every Settings tab opens it). Looks that fail (offline, files of a git copy edited by
 hand) otherwise stay quiet. A look never waits for a password and gives up after 90 seconds. ENLENS reads the newest
 version from GitHub's release page, which GitHub's limit of 60 questions an hour does not count, so several
-computers in one office can all look every two minutes.
+computers in one office can all look every two minutes. Release candidates (*Early*) are looked for only on *Check
+for updates*, which asks GitHub's API: when GitHub's hourly limit was reached for your internet connection (every
+computer on it counts), the message says so and when to check again.
 
 **In a terminal**, `enlens update` does the same, the way ENLENS was installed (`enlens update --check` only looks):
 

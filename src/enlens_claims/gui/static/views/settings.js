@@ -1578,7 +1578,7 @@ function channelField(st) {
   const pick = choice({ sm: true, id: "update-channel", label: "Which new versions to offer", value: (st.settings || {}).update_channel || "stable",
     options: [["stable", "Stable"], ["early", "Early"]],
     onPick: async (v) => { try { await save({ update_channel: v }); checkUpdate(true).catch(() => {}); } catch (_) { /* shown */ } } });
-  return setting("Which new versions to offer", pick, { help: "Early also offers release candidates, try-outs of the next version.",
+  return setting("Which new versions to offer", pick, { help: "Early also offers release candidates, try-outs of the next version, when you press Check for updates. By itself ENLENS looks only for stable versions.",
     about: ["Trying new versions early", "A release candidate (a try-out of the next version) comes out at least a week before each new version, so you can try it on your own projects. Try it on a project you do not share with colleagues: going back to the stable version can show sync clashes (nothing is lost)."] });
 }
 

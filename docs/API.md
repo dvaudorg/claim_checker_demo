@@ -252,6 +252,11 @@ since 0.13.6 only when there is an update).
   (`update.version_tuple`); `stable` asks `/releases/latest`, which is never a pre-release. A git copy follows
   `main` and ignores it. `GET /api/update` carries `"candidate": true` when `latest` is a release candidate, and
   changing the channel makes the next look ask again.
+  0.21.0rc4: only `GET /api/update?fresh=1` (*Check for updates*, or a change of channel) takes release candidates;
+  the page's own looks read the release page on `early` too (`update.update(..., candidates=False)`), so they never
+  ask the API, and a candidate found before stays the answer until a newer version is seen. Every looked-up 409 says
+  whose problem it is (`update.github_problem`): GitHub's hourly limit (403/429, with the time it lifts), a problem
+  on GitHub's side (5xx), or no connection.
 - `GET /api/technical-details` (0.15) → `{"text": "ENLENS version: …\nInstalled: …\nSystem: …\nPython: …\nAI route: …\nLocal
   only: yes|no\nUpdate channel: …"}`: a short block for a problem report (*Copy technical details* in Settings →
   Technical). It holds no path, project or document name, user name or key.

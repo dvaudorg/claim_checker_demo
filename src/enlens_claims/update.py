@@ -44,6 +44,38 @@ class UpdateError(Exception):
     """An update that cannot go ahead; the message says what to do."""
 
 
+def github_problem(e: Exception) -> str:
+    """0.21.0rc4: why GitHub gave no answer about the newest ENLENS, in words that say whose problem it is. Until
+    then every failure read "… Are you online?", also GitHub's hourly limit (60 API questions an hour from one
+    internet connection, which a Mac and a Windows PC at home on the early channel used up between them)."""
+    import time
+    from urllib.error import HTTPError, URLError
+
+    if isinstance(e, HTTPError):
+        headers = e.headers or {}
+        limited = e.code == 429 or (e.code == 403 and (headers.get("X-RateLimit-Remaining") == "0"
+                                                        or "rate limit" in str(e.reason).lower()))
+        if limited:
+            when = "in an hour"
+            try:
+                reset = float(headers.get("X-RateLimit-Reset") or 0)
+                if reset > time.time():
+                    when = "after " + time.strftime("%H:%M", time.localtime(reset))
+            except (TypeError, ValueError):
+                pass
+            return ("GitHub's limit on update checks was reached: it answers 60 questions an hour from one internet "
+                    "connection, and every computer on the same network counts. You are online and nothing is wrong "
+                    f"with ENLENS. Check again {when}.")
+        if e.code >= 500:
+            return (f"GitHub had a problem of its own (HTTP {e.code} {e.reason}). You are online and nothing is wrong "
+                    "with ENLENS. Check again in a few minutes.")
+        return f"GitHub did not answer the question about the newest ENLENS (HTTP {e.code} {e.reason})."
+    if isinstance(e, (URLError, OSError)):
+        reason = e.reason if isinstance(e, URLError) else e
+        return f"Could not reach GitHub to ask for the newest ENLENS ({type(e).__name__}: {reason}). Are you online?"
+    return f"Could not ask GitHub for the newest ENLENS ({type(e).__name__}: {e})."
+
+
 def source_root() -> Path | None:
     """The git copy this ENLENS runs from (src/enlens_claims/ → the folder with pyproject.toml), or None."""
     root = Path(__file__).resolve().parent.parent.parent
@@ -202,19 +234,22 @@ def installed_extras(pyproject: Path) -> list[str]:
 
 def update(check_only: bool = False, root: Path | None = None, run: Runner = _run,
            python: str | None = None, quick: bool = False, restart: list[str] | None = None,
-           token: str | None = None) -> dict:
+           token: str | None = None, candidates: bool = True) -> dict:
     """Bring this ENLENS up to date, the way it was installed (see the module's notes). Returns what happened.
     `quick` (0.13.6, the app's check every two minutes): a one-line install learns the newest version from GitHub's
     release page, which GitHub's limit of 60 API requests an hour does not count. `restart` (0.15.4, the app on
     Windows): the command that starts the app again, for the hand-over (update_release); 0.17.2: `token`, the app's
-    access token, which the hand-over gives to the copy it starts (start_handover)."""
+    access token, which the hand-over gives to the copy it starts (start_handover). 0.21.0rc4: `candidates=False`
+    with `quick` (the app's look every two minutes, not Check for updates): no release candidates, so the API is not
+    asked (latest_version)."""
     if root is None and source_root() is None:
         from . import installation
 
         k = installation.kind()
         if k == "script":
             if quick and check_only:
-                return update_release(check_only=True, run=run, peek=_peek)
+                return update_release(check_only=True, run=run, peek=_peek,
+                                      **({} if candidates else {"candidates": False}))
             return update_release(check_only=check_only, run=run, **({"restart": restart} if restart else {}),
                                   **({"token": token} if token else {}))
         if k == "package":
@@ -471,7 +506,7 @@ def latest_release(fetch: Fetch = _fetch, repo: str | None = None, channel: str 
     try:
         data = json.loads(fetch(url).decode("utf-8"))
     except Exception as e:  # noqa: BLE001 - offline, rate limited, no release yet: say it plainly
-        raise UpdateError(f"Could not ask GitHub for the newest ENLENS ({type(e).__name__}: {e}). Are you online?") from e
+        raise UpdateError(github_problem(e)) from e
     if early:
         data = highest_release(data)
     elif not isinstance(data, dict) or data.get("prerelease") or is_candidate(str(data.get("tag_name") or "")):
@@ -480,8 +515,7 @@ def latest_release(fetch: Fetch = _fetch, repo: str | None = None, channel: str 
         try:
             listed = json.loads(fetch(f"{_release_api(repo or REPO)}/releases?per_page=30").decode("utf-8"))
         except Exception as e:  # noqa: BLE001
-            raise UpdateError(f"Could not ask GitHub for the newest ENLENS ({type(e).__name__}: {e}). Are you "
-                              "online?") from e
+            raise UpdateError(github_problem(e)) from e
         data = highest_release([r for r in listed if isinstance(r, dict) and not r.get("prerelease")
                                 and not is_candidate(str(r.get("tag_name") or ""))] if isinstance(listed, list) else [])
     assets = {a.get("name", ""): a.get("browser_download_url", "") for a in data.get("assets") or []}
@@ -522,19 +556,23 @@ def _peek(url: str) -> str:
 Peek = Callable[[str], str]
 
 
-def latest_version(peek: Peek = _peek, repo: str | None = None, channel: str | None = None) -> str:
+def latest_version(peek: Peek = _peek, repo: str | None = None, channel: str | None = None,
+                   candidates: bool = True) -> str:
     """0.13.6: the newest release's version, from where github.com/…/releases/latest redirects to
     (…/releases/tag/v0.13.6). A web page, not the API: GitHub's limit of 60 API requests an hour for each address
     does not count it, so the app can ask every two minutes on every computer in an office. "" when it cannot tell.
-    0.15: "" on the "early" channel: that page never shows a pre-release, so the API list is asked instead."""
+    0.15: "" on the "early" channel: that page never shows a pre-release, so the API list is asked instead.
+    0.21.0rc4: with `candidates=False` (the app's own look every two minutes) the page is read on the early channel
+    too, so the look finds a new stable version but no release candidate; candidates are looked for only when the
+    person asks (Check for updates), since asking the API every two minutes used up GitHub's hourly limit."""
     from .installation import REPO
 
-    if (channel or update_channel()) == "early" or os.environ.get("ENLENS_RELEASE_API", "").strip():
+    if ((channel or update_channel()) == "early" and candidates) or os.environ.get("ENLENS_RELEASE_API", "").strip():
         return ""
     try:
         where = peek(f"https://github.com/{repo or REPO}/releases/latest")
     except Exception as e:  # noqa: BLE001 - offline, GitHub down: say it plainly
-        raise UpdateError(f"Could not ask GitHub for the newest ENLENS ({type(e).__name__}: {e}). Are you online?") from e
+        raise UpdateError(github_problem(e)) from e
     m = re.search(r"/releases/tag/([^/?#]+)", where or "")
     return m.group(1).lstrip("v") if m else ""
 
@@ -635,20 +673,21 @@ def start_handover(job: dict, token: str | None = None) -> None:
 def update_release(check_only: bool = False, run: Runner = _run, fetch: Fetch = _fetch, workdir: Path | None = None,
                    windows: bool | None = None, peek: Peek | None = None, channel: str | None = None,
                    restart: list[str] | None = None, start: Callable[[dict], None] | None = None,
-                   token: str | None = None) -> dict:
+                   token: str | None = None, candidates: bool = True) -> dict:
     """Install the newest GitHub Release over a one-line install (see the module's notes). With `peek` (0.13.6), a
     check reads the newest version from the release page (`latest_version`), and asks the API only when the page does
     not say. 0.15: `channel` ("stable" or "early", default from the settings) says whether a release candidate counts.
     0.15.4, Windows: with `restart` (the app's command to start again) the download is checked here and the install
     handed over to handover.py (`start`, default start_handover), which runs once the app has quit; the answer then
-    has `"handover": True` and the app is to quit, not restart. Without it, the person is told what to do."""
+    has `"handover": True` and the app is to quit, not restart. Without it, the person is told what to do.
+    0.21.0rc4: `candidates=False` (the app's own look): the release page only, also on the early channel."""
     import tempfile
 
     from . import __version__, installation
 
     have = __version__
     channel = channel or update_channel()
-    seen = latest_version(peek, channel=channel) if check_only and peek is not None else ""
+    seen = latest_version(peek, channel=channel, candidates=candidates) if check_only and peek is not None else ""
     rel = {"version": seen} if seen else latest_release(fetch, channel=channel)
     if not rel["version"] or version_tuple(rel["version"]) <= version_tuple(have):
         return {"updated": False, "version": have, "message": f"ENLENS {have} is up to date."}
