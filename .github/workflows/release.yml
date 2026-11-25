@@ -31,9 +31,16 @@ permissions:
   contents: read
   actions: read   # to look up the Tests runs of this commit
 
+# 2026-11-25 (owner's rule), how much is tested before the draft, by the tag:
+# - a pre-release (vX.Y.ZrcN): no tests are waited for (fast deployment matters most; the push to main still runs
+#   the Linux tests, and the nightly run the whole suite);
+# - a small stable release (vX.Y.Z, Z > 0) and a run by hand: the job `tests` waits for the Linux run of this commit;
+# - a new stable version (vX.Y.0): the job `full-tests` runs the whole suite (tests.yml with full) on Linux, macOS and
+#   Windows here.
 jobs:
   tests:
-    name: Tests of this commit (Linux, macOS, Windows)
+    name: Tests of this commit (Linux)
+    if: ${{ !contains(github.ref_name, 'rc') && !(github.ref_type == 'tag' && endsWith(github.ref_name, '.0')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -57,7 +64,7 @@ jobs:
             waited=$(( $(date +%s) - start ))
             case "$what" in
               passed)
-                echo "Tests passed on $GITHUB_SHA on Linux, macOS and Windows ($url): not running them again here."
+                echo "Tests passed on $GITHUB_SHA ($url): not running them again here."
                 echo "here=false" >> "$GITHUB_OUTPUT"; exit 0 ;;
               failed)
                 echo "::error::Tests failed on $GITHUB_SHA ($url), so no release is drafted. Fix it in a new commit; or, if a test failed only by chance, re-run that run's failed jobs and then this run's."
@@ -368,10 +375,19 @@ jobs:
           PY="$(uv tool dir)/enlens-claims/bin/python"
           "$PY" -c "from enlens_claims import installation as i; assert i.kind() == 'script', i.kind(); print(i.info())"
 
+  # a new stable version (vX.Y.0): the whole suite, on Linux, macOS and Windows
+  full-tests:
+    name: Full suite
+    if: ${{ github.ref_type == 'tag' && !contains(github.ref_name, 'rc') && endsWith(github.ref_name, '.0') }}
+    uses: ./.github/workflows/tests.yml
+    with:
+      full: true
+
   release:
     name: Draft the GitHub Release
-    needs: [build, try-install, tests]
-    if: github.ref_type == 'tag'
+    needs: [build, try-install, tests, full-tests]
+    # the tests of a pre-release are skipped on purpose; a skipped job must not stop the draft, a failed one does
+    if: ${{ github.ref_type == 'tag' && !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
       contents: write        # the draft release

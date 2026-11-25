@@ -3,6 +3,8 @@
 # 10 seeds on every push and a laptop 2, so a defect that shows in a rare seed is still found within a day, without
 # making every push or every local run carry ~15 GB of writes. A failure names its seed: rerun it locally with
 # ENLENS_ROLES_FIRST_SEED=<seed> ENLENS_ROLES_SEEDS=1 (or ENLENS_L2_FIRST_SEED / ENLENS_L2_SEEDS) and the test's file.
+# 2026-11-25: also the whole suite on Linux, macOS and Windows (tests.yml with full), since pushes and pull requests
+# now run Linux only: a fault only macOS or Windows shows is found within a day without holding up a merge.
 name: Long random runs
 
 on:
@@ -37,3 +39,9 @@ jobs:
         run: uv sync --frozen --extra dev --extra connector --extra fast --extra pdfminer
       - name: Test
         run: uv run --frozen --no-sync python -m pytest -q -m random -n auto --dist worksteal --timeout=1800 --durations=10
+
+  full:
+    name: Full suite
+    uses: ./.github/workflows/tests.yml
+    with:
+      full: true

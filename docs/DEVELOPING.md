@@ -35,9 +35,11 @@ python -m pytest -q --testmon tests/test_<what you changed>.py   # while working
 python -m pytest -q -rs -n 4 --durations=15                      # the whole suite, alone on the computer, before a release
 ```
 
-**CI is where the whole suite runs** (2026-11-12). `.github/workflows/tests.yml` runs it on every push to `main` and
-every pull request, on Linux (Python 3.10, and 3.13 with every optional extra: the Claude API, OCR with Tesseract,
-PyYAML), macOS and Windows (0.15; required since 0.15.7), with a quick `ruff` check for syntax errors and undefined
+**CI is where the whole suite runs** (2026-11-12). `.github/workflows/tests.yml` runs it on Linux (Python 3.10, and
+3.13 with every optional extra: the Claude API, OCR with Tesseract, PyYAML) on every push to `main` and every pull
+request, and also on macOS and Windows (the job `test-other`) when it runs with `full`: every night (`nightly.yml`),
+for a new stable version X.Y.0 (`release.yml`), and by hand (*Run workflow*, tick *full*; or
+`gh workflow run tests.yml -f full=true`). See *How much is tested before a release* below. It runs with a quick `ruff` check for syntax errors and undefined
 names, and `tools/lint_js.py` for the page's JavaScript (eslint, two rules: a name defined nowhere, an async Promise
 executor; `python tools/lint_js.py` runs it here, with Node and the network). Each machine runs the tests side by side (`-n auto`), each test with a 10-minute limit (`--timeout=600`: a test
 that hangs fails with its stack), and Windows, the slowest, is split over four machines (`ENLENS_TEST_SHARD=k/4`, a
@@ -233,8 +235,19 @@ editing its files is in [EXTENDING.md](EXTENDING.md).
   also works: the release workflow's *tests* job waits for the Tests run of that commit while the package is built and
   tried beside it, and a failed run stops the draft. It runs the suite itself, on Linux only, when the commit has no
   Tests run (none, or one cancelled by a later push to `main`).
+- **How much is tested before a release** (2026-11-25, the owner's rule: a fix should reach the app without waiting
+  for three systems each time). `release.yml` decides by the tag:
+  - a **pre-release** (`vX.Y.ZrcN`): no tests are waited for; fast deployment matters most. The push to `main` still
+    runs the Linux tests, and the nightly run the whole suite, so a fault is still found within a day;
+  - a **small stable release** (`vX.Y.Z`, Z > 0): its job *tests* waits for the Linux Tests run of the commit (about
+    8 minutes), as below;
+  - a **new stable version** (`vX.Y.0`): its job *full-tests* runs the whole suite on Linux, macOS and Windows
+    (`tests.yml` with `full`), and the draft waits for it.
+
+  A small fix the owner wants now may be merged with `gh pr merge --admin` without waiting for its pull request's
+  run: the push to `main` runs the Linux tests anyway.
 - **Rules on GitHub (0.18.4, roadmap J1.2).** Two rulesets guard the repository. On `main`: a change comes in through
-  a pull request whose seven *Tests* jobs are green, and `main` cannot be deleted or force-pushed. On `v*` tags: a
+  a pull request whose two Linux *Tests* jobs are green (2026-11-25; seven, with macOS and Windows, before), and `main` cannot be deleted or force-pushed. On `v*` tags: a
   release tag is never moved or deleted. Repository admins may bypass both, so the order above (push the release
   commit to `main`, wait for green, push the tag) still works for the owner; everyone else, and every agent working
   for someone who is not an admin, goes through a pull request. `gh api repos/dvaudorg/claim_checker_demo/rulesets`
