@@ -174,7 +174,22 @@ def test_repeatable_says_claude_code_takes_no_seed():
     from enlens_claims.llm import ClaudeCodeBackend, repeatable
 
     r = repeatable(ClaudeCodeBackend(), "opus")
-    assert r["repeatable"] is False and "seed" in r["note"]
+    assert r["repeatable"] is False and "seed" in r["note"] and r["asked"] is False
+    assert r["note"].startswith("Claude Code ")
+
+
+def test_repeatable_names_the_agent_cli_and_its_own_model():
+    """Antigravity's test said "Claude Code" and the ladder alias ("sonnet"), and asked nothing: it names itself
+    and the provider's model id the alias stands for."""
+    from enlens_claims import routing
+    from enlens_claims.llm import AgentCliBackend, repeatable
+
+    be = AgentCliBackend("antigravity")
+    be.router = routing.from_settings({"backend": "antigravity"}, large="opus")
+    r = repeatable(be, "sonnet")
+    assert r["repeatable"] is False and r["asked"] is False
+    assert r["note"].startswith("Antigravity ") and "Claude Code" not in r["note"]
+    assert r["model"] == be.router.api_id("sonnet") and r["model"] != "sonnet"
 
 
 def test_label_compare_with_claude_code(home, corpus):  # noqa: F811

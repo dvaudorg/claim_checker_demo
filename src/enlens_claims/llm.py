@@ -1932,10 +1932,15 @@ def repeatable(backend, model: str) -> dict:
         return {"repeatable": False, "seed": False, "note": "The Claude API takes no seed: answers are not guaranteed "
                                                             "to be the same twice, even at temperature 0."}
     if name == "claude_code" or name in providers.AGENT_CLIS:
-        return {"repeatable": False, "seed": False,
-                "note": "Claude Code takes no seed and no temperature: answers are not guaranteed to be the same "
-                        "twice. Measure how much two readings differ with the acceptance runs (--again), or compare "
-                        "a sample of labels."}
+        # nothing is asked: an agent route is sent no seed and no temperature, so the answer is known beforehand.
+        # Named by its own title and its provider's model id (Antigravity's showed "Claude Code" and "sonnet")
+        title = getattr(backend, "title", None) or "Claude Code"
+        router = getattr(backend, "router", None)
+        shown = router.api_id(model) if router is not None and getattr(router, "lineup", None) else model
+        return {"repeatable": False, "seed": False, "asked": False, "model": shown,
+                "note": f"{title} takes no seed and no temperature, so no question was sent: its answers are not "
+                        "guaranteed to be the same twice. To see how its models do, use Test a model before trusting "
+                        "it below, or compare two readings of a sample of labels."}
     if name == "ollama" and hasattr(backend, "details"):
         # I6 (research section 3): Ollama's MLX runner sums in another order depending on what it read just before
         # (its prompt cache, ollama/ollama#16860), so two short questions in a row would look repeatable when a long
