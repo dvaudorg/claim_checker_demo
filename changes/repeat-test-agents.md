@@ -1,4 +1,4 @@
-### Fixes
+### Fixed
 
 - **Repeatable results no longer offers a test that asks nothing on Claude Code, Codex or Antigravity.** These tools
   take no seed and no temperature, so the button answered at once with the same box each time, which looked like
