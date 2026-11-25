@@ -1,5 +1,5 @@
 // Settings: model service, embeddings, check defaults, frameworks, model test, data folder.
-import { store, saveBlob, App, api, h, icon, tabs, replace, clear, toast, showError, fmt, pageHead, watchJob, P, field, switchControl, rangeControl, confirmDialog, dialog, download, VERSION, TERMINAL, strictness, statusBadge, copyLine, tesseractHelp, helpMark, rememberClaude, claudeAccount, appName, Updates, checkUpdate, speedPicker, saveSpeed, thoughtPicker, saveThought, latestPick, choice, planTier, button, card, fold, link, notice, downloadButton, input as fieldInput, select as selectField, tag, optionCards, readsLine, stopButton, inset, workState, aiWhere, myLink, WhatsNew, loadWhatsNew, showWhatsNew, whatsNewLink, aiButton, setBusy, aiSide, aiSides } from "../lib.js";
+import { store, saveBlob, App, api, h, icon, tabs, replace, clear, toast, showError, fmt, pageHead, watchJob, P, field, switchControl, rangeControl, confirmDialog, dialog, download, VERSION, TERMINAL, strictness, statusBadge, copyLine, tesseractHelp, helpMark, rememberClaude, claudeAccount, appName, Updates, checkUpdate, speedPicker, saveSpeed, thoughtPicker, saveThought, latestPick, choice, planTier, button, card, fold, link, notice, downloadButton, input as fieldInput, select as selectField, tag, optionCards, readsLine, stopButton, inset, workState, aiWhere, myLink, WhatsNew, loadWhatsNew, showWhatsNew, whatsNewLink, aiButton, setBusy, aiSide, aiSides, isAgent, agentTitle } from "../lib.js";
 import { withAI } from "../features.js";
 import { aiRun } from "./progress.js";
 import { remoteServerLine, restrictedModelCard, termsPanel } from "./ai-access.js";
@@ -1406,9 +1406,10 @@ function reproSection(s) {
     lead: "A model on this computer, or another cloud provider's API that takes them, is sent a fixed seed and temperature 0; Claude Code, the Claude API, Codex and Antigravity are sent neither. Every result records the model and its exact version where the route reports one.",
     body: [setting("Seed", seed, { help: "Any whole number. Changing it can change the answers.",
       about: ["The seed", "With the same seed, documents and settings, a model gives the same answers, when its server honours the seed (test it below). The seed is shown in “How these results were made” in every Excel download."] }),
-    h("div", { class: "btn-row" }, withAI(test)),
-    readsLine("a short test question, twice"),
-    out] };
+      // Claude Code, Codex and Antigravity take no seed: the answer is known without asking, so no button that asks nothing
+      ...(isAgent() ? [notice({ kind: "attention" }, h("p", {}, h("strong", {}, "Not guaranteed"), ` · ${agentTitle()}`),
+        h("p", { class: "small" }, `${agentTitle()} takes no seed and no temperature, so there is nothing to test here: its answers are not guaranteed to be the same twice. To see how its models do, use Test a model before trusting it below.`))]
+      : [h("div", { class: "btn-row" }, withAI(test)), readsLine("a short test question, twice"), out])] };
 }
 
 // ---------------------------------------------------------------------------------------------

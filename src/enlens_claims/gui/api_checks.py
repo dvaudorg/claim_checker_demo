@@ -452,7 +452,7 @@ class ChecksApi:
 
         self._body()
         be, model = self.app.backend(wake=True)
-        return {"model": model, **repeatable(be, model)}
+        return {"model": model, **repeatable(be, model)}   # an agent route names its provider's own model id
 
     def put_judgement(self, name, claim_id, passage_id, q):
         body = self._body()
