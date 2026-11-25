@@ -2441,7 +2441,8 @@ class Handler(BaseHTTPRequestHandler, DocumentsApi, ExploreApi, ChecksApi, Setup
         the branch a git copy follows. A newer version already on disk (updated while this copy ran) counts.
         0.13.6: the page asks every two minutes; the answer (or the reason there is none) is kept for
         UPDATE_LOOK_EVERY seconds, so the open tabs share one look. `?fresh=1` (Settings → Check for updates) looks
-        again now."""
+        again now. 0.21.0rc4: only that asked-for look finds release candidates (early channel); the page's own looks
+        ask the release page alone, which GitHub's hourly limit does not count, and keep a candidate found before."""
         from .. import update as upd
 
         installed = _installed_version()
@@ -2456,17 +2457,28 @@ class Handler(BaseHTTPRequestHandler, DocumentsApi, ExploreApi, ChecksApi, Setup
                     "updating": True}
         with self.app.update_looking:
             seen = self.app.update_seen
-            if _bool(q, "fresh") or not seen or time.time() - seen["at"] >= UPDATE_LOOK_EVERY:
+            fresh = _bool(q, "fresh")
+            if fresh or not seen or time.time() - seen["at"] >= UPDATE_LOOK_EVERY:
+                before = (seen or {}).get("answer") or {}
                 try:
-                    r = upd.update(check_only=True, quick=True)
+                    r = upd.update(check_only=True, quick=True, **({} if fresh else {"candidates": False}))
                     waiting = r.get("waiting")
-                    seen = {"at": time.time(), "answer": {
+                    answer = {
                         "available": bool(waiting), "on_disk": False, "version": __version__,
                         "latest": waiting if isinstance(waiting, str) else None,
                         "changes": waiting if isinstance(waiting, int) else None,
-                        "candidate": isinstance(waiting, str) and upd.is_candidate(waiting)}}
+                        "candidate": isinstance(waiting, str) and upd.is_candidate(waiting)}
+                    # 0.21.0rc4: a look of the page's own never sees a candidate: one that Check for updates found
+                    # stays offered until a newer version is
+                    if (not fresh and before.get("candidate") and before.get("latest")
+                            and not (answer["latest"] and upd.version_tuple(answer["latest"])
+                                     >= upd.version_tuple(before["latest"]))):
+                        answer = before
+                    seen = {"at": time.time(), "answer": answer}
                 except upd.UpdateError as e:
-                    seen = {"at": time.time(), "error": str(e)}
+                    # 0.21.0rc4: nor does a failed look of its own forget a candidate found before
+                    seen = ({"at": time.time(), "answer": before} if not fresh and before.get("candidate")
+                            else {"at": time.time(), "error": str(e)})
                 self.app.update_seen = seen
         if "error" in seen:
             raise ApiError(409, seen["error"])

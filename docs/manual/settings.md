@@ -83,7 +83,8 @@ Old links to a section (`#/settings/second`, `#/settings/calibration`…) open i
 
 ENLENS offers full releases only, by default. From 0.16 on, a **release candidate** (a try-out of the next version)
 comes out at least a week before each new version. To be offered candidates, choose *Early* under
-*Settings → General → Which new versions to offer*; *Stable* goes back. A copy installed from git follows its branch
+*Settings → General → Which new versions to offer*; *Stable* goes back. ENLENS looks for candidates only when you
+press *Check for updates*: its own look every two minutes finds new stable versions only. A copy installed from git follows its branch
 and has no such choice.
 
 > [!WARNING]
