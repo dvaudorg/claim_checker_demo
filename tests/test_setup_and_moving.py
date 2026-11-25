@@ -338,7 +338,7 @@ def test_release_workflow_builds_tries_and_drafts():
     wf = (ROOT / ".github" / "workflows" / "release.yml").read_text()
     for needle in ('tags: ["v*"]', "python tools/release.py check", "python -m pytest -q", "tools/release.py assets dist",
                    "ubuntu-latest, windows-latest", "dist/install.sh", "install.ps1", "--draft",
-                   "needs: [build, try-install, tests]", "check_connector()"):
+                   "needs: [build, try-install, tests, full-tests]", "check_connector()"):
         assert needle in wf, needle
     # 2026-11-12: the suite is not run twice. The draft waits for the Tests run (tests.yml) of the tagged commit,
     # which a failed run stops; only without one does the release run the suite itself. The build does not wait.

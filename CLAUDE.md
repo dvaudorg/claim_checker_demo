@@ -7,8 +7,9 @@ background agent. These rules keep that from happening again. docs/DEVELOPING.md
 
 ## Tests
 
-- **CI runs the whole suite**, on Linux (one job with every optional extra), macOS and Windows, on every push to `main`
-  (`.github/workflows/tests.yml`). Locally, run only the tests of what you changed: the test files you touched, or
+- **CI runs the whole suite**: on Linux (one job with every optional extra) on every push to `main` and pull request,
+  and also on macOS and Windows nightly, by hand (`gh workflow run tests.yml -f full=true`) and for a new stable
+  version X.Y.0 (`.github/workflows/tests.yml`; docs/DEVELOPING.md, *How much is tested before a release*). Locally, run only the tests of what you changed: the test files you touched, or
   `--testmon` to rerun the tests that touch the code you changed.
 - **One test run at a time on this computer.** A hook (`~/.claude/hooks/one-test-run.sh`) refuses a second one. To wait
   for the running one, run `bash ~/.claude/hooks/wait-for-tests.sh`, then start yours. Never get around the hook

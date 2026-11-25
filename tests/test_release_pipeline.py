@@ -188,7 +188,8 @@ def test_dependabot_watches_the_packages_and_the_actions():
 def test_every_workflow_that_needs_the_version_has_the_tags():
     for name in ("tests.yml", "nightly.yml", "release.yml", "tag-release.yml"):
         wf = _workflow(name)
-        checkouts = [s for job in wf["jobs"].values() for s in job["steps"] if str(s.get("uses", "")).startswith("actions/checkout@")]
+        checkouts = [s for job in wf["jobs"].values() for s in job.get("steps", [])   # a job calling tests.yml has none
+                     if str(s.get("uses", "")).startswith("actions/checkout@")]
         assert checkouts and all(s.get("with", {}).get("fetch-depth") == 0 for s in checkouts), name
 
 
@@ -199,6 +200,38 @@ def test_the_every_extra_job_still_installs_every_extra():
     extras = re.search(r"^\[project\.optional-dependencies\]\n(.*?)^\[", PYPROJECT, re.M | re.S).group(1)
     every = set(re.findall(r"^(\w+)\s*=", extras, re.M)) - {"gui"}          # gui = []: nothing to install
     assert set(full["extras"].split(",")) >= every, every - set(full["extras"].split(","))
+
+
+def test_how_much_is_tested_depends_on_the_release():
+    """2026-11-25 (owner's rule): pushes and pull requests run Linux only; macOS and Windows run with `full` (by hand,
+    nightly, a new stable version X.Y.0); a pre-release waits for no tests, a small stable release for Linux."""
+    tests = _workflow("tests.yml")
+    on = tests.get("on") or tests[True]
+    assert on["workflow_call"]["inputs"]["full"]["type"] == "boolean"
+    assert on["workflow_dispatch"]["inputs"]["full"]["type"] == "boolean"
+    linux = tests["jobs"]["test"]["strategy"]["matrix"]["include"]
+    other = tests["jobs"]["test-other"]["strategy"]["matrix"]["include"]
+    assert {r["os"] for r in linux} == {"ubuntu-latest"} and "if" not in tests["jobs"]["test"]
+    assert {r["os"] for r in other} == {"macos-latest", "windows-latest"}
+    assert tests["jobs"]["test-other"]["if"] == "${{ inputs.full }}"
+    assert tests["jobs"]["test-other"]["steps"] == tests["jobs"]["test"]["steps"]        # the same steps (an anchor)
+    assert tests["jobs"]["test-other"]["name"] == tests["jobs"]["test"]["name"]          # the checks keep their names
+    assert "inputs.full" in tests["concurrency"]["group"]          # a full run and a push run never cancel each other
+
+    rel = _workflow("release.yml")
+    jobs = rel["jobs"]
+    assert "!contains(github.ref_name, 'rc')" in jobs["tests"]["if"]                     # a pre-release waits for none
+    assert "endsWith(github.ref_name, '.0')" in jobs["tests"]["if"]                      # X.Y.0 runs the full suite
+    full = jobs["full-tests"]
+    assert full["uses"] == "./.github/workflows/tests.yml" and full["with"] == {"full": True}
+    assert "!contains(github.ref_name, 'rc')" in full["if"] and "endsWith(github.ref_name, '.0')" in full["if"]
+    draft = jobs["release"]
+    assert {"tests", "full-tests", "build", "try-install"} <= set(draft["needs"])
+    assert "!failure()" in draft["if"] and "!cancelled()" in draft["if"]                 # a skipped test job is fine
+
+    nightly = _workflow("nightly.yml")
+    assert nightly["jobs"]["full"]["uses"] == "./.github/workflows/tests.yml"
+    assert nightly["jobs"]["full"]["with"] == {"full": True}
 
 
 # ---------------------------------------------------------------------------------------------

@@ -17,18 +17,34 @@
 # made from the git tag (setuptools-scm, pyproject.toml): without tags it would be 0.0.0.
 name: Tests
 
+# 2026-11-25 (owner's rule): how much is tested depends on what it is for. Every push to main and every pull request
+# runs the Linux jobs only (about 8 minutes). macOS and Windows (the job `test-other`) run with `full`: by hand ("Run
+# workflow", tick full), every night (nightly.yml calls this workflow), and for a new stable version X.Y.0
+# (release.yml calls it). A pre-release (X.Y.ZrcN) waits for no tests; a small stable release (X.Y.Z, Z > 0) waits for
+# the Linux run of its commit (release.yml). The rule on main asks for the two Linux jobs only.
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      full:
+        description: "Also macOS and Windows (the full suite)"
+        type: boolean
+        default: false
+  workflow_call:   # nightly.yml and release.yml (a new stable version): with full, the whole suite on three systems
+    inputs:
+      full:
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: tests-${{ github.ref }}
+  # a full run (nightly, a release) is never cancelled by a push to main, nor cancels one
+  group: tests-${{ github.workflow }}-${{ github.ref }}-${{ inputs.full && 'full' || 'linux' }}
   cancel-in-progress: true
 
 jobs:
@@ -37,7 +53,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.advisory }}
     timeout-minutes: 30
-    env:
+    env: &env
       # the test files are UTF-8 and many read them with read_text(); Windows would read them as cp1252
       PYTHONUTF8: "1"
       ENLENS_TEST_SHARD: ${{ matrix.shard }}
@@ -48,13 +64,7 @@ jobs:
           # workers: "auto" is one per core (4 on Linux and Windows, 3 on macOS)
           - {os: ubuntu-latest, python: "3.10", label: "Linux, Python 3.10", lint: false, advisory: false, workers: auto, shard: "", extras: "dev,connector,fast,pdfminer", all: false}
           - {os: ubuntu-latest, python: "3.13", label: "Linux, Python 3.13, every extra", lint: true, advisory: false, workers: auto, shard: "", extras: "dev,connector,fast,pdfminer,anthropic,ocr,ci", all: true}
-          # 0.15: advisory until the suite passed there; 0.15.7: it does, so a failure on macOS or Windows fails the run
-          - {os: macos-latest, python: "3.12", label: "macOS, Python 3.12", lint: false, advisory: false, workers: auto, shard: "", extras: "dev,connector,fast,pdfminer", all: false}
-          - {os: windows-latest, python: "3.12", label: "Windows, Python 3.12, part 1 of 4", lint: false, advisory: false, workers: auto, shard: "1/4", extras: "dev,connector,fast,pdfminer", all: false}
-          - {os: windows-latest, python: "3.12", label: "Windows, Python 3.12, part 2 of 4", lint: false, advisory: false, workers: auto, shard: "2/4", extras: "dev,connector,fast,pdfminer", all: false}
-          - {os: windows-latest, python: "3.12", label: "Windows, Python 3.12, part 3 of 4", lint: false, advisory: false, workers: auto, shard: "3/4", extras: "dev,connector,fast,pdfminer", all: false}
-          - {os: windows-latest, python: "3.12", label: "Windows, Python 3.12, part 4 of 4", lint: false, advisory: false, workers: auto, shard: "4/4", extras: "dev,connector,fast,pdfminer", all: false}
-    steps:
+    steps: &steps
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0   # the package's version is made from the git tag
@@ -82,3 +92,23 @@ jobs:
         run: uv run --frozen --no-sync python tools/lint_js.py   # eslint, pinned there; needs the runner's Node
       - name: Test
         run: uv run --frozen --no-sync python -m pytest -q -rs -n ${{ matrix.workers }} --dist worksteal --timeout=600 --durations=25
+
+  # macOS and Windows: only for the full suite (by hand with full, nightly, a new stable version)
+  test-other:
+    if: ${{ inputs.full }}
+    name: Tests (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.advisory }}
+    timeout-minutes: 30
+    env: *env
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 0.15: advisory until the suite passed there; 0.15.7: it does, so a failure on macOS or Windows fails the run
+          - {os: macos-latest, python: "3.12", label: "macOS, Python 3.12", lint: false, advisory: false, workers: auto, shard: "", extras: "dev,connector,fast,pdfminer", all: false}
+          - {os: windows-latest, python: "3.12", label: "Windows, Python 3.12, part 1 of 4", lint: false, advisory: false, workers: auto, shard: "1/4", extras: "dev,connector,fast,pdfminer", all: false}
+          - {os: windows-latest, python: "3.12", label: "Windows, Python 3.12, part 2 of 4", lint: false, advisory: false, workers: auto, shard: "2/4", extras: "dev,connector,fast,pdfminer", all: false}
+          - {os: windows-latest, python: "3.12", label: "Windows, Python 3.12, part 3 of 4", lint: false, advisory: false, workers: auto, shard: "3/4", extras: "dev,connector,fast,pdfminer", all: false}
+          - {os: windows-latest, python: "3.12", label: "Windows, Python 3.12, part 4 of 4", lint: false, advisory: false, workers: auto, shard: "4/4", extras: "dev,connector,fast,pdfminer", all: false}
+    steps: *steps
