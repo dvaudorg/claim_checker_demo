@@ -2,6 +2,12 @@
 
 ## 0.21.0rc3 (November 2026): Two columns read in order (reader 8)
 
+Reader 8 reads two columns in order where their lines do not line up, such as a thesis printed with two book pages
+side by side on one PDF page: earlier readers mixed the two columns line by line. Only PDFs with such pages read
+otherwise, and documents already in a project keep their reading until you move them to the new reader. The Settings
+line about the network and some outdated wording on the pages are put right too. It is a pre-release: the install line
+and *Update* do not take it.
+
 ### Changes that can alter your results
 
 - **Reader 8: two columns whose lines do not line up are read one after the other.** Where the lines of one column
@@ -25,6 +31,14 @@
   run now speak of the cloud, not only of Claude or Anthropic. "Profile" is called Codes everywhere, and a few other
   stale lines (Backblaze in the EU, nothing stored, when the local model starts) say what the app does now. Does not
   change results.
+
+### Not yet done
+
+- Reader 8 was tried on 108 PDFs on one Mac (a thesis and journal papers); every page it changed reads in order now,
+  but a page whose columns' lines overlap in other ways (three columns of other widths, a figure beside the text) may
+  still be read across.
+- Two faults seen in the same thesis are left for later: a heading set in a font without a map of its characters reads
+  as "soci(cid:73)(cid:84)", and one journal article did not finish reading in 15 minutes (with reader 7 too).
 
 ## 0.21.0rc2 (November 2026): The bug hunt: about 400 fixes and Reader 7
 
